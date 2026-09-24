@@ -271,6 +271,11 @@ function renderPagination(containerId, totalPages, currentPage, onPageChange) {
 
 // 采集历史
 document.getElementById('btn-refresh-history').addEventListener('click', loadHistory);
+document.getElementById('history-table-body').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-slug]');
+  if (!btn) return;
+  window.viewRunResult(btn.dataset.slug);
+});
 
 async function loadHistory() {
   const settings = await window.appAPI.settings.load();
@@ -297,7 +302,7 @@ async function loadHistory() {
       <td>${escapeHtml(item.duration ? item.duration + 's' : '-')}</td>
       <td>${escapeHtml(item.origin || '-')}</td>
       <td>${startTime}</td>
-      <td><button class="btn btn-sm" onclick="viewRunResult('${item.slug}')">查看结果</button></td>
+      <td><button class="btn btn-sm" data-slug="${escapeHtml(item.slug)}">查看结果</button></td>
     </tr>`;
   }).join('');
 }
