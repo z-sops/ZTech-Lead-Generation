@@ -12,6 +12,19 @@ contextBridge.exposeInMainWorld('appAPI', {
     getHistory: (limit = 20, offset = 0) => ipcRenderer.invoke('coreclaw:get-history', { limit, offset })
   },
 
+  provider: {
+    setCredentials: (credentials, providerId) => ipcRenderer.invoke('provider:set-credentials', { providerId, credentials }),
+    testConnection: (apiKey, taskKey, providerId) => ipcRenderer.invoke('provider:test-connection', { providerId, apiKey, taskKey })
+  },
+
+  collection: {
+    submit: (params, providerId) => ipcRenderer.invoke('collection:submit', { providerId, params }),
+    getStatus: (jobId, providerId) => ipcRenderer.invoke('collection:job-status', { providerId, jobId }),
+    getResult: (jobId, options, providerId) => ipcRenderer.invoke('collection:job-result', { providerId, jobId, ...(options || {}) }),
+    getHistory: (limit = 20, offset = 0, providerId) => ipcRenderer.invoke('collection:job-history', { providerId, limit, offset }),
+    getStore: (providerId) => ipcRenderer.invoke('collection:store', { providerId })
+  },
+
   // 设置
   settings: {
     save: (settings) => ipcRenderer.invoke('settings:save', settings),

@@ -1,26 +1,18 @@
 const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
-const { CoreClawClient } = require('./src/main/coreClawClient');
 const { AccountStore } = require('./src/main/accountStore');
 const { logger } = require('./src/main/logger');
+const { ProviderManager } = require('./src/main/providers/providerManager');
+const { CoreClawAdapter } = require('./src/main/providers/coreclawAdapter');
+const { migrateLegacySettingsToProviders } = require('./src/main/providers/legacySettingsMigration');
 
 let mainWindow = null;
-let coreClawClient = null;
+let providerManager = null;
+let legacyProviderId = null;
 let accountStore = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 
-const ALLOWED_LANGS = new Set(['en', 'zh', 'es', 'fr', 'de', 'ar', 'pt', 'ja', 'ko']);
-const ALLOWED_TITLE_MATCH_MODES = new Set(['all', 'exact', 'contains']);
-const ALLOWED_MIN_RATINGS = new Set(['all', '4.5', '4.0', '3.5', '3.0']);
-const ALLOWED_WEBSITE_FILTERS = new Set(['all', 'has_website', 'no_website']);
-const ALLOWED_REVIEW_SORTS = new Set(['newest', 'highest', 'lowest', 'most_relevant']);
-const COLLECT_BOOL_KEYS = [
-  'skipClosed', 'fetchSocialInfo', 'facebook', 'instagram', 'youtube', 'tiktok',
-  'linkedin', 'fetchPlaceDetails', 'fetchReservation', 'fetchOnlineOrder',
-  'fetchWebResult', 'emailVerification', 'fetchReviews', 'includeReviewerInfo'
-];
-const RUN_SLUG_PATTERN = /^[A-Za-z0-9._~-]{1,200}$/;
 const MAX_KEY_LENGTH = 500;
 
 function invalidParams(message) {
@@ -48,27 +40,6 @@ function assertOptionalString(value, name, maxLength) {
   if (value === undefined || value === null) return;
   if (typeof value !== 'string') throw invalidParams(`Invalid params: ${name} (string required)`);
   if (value.length > maxLength) throw invalidParams(`Invalid params: ${name} (max ${maxLength} chars)`);
-}
-
-function assertOptionalEnum(value, name, allowed) {
-  if (value === undefined || value === null) return;
-  if (typeof value !== 'string' || !allowed.has(value)) {
-    throw invalidParams(`Invalid params: ${name}`);
-  }
-}
-
-function assertOptionalInt(value, name, min, max) {
-  if (value === undefined || value === null) return;
-  if (!Number.isInteger(value) || value < min || value > max) {
-    throw invalidParams(`Invalid params: ${name} (integer ${min}-${max})`);
-  }
-}
-
-function validateRunSlug(runSlug) {
-  if (typeof runSlug !== 'string' || !RUN_SLUG_PATTERN.test(runSlug)) {
-    throw invalidParams('Invalid params: runSlug');
-  }
-  return runSlug;
 }
 
 function validateProxyUrl(proxyUrl) {
@@ -99,7 +70,7 @@ function validateSettingsPayload(settings) {
   return out;
 }
 
-function validateCollectParams(params) {
+function validateSubmitShape(params) {
   assertPlainObject(params, 'params');
 
   if (!Array.isArray(params.keywords)) {
@@ -115,22 +86,6 @@ function validateCollectParams(params) {
     if (keyword.length > 200) throw invalidParams('Invalid params: keywords (max 200 chars each)');
   }
   params.keywords = keywords;
-
-  assertOptionalString(params.location, 'location', 200);
-  assertOptionalEnum(params.lang, 'lang', ALLOWED_LANGS);
-  assertOptionalInt(params.maxResults, 'maxResults', 1, 500);
-  assertOptionalEnum(params.titleMatchMode, 'titleMatchMode', ALLOWED_TITLE_MATCH_MODES);
-  assertOptionalEnum(params.minRating, 'minRating', ALLOWED_MIN_RATINGS);
-  assertOptionalEnum(params.websiteFilter, 'websiteFilter', ALLOWED_WEBSITE_FILTERS);
-  assertOptionalEnum(params.reviewSortBy, 'reviewSortBy', ALLOWED_REVIEW_SORTS);
-  assertOptionalInt(params.maxReviewsPerPlace, 'maxReviewsPerPlace', 1, 50);
-  assertOptionalString(params.reviewKeyword, 'reviewKeyword', 200);
-
-  for (const key of COLLECT_BOOL_KEYS) {
-    if (params[key] !== undefined && params[key] !== null) {
-      params[key] = params[key] === true;
-    }
-  }
 
   return params;
 }
@@ -209,88 +164,226 @@ function createMainWindow() {
   });
 }
 
+function persistProviderCredentials(store, providerId, credentials) {
+  const providers = store.get('providers', null);
+  const existing = providers && typeof providers === 'object' && providers[providerId] && typeof providers[providerId] === 'object'
+    ? providers[providerId]
+    : {};
+  const record = {
+    ...existing,
+    providerId,
+    enabled: existing.enabled !== undefined ? existing.enabled : true,
+    configuration: existing.configuration && typeof existing.configuration === 'object' ? existing.configuration : {},
+    credentials: {
+      apiKey: typeof credentials.apiKey === 'string' ? credentials.apiKey : '',
+      taskKey: typeof credentials.taskKey === 'string' ? credentials.taskKey : ''
+    }
+  };
+  store.set('providers', {
+    ...(providers && typeof providers === 'object' ? providers : {}),
+    [providerId]: record
+  });
+  return record;
+}
+
+function loadProviderCredentials(store, providerId) {
+  const providers = store.get('providers', null);
+  if (!providers || typeof providers !== 'object') return null;
+  const record = providers[providerId];
+  if (!record || typeof record !== 'object') return null;
+  if (!record.credentials || typeof record.credentials !== 'object') return null;
+  return record.credentials;
+}
+
 function initServices() {
   accountStore = new AccountStore();
-  coreClawClient = new CoreClawClient();
+  providerManager = new ProviderManager();
+  const adapter = providerManager.register(new CoreClawAdapter());
+  legacyProviderId = adapter.providerId;
+  const Store = require('electron-store');
+  const store = new Store();
+  migrateLegacySettingsToProviders(store, adapter.providerId);
+  const credentials = loadProviderCredentials(store, adapter.providerId);
+  if (credentials) {
+    providerManager.setCredentials(adapter.providerId, credentials);
+  }
 }
 
 function registerIpcHandlers() {
-  // CoreClaw 采集相关
-  ipcMain.handle('coreclaw:set-api-key', (_, key) => {
-    if (typeof key !== 'string' || key.length > MAX_KEY_LENGTH) {
-      return rejectEnvelope('coreclaw:set-api-key', 'Invalid params: apiKey');
-    }
-    coreClawClient.setApiKey(key);
-    return { success: true };
-  });
+  function providerIdFrom(payload) {
+    const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+    return p.providerId;
+  }
 
-  ipcMain.handle('coreclaw:run-google-maps', async (_, params) => {
+  function handleSetCredentials(channel, providerId, credentials) {
+    if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) {
+      return rejectEnvelope(channel, 'Invalid params: credentials');
+    }
+    const { apiKey, taskKey } = credentials;
+    if (apiKey !== undefined && apiKey !== null && (typeof apiKey !== 'string' || apiKey.length > MAX_KEY_LENGTH)) {
+      return rejectEnvelope(channel, 'Invalid params: apiKey');
+    }
+    if (taskKey !== undefined && taskKey !== null && (typeof taskKey !== 'string' || taskKey.length > MAX_KEY_LENGTH)) {
+      return rejectEnvelope(channel, 'Invalid params: taskKey');
+    }
     try {
-      return await coreClawClient.runGoogleMaps(validateCollectParams(params));
+      providerManager.setCredentials(providerId, {
+        ...(apiKey !== undefined && apiKey !== null ? { apiKey } : {}),
+        ...(taskKey !== undefined && taskKey !== null ? { taskKey } : {})
+      });
+      return { success: true };
     } catch (err) {
-      if (err.invalidParams) return rejectEnvelope('coreclaw:run-google-maps', err.message);
-      logger.error('ipc', 'coreclaw:run-google-maps failed', { error: err.message });
+      if (err.invalidParams) return rejectEnvelope(channel, err.message);
+      logger.error('ipc', `${channel} failed`, { error: err.message });
       return { success: false, error: err.message };
     }
-  });
+  }
 
-  ipcMain.handle('coreclaw:get-run-result', (_, runSlug) => {
+  async function handleCollectionSubmit(channel, providerId, params) {
     try {
-      validateRunSlug(runSlug);
+      const shaped = validateSubmitShape(params);
+      const adapter = providerManager.resolveCollectionProvider(providerId);
+      return await adapter.submitCollection(shaped);
     } catch (err) {
-      return rejectEnvelope('coreclaw:get-run-result', err.message);
+      if (err.invalidParams) return rejectEnvelope(channel, err.message);
+      logger.error('ipc', `${channel} failed`, { error: err.message });
+      return { success: false, error: err.message };
     }
-    return coreClawClient.getRunResult(runSlug);
-  });
+  }
 
-  ipcMain.handle('coreclaw:get-run-status', (_, runSlug) => {
+  async function handleGetJobState(channel, providerId, jobId) {
     try {
-      validateRunSlug(runSlug);
+      const adapter = providerManager.resolveCollectionProvider(providerId);
+      return await adapter.getJobState(jobId);
     } catch (err) {
-      return rejectEnvelope('coreclaw:get-run-status', err.message);
+      if (err.invalidParams) return rejectEnvelope(channel, err.message);
+      logger.error('ipc', `${channel} failed`, { error: err.message });
+      return { success: false, error: err.message };
     }
-    return coreClawClient.getRunStatus(runSlug);
-  });
+  }
 
-  ipcMain.handle('coreclaw:get-store', () => {
-    return coreClawClient.getStore();
-  });
+  async function handleGetJobResults(channel, providerId, jobId, options) {
+    try {
+      const adapter = providerManager.resolveCollectionProvider(providerId);
+      return await adapter.getJobResults(jobId, options);
+    } catch (err) {
+      if (err.invalidParams) return rejectEnvelope(channel, err.message);
+      logger.error('ipc', `${channel} failed`, { error: err.message });
+      return { success: false, error: err.message };
+    }
+  }
 
-  ipcMain.handle('coreclaw:get-history', (_, payload) => {
+  async function handleGetJobHistory(channel, providerId, payload) {
     try {
       const { limit, offset } = validateHistoryPaging(payload);
-      return coreClawClient.getRunHistory(limit, offset);
+      const adapter = providerManager.resolveCollectionProvider(providerId);
+      return await adapter.getJobHistory({ limit, offset });
     } catch (err) {
-      return rejectEnvelope('coreclaw:get-history', err.message);
+      if (err.invalidParams) return rejectEnvelope(channel, err.message);
+      logger.error('ipc', `${channel} failed`, { error: err.message });
+      return { success: false, error: err.message };
     }
-  });
+  }
 
-  ipcMain.handle('coreclaw:test-connection', async (_, payload) => {
+  async function handleGetStore(channel, providerId) {
+    try {
+      const adapter = providerManager.resolveCollectionProvider(providerId);
+      if (typeof adapter.getStore !== 'function') {
+        return { success: false, error: 'not supported' };
+      }
+      return await adapter.getStore();
+    } catch (err) {
+      if (err.invalidParams) return rejectEnvelope(channel, err.message);
+      logger.error('ipc', `${channel} failed`, { error: err.message });
+      return { success: false, error: err.message };
+    }
+  }
+
+  async function handleTestConnection(channel, providerId, payload) {
     const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
     const apiKey = p.apiKey;
     const taskKey = p.taskKey;
     if (typeof apiKey !== 'string' || !apiKey || apiKey.length > MAX_KEY_LENGTH) {
-      return rejectEnvelope('coreclaw:test-connection', 'Invalid params: apiKey');
+      return rejectEnvelope(channel, 'Invalid params: apiKey');
     }
     if (taskKey !== undefined && taskKey !== null && (typeof taskKey !== 'string' || taskKey.length > MAX_KEY_LENGTH)) {
-      return rejectEnvelope('coreclaw:test-connection', 'Invalid params: taskKey');
+      return rejectEnvelope(channel, 'Invalid params: taskKey');
     }
+    try {
+      const adapter = providerManager.resolveCollectionProvider(providerId);
+      return await adapter.testConnection({ apiKey, taskKey });
+    } catch (err) {
+      if (err.invalidParams) return rejectEnvelope(channel, err.message);
+      logger.error('ipc', `${channel} failed`, { error: err.message });
+      return { success: false, error: err.message };
+    }
+  }
 
-    const testClient = new CoreClawClient();
-    testClient.setApiKey(apiKey);
+  ipcMain.handle('provider:set-credentials', (_, payload) => {
+    const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+    return handleSetCredentials('provider:set-credentials', p.providerId, p.credentials);
+  });
 
-    const result = await testClient.getWorkerInputSchema('coreclaw~google-maps-scraper');
-    if (!result.success) {
-      logger.info('coreclaw', 'connection test failed', { apiKeyValid: false, hasTaskKey: !!taskKey, error: result.error });
-      return { success: false, error: 'API Key 无效或网络错误: ' + result.error };
+  ipcMain.handle('provider:test-connection', (_, payload) => {
+    return handleTestConnection('provider:test-connection', providerIdFrom(payload), payload);
+  });
+
+  ipcMain.handle('collection:submit', (_, payload) => {
+    const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+    return handleCollectionSubmit('collection:submit', p.providerId, p.params);
+  });
+
+  ipcMain.handle('collection:job-status', (_, payload) => {
+    const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+    return handleGetJobState('collection:job-status', p.providerId, p.jobId);
+  });
+
+  ipcMain.handle('collection:job-result', (_, payload) => {
+    const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+    return handleGetJobResults('collection:job-result', p.providerId, p.jobId, {
+      offset: p.offset,
+      limit: p.limit
+    });
+  });
+
+  ipcMain.handle('collection:job-history', (_, payload) => {
+    const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+    return handleGetJobHistory('collection:job-history', p.providerId, p);
+  });
+
+  ipcMain.handle('collection:store', (_, payload) => {
+    return handleGetStore('collection:store', providerIdFrom(payload));
+  });
+
+  ipcMain.handle('coreclaw:set-api-key', (_, key) => {
+    if (typeof key !== 'string' || key.length > MAX_KEY_LENGTH) {
+      return rejectEnvelope('coreclaw:set-api-key', 'Invalid params: apiKey');
     }
-    let taskKeyValid = false;
-    if (taskKey) {
-      const runs = await testClient.request('GET', `/api/v2/worker-runs?task_key=${encodeURIComponent(taskKey)}`);
-      taskKeyValid = runs.success;
-    }
-    logger.info('coreclaw', 'connection test succeeded', { apiKeyValid: true, taskKeyValid, hasTaskKey: !!taskKey });
-    return { success: true, apiKeyValid: true, taskKeyValid };
+    return handleSetCredentials('coreclaw:set-api-key', legacyProviderId, { apiKey: key });
+  });
+
+  ipcMain.handle('coreclaw:run-google-maps', (_, params) => {
+    return handleCollectionSubmit('coreclaw:run-google-maps', legacyProviderId, params);
+  });
+
+  ipcMain.handle('coreclaw:get-run-result', (_, runSlug) => {
+    return handleGetJobResults('coreclaw:get-run-result', legacyProviderId, runSlug);
+  });
+
+  ipcMain.handle('coreclaw:get-run-status', (_, runSlug) => {
+    return handleGetJobState('coreclaw:get-run-status', legacyProviderId, runSlug);
+  });
+
+  ipcMain.handle('coreclaw:get-store', () => {
+    return handleGetStore('coreclaw:get-store', legacyProviderId);
+  });
+
+  ipcMain.handle('coreclaw:get-history', (_, payload) => {
+    return handleGetJobHistory('coreclaw:get-history', legacyProviderId, payload);
+  });
+
+  ipcMain.handle('coreclaw:test-connection', (_, payload) => {
+    return handleTestConnection('coreclaw:test-connection', legacyProviderId, payload);
   });
 
   ipcMain.handle('settings:save', (_, settings) => {
@@ -304,7 +397,21 @@ function registerIpcHandlers() {
     const Store = require('electron-store');
     const store = new Store();
     store.set('settings', nextSettings);
-    coreClawClient.setApiKey(nextSettings.apiKey);
+    let activeProviderId;
+    try {
+      activeProviderId = providerManager.resolveCollectionProvider().providerId;
+    } catch (err) {
+      if (err.invalidParams) rejectLog('settings:save', err.message);
+      throw err;
+    }
+    persistProviderCredentials(store, activeProviderId, {
+      apiKey: nextSettings.apiKey,
+      taskKey: nextSettings.taskKey
+    });
+    providerManager.setCredentials(activeProviderId, {
+      apiKey: nextSettings.apiKey,
+      taskKey: nextSettings.taskKey
+    });
     logger.info('settings', 'settings saved', {
       hasApiKey: !!nextSettings.apiKey,
       hasTaskKey: !!nextSettings.taskKey,
@@ -316,7 +423,24 @@ function registerIpcHandlers() {
   ipcMain.handle('settings:load', () => {
     const Store = require('electron-store');
     const store = new Store();
-    return store.get('settings', {});
+    const legacy = store.get('settings', {});
+    const base = (legacy && typeof legacy === 'object') ? legacy : {};
+    let activeProviderId = null;
+    try {
+      activeProviderId = providerManager.resolveCollectionProvider().providerId;
+    } catch {
+      activeProviderId = null;
+    }
+    const credentials = activeProviderId ? loadProviderCredentials(store, activeProviderId) : null;
+    return {
+      apiKey: credentials && typeof credentials.apiKey === 'string'
+        ? credentials.apiKey
+        : (typeof base.apiKey === 'string' ? base.apiKey : ''),
+      taskKey: credentials && typeof credentials.taskKey === 'string'
+        ? credentials.taskKey
+        : (typeof base.taskKey === 'string' ? base.taskKey : ''),
+      proxyUrl: typeof base.proxyUrl === 'string' ? base.proxyUrl : ''
+    };
   });
 
   // 采集结果管理
