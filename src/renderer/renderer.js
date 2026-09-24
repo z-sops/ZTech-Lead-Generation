@@ -471,7 +471,7 @@ document.getElementById('btn-export-results').addEventListener('click', () => {
   if (!window.__collectResults || !window.__collectResults.length) return;
   const header = 'title,phone,address,website,email\n';
   const rows = window.__collectResults.map(item =>
-    `"${csvField(item.title || '')}","${csvField(item.phone || '')}","${csvField(item.address || '')}","${csvField(item.website || '')}","${csvField(item.email_1 || '')}"`
+    `"${csvField(item.title || '')}","${csvField(item.phone || '')}","${csvField(item.address || '')}","${csvField(item.website || '')}","${csvField(item.email_1 || item.all_emails || '')}"`
   ).join('\n');
   const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
