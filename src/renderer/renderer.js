@@ -30,7 +30,7 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-// CoreClaw 采集
+// 采集
 let currentRunSlug = null;
 
 document.getElementById('btn-start-collect').addEventListener('click', async () => {
@@ -50,10 +50,9 @@ document.getElementById('btn-start-collect').addEventListener('click', async () 
     return;
   }
 
-  await window.appAPI.coreclaw.setApiKey(apiKey);
   showStatus('正在提交采集任务...');
 
-  const result = await window.appAPI.coreclaw.runGoogleMaps({
+  const result = await window.appAPI.collection.submit({
     keywords: keywords.split(',').map(k => k.trim()),
     location: region,
     lang,
@@ -102,7 +101,7 @@ async function pollRunStatus() {
 
   showStatus(`正在查询任务状态... (${currentRunSlug})`);
 
-  const status = await window.appAPI.coreclaw.getRunStatus(currentRunSlug);
+  const status = await window.appAPI.collection.getStatus(currentRunSlug);
 
   if (!status.success) {
     showStatus(`查询失败: ${status.error}`, true);
@@ -123,7 +122,7 @@ async function pollRunStatus() {
 }
 
 async function loadRunResult() {
-  const result = await window.appAPI.coreclaw.getRunResult(currentRunSlug);
+  const result = await window.appAPI.collection.getResult(currentRunSlug);
 
   if (!result.success) {
     showStatus(`获取结果失败: ${result.error}`, true);
@@ -257,10 +256,12 @@ document.getElementById('btn-refresh-history').addEventListener('click', loadHis
 async function loadHistory() {
   const settings = await window.appAPI.settings.load();
   if (!settings.apiKey) return;
-  await window.appAPI.coreclaw.setApiKey(settings.apiKey);
 
-  const result = await window.appAPI.coreclaw.getHistory(20, 0);
-  if (!result.success) return;
+  const result = await window.appAPI.collection.getHistory(20, 0);
+  if (!result.success) {
+    toast(result.error || '获取采集历史失败', 'error');
+    return;
+  }
 
   const list = result.data?.list || [];
   const tbody = document.getElementById('history-table-body');
@@ -285,9 +286,8 @@ async function loadHistory() {
 window.viewRunResult = async (slug) => {
   const settings = await window.appAPI.settings.load();
   if (!settings.apiKey) return;
-  await window.appAPI.coreclaw.setApiKey(settings.apiKey);
 
-  const result = await window.appAPI.coreclaw.getRunResult(slug);
+  const result = await window.appAPI.collection.getResult(slug);
   if (result.success) {
     const items = result.data?.list || [];
     // 切到采集页显示结果
@@ -306,6 +306,8 @@ window.viewRunResult = async (slug) => {
       renderCollectResults(items);
       window.__filteredResults = null;
     }
+  } else {
+    toast(result.error || '获取结果失败', 'error');
   }
 };
 
@@ -367,12 +369,12 @@ document.getElementById('btn-export-logs').addEventListener('click', async () =>
 document.getElementById('btn-test-apikey').addEventListener('click', async () => {
   const apiKey = document.getElementById('settings-apikey').value.trim();
   if (!apiKey) { toast('请输入 API Key', 'error'); return; }
-  toast('正在测试 CoreClaw API Key...', 'info');
-  const result = await window.appAPI.coreclaw.testConnection(apiKey, '');
+  toast('正在测试 API Key...', 'info');
+  const result = await window.appAPI.provider.testConnection(apiKey, '');
   if (result.success && result.apiKeyValid) {
-    toast('CoreClaw API Key 连接成功', 'success');
+    toast('API Key 连接成功', 'success');
   } else {
-    toast('CoreClaw API Key 连接失败', 'error');
+    toast('API Key 连接失败', 'error');
   }
 });
 
@@ -382,7 +384,7 @@ document.getElementById('btn-test-taskkey').addEventListener('click', async () =
   if (!apiKey) { toast('请先填写 API Key', 'error'); return; }
   if (!taskKey) { toast('请输入任务流 Key', 'error'); return; }
   toast('正在测试任务流 Key...', 'info');
-  const result = await window.appAPI.coreclaw.testConnection(apiKey, taskKey);
+  const result = await window.appAPI.provider.testConnection(apiKey, taskKey);
   if (result.success && result.taskKeyValid) {
     toast('任务流 Key 验证成功', 'success');
   } else {

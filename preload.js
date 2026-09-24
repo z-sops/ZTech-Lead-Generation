@@ -1,17 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('appAPI', {
-  // CoreClaw 采集
-  coreclaw: {
-    setApiKey: (key) => ipcRenderer.invoke('coreclaw:set-api-key', key),
-    runGoogleMaps: (params) => ipcRenderer.invoke('coreclaw:run-google-maps', params),
-    getRunResult: (runSlug) => ipcRenderer.invoke('coreclaw:get-run-result', runSlug),
-    getRunStatus: (runSlug) => ipcRenderer.invoke('coreclaw:get-run-status', runSlug),
-    getStore: () => ipcRenderer.invoke('coreclaw:get-store'),
-    testConnection: (apiKey, taskKey) => ipcRenderer.invoke('coreclaw:test-connection', { apiKey, taskKey }),
-    getHistory: (limit = 20, offset = 0) => ipcRenderer.invoke('coreclaw:get-history', { limit, offset })
-  },
-
   provider: {
     setCredentials: (credentials, providerId) => ipcRenderer.invoke('provider:set-credentials', { providerId, credentials }),
     testConnection: (apiKey, taskKey, providerId) => ipcRenderer.invoke('provider:test-connection', { providerId, apiKey, taskKey })
@@ -48,19 +37,5 @@ contextBridge.exposeInMainWorld('appAPI', {
   logs: {
     exportLogs: () => ipcRenderer.invoke('logs:export'),
     getLogDir: () => ipcRenderer.invoke('logs:dir')
-  },
-
-  // 事件监听
-  on: (channel, callback) => {
-    const validChannels = [
-      'coreclaw:run-complete'
-    ];
-    if (validChannels.includes(channel)) {
-      ipcRenderer.on(channel, (_, data) => callback(data));
-    }
-  },
-
-  removeListener: (channel, callback) => {
-    ipcRenderer.removeListener(channel, callback);
   }
 });
