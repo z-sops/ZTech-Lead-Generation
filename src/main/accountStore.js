@@ -108,10 +108,13 @@ class AccountStore {
 
   saveDB() {
     if (!this.db) return;
+    const tmpPath = this.dbPath + '.tmp';
     try {
       const data = this.db.export();
-      fs.writeFileSync(this.dbPath, Buffer.from(data));
+      fs.writeFileSync(tmpPath, Buffer.from(data));
+      fs.renameSync(tmpPath, this.dbPath);
     } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch (cleanupErr) {}
       logger.error('accountStore', 'failed to persist database', { error: err.message });
       throw err;
     }
