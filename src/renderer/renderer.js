@@ -414,14 +414,20 @@ document.getElementById('btn-save-numbers').addEventListener('click', async () =
   showStatus(`已保存 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复`);
 });
 
+function csvField(value) {
+  let s = value === undefined || value === null ? '' : String(value);
+  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  return s.replace(/"/g, '""');
+}
+
 // === 采集结果导出 CSV ===
 document.getElementById('btn-export-results').addEventListener('click', () => {
   if (!window.__collectResults || !window.__collectResults.length) return;
   const header = 'title,phone,address,website,email\n';
   const rows = window.__collectResults.map(item =>
-    `"${item.title || ''}","${item.phone || ''}","${item.address || ''}","${item.website || ''}","${item.email_1 || ''}"`
+    `"${csvField(item.title || '')}","${csvField(item.phone || '')}","${csvField(item.address || '')}","${csvField(item.website || '')}","${csvField(item.email_1 || '')}"`
   ).join('\n');
-  const blob = new Blob([header + rows], { type: 'text/csv' });
+  const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -498,7 +504,7 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
     return;
   }
   if (csv) {
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

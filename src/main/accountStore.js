@@ -5,6 +5,12 @@ const { logger } = require('./logger');
 
 const DATA_DIR = path.join(require('electron').app.getPath('userData'), 'data');
 
+function csvField(value) {
+  let s = value === undefined || value === null ? '' : String(value);
+  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  return s.replace(/"/g, '""');
+}
+
 let initSQL;
 try {
   initSQL = require('sql.js');
@@ -130,7 +136,11 @@ class AccountStore {
   _addNumbers(newNumbers) {
     if (!this.db) {
       const existing = new Set((this._numbers || []).map(n => n.phone));
-      const unique = newNumbers.filter(n => !existing.has(n.phone));
+      const unique = newNumbers.filter(n => {
+        if (existing.has(n.phone)) return false;
+        existing.add(n.phone);
+        return true;
+      });
       this._numbers.push(...unique);
       try {
         fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
@@ -197,7 +207,7 @@ class AccountStore {
     if (format === 'csv') {
       const header = 'phone,source,keyword,status,collected_at\n';
       const rows = numbers.map(n =>
-        `"${n.phone}","${n.source || ''}","${n.keyword || ''}","${n.status || ''}","${n.collectedAt || ''}"`
+        `"${csvField(n.phone)}","${csvField(n.source || '')}","${csvField(n.keyword || '')}","${csvField(n.status || '')}","${csvField(n.collectedAt || '')}"`
       ).join('\n');
       return header + rows;
     }
