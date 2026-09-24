@@ -326,7 +326,13 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
     taskKey: document.getElementById('settings-task-key').value.trim(),
     proxyUrl: document.getElementById('settings-proxy-url').value.trim()
   };
-  const result = await window.appAPI.settings.save(settings);
+  let result;
+  try {
+    result = await window.appAPI.settings.save(settings);
+  } catch (err) {
+    toast(err?.message || '保存设置失败', 'error');
+    return;
+  }
   if (result.success) toast('设置已保存', 'success');
 });
 
@@ -388,15 +394,21 @@ document.getElementById('btn-test-taskkey').addEventListener('click', async () =
 document.getElementById('btn-save-numbers').addEventListener('click', async () => {
   const source = window.__filteredResults || window.__collectResults;
   if (!source || !source.length) return;
-  const numbers = source.map((item, i) => ({
-    id: `num-${Date.now()}-${i}`,
+  const numbers = source.map((item) => ({
+    id: crypto.randomUUID(),
     phone: item.phone || '',
     source: item.title || '',
     keyword: item.source_keyword || '',
     status: 'pending',
     collectedAt: new Date().toISOString()
   })).filter(n => n.phone);
-  const result = await window.appAPI.collector.addNumbers(numbers);
+  let result;
+  try {
+    result = await window.appAPI.collector.addNumbers(numbers);
+  } catch (err) {
+    showStatus(err?.message || '保存失败', true);
+    return;
+  }
   showStatus(`已保存 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复`);
 });
 
@@ -466,12 +478,23 @@ document.getElementById('number-filter-status').addEventListener('change', rende
 document.getElementById('btn-delete-selected').addEventListener('click', async () => {
   const ids = [...document.querySelectorAll('.number-check:checked')].map(cb => cb.dataset.id);
   if (!ids.length) return;
-  await window.appAPI.collector.deleteNumbers(ids);
+  try {
+    await window.appAPI.collector.deleteNumbers(ids);
+  } catch (err) {
+    toast(err?.message || '删除失败', 'error');
+    return;
+  }
   loadNumbers();
 });
 
 document.getElementById('btn-export-csv').addEventListener('click', async () => {
-  const csv = await window.appAPI.collector.exportNumbers('csv');
+  let csv;
+  try {
+    csv = await window.appAPI.collector.exportNumbers('csv');
+  } catch (err) {
+    toast(err?.message || '导出失败', 'error');
+    return;
+  }
   if (csv) {
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -495,8 +518,8 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
       .split(/\r?\n/)
       .map(line => line.trim())
       .filter(line => line)
-      .map((phone, i) => ({
-        id: 'num-' + Date.now() + '-' + i,
+      .map((phone) => ({
+        id: crypto.randomUUID(),
         phone,
         source: '手动导入',
         keyword: '',
@@ -504,7 +527,13 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
         collectedAt: new Date().toISOString()
       }));
     if (!numbers.length) { toast('文件中没有有效号码', 'error'); return; }
-    const result = await window.appAPI.collector.addNumbers(numbers);
+    let result;
+    try {
+      result = await window.appAPI.collector.addNumbers(numbers);
+    } catch (err) {
+      toast(err?.message || '导入失败', 'error');
+      return;
+    }
     toast(`已导入 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复`);
     loadNumbers();
   });

@@ -1,5 +1,7 @@
 const path = require('path');
 const fs = require('fs');
+const { randomUUID } = require('crypto');
+const { logger } = require('./logger');
 
 const DATA_DIR = path.join(require('electron').app.getPath('userData'), 'data');
 
@@ -17,6 +19,7 @@ class AccountStore {
     }
     this.dbPath = path.join(DATA_DIR, 'whatsapp.db');
     this.db = null;
+    this._numbers = [];
     this.ready = this.initDB();
   }
 
@@ -24,60 +27,93 @@ class AccountStore {
     if (!initSQL) {
       this.db = null;
       this.fallbackToJson();
+      logger.warn('accountStore', 'sql.js not available, using JSON fallback storage');
       return;
     }
 
-    const SQL = await initSQL();
-    let buffer = null;
-    if (fs.existsSync(this.dbPath)) {
-      buffer = fs.readFileSync(this.dbPath);
+    try {
+      const SQL = await initSQL();
+      let buffer = null;
+      if (fs.existsSync(this.dbPath)) {
+        buffer = fs.readFileSync(this.dbPath);
+      }
+      this.db = buffer ? new SQL.Database(buffer) : new SQL.Database();
+
+      this.db.run(`CREATE TABLE IF NOT EXISTS numbers (
+        id TEXT PRIMARY KEY,
+        phone TEXT,
+        source TEXT,
+        keyword TEXT,
+        status TEXT DEFAULT 'pending',
+        collectedAt TEXT
+      )`);
+
+      this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_phone ON numbers(phone)`);
+      this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_status ON numbers(status)`);
+
+      this.saveDB();
+
+      this.migrateJsonData();
+      logger.info('accountStore', 'database initialized', { dbPath: this.dbPath });
+    } catch (err) {
+      logger.error('accountStore', 'database init failed, falling back to JSON storage', { error: err.message });
+      this.db = null;
+      this.fallbackToJson();
     }
-    this.db = buffer ? new SQL.Database(buffer) : new SQL.Database();
-
-    this.db.run(`CREATE TABLE IF NOT EXISTS numbers (
-      id TEXT PRIMARY KEY,
-      phone TEXT,
-      source TEXT,
-      keyword TEXT,
-      status TEXT DEFAULT 'pending',
-      collectedAt TEXT
-    )`);
-
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_phone ON numbers(phone)`);
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_status ON numbers(status)`);
-
-    this.saveDB();
-
-    // 迁移旧 JSON 数据
-    this.migrateJsonData();
   }
 
   migrateJsonData() {
     const oldNumbers = path.join(DATA_DIR, 'numbers.json');
 
-    if (fs.existsSync(oldNumbers)) {
-      try {
-        const data = JSON.parse(fs.readFileSync(oldNumbers, 'utf-8'));
-        if (data.length) this.addNumbers(data);
-        fs.renameSync(oldNumbers, oldNumbers + '.bak');
-      } catch {}
+    if (!fs.existsSync(oldNumbers)) return;
+    try {
+      const data = JSON.parse(fs.readFileSync(oldNumbers, 'utf-8'));
+      if (Array.isArray(data) && data.length) {
+        const result = this._addNumbers(data);
+        logger.info('accountStore', 'legacy JSON data migrated', {
+          input: data.length,
+          added: result.added,
+          duplicates: result.duplicates
+        });
+      } else {
+        logger.info('accountStore', 'legacy JSON file found, no rows to migrate');
+      }
+      fs.renameSync(oldNumbers, oldNumbers + '.bak');
+    } catch (err) {
+      logger.error('accountStore', 'legacy JSON migration failed', { error: err.message });
     }
   }
 
   fallbackToJson() {
     this._numbers = [];
     const nf = path.join(DATA_DIR, 'numbers.json');
-    try { if (fs.existsSync(nf)) this._numbers = JSON.parse(fs.readFileSync(nf, 'utf-8')); } catch {}
+    if (!fs.existsSync(nf)) return;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(nf, 'utf-8'));
+      if (Array.isArray(parsed)) {
+        this._numbers = parsed;
+      } else {
+        logger.warn('accountStore', 'numbers.json is not an array, ignoring');
+      }
+    } catch (err) {
+      logger.error('accountStore', 'failed to read numbers.json', { error: err.message });
+    }
   }
 
   saveDB() {
     if (!this.db) return;
-    const data = this.db.export();
-    fs.writeFileSync(this.dbPath, Buffer.from(data));
+    try {
+      const data = this.db.export();
+      fs.writeFileSync(this.dbPath, Buffer.from(data));
+    } catch (err) {
+      logger.error('accountStore', 'failed to persist database', { error: err.message });
+      throw err;
+    }
   }
 
   // === 号码管理 ===
-  getCollectedNumbers() {
+  async getCollectedNumbers() {
+    await this.ready;
     if (!this.db) return this._numbers || [];
     const rows = this.db.exec('SELECT * FROM numbers ORDER BY rowid DESC');
     if (!rows.length) return [];
@@ -86,13 +122,25 @@ class AccountStore {
     }));
   }
 
-  addNumbers(newNumbers) {
+  async addNumbers(newNumbers) {
+    await this.ready;
+    return this._addNumbers(newNumbers);
+  }
+
+  _addNumbers(newNumbers) {
     if (!this.db) {
       const existing = new Set((this._numbers || []).map(n => n.phone));
       const unique = newNumbers.filter(n => !existing.has(n.phone));
       this._numbers.push(...unique);
-      fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
-      return { added: unique.length, duplicates: newNumbers.length - unique.length };
+      try {
+        fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
+      } catch (err) {
+        logger.error('accountStore', 'failed to write numbers.json', { error: err.message });
+        throw err;
+      }
+      const result = { added: unique.length, duplicates: newNumbers.length - unique.length };
+      logger.info('collector', 'numbers added', { input: newNumbers.length, added: result.added, duplicates: result.duplicates, storage: 'json' });
+      return result;
     }
 
     let added = 0, duplicates = 0;
@@ -104,36 +152,48 @@ class AccountStore {
       }
       this.db.run(
         'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt) VALUES (?, ?, ?, ?, ?, ?)',
-        [n.id || `num-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        [n.id || randomUUID(),
          n.phone, n.source || '', n.keyword || '', n.status || 'pending', n.collectedAt || new Date().toISOString()]
       );
       added++;
     }
     this.saveDB();
+    logger.info('collector', 'numbers added', { input: newNumbers.length, added, duplicates, storage: 'sql' });
     return { added, duplicates };
   }
 
-  updateNumberStatus(phone, status) {
+  async updateNumberStatus(phone, status) {
+    await this.ready;
     if (!this.db) return;
     this.db.run('UPDATE numbers SET status = ? WHERE phone = ?', [status, phone]);
     this.saveDB();
   }
 
-  deleteNumbers(ids) {
+  async deleteNumbers(ids) {
+    await this.ready;
     if (!this.db) {
       this._numbers = (this._numbers || []).filter(n => !ids.includes(n.id));
-      fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
+      try {
+        fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
+      } catch (err) {
+        logger.error('accountStore', 'failed to write numbers.json', { error: err.message });
+        throw err;
+      }
+      logger.info('collector', 'numbers deleted', { count: ids.length, storage: 'json' });
       return { success: true };
     }
     for (const id of ids) {
       this.db.run('DELETE FROM numbers WHERE id = ?', [id]);
     }
     this.saveDB();
+    logger.info('collector', 'numbers deleted', { count: ids.length, storage: 'sql' });
     return { success: true };
   }
 
-  exportNumbers(format = 'csv') {
-    const numbers = this.getCollectedNumbers();
+  async exportNumbers(format = 'csv') {
+    await this.ready;
+    const numbers = await this.getCollectedNumbers();
+    logger.info('collector', 'numbers exported', { format: format === 'json' ? 'json' : 'csv', count: numbers.length });
     if (format === 'csv') {
       const header = 'phone,source,keyword,status,collected_at\n';
       const rows = numbers.map(n =>
