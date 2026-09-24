@@ -140,8 +140,30 @@ async function pollRunStatus() {
   }
 }
 
+const RESULTS_PAGE_SIZE = 100;
+const RESULTS_MAX_OFFSET = 100000;
+
+async function fetchAllRunResults(slug) {
+  let offset = 0;
+  let prevPage = null;
+  const all = [];
+  for (;;) {
+    const result = await window.appAPI.collection.getResult(slug, { offset, limit: RESULTS_PAGE_SIZE });
+    if (!result.success) return result;
+    const page = (result.data && result.data.list) || [];
+    if (prevPage && JSON.stringify(page) === JSON.stringify(prevPage)) break;
+    prevPage = page;
+    for (const item of page) all.push(item);
+    if (page.length < RESULTS_PAGE_SIZE) break;
+    const next = offset + page.length;
+    if (next > RESULTS_MAX_OFFSET) break;
+    offset = next;
+  }
+  return { success: true, data: { list: all } };
+}
+
 async function loadRunResult() {
-  const result = await window.appAPI.collection.getResult(currentRunSlug);
+  const result = await fetchAllRunResults(currentRunSlug);
 
   if (!result.success) {
     showStatus(`获取结果失败: ${result.error}`, true);
@@ -149,13 +171,13 @@ async function loadRunResult() {
   }
 
   const items = result.data?.list || [];
-  showStatus(`采集完成，共 ${items.length} 条结果`);
+  showStatus(`采集完成，已加载 ${items.length} 条结果`);
   window.__collectResults = items;
   const mobileOnly = document.getElementById('collect-mobile-only').checked;
   if (mobileOnly) {
     const filtered = items.filter(item => isMobileNumber(item.phone));
     renderCollectResults(filtered, true);
-    toast(`筛选出 ${filtered.length} 个手机号（原共 ${items.length} 条）`, 'success');
+    toast(`筛选出 ${filtered.length} 个手机号（已加载 ${items.length} 条）`, 'success');
     window.__filteredResults = filtered;
   } else {
     renderCollectResults(items);
@@ -311,7 +333,7 @@ window.viewRunResult = async (slug) => {
   const settings = await window.appAPI.settings.load();
   if (!settings.apiKey) return;
 
-  const result = await window.appAPI.collection.getResult(slug);
+  const result = await fetchAllRunResults(slug);
   if (result.success) {
     const items = result.data?.list || [];
     // 切到采集页显示结果
