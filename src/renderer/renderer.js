@@ -30,6 +30,15 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
+function escapeHtml(value) {
+  return String(value === undefined || value === null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // 采集
 let currentRunSlug = null;
 
@@ -151,11 +160,11 @@ function renderCollectResults(items, preserveOriginal = false) {
 
   tbody.innerHTML = items.map((item, i) => `<tr>
     <td><input type="checkbox" data-index="${i}" class="result-check"></td>
-    <td>${item.title || ''}</td>
-    <td>${item.phone || ''}</td>
-    <td>${item.address || ''}</td>
+    <td>${escapeHtml(item.title || '')}</td>
+    <td>${escapeHtml(item.phone || '')}</td>
+    <td>${escapeHtml(item.address || '')}</td>
     <td>${item.website ? `<a href="${item.website}" target="_blank">链接</a>` : ''}</td>
-    <td>${item.email_1 || item.all_emails || ''}</td>
+    <td>${escapeHtml(item.email_1 || item.all_emails || '')}</td>
   </tr>`).join('');
 
   if (!preserveOriginal) {
@@ -271,12 +280,12 @@ async function loadHistory() {
     const statusClass = item.status === 'succeeded' ? 'color:var(--accent)' : item.status === 'failed' ? 'color:var(--danger)' : 'color:var(--warning)';
     const statusText = item.status === 'succeeded' ? '成功' : item.status === 'failed' ? '失败' : item.status === 'running' ? '运行中' : item.status;
     return `<tr>
-      <td>${item.scraper_title || '-'}</td>
-      <td style="${statusClass}">${statusText}</td>
-      <td>${item.results || 0}</td>
-      <td>${item.usage || '0'}</td>
-      <td>${item.duration ? item.duration + 's' : '-'}</td>
-      <td>${item.origin || '-'}</td>
+      <td>${escapeHtml(item.scraper_title || '-')}</td>
+      <td style="${statusClass}">${escapeHtml(statusText)}</td>
+      <td>${escapeHtml(item.results || 0)}</td>
+      <td>${escapeHtml(item.usage || '0')}</td>
+      <td>${escapeHtml(item.duration ? item.duration + 's' : '-')}</td>
+      <td>${escapeHtml(item.origin || '-')}</td>
       <td>${startTime}</td>
       <td><button class="btn btn-sm" onclick="viewRunResult('${item.slug}')">查看结果</button></td>
     </tr>`;
@@ -469,11 +478,11 @@ function renderNumbers() {
 
   const tbody = document.getElementById('numbers-table-body');
   tbody.innerHTML = pageData.map(n => `<tr>
-    <td><input type="checkbox" class="number-check" data-id="${n.id}"></td>
-    <td>${n.phone}</td>
-    <td>${n.source || '-'}</td>
-    <td>${n.keyword || '-'}</td>
-    <td>${n.status || 'pending'}</td>
+    <td><input type="checkbox" class="number-check" data-id="${escapeHtml(n.id)}"></td>
+    <td>${escapeHtml(n.phone)}</td>
+    <td>${escapeHtml(n.source || '-')}</td>
+    <td>${escapeHtml(n.keyword || '-')}</td>
+    <td>${escapeHtml(n.status || 'pending')}</td>
     <td>${n.collectedAt ? new Date(n.collectedAt).toLocaleString('zh-CN') : '-'}</td>
   </tr>`).join('');
 
