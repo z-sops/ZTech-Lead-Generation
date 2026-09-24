@@ -1,70 +1,70 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>phone全球获客</title>
+  <title>ZTech Lead Generation</title>
   <link rel="stylesheet" href="./src/renderer/styles.css">
 </head>
 <body>
   <div class="toast-container" id="toast-container"></div>
   <div class="app-layout">
-    <!-- 左侧边栏 -->
+    <!-- Left sidebar -->
     <aside class="sidebar">
       <div class="sidebar-header">
-        <h1 class="brand">phone全球获客</h1>
+        <h1 class="brand">ZTech Lead Generation</h1>
         <span class="version">v1.0.0</span>
       </div>
 
       <nav class="sidebar-nav">
         <button class="nav-item active" data-view="collector">
           <span class="nav-icon">🔍</span>
-          <span class="nav-label">关键词采集</span>
+          <span class="nav-label">Keyword Collection</span>
         </button>
         <button class="nav-item" data-view="history">
           <span class="nav-icon">📊</span>
-          <span class="nav-label">采集历史</span>
+          <span class="nav-label">Collection History</span>
         </button>
         <button class="nav-item" data-view="numbers">
           <span class="nav-icon">📋</span>
-          <span class="nav-label">号码管理</span>
+          <span class="nav-label">Lead Management</span>
         </button>
         <button class="nav-item" data-view="settings">
           <span class="nav-icon">⚙️</span>
-          <span class="nav-label">设置</span>
+          <span class="nav-label">Settings</span>
         </button>
       </nav>
     </aside>
 
-    <!-- 右侧主区域 -->
+    <!-- Main content area -->
     <main class="main-content">
-      <!-- 顶部状态栏 -->
+      <!-- Top status bar -->
       <header class="top-bar">
-        <div class="top-bar-title" id="page-title">关键词采集</div>
+        <div class="top-bar-title" id="page-title">Keyword Collection</div>
         <div class="top-bar-stats">
-          <span class="stat-item">采集: <strong id="stat-collected">0</strong></span>
+          <span class="stat-item">Collected: <strong id="stat-collected">0</strong></span>
         </div>
         <div class="top-bar-time" id="clock"></div>
       </header>
 
       <!-- 视图容器 -->
       <div class="view-container">
-        <!-- 采集视图 -->
+        <!-- Collection view -->
         <section class="view active" id="view-collector">
           <div class="view-top">
             <div class="form-item">
-              <label>关键词</label>
+              <label>Keywords</label>
               <input type="text" id="collect-keywords" placeholder="多个用逗号分隔，如: HVAC Contractors, Plumber">
             </div>
             <div class="form-item">
-              <label>地区</label>
+              <label>Region</label>
               <input type="text" id="collect-region" placeholder="如: New York,USA">
             </div>
             <div class="form-item">
-              <label>语言</label>
+              <label>Language</label>
               <select id="collect-lang">
                 <option value="en">English</option>
-                <option value="zh">中文</option>
+                <option value="zh">Chinese</option>
                 <option value="es">Español</option>
                 <option value="fr">Français</option>
                 <option value="de">Deutsch</option>
@@ -75,21 +75,21 @@
               </select>
             </div>
             <div class="form-item">
-              <label>最大数量</label>
+              <label>Maximum Quantity</label>
               <input type="number" id="collect-max" value="20" min="1" max="500">
             </div>
             <div class="form-item">
-              <label>标题匹配</label>
+              <label>Title Matching</label>
               <select id="collect-title-match">
-                <option value="all">全部匹配</option>
-                <option value="exact">精确匹配</option>
-                <option value="contains">包含关键词</option>
+                <option value="all">Match All</option>
+                <option value="exact">Exact Match</option>
+                <option value="contains">包含Keywords</option>
               </select>
             </div>
             <div class="form-item">
-              <label>最低评分</label>
+              <label>Lowest Rating</label>
               <select id="collect-min-rating">
-                <option value="all">不限</option>
+                <option value="all">Any</option>
                 <option value="4.5">4.5+</option>
                 <option value="4.0">4.0+</option>
                 <option value="3.5">3.5+</option>
@@ -97,76 +97,76 @@
               </select>
             </div>
             <div class="form-item">
-              <label>网站筛选</label>
+              <label>Website Filter</label>
               <select id="collect-website-filter">
-                <option value="all">全部</option>
-                <option value="has_website">有网站</option>
-                <option value="no_website">无网站</option>
+                <option value="all">All</option>
+                <option value="has_website">Has Website</option>
+                <option value="no_website">No Website</option>
               </select>
             </div>
 
             <div class="form-divider"></div>
             <div class="switch-grid">
-              <label class="switch-label"><input type="checkbox" id="collect-skip-closed" checked> 跳过永久关闭</label>
-              <label class="switch-label"><input type="checkbox" id="collect-social" checked> 社交信息</label>
+              <label class="switch-label"><input type="checkbox" id="collect-skip-closed" checked> Skip Permanently Closed</label>
+              <label class="switch-label"><input type="checkbox" id="collect-social" checked> Social Information</label>
               <label class="switch-label"><input type="checkbox" id="collect-facebook"> Facebook</label>
               <label class="switch-label"><input type="checkbox" id="collect-instagram"> Instagram</label>
               <label class="switch-label"><input type="checkbox" id="collect-youtube"> YouTube</label>
               <label class="switch-label"><input type="checkbox" id="collect-tiktok"> TikTok</label>
               <label class="switch-label"><input type="checkbox" id="collect-linkedin"> LinkedIn</label>
-              <label class="switch-label"><input type="checkbox" id="collect-place-details"> 详细信息</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reservation"> 预订信息</label>
-              <label class="switch-label"><input type="checkbox" id="collect-online-order"> 在线下单</label>
-              <label class="switch-label"><input type="checkbox" id="collect-web-result"> 网页搜索</label>
-              <label class="switch-label"><input type="checkbox" id="collect-email-verify"> 邮箱验证</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reviews"> 抓取评论</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reviewer-info"> 评论者信息</label>
-              <label class="switch-label"><input type="checkbox" id="collect-mobile-only"> <span style="color:red;font-weight:bold;">仅搜索手机号</span></label>
+              <label class="switch-label"><input type="checkbox" id="collect-place-details"> Detailed Information</label>
+              <label class="switch-label"><input type="checkbox" id="collect-reservation"> Booking Information</label>
+              <label class="switch-label"><input type="checkbox" id="collect-online-order"> Online Ordering</label>
+              <label class="switch-label"><input type="checkbox" id="collect-web-result"> Web Search</label>
+              <label class="switch-label"><input type="checkbox" id="collect-email-verify"> Email Verification</label>
+              <label class="switch-label"><input type="checkbox" id="collect-reviews"> Scrape Reviews</label>
+              <label class="switch-label"><input type="checkbox" id="collect-reviewer-info"> Reviewer Information</label>
+              <label class="switch-label"><input type="checkbox" id="collect-mobile-only"> <span style="color:red;font-weight:bold;">Mobile Numbers Only</span></label>
             </div>
 
             <div class="form-divider"></div>
             <div class="form-item">
-              <label>每商家最多评论</label>
+              <label>Max Reviews per Business</label>
               <input type="number" id="collect-max-reviews" value="5" min="1" max="50">
             </div>
             <div class="form-item">
-              <label>评论排序</label>
+              <label>Review Sort</label>
               <select id="collect-review-sort">
-                <option value="newest">最新</option>
-                <option value="highest">最高评分</option>
-                <option value="lowest">最低评分</option>
-                <option value="most_relevant">最相关</option>
+                <option value="newest">Newest</option>
+                <option value="highest">Highest Rating</option>
+                <option value="lowest">Lowest Rating</option>
+                <option value="most_relevant">Most Relevant</option>
               </select>
             </div>
             <div class="form-item">
-              <label>评论关键词</label>
-              <input type="text" id="collect-review-keyword" placeholder="筛选包含关键词的评论">
+              <label>评论Keywords</label>
+              <input type="text" id="collect-review-keyword" placeholder="筛选包含Keywords的评论">
             </div>
 
             <div class="form-actions">
-              <button class="btn btn-primary" id="btn-start-collect">开始采集</button>
-              <button class="btn btn-secondary" id="btn-check-status">查询状态</button>
+              <button class="btn btn-primary" id="btn-start-collect">Start Collection</button>
+              <button class="btn btn-secondary" id="btn-check-status">Check Status</button>
             </div>
             <div class="status-bar" id="collect-status" style="display:none;"></div>
 
             <div id="collect-result-card" style="display:none; margin-top:16px;">
               <div class="form-divider"></div>
               <div style="display:flex; align-items:center; justify-content:space-between; margin:10px 0;">
-                <strong style="font-size:13px;">采集结果</strong>
+                <strong style="font-size:13px;">Collection Results</strong>
                 <div style="display:flex; gap:8px;">
-                  <button class="btn btn-sm btn-primary" id="btn-save-numbers">保存到号码库</button>
-                  <button class="btn btn-sm" id="btn-export-results">导出 CSV</button>
+                  <button class="btn btn-sm btn-primary" id="btn-save-numbers">Save to Lead Library</button>
+                  <button class="btn btn-sm" id="btn-export-results">Export CSV</button>
                 </div>
               </div>
               <table class="data-table">
                 <thead>
                   <tr>
                     <th><input type="checkbox" id="select-all-results"></th>
-                    <th>商家名称</th>
-                    <th>电话</th>
-                    <th>地址</th>
-                    <th>网站</th>
-                    <th>邮箱</th>
+                    <th>Business Name</th>
+                    <th>Phone</th>
+                    <th>Address</th>
+                    <th>Website</th>
+                    <th>Email</th>
                   </tr>
                 </thead>
                 <tbody id="collect-result-body"></tbody>
@@ -175,11 +175,11 @@
           </div>
         </section>
 
-        <!-- 采集历史视图 -->
+        <!-- Collection History视图 -->
         <section class="view" id="view-history">
           <div class="view-top">
             <div class="form-actions">
-              <button class="btn btn-secondary" id="btn-refresh-history">刷新记录</button>
+              <button class="btn btn-secondary" id="btn-refresh-history">Refresh Records</button>
             </div>
           </div>
           <div class="view-bottom">
@@ -187,13 +187,13 @@
               <thead>
                 <tr>
                   <th>Worker</th>
-                  <th>状态</th>
-                  <th>结果数</th>
-                  <th>费用($)</th>
-                  <th>耗时</th>
-                  <th>来源</th>
-                  <th>时间</th>
-                  <th>操作</th>
+                  <th>Status</th>
+                  <th>Results</th>
+                  <th>Cost ($)</th>
+                  <th>Duration</th>
+                  <th>Source</th>
+                  <th>Time</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="history-table-body"></tbody>
@@ -202,27 +202,27 @@
           </div>
         </section>
 
-        <!-- 号码管理视图 -->
+        <!-- Lead Management视图 -->
         <section class="view" id="view-numbers">
           <div class="view-top">
             <div class="form-item">
-              <label>搜索</label>
-              <input type="text" id="number-search" placeholder="输入号码搜索...">
+              <label>Search</label>
+              <input type="text" id="number-search" placeholder="输入PhoneSearch...">
             </div>
             <div class="form-item">
-              <label>状态筛选</label>
+              <label>Status筛选</label>
               <select id="number-filter-status">
-                <option value="all">全部</option>
-                <option value="pending">待发送</option>
-                <option value="sent">已发送</option>
-                <option value="success">成功</option>
-                <option value="failed">失败</option>
+                <option value="all">All</option>
+                <option value="pending">Pending</option>
+                <option value="sent">Sent</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
               </select>
             </div>
             <div class="form-actions">
-              <button class="btn btn-sm" id="btn-import-numbers">导入号码</button>
-              <button class="btn btn-sm" id="btn-export-csv">导出 CSV</button>
-              <button class="btn btn-sm btn-danger" id="btn-delete-selected">删除选中</button>
+              <button class="btn btn-sm" id="btn-import-numbers">Import Leads</button>
+              <button class="btn btn-sm" id="btn-export-csv">Export CSV</button>
+              <button class="btn btn-sm btn-danger" id="btn-delete-selected">Delete Selected</button>
             </div>
           </div>
           <div class="view-bottom">
@@ -230,11 +230,11 @@
               <thead>
                 <tr>
                   <th><input type="checkbox" id="select-all-numbers"></th>
-                  <th>号码</th>
-                  <th>来源</th>
-                  <th>关键词</th>
-                  <th>状态</th>
-                  <th>采集时间</th>
+                  <th>Phone</th>
+                  <th>Source</th>
+                  <th>Keywords</th>
+                  <th>Status</th>
+                  <th>采集Time</th>
                 </tr>
               </thead>
               <tbody id="numbers-table-body"></tbody>
@@ -243,33 +243,33 @@
           </div>
         </section>
 
-        <!-- 设置视图 -->
+        <!-- Settings视图 -->
         <section class="view" id="view-settings">
           <div class="view-top">
             <div class="form-item">
               <label>CoreClaw API Key</label>
               <div class="input-with-btn">
                 <input type="password" id="settings-apikey" placeholder="如: scraper_api_xxxxx">
-                <button class="btn btn-secondary btn-sm" id="btn-test-apikey">测试连接</button>
+                <button class="btn btn-secondary btn-sm" id="btn-test-apikey">Test Connection</button>
               </div>
             </div>
             <div class="form-item">
-              <label>任务流 Key</label>
+              <label>Task Flow Key</label>
               <div class="input-with-btn">
                 <input type="text" id="settings-task-key" placeholder="如: 01KWA7xxxx">
-                <button class="btn btn-secondary btn-sm" id="btn-test-taskkey">测试连接</button>
+                <button class="btn btn-secondary btn-sm" id="btn-test-taskkey">Test Connection</button>
               </div>
             </div>
             <div class="form-item">
-              <label>网络代理</label>
+              <label>Network Proxy</label>
               <div class="input-with-btn">
-                <input type="text" id="settings-proxy-url" placeholder="如: http://127.0.0.1:7890 或留空自动检测">
-                <button class="btn btn-secondary btn-sm" id="btn-detect-proxy">自动检测</button>
+                <input type="text" id="settings-proxy-url" placeholder="如: http://127.0.0.1:7890 或留空Auto Detect">
+                <button class="btn btn-secondary btn-sm" id="btn-detect-proxy">Auto Detect</button>
               </div>
             </div>
             <div class="form-actions">
-              <button class="btn btn-primary" id="btn-save-settings">保存设置</button>
-              <button class="btn btn-secondary" id="btn-export-logs">导出日志</button>
+              <button class="btn btn-primary" id="btn-save-settings">保存Settings</button>
+              <button class="btn btn-secondary" id="btn-export-logs">Export Logs</button>
             </div>
           </div>
           <div class="view-bottom"></div>
