@@ -151,6 +151,24 @@ function createMainWindow() {
     }
   });
 
+  mainWindow.webContents.setWindowOpenHandler?.(({ url }) => {
+    try {
+      const protocol = new URL(url).protocol;
+      if (protocol === 'http:' || protocol === 'https:') return { action: 'allow' };
+    } catch {}
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isDev) {
+      try {
+        const devOrigin = new URL(`http://localhost:${process.env.VITE_PORT || 5173}`).origin;
+        if (new URL(url).origin === devOrigin) return;
+      } catch {}
+    }
+    event.preventDefault();
+  });
+
   if (isDev) {
     const port = process.env.VITE_PORT || 5173;
     mainWindow.loadURL(`http://localhost:${port}`);
