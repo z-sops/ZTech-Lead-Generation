@@ -39,6 +39,16 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function renderWebsite(value) {
+  if (!value) return '';
+  const website = String(value).trim();
+  if (!website) return '';
+  let parsed;
+  try { parsed = new URL(website); } catch { return escapeHtml(website); }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return escapeHtml(website);
+  return `<a href="${escapeHtml(website)}" target="_blank" rel="noopener">链接</a>`;
+}
+
 // 采集
 let currentRunSlug = null;
 
@@ -163,7 +173,7 @@ function renderCollectResults(items, preserveOriginal = false) {
     <td>${escapeHtml(item.title || '')}</td>
     <td>${escapeHtml(item.phone || '')}</td>
     <td>${escapeHtml(item.address || '')}</td>
-    <td>${item.website ? `<a href="${item.website}" target="_blank">链接</a>` : ''}</td>
+    <td>${renderWebsite(item.website)}</td>
     <td>${escapeHtml(item.email_1 || item.all_emails || '')}</td>
   </tr>`).join('');
 
