@@ -2,6 +2,7 @@ const { logger } = require('./logger');
 
 const BASE_URL = 'https://openapi.coreclaw.com';
 const DEFAULT_WORKER = 'coreclaw~google-maps-scraper';
+const REQUEST_TIMEOUT_MS = 30000;
 
 class CoreClawClient {
   constructor() {
@@ -31,7 +32,8 @@ class CoreClawClient {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
         },
-        body: body ? JSON.stringify(body) : undefined
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       });
 
       const data = await response.json();
