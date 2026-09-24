@@ -1,0 +1,50 @@
+{
+  "name": "phone-global-leads",
+  "version": "1.0.0",
+  "description": "phone全球获客",
+  "author": "",
+  "main": "main.js",
+  "scripts": {
+    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8",
+    "vite": "^5.4.0",
+    "wait-on": "^7.2.0"
+  },
+  "dependencies": {
+    "electron-store": "^8.0.1",
+    "sql.js": "^1.10.3"
+  },
+  "build": {
+    "appId": "com.whatsapp.automation",
+    "productName": "phone全球获客",
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "package.json",
+      "src/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/sql.js/dist/sql-wasm.wasm"
+    ],
+    "directories": {
+      "output": "dist"
+    }
+  }
+}
