@@ -1,102 +1,184 @@
-# phone全球获客
 
-[English](README_EN.md) | 简体中文
+# ZTech Lead Generation
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+**ZTech Lead Generation** is a desktop tool developed and licensed by **ZuniTech** for global business lead discovery and organization. It is designed for foreign trade, cross-border services, local services, B2B sales, market research, and channel development scenarios.
 
-`phone全球获客` 是一款以全球商业线索采集为核心的桌面工具，面向外贸、跨境服务、本地生活、B2B 销售和渠道拓展场景。通过关键词、地区、语言和筛选条件组合，可以快速采集全球商家信息，获取座机、手机号、地址、网站、邮箱等线索，并沉淀到号码库中，方便后续筛选、整理和导出。
+By combining keywords, regions, languages, and filter conditions, users can discover business information worldwide — including landline numbers, mobile numbers, addresses, websites, emails, social profiles, and other publicly available business information — and store results in a lead library for filtering, organizing, and exporting.
 
-## 核心能力
+## Core Capabilities
 
-- 全球关键词获客：支持按行业关键词和目标地区采集潜在客户。
-- 多语言地区搜索：支持 English、中文、Español、Français、Deutsch、العربية、Português、日本語、한국어 等语言配置。
-- 商家信息采集：可获取商家名称、座机、手机号、地址、网站、邮箱等线索字段。
-- 精准筛选：支持标题匹配、最低评分、网站筛选、仅搜索手机号等过滤条件。
-- 社交与详情扩展：可按需采集 Facebook、Instagram、YouTube、TikTok、LinkedIn、网页搜索、详细信息、评论等数据。
-- 座机与手机号沉淀：采集结果可保存到号码库，支持搜索、筛选、导入、删除和导出 CSV。
-- 采集历史：可查看历史采集任务，追踪采集状态并回看结果。
+* **Global keyword lead generation:** Collect potential customers by industry keywords and target regions.
+* **Multi-language region search:** Supports English, Chinese, Español, Français, Deutsch, العربية, Português, 日本語, 한국어, and other language configurations.
+* **Business information collection:** Retrieves lead fields such as business name, landline, mobile number, address, website, and email.
+* **Precision filtering:** Supports title matching, minimum rating, website filtering, mobile-number-only searches, and other filter conditions.
+* **Social & detail expansion:** Optionally collects Facebook, Instagram, YouTube, TikTok, LinkedIn, web search, detailed information, reviews, and other available data.
+* **Lead storage:** Results can be saved to a lead library with search, filtering, importing, deleting, and CSV export capabilities.
+* **Collection history:** View previous collection tasks, track collection status, and review collected results.
 
-## 产品截图
+## Product Screenshots
 
-### 关键词采集
+### Keyword Collection
 
-| 关键词采集 |
-| --- |
-| <img src="img/92374d351f17b3b282208e237b3aa7d9.png" alt="关键词采集" width="760"> |
+| Keyword Collection                                                                        |
+| ----------------------------------------------------------------------------------------- |
+| <img src="img/92374d351f17b3b282208e237b3aa7d9.png" alt="Keyword collection" width="760"> |
 
-### 采集结果
+### Collection Results
 
-| 采集结果 |
-| --- |
-| <img src="img/e7b23172b27c3e0bcb4488327ac3078a.png" alt="采集结果" width="760"> |
+| Collection Results                                                                        |
+| ----------------------------------------------------------------------------------------- |
+| <img src="img/e7b23172b27c3e0bcb4488327ac3078a.png" alt="Collection results" width="760"> |
 
-## 适用场景
+## Use Cases
 
-- 外贸客户开发
-- 跨境业务找商家
-- 本地服务商线索采集
-- B2B 电话与邮箱线索整理
-- 区域市场调研
-- 行业名单批量沉淀
+* Foreign trade customer development
+* Finding businesses for cross-border commerce
+* Local service provider lead collection
+* B2B phone and email lead organization
+* Regional market research
+* Industry list building
+* Channel partner discovery
+* Sales prospecting
 
-## 功能亮点
+## Feature Highlights
 
-- 按国家、城市、区域搜索目标客户。
-- 按行业关键词批量发现潜在商家。
-- 同时覆盖座机号码和手机号线索。
-- 支持只保留手机号，便于做更精准的私域触达。
-- 支持采集网站和邮箱，方便多渠道跟进。
-- 支持社交主页采集，辅助判断客户活跃度。
-- 支持保存到号码库，统一管理全球客户线索。
-- 支持导出 CSV，方便交给销售团队、客服团队或 CRM 系统继续处理。
+* Search target customers by country, city, and region.
+* Bulk-discover potential businesses by industry keyword.
+* Covers both landline and mobile number leads.
+* Option to keep only mobile numbers for more precise lead targeting.
+* Collects websites and emails for multi-channel sales workflows.
+* Collects social profiles to help assess business presence and activity.
+* Saves results to a centralized lead library.
+* Export lead data to CSV for sales teams, support teams, or CRM workflows.
 
-## 部署与运行
+## Deployment & Running
 
-### 环境要求
+### Environment Requirements
 
-- Node.js 18+
-- npm
-- Windows 桌面环境
+* Node.js 18+
+* npm
+* Windows desktop environment
 
-### 安装依赖
+### Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 开发环境运行
+### Run in Development
 
 ```bash
 npm run dev
 ```
 
-运行后会自动启动本地 Vite 服务，并拉起 Electron 桌面窗口。
+After running, a local Vite service starts automatically and launches the Electron desktop window.
 
-### 打包 Windows 桌面版
+### Build Windows Desktop Version
 
 ```bash
 npm run build
 ```
 
-打包产物默认输出到 `dist/` 目录。
+Build output goes to the `dist/` directory by default.
 
-如果 Windows 环境在解压签名工具时遇到符号链接权限问题，可以先用目录包方式验证：
+If your Windows environment encounters symlink permission issues while extracting the signing tool, you can verify with a directory-package build first:
 
 ```bash
 npx electron-builder --dir --config.win.signAndEditExecutable=false
 ```
 
-该命令会生成可直接测试的 `dist/win-unpacked/` 目录包。
+This command generates a directly testable `dist/win-unpacked/` directory package.
 
-## 商业授权与合规声明
+---
 
-- 商用、商业集成、二次封装、SaaS 集成、代部署或面向客户交付前，必须联系作者获得明确授权。
-- 使用本工具采集数据时，请遵守目标网站的 robots.txt、服务条款、接口规则和访问频率限制。
-- 请遵守各个国家和地区关于网络爬虫、数据采集、隐私保护、个人信息保护、反垃圾信息和商业触达的法律法规。
-- 使用者需自行确认采集、存储、导出和使用线索数据的合法性，禁止用于垃圾营销、骚扰、欺诈或其他违法用途。
+# License
 
-## 联系方式
+## Proprietary Software — ZuniTech
 
-扫码添加微信，了解定制和使用支持。
+**Copyright © 2026 ZuniTech. All rights reserved.**
 
-<img src="img/wx.jpg" alt="微信联系方式" width="280">
+ZTech Lead Generation is proprietary software owned and controlled by **ZuniTech**.
+
+This repository may be made available publicly for development, evaluation, collaboration, or source-code inspection, but **public availability does not mean that the software is open source or that commercial rights are granted**.
+
+Unless ZuniTech provides written authorization, you may **not**:
+
+* Sell, resell, sublicense, rent, lease, or redistribute the software.
+* Use the software as a commercial service or paid lead-generation service.
+* Repackage or white-label the software for clients or third parties.
+* Integrate the software into another commercial product or SaaS platform.
+* Distribute modified or derivative versions commercially.
+* Remove, alter, or obscure ZuniTech copyright, branding, license, or attribution notices.
+* Use ZTech Lead Generation as the underlying engine for a competing commercial product.
+* Copy substantial portions of the source code into another commercial product.
+* Distribute commercial builds, installers, or modified versions without authorization.
+
+### Commercial Licensing
+
+Commercial use requires a separate license or written authorization from **ZuniTech**.
+
+Commercial use includes, but is not limited to:
+
+* Using the software internally for a revenue-generating business.
+* Providing lead-generation services to customers.
+* Using the software to create or operate a paid data-generation service.
+* Integrating the software into commercial software or SaaS products.
+* Rebranding or white-labeling the software.
+* Distributing the software to customers, employees, contractors, or third parties as part of a commercial offering.
+* Selling collected lead data or providing lead-generation services based on the software.
+
+Commercial licensing terms, permitted usage, number of installations, distribution rights, support, updates, and other conditions are determined by a separate agreement with ZuniTech.
+
+### Development and Evaluation
+
+Subject to the terms above, the repository may be accessed and used for development, testing, evaluation, and other non-commercial purposes.
+
+Any use beyond those permissions requires prior written authorization from ZuniTech.
+
+### Third-Party Components
+
+ZTech Lead Generation may use third-party libraries, frameworks, APIs, services, and other components that are governed by their respective licenses and terms.
+
+Those third-party licenses remain applicable to their respective components and are not replaced by this proprietary license.
+
+### Data Collection & Compliance
+
+When collecting data with ZTech Lead Generation, users are responsible for complying with:
+
+* Applicable laws and regulations.
+* Website terms of service.
+* API terms and usage policies.
+* Robots.txt directives where applicable.
+* Rate limits and technical restrictions.
+* Privacy and data-protection requirements.
+* Personal-information and consumer-protection laws.
+* Anti-spam and electronic-communications regulations.
+
+Users are solely responsible for determining whether their intended collection, storage, processing, export, and use of lead information is lawful.
+
+The software must not be used for fraud, harassment, unlawful surveillance, spam, abuse, or other illegal activities.
+
+### No Warranty
+
+ZTech Lead Generation is provided subject to the terms of the applicable license agreement. ZuniTech makes no guarantee that data collected through third-party websites, APIs, search engines, or other external services will be complete, accurate, current, or continuously available.
+
+Users are responsible for validating collected information before relying on it for business, legal, financial, or other consequential purposes.
+
+---
+
+## Ownership
+
+**Product:** ZTech Lead Generation
+**Owner / Licensor:** ZuniTech
+**License:** Proprietary / Commercial License
+**Copyright:** © 2026 ZuniTech. All rights reserved.
+
+For commercial licensing, redistribution, white-label arrangements, integrations, or other commercial use, contact **ZuniTech** for authorization.
+
+---
+
+## Disclaimer
+
+ZTech Lead Generation is a software tool for business lead discovery and organization. ZuniTech does not authorize or encourage users to violate third-party terms of service, privacy laws, data-protection regulations, or applicable telecommunications and marketing laws.
+
+Users are solely responsible for how they configure, operate, and use the software and for the data they collect and process.
