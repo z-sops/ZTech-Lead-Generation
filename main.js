@@ -264,6 +264,16 @@ function registerIpcHandlers() {
 
   async function handleGetJobResults(channel, providerId, jobId, options) {
     try {
+      if (options && typeof options === 'object') {
+        if (options.offset !== undefined &&
+            (!Number.isInteger(options.offset) || options.offset < 0 || options.offset > 100000)) {
+          throw invalidParams('Invalid params: offset (integer 0-100000)');
+        }
+        if (options.limit !== undefined &&
+            (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 10000)) {
+          throw invalidParams('Invalid params: limit (integer 1-10000)');
+        }
+      }
       const adapter = providerManager.resolveCollectionProvider(providerId);
       return await adapter.getJobResults(jobId, options);
     } catch (err) {
