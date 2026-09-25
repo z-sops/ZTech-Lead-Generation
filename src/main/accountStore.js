@@ -345,13 +345,6 @@ class AccountStore {
     return { added, duplicates };
   }
 
-  async updateNumberStatus(phone, status) {
-    await this.ready;
-    if (!this.db) return;
-    this.db.run('UPDATE numbers SET status = ? WHERE phone = ?', [status, phone]);
-    this.saveDB();
-  }
-
   async deleteNumbers(ids) {
     await this.ready;
     if (!this.db) {

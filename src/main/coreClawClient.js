@@ -14,10 +14,6 @@ class CoreClawClient {
     this.apiKey = key;
   }
 
-  setWorkerId(id) {
-    this.workerId = id || DEFAULT_WORKER;
-  }
-
   async request(method, path, body = null) {
     if (!this.apiKey) {
       return { success: false, error: '未设置 API Key' };
@@ -142,16 +138,6 @@ class CoreClawClient {
     return res;
   }
 
-  async abortRun(runSlug) {
-    const res = await this.request('POST', `/api/v2/worker-runs/${encodeURIComponent(runSlug)}/abort`);
-    if (res.success) {
-      logger.info('coreclaw', 'run aborted', { runSlug });
-    } else {
-      logger.warn('coreclaw', 'run abort failed', { runSlug, error: res.error });
-    }
-    return res;
-  }
-
   async getRunHistory(limit = 20, offset = 0) {
     const res = await this.request('GET', `/api/v2/worker-runs?limit=${limit}&offset=${offset}`);
     if (res.success) {
@@ -160,14 +146,6 @@ class CoreClawClient {
       logger.warn('coreclaw', 'run history fetch failed', { limit, offset, error: res.error });
     }
     return res;
-  }
-
-  isRunComplete(status) {
-    return status === 'succeeded' || status === 'completed' || status === 'success';
-  }
-
-  isRunFailed(status) {
-    return status === 'failed' || status === 'error';
   }
 }
 

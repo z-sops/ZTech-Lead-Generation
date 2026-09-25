@@ -122,11 +122,6 @@ class CoreClawAdapter {
   async getStore() {
     return this.client.getStore();
   }
-
-  async abortJob(jobId) {
-    validateJobId(jobId);
-    return this.client.abortRun(jobId);
-  }
 }
 
 module.exports = { CoreClawAdapter, validateSubmitParams, validateJobId };
