@@ -11,6 +11,26 @@ function csvField(value) {
   return s.replace(/"/g, '""');
 }
 
+function canonicalPhone(phone) {
+  if (typeof phone !== 'string') return phone;
+  return phone.replace(/[\s\-.()]/g, '');
+}
+
+function mergeEmptyLeadFields(existing, incoming) {
+  let changed = false;
+  for (const field of ['source', 'keyword', 'status', 'collectedAt']) {
+    const cur = existing[field];
+    const inc = incoming[field];
+    const curEmpty = cur === undefined || cur === null || (typeof cur === 'string' && cur.trim() === '');
+    const incFilled = inc !== undefined && inc !== null && !(typeof inc === 'string' && inc.trim() === '');
+    if (curEmpty && incFilled) {
+      existing[field] = inc;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 let initSQL;
 try {
   initSQL = require('sql.js');
@@ -220,36 +240,71 @@ class AccountStore {
 
   _addNumbers(newNumbers) {
     if (!this.db) {
-      const existing = new Set((this._numbers || []).map(n => n.phone));
-      const unique = newNumbers.filter(n => {
-        if (existing.has(n.phone)) return false;
-        existing.add(n.phone);
-        return true;
-      });
-      this._numbers.push(...unique);
+      const byPhone = new Map();
+      for (const n of this._numbers || []) {
+        const key = canonicalPhone(n.phone);
+        if (!byPhone.has(key)) byPhone.set(key, n);
+      }
+      let added = 0, duplicates = 0;
+      for (const n of newNumbers) {
+        const key = canonicalPhone(n.phone);
+        const existing = byPhone.get(key);
+        if (existing) {
+          mergeEmptyLeadFields(existing, n);
+          duplicates++;
+          continue;
+        }
+        byPhone.set(key, n);
+        this._numbers.push(n);
+        added++;
+      }
       try {
         fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
       } catch (err) {
         logger.error('accountStore', 'failed to write numbers.json', { error: err.message });
         throw err;
       }
-      const result = { added: unique.length, duplicates: newNumbers.length - unique.length };
+      const result = { added, duplicates };
       logger.info('collector', 'numbers added', { input: newNumbers.length, added: result.added, duplicates: result.duplicates, storage: 'json' });
       return result;
     }
 
     let added = 0, duplicates = 0;
+    const scan = this.db.exec('SELECT * FROM numbers ORDER BY rowid DESC');
+    const byPhone = new Map();
+    if (scan.length) {
+      for (const r of scan[0].values) {
+        byPhone.set(canonicalPhone(r[1]), {
+          id: r[0], phone: r[1], source: r[2], keyword: r[3], status: r[4], collectedAt: r[5]
+        });
+      }
+    }
     for (const n of newNumbers) {
-      const exists = this.db.exec('SELECT 1 FROM numbers WHERE phone = ?', [n.phone]);
-      if (exists.length && exists[0].values.length) {
+      const key = canonicalPhone(n.phone);
+      const existing = byPhone.get(key);
+      if (existing) {
+        if (mergeEmptyLeadFields(existing, n)) {
+          this.db.run(
+            'UPDATE numbers SET source = ?, keyword = ?, status = ?, collectedAt = ? WHERE id = ?',
+            [existing.source, existing.keyword, existing.status, existing.collectedAt, existing.id]
+          );
+        }
         duplicates++;
         continue;
       }
+      const row = {
+        id: n.id || randomUUID(),
+        phone: n.phone,
+        source: n.source || '',
+        keyword: n.keyword || '',
+        status: n.status || 'pending',
+        collectedAt: n.collectedAt || new Date().toISOString()
+      };
       this.db.run(
         'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt) VALUES (?, ?, ?, ?, ?, ?)',
-        [n.id || randomUUID(),
-         n.phone, n.source || '', n.keyword || '', n.status || 'pending', n.collectedAt || new Date().toISOString()]
+        [row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt]
       );
+      byPhone.set(key, row);
       added++;
     }
     this.saveDB();
