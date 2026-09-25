@@ -31,6 +31,17 @@ function mergeEmptyLeadFields(existing, incoming) {
   return changed;
 }
 
+function writeJsonAtomic(filePath, contents) {
+  const tmpPath = filePath + '.tmp';
+  try {
+    fs.writeFileSync(tmpPath, contents, 'utf-8');
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch (cleanupErr) {}
+    throw err;
+  }
+}
+
 let initSQL;
 try {
   initSQL = require('sql.js');
@@ -260,7 +271,7 @@ class AccountStore {
         added++;
       }
       try {
-        fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
+        writeJsonAtomic(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
       } catch (err) {
         this._numbers = backup;
         logger.error('accountStore', 'failed to write numbers.json', { error: err.message });
@@ -349,9 +360,10 @@ class AccountStore {
     await this.ready;
     if (!this.db) {
       const backup = (this._numbers || []).map(n => ({ ...n }));
-      this._numbers = (this._numbers || []).filter(n => !ids.includes(n.id));
+      const idSet = new Set(ids);
+      this._numbers = (this._numbers || []).filter(n => !idSet.has(n.id));
       try {
-        fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
+        writeJsonAtomic(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
       } catch (err) {
         this._numbers = backup;
         logger.error('accountStore', 'failed to write numbers.json', { error: err.message });
@@ -360,10 +372,11 @@ class AccountStore {
       logger.info('collector', 'numbers deleted', { count: ids.length, storage: 'json' });
       return { success: true };
     }
+    const idSet = new Set(ids);
     const scan = this.db.exec('SELECT * FROM numbers ORDER BY rowid DESC');
     const removed = scan.length
       ? scan[0].values
-          .filter(r => ids.includes(r[0]))
+          .filter(r => idSet.has(r[0]))
           .map(r => ({ id: r[0], phone: r[1], source: r[2], keyword: r[3], status: r[4], collectedAt: r[5] }))
       : [];
     for (const id of ids) {

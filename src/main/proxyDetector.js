@@ -7,6 +7,13 @@ const COMMON_PROXY_PORTS = [7890, 7891, 7897, 1080, 10809, 8080, 10808, 2080];
 const TCP_TIMEOUT_MS = 1000;
 const VALIDATE_TIMEOUT_MS = 3000;
 
+// WhatsApp connectivity target (product-specific).
+// This is NOT a generic proxy health endpoint: a pass here means only that
+// the proxy can CONNECT to web.whatsapp.com:443. It does not prove that
+// every destination, CoreClaw, or any particular network path is reachable.
+const WHATSAPP_CONNECT_HOST = 'web.whatsapp.com';
+const WHATSAPP_CONNECT_PORT = 443;
+
 async function detectSystemProxy() {
   try {
     const regPath = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
@@ -61,31 +68,61 @@ function tcpConnect(port, host = '127.0.0.1') {
   });
 }
 
+// Validates the WhatsApp target before it is placed into the CONNECT request.
+// Rejects CRLF injection, non-hostname schemes, credentials, and bad ports.
+function buildWhatsAppConnectRequest(host = WHATSAPP_CONNECT_HOST, port = WHATSAPP_CONNECT_PORT) {
+  if (typeof host !== 'string' || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(host)) return null;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return `CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n\r\n`;
+}
+
+// Concept B: WhatsApp connectivity through the proxy.
+// Pass = the proxy answered CONNECT web.whatsapp.com:443 with a reply containing 200.
+// This is NOT a generic proxy-health label and NOT CoreClaw reachability.
+function testWhatsAppConnect(proxyHost, proxyPort) {
+  return new Promise((resolve) => {
+    const request = buildWhatsAppConnectRequest();
+    if (!request) {
+      resolve({ proxyConfigured: false, whatsappReachable: false });
+      return;
+    }
+    const socket = new net.Socket();
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve({ proxyConfigured: false, whatsappReachable: false });
+    }, VALIDATE_TIMEOUT_MS);
+    socket.connect(proxyPort, proxyHost, () => {
+      socket.write(request);
+    });
+    socket.once('data', (data) => {
+      clearTimeout(timer);
+      socket.destroy();
+      const text = data.toString();
+      const whatsappReachable = text.includes('200');
+      const httpShaped = /^HTTP\/1\.[01] \d{3}/.test(text.trimStart());
+      resolve({ proxyConfigured: whatsappReachable || httpShaped, whatsappReachable });
+    });
+    socket.on('error', () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve({ proxyConfigured: false, whatsappReachable: false });
+    });
+  });
+}
+
 async function validateProxy(proxyUrl) {
   try {
     const url = new URL(proxyUrl.includes('://') ? proxyUrl : `http://${proxyUrl}`);
     const host = url.hostname || '127.0.0.1';
     const port = Number(url.port) || (url.protocol === 'socks5:' ? 1080 : 8080);
-    if (url.protocol === 'socks5:') return await validateSocks5(host, port);
-    return await validateHttpProxy(host, port);
+    if (url.protocol === 'socks5:') {
+      const greetingOk = await validateSocks5(host, port);
+      return { proxyConfigured: greetingOk, whatsappReachable: null };
+    }
+    return await testWhatsAppConnect(host, port);
   } catch {
-    return false;
+    return { proxyConfigured: false, whatsappReachable: false };
   }
-}
-
-function validateHttpProxy(host, port) {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    const timer = setTimeout(() => { socket.destroy(); resolve(false); }, VALIDATE_TIMEOUT_MS);
-    socket.connect(port, host, () => {
-      socket.write(`CONNECT web.whatsapp.com:443 HTTP/1.1\r\nHost: web.whatsapp.com:443\r\n\r\n`);
-    });
-    socket.once('data', (data) => {
-      clearTimeout(timer); socket.destroy();
-      resolve(data.toString().includes('200'));
-    });
-    socket.on('error', () => { clearTimeout(timer); socket.destroy(); resolve(false); });
-  });
 }
 
 function validateSocks5(host, port) {
@@ -106,21 +143,50 @@ async function scanCommonPorts() {
     COMMON_PROXY_PORTS.map(async (port) => (await tcpConnect(port)) ? port : null)
   );
   const openPorts = results.filter(p => p !== null);
+  let whatsappFailedCandidate = null;
   for (const port of openPorts) {
-    if (await validateProxy(`http://127.0.0.1:${port}`)) return `http://127.0.0.1:${port}`;
-    if (await validateProxy(`socks5://127.0.0.1:${port}`)) return `socks5://127.0.0.1:${port}`;
+    const httpCheck = await validateProxy(`http://127.0.0.1:${port}`);
+    if (httpCheck.proxyConfigured && httpCheck.whatsappReachable === true) {
+      return { proxyUrl: `http://127.0.0.1:${port}`, whatsappReachable: true };
+    }
+    if (httpCheck.proxyConfigured && httpCheck.whatsappReachable === false && !whatsappFailedCandidate) {
+      whatsappFailedCandidate = `http://127.0.0.1:${port}`;
+    }
+    const socksCheck = await validateProxy(`socks5://127.0.0.1:${port}`);
+    if (socksCheck.proxyConfigured) {
+      return { proxyUrl: `socks5://127.0.0.1:${port}`, whatsappReachable: null };
+    }
+  }
+  if (whatsappFailedCandidate) {
+    return { proxyUrl: whatsappFailedCandidate, whatsappReachable: false };
   }
   return null;
 }
 
 async function autoDetectProxy() {
   const systemProxy = await detectSystemProxy();
-  if (systemProxy && await validateProxy(systemProxy)) {
-    return { source: 'registry', proxyUrl: systemProxy };
+  if (systemProxy) {
+    const check = await validateProxy(systemProxy);
+    if (check.proxyConfigured && check.whatsappReachable !== false) {
+      return { source: 'registry', proxyUrl: systemProxy, proxyConfigured: true, whatsappReachable: check.whatsappReachable };
+    }
+    const scanned = await scanCommonPorts();
+    if (scanned) {
+      return { source: 'portscan', proxyUrl: scanned.proxyUrl, proxyConfigured: true, whatsappReachable: scanned.whatsappReachable };
+    }
+    return { source: 'registry', proxyUrl: systemProxy, proxyConfigured: true, whatsappReachable: false };
   }
   const scanned = await scanCommonPorts();
-  if (scanned) return { source: 'portscan', proxyUrl: scanned };
-  return null;
+  if (scanned) {
+    return { source: 'portscan', proxyUrl: scanned.proxyUrl, proxyConfigured: true, whatsappReachable: scanned.whatsappReachable };
+  }
+  return { source: null, proxyUrl: null, proxyConfigured: false, whatsappReachable: false };
 }
 
-module.exports = { detectSystemProxy, scanCommonPorts, validateProxy, autoDetectProxy };
+module.exports = {
+  detectSystemProxy,
+  scanCommonPorts,
+  validateProxy,
+  autoDetectProxy,
+  buildWhatsAppConnectRequest
+};

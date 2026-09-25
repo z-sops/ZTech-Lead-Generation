@@ -42,7 +42,35 @@ class CoreClawClient {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       });
 
-      const data = await response.json();
+      let data = null;
+      let jsonError = false;
+      try {
+        data = await response.json();
+      } catch {
+        jsonError = true;
+      }
+
+      if (!response.ok) {
+        const statusText = typeof response.statusText === 'string' && response.statusText
+          ? ` ${response.statusText}`
+          : '';
+        const httpFallback = `HTTP ${response.status}${statusText}`;
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          const message = typeof data.message === 'string' && data.message ? data.message : '';
+          const code = Number.isInteger(data.code) ? data.code : undefined;
+          return {
+            success: false,
+            error: message || httpFallback,
+            httpStatus: response.status,
+            ...(code !== undefined ? { code } : {})
+          };
+        }
+        return { success: false, error: httpFallback, httpStatus: response.status };
+      }
+
+      if (jsonError) {
+        return { success: false, error: '响应不是有效的 JSON', httpStatus: response.status };
+      }
 
       if (data.code !== 0) {
         return { success: false, error: data.message || '请求失败', raw: data };

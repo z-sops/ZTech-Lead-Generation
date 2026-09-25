@@ -54,9 +54,13 @@ let currentRunSlug = null;
 let runGeneration = 0;
 let pollTimerId = null;
 let pollInFlight = false;
+let pollFailureCount = 0;
 let viewClaimSeq = 0;
 let viewClaimKind = 'none';
 let displayedResultRowMap = new Map();
+
+const MAX_CONSECUTIVE_POLL_FAILURES = 3;
+const POLL_RETRY_DELAY_MS = 5000;
 
 function isCurrentRun(gen, slug) {
   return gen === runGeneration && slug === currentRunSlug;
@@ -117,6 +121,7 @@ document.getElementById('btn-start-collect').addEventListener('click', async () 
   const gen = runGeneration;
   cancelPollTimer();
   currentRunSlug = null;
+  pollFailureCount = 0;
 
   const result = await window.appAPI.collection.submit({
     keywords: keywords.split(',').map(k => k.trim()),
@@ -165,9 +170,34 @@ document.getElementById('btn-check-status').addEventListener('click', async () =
     return;
   }
   if (pollTimerId !== null || pollInFlight) return;
+  pollFailureCount = 0;
   claimResultView('run');
   startPolling(runGeneration, currentRunSlug);
 });
+
+function evaluatePollOutcome(status) {
+  if (!status || status.success !== true) {
+    return { outcome: 'transport-error', error: (status && status.error) || '未知错误' };
+  }
+  const state = status.data?.status || status.data?.state;
+  if (state === 'succeeded' || state === 'completed' || state === 'success') {
+    return { outcome: 'terminal-success', state };
+  }
+  if (state === 'failed' || state === 'error') {
+    return { outcome: 'terminal-failure', state, error: status.data?.error };
+  }
+  if (!state || typeof state !== 'string') {
+    return { outcome: 'missing-state' };
+  }
+  return { outcome: 'pending', state };
+}
+
+function scheduleNextPoll(gen, slug) {
+  pollTimerId = setTimeout(() => {
+    pollTimerId = null;
+    pollRunStatus(gen, slug);
+  }, POLL_RETRY_DELAY_MS);
+}
 
 async function pollRunStatus(gen, slug) {
   if (!isCurrentRun(gen, slug)) return;
@@ -180,24 +210,43 @@ async function pollRunStatus(gen, slug) {
 
     if (!isCurrentRun(gen, slug)) return;
 
-    if (!status.success) {
-      showStatus(`查询失败: ${status.error}`, true);
+    const res = evaluatePollOutcome(status);
+
+    if (res.outcome === 'transport-error') {
+      pollFailureCount += 1;
+      if (pollFailureCount >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        showStatus(`查询失败: ${res.error}`, true);
+        return;
+      }
+      showStatus(`查询失败: ${res.error}，稍后自动重试 (${pollFailureCount}/${MAX_CONSECUTIVE_POLL_FAILURES})`, true);
+      scheduleNextPoll(gen, slug);
       return;
     }
 
-    const state = status.data?.status || status.data?.state;
-
-    if (state === 'succeeded' || state === 'completed' || state === 'success') {
+    if (res.outcome === 'terminal-success') {
       loadRunResult(slug, gen);
-    } else if (state === 'failed' || state === 'error') {
-      showStatus(`采集失败: ${status.data?.error || '未知错误'}`, true);
-    } else {
-      showStatus(`任务状态: ${state}，稍后自动刷新...`);
-      pollTimerId = setTimeout(() => {
-        pollTimerId = null;
-        pollRunStatus(gen, slug);
-      }, 5000);
+      return;
     }
+
+    if (res.outcome === 'terminal-failure') {
+      showStatus(`采集失败: ${res.error || '未知错误'}`, true);
+      return;
+    }
+
+    if (res.outcome === 'missing-state') {
+      pollFailureCount += 1;
+      if (pollFailureCount >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        showStatus('任务状态未知，已停止自动查询，可点击「检查状态」重试', true);
+        return;
+      }
+      showStatus(`任务状态未知，稍后自动刷新 (${pollFailureCount}/${MAX_CONSECUTIVE_POLL_FAILURES})`);
+      scheduleNextPoll(gen, slug);
+      return;
+    }
+
+    pollFailureCount = 0;
+    showStatus(`任务状态: ${res.state}，稍后自动刷新...`);
+    scheduleNextPoll(gen, slug);
   } finally {
     if (gen === runGeneration) pollInFlight = false;
   }
@@ -548,28 +597,46 @@ async function loadSettings() {
   if (settings.proxyUrl) document.getElementById('settings-proxy-url').value = settings.proxyUrl;
 }
 
+function settingsSaveFeedback(result) {
+  if (result && result.success === true) {
+    if (result.proxyApplied) {
+      return { message: '设置已保存', type: 'success' };
+    }
+    return { message: '设置已保存，但代理设置未能生效', type: 'info' };
+  }
+  return { message: '保存设置失败，请检查设置内容', type: 'error' };
+}
+
 document.getElementById('btn-save-settings').addEventListener('click', async () => {
   const settings = {
     apiKey: document.getElementById('settings-apikey').value.trim(),
     taskKey: document.getElementById('settings-task-key').value.trim(),
     proxyUrl: document.getElementById('settings-proxy-url').value.trim()
   };
-  let result;
+  let result = null;
   try {
     result = await window.appAPI.settings.save(settings);
-  } catch (err) {
-    toast(err?.message || '保存设置失败', 'error');
+  } catch {
+    const feedback = settingsSaveFeedback(null);
+    toast(feedback.message, feedback.type);
     return;
   }
-  if (result.success) toast('设置已保存', 'success');
+  const feedback = settingsSaveFeedback(result);
+  toast(feedback.message, feedback.type);
 });
 
 document.getElementById('btn-detect-proxy').addEventListener('click', async () => {
   toast('正在检测系统代理...', 'info');
   const result = await window.appAPI.proxy.detect();
-  if (result.proxyUrl) {
+  if (result && result.proxyUrl) {
     document.getElementById('settings-proxy-url').value = result.proxyUrl;
-    toast(`检测到代理: ${result.proxyUrl} (${result.source})`, 'success');
+    if (result.whatsappReachable === false) {
+      toast(`已检测到代理，但 WhatsApp 连通性测试未通过: ${result.proxyUrl} (${result.source})`, 'info');
+    } else if (result.whatsappReachable === true) {
+      toast(`检测到代理，WhatsApp 连通性测试通过: ${result.proxyUrl} (${result.source})`, 'success');
+    } else {
+      toast(`检测到代理: ${result.proxyUrl} (${result.source})`, 'success');
+    }
   } else {
     toast('未检测到可用代理', 'error');
   }
@@ -753,6 +820,30 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
   }
 });
 
+function splitImportLines(text) {
+  return String(text).split(/\r\n|\r|\n/);
+}
+
+function isValidImportPhoneLine(line) {
+  if (typeof line !== 'string') return false;
+  const value = line.trim();
+  if (!value || value.length > 50) return false;
+  if (!/^\+?[\d\s.\-()]+$/.test(value)) return false;
+  return value.replace(/\D/g, '').length >= 5;
+}
+
+function buildImportBatch(text) {
+  const valid = [];
+  let invalid = 0;
+  for (const raw of splitImportLines(text)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (isValidImportPhoneLine(line)) valid.push(line);
+    else invalid += 1;
+  }
+  return { valid, invalid };
+}
+
 document.getElementById('btn-import-numbers').addEventListener('click', () => {
   const input = document.createElement('input');
   input.type = 'file';
@@ -761,19 +852,19 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
     const file = input.files[0];
     if (!file) return;
     const text = await file.text();
-    const numbers = text
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(line => line)
-      .map((phone) => ({
-        id: crypto.randomUUID(),
-        phone,
-        source: '手动导入',
-        keyword: '',
-        status: 'pending',
-        collectedAt: new Date().toISOString()
-      }));
-    if (!numbers.length) { toast('文件中没有有效号码', 'error'); return; }
+    const { valid, invalid } = buildImportBatch(text);
+    if (!valid.length) {
+      toast(invalid > 0 ? `文件中没有有效号码（已跳过 ${invalid} 行无效内容）` : '文件中没有有效号码', 'error');
+      return;
+    }
+    const numbers = valid.map((phone) => ({
+      id: crypto.randomUUID(),
+      phone,
+      source: '手动导入',
+      keyword: '',
+      status: 'pending',
+      collectedAt: new Date().toISOString()
+    }));
     let result;
     try {
       result = await window.appAPI.collector.addNumbers(numbers);
@@ -781,7 +872,11 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
       toast(err?.message || '导入失败', 'error');
       return;
     }
-    toast(`已导入 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复`);
+    toast(
+      `已导入 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复` +
+        (invalid > 0 ? `，忽略 ${invalid} 行无效` : ''),
+      invalid > 0 ? 'info' : 'success'
+    );
     loadNumbers();
   });
   input.click();
