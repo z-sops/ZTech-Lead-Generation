@@ -240,6 +240,7 @@ class AccountStore {
 
   _addNumbers(newNumbers) {
     if (!this.db) {
+      const backup = (this._numbers || []).map(n => ({ ...n }));
       const byPhone = new Map();
       for (const n of this._numbers || []) {
         const key = canonicalPhone(n.phone);
@@ -261,6 +262,7 @@ class AccountStore {
       try {
         fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
       } catch (err) {
+        this._numbers = backup;
         logger.error('accountStore', 'failed to write numbers.json', { error: err.message });
         throw err;
       }
@@ -279,15 +281,25 @@ class AccountStore {
         });
       }
     }
+    const pristine = new Map();
+    const mergedIds = new Set();
+    const insertedIds = [];
     for (const n of newNumbers) {
       const key = canonicalPhone(n.phone);
       const existing = byPhone.get(key);
       if (existing) {
+        if (!pristine.has(existing.id)) {
+          pristine.set(existing.id, {
+            id: existing.id, source: existing.source, keyword: existing.keyword,
+            status: existing.status, collectedAt: existing.collectedAt
+          });
+        }
         if (mergeEmptyLeadFields(existing, n)) {
           this.db.run(
             'UPDATE numbers SET source = ?, keyword = ?, status = ?, collectedAt = ? WHERE id = ?',
             [existing.source, existing.keyword, existing.status, existing.collectedAt, existing.id]
           );
+          mergedIds.add(existing.id);
         }
         duplicates++;
         continue;
@@ -305,9 +317,30 @@ class AccountStore {
         [row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt]
       );
       byPhone.set(key, row);
+      insertedIds.push(row.id);
       added++;
     }
-    this.saveDB();
+    try {
+      this.saveDB();
+    } catch (err) {
+      try {
+        for (const id of insertedIds) {
+          this.db.run('DELETE FROM numbers WHERE id = ?', [id]);
+        }
+        for (const id of mergedIds) {
+          const prev = pristine.get(id);
+          if (prev) {
+            this.db.run(
+              'UPDATE numbers SET source = ?, keyword = ?, status = ?, collectedAt = ? WHERE id = ?',
+              [prev.source, prev.keyword, prev.status, prev.collectedAt, id]
+            );
+          }
+        }
+      } catch (revertErr) {
+        logger.error('accountStore', 'in-memory restore after failed persistence incomplete', { error: revertErr.message });
+      }
+      throw err;
+    }
     logger.info('collector', 'numbers added', { input: newNumbers.length, added, duplicates, storage: 'sql' });
     return { added, duplicates };
   }
@@ -322,20 +355,42 @@ class AccountStore {
   async deleteNumbers(ids) {
     await this.ready;
     if (!this.db) {
+      const backup = (this._numbers || []).map(n => ({ ...n }));
       this._numbers = (this._numbers || []).filter(n => !ids.includes(n.id));
       try {
         fs.writeFileSync(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
       } catch (err) {
+        this._numbers = backup;
         logger.error('accountStore', 'failed to write numbers.json', { error: err.message });
         throw err;
       }
       logger.info('collector', 'numbers deleted', { count: ids.length, storage: 'json' });
       return { success: true };
     }
+    const scan = this.db.exec('SELECT * FROM numbers ORDER BY rowid DESC');
+    const removed = scan.length
+      ? scan[0].values
+          .filter(r => ids.includes(r[0]))
+          .map(r => ({ id: r[0], phone: r[1], source: r[2], keyword: r[3], status: r[4], collectedAt: r[5] }))
+      : [];
     for (const id of ids) {
       this.db.run('DELETE FROM numbers WHERE id = ?', [id]);
     }
-    this.saveDB();
+    try {
+      this.saveDB();
+    } catch (err) {
+      try {
+        for (const row of removed) {
+          this.db.run(
+            'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt) VALUES (?, ?, ?, ?, ?, ?)',
+            [row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt]
+          );
+        }
+      } catch (revertErr) {
+        logger.error('accountStore', 'in-memory restore after failed persistence incomplete', { error: revertErr.message });
+      }
+      throw err;
+    }
     logger.info('collector', 'numbers deleted', { count: ids.length, storage: 'sql' });
     return { success: true };
   }
