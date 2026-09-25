@@ -503,6 +503,10 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('collector:storage-status', () => {
+    return accountStore.getStorageStatus();
+  });
+
   ipcMain.handle('logs:export', () => {
     return logger.exportLogs();
   });

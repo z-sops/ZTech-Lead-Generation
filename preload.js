@@ -30,7 +30,8 @@ contextBridge.exposeInMainWorld('appAPI', {
     getNumbers: () => ipcRenderer.invoke('collector:get-numbers'),
     addNumbers: (numbers) => ipcRenderer.invoke('collector:add-numbers', numbers),
     exportNumbers: (format) => ipcRenderer.invoke('collector:export-numbers', format),
-    deleteNumbers: (ids) => ipcRenderer.invoke('collector:delete-numbers', ids)
+    deleteNumbers: (ids) => ipcRenderer.invoke('collector:delete-numbers', ids),
+    storageStatus: () => ipcRenderer.invoke('collector:storage-status')
   },
 
   // 日志

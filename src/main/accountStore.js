@@ -26,6 +26,8 @@ class AccountStore {
     this.dbPath = path.join(DATA_DIR, 'whatsapp.db');
     this.db = null;
     this._numbers = [];
+    this._sessionQuarantine = null;
+    this.storageStatus = { mode: 'json-fallback', reason: null, quarantine: null, dataMayBeIncomplete: false };
     this.ready = this.initDB();
   }
 
@@ -34,15 +36,36 @@ class AccountStore {
       this.db = null;
       this.fallbackToJson();
       logger.warn('accountStore', 'sql.js not available, using JSON fallback storage');
+      this._completeStatus('json-fallback', 'sqljs-unavailable');
       return;
     }
 
+    let SQL;
     try {
-      const SQL = await initSQL();
-      let buffer = null;
-      if (fs.existsSync(this.dbPath)) {
+      SQL = await initSQL();
+    } catch (err) {
+      logger.error('accountStore', 'database init failed, falling back to JSON storage', { error: err.message });
+      this.db = null;
+      this.fallbackToJson();
+      this._completeStatus('json-fallback', 'sqljs-unavailable');
+      return;
+    }
+
+    let buffer = null;
+    if (fs.existsSync(this.dbPath)) {
+      try {
         buffer = fs.readFileSync(this.dbPath);
+      } catch (err) {
+        logger.error('accountStore', 'database init failed, falling back to JSON storage', { error: err.message });
+        this.db = null;
+        this.fallbackToJson();
+        this._completeStatus('json-fallback', 'read-failed');
+        return;
       }
+    }
+
+    const hasExisting = !!(buffer && buffer.length);
+    try {
       this.db = buffer ? new SQL.Database(buffer) : new SQL.Database();
 
       this.db.run(`CREATE TABLE IF NOT EXISTS numbers (
@@ -56,16 +79,75 @@ class AccountStore {
 
       this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_phone ON numbers(phone)`);
       this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_status ON numbers(status)`);
-
-      this.saveDB();
-
-      this.migrateJsonData();
-      logger.info('accountStore', 'database initialized', { dbPath: this.dbPath });
     } catch (err) {
-      logger.error('accountStore', 'database init failed, falling back to JSON storage', { error: err.message });
       this.db = null;
+      logger.error('accountStore', 'database init failed, falling back to JSON storage', { error: err.message });
+      if (hasExisting) this._quarantineCorrupt(err);
       this.fallbackToJson();
+      this._completeStatus('json-fallback', hasExisting ? 'corrupt-open' : 'init-failed');
+      return;
     }
+
+    try {
+      this.saveDB();
+    } catch (err) {
+      this.db = null;
+      logger.error('accountStore', 'database init failed, falling back to JSON storage', { error: err.message });
+      this.fallbackToJson();
+      this._completeStatus('json-fallback', 'init-write-failed');
+      return;
+    }
+
+    this.migrateJsonData();
+    logger.info('accountStore', 'database initialized', { dbPath: this.dbPath });
+    this._completeStatus('sql', null);
+  }
+
+  _quarantineCorrupt(openErr) {
+    const target = this.dbPath + '.corrupt-' + Date.now();
+    try {
+      fs.renameSync(this.dbPath, target);
+      this._sessionQuarantine = target;
+      logger.error('accountStore', 'unreadable database preserved', { error: openErr.message, preserved: target });
+    } catch (renameErr) {
+      this._sessionQuarantine = null;
+      logger.error('accountStore', 'failed to preserve unreadable database', { error: renameErr.message, dbPath: this.dbPath });
+    }
+  }
+
+  _scanQuarantine() {
+    const prefix = path.basename(this.dbPath) + '.corrupt-';
+    try {
+      let newest = null;
+      let newestM = -1;
+      for (const name of fs.readdirSync(path.dirname(this.dbPath))) {
+        if (!name.startsWith(prefix)) continue;
+        const full = path.join(path.dirname(this.dbPath), name);
+        const m = fs.statSync(full).mtimeMs;
+        if (m >= newestM) {
+          newestM = m;
+          newest = full;
+        }
+      }
+      return newest;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  _completeStatus(mode, reason) {
+    const quarantine = this._sessionQuarantine || this._scanQuarantine();
+    this.storageStatus = {
+      mode,
+      quarantine,
+      reason,
+      dataMayBeIncomplete: quarantine !== null || (mode === 'json-fallback' && fs.existsSync(this.dbPath))
+    };
+  }
+
+  async getStorageStatus() {
+    await this.ready;
+    return { ...this.storageStatus };
   }
 
   migrateJsonData() {

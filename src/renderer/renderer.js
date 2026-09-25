@@ -272,6 +272,28 @@ function toast(msg, type = 'success', duration = 3000) {
   setTimeout(() => { el.remove(); }, duration);
 }
 
+async function checkStorageStatus() {
+  const el = document.getElementById('storage-warning');
+  if (!el) return;
+  try {
+    const st = await window.appAPI.collector.storageStatus();
+    if (!st || (st.mode !== 'json-fallback' && !st.quarantine && !st.dataMayBeIncomplete)) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    const parts = [];
+    if (st.mode === 'json-fallback') parts.push('存储已降级为 JSON 备用存储，号码数据可能不完整');
+    if (st.quarantine) parts.push('检测到无法读取的数据库文件，已保留：' + st.quarantine);
+    else if (st.reason === 'corrupt-open') parts.push('检测到无法读取的数据库文件');
+    if (st.dataMayBeIncomplete) parts.push('当前列表可能缺少此前的记录');
+    el.textContent = parts.join('；');
+    el.style.display = 'block';
+  } catch (err) {
+    el.style.display = 'none';
+  }
+}
+
 function renderPagination(containerId, totalPages, currentPage, onPageChange) {
   const container = document.getElementById(containerId);
   if (totalPages <= 1) { container.innerHTML = ''; return; }
@@ -598,10 +620,14 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
 navItems.forEach(item => {
   item.addEventListener('click', () => {
     const viewId = item.dataset.view;
-    if (viewId === 'numbers') loadNumbers();
+    if (viewId === 'numbers') {
+      loadNumbers();
+      checkStorageStatus();
+    }
     if (viewId === 'history') loadHistory();
   });
 });
 
 // 初始化补充
 loadNumbers();
+checkStorageStatus();
