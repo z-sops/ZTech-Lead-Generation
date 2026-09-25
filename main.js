@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, session } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
 const { AccountStore } = require('./src/main/accountStore');
 const { logger } = require('./src/main/logger');
@@ -182,10 +182,15 @@ function createMainWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler?.(({ url }) => {
+    let protocol = null;
     try {
-      const protocol = new URL(url).protocol;
-      if (protocol === 'http:' || protocol === 'https:') return { action: 'allow' };
+      protocol = new URL(url).protocol;
     } catch {}
+    if (protocol === 'http:' || protocol === 'https:') {
+      Promise.resolve()
+        .then(() => shell.openExternal(url))
+        .catch((err) => logger.warn('app', 'openExternal failed', { url, error: err.message }));
+    }
     return { action: 'deny' };
   });
 
