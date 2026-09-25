@@ -118,10 +118,6 @@ class CoreClawAdapter {
     const offset = p.offset === undefined ? 0 : p.offset;
     return this.client.getRunHistory(limit, offset);
   }
-
-  async getStore() {
-    return this.client.getStore();
-  }
 }
 
 module.exports = { CoreClawAdapter, validateSubmitParams, validateJobId };

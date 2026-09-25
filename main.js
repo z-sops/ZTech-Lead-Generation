@@ -8,10 +8,24 @@ const { migrateLegacySettingsToProviders } = require('./src/main/providers/legac
 
 let mainWindow = null;
 let providerManager = null;
-let legacyProviderId = null;
 let accountStore = null;
 
 const isDev = process.env.NODE_ENV === 'development';
+
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (mainWindow === null) return;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  } catch (err) {
+    logger.warn('app', 'second-instance focus failed', { error: err.message });
+  }
+});
 
 const MAX_KEY_LENGTH = 500;
 
@@ -233,7 +247,6 @@ function initServices() {
   accountStore = new AccountStore();
   providerManager = new ProviderManager();
   const adapter = providerManager.register(new CoreClawAdapter());
-  legacyProviderId = adapter.providerId;
   const Store = require('electron-store');
   const store = new Store();
   migrateLegacySettingsToProviders(store, adapter.providerId);
@@ -329,20 +342,6 @@ function registerIpcHandlers() {
     }
   }
 
-  async function handleGetStore(channel, providerId) {
-    try {
-      const adapter = providerManager.resolveCollectionProvider(providerId);
-      if (typeof adapter.getStore !== 'function') {
-        return { success: false, error: 'not supported' };
-      }
-      return await adapter.getStore();
-    } catch (err) {
-      if (err.invalidParams) return rejectEnvelope(channel, err.message);
-      logger.error('ipc', `${channel} failed`, { error: err.message });
-      return { success: false, error: err.message };
-    }
-  }
-
   async function handleTestConnection(channel, providerId, payload) {
     const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
     const apiKey = p.apiKey;
@@ -393,41 +392,6 @@ function registerIpcHandlers() {
   ipcMain.handle('collection:job-history', (_, payload) => {
     const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
     return handleGetJobHistory('collection:job-history', p.providerId, p);
-  });
-
-  ipcMain.handle('collection:store', (_, payload) => {
-    return handleGetStore('collection:store', providerIdFrom(payload));
-  });
-
-  ipcMain.handle('coreclaw:set-api-key', (_, key) => {
-    if (typeof key !== 'string' || key.length > MAX_KEY_LENGTH) {
-      return rejectEnvelope('coreclaw:set-api-key', 'Invalid params: apiKey');
-    }
-    return handleSetCredentials('coreclaw:set-api-key', legacyProviderId, { apiKey: key });
-  });
-
-  ipcMain.handle('coreclaw:run-google-maps', (_, params) => {
-    return handleCollectionSubmit('coreclaw:run-google-maps', legacyProviderId, params);
-  });
-
-  ipcMain.handle('coreclaw:get-run-result', (_, runSlug) => {
-    return handleGetJobResults('coreclaw:get-run-result', legacyProviderId, runSlug);
-  });
-
-  ipcMain.handle('coreclaw:get-run-status', (_, runSlug) => {
-    return handleGetJobState('coreclaw:get-run-status', legacyProviderId, runSlug);
-  });
-
-  ipcMain.handle('coreclaw:get-store', () => {
-    return handleGetStore('coreclaw:get-store', legacyProviderId);
-  });
-
-  ipcMain.handle('coreclaw:get-history', (_, payload) => {
-    return handleGetJobHistory('coreclaw:get-history', legacyProviderId, payload);
-  });
-
-  ipcMain.handle('coreclaw:test-connection', (_, payload) => {
-    return handleTestConnection('coreclaw:test-connection', legacyProviderId, payload);
   });
 
   ipcMain.handle('settings:save', async (_, settings) => {
@@ -541,6 +505,7 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(() => {
+  if (!gotTheLock) return;
   logger.info('app', 'application started', { version: app.getVersion(), isDev });
   createMainWindow();
   initServices();

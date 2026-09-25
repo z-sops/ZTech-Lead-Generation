@@ -2,7 +2,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('appAPI', {
   provider: {
-    setCredentials: (credentials, providerId) => ipcRenderer.invoke('provider:set-credentials', { providerId, credentials }),
     testConnection: (apiKey, taskKey, providerId) => ipcRenderer.invoke('provider:test-connection', { providerId, apiKey, taskKey })
   },
 
@@ -10,8 +9,7 @@ contextBridge.exposeInMainWorld('appAPI', {
     submit: (params, providerId) => ipcRenderer.invoke('collection:submit', { providerId, params }),
     getStatus: (jobId, providerId) => ipcRenderer.invoke('collection:job-status', { providerId, jobId }),
     getResult: (jobId, options, providerId) => ipcRenderer.invoke('collection:job-result', { providerId, jobId, ...(options || {}) }),
-    getHistory: (limit = 20, offset = 0, providerId) => ipcRenderer.invoke('collection:job-history', { providerId, limit, offset }),
-    getStore: (providerId) => ipcRenderer.invoke('collection:store', { providerId })
+    getHistory: (limit = 20, offset = 0, providerId) => ipcRenderer.invoke('collection:job-history', { providerId, limit, offset })
   },
 
   // 设置
