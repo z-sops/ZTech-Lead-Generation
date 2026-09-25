@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, session } = require('electron');
 const path = require('path');
 const { AccountStore } = require('./src/main/accountStore');
 const { logger } = require('./src/main/logger');
@@ -54,6 +54,22 @@ function validateProxyUrl(proxyUrl) {
     throw invalidParams('Invalid params: proxyUrl (expected http/https/socks5 URL)');
   }
   return proxyUrl;
+}
+
+async function applyProxyConfiguration(proxyUrl) {
+  try {
+    if (!session || !session.defaultSession || typeof session.defaultSession.setProxy !== 'function') {
+      logger.warn('proxy', 'proxy configuration skipped', { reason: 'session-unavailable' });
+      return { applied: false, reason: 'session-unavailable' };
+    }
+    const proxyRules = proxyUrl ? validateProxyUrl(proxyUrl) : '';
+    await session.defaultSession.setProxy(proxyRules ? { proxyRules } : { mode: 'direct' });
+    logger.info('proxy', 'proxy configuration applied', { hasProxy: !!proxyRules });
+    return { applied: true };
+  } catch (err) {
+    logger.warn('proxy', 'proxy configuration failed', { error: err.message });
+    return { applied: false, reason: err.message };
+  }
 }
 
 function validateSettingsPayload(settings) {
@@ -414,7 +430,7 @@ function registerIpcHandlers() {
     return handleTestConnection('coreclaw:test-connection', legacyProviderId, payload);
   });
 
-  ipcMain.handle('settings:save', (_, settings) => {
+  ipcMain.handle('settings:save', async (_, settings) => {
     let nextSettings;
     try {
       nextSettings = validateSettingsPayload(settings);
@@ -445,7 +461,8 @@ function registerIpcHandlers() {
       hasTaskKey: !!nextSettings.taskKey,
       hasProxy: !!nextSettings.proxyUrl
     });
-    return { success: true };
+    const proxyResult = await applyProxyConfiguration(nextSettings.proxyUrl);
+    return { success: true, proxyApplied: proxyResult.applied };
   });
 
   ipcMain.handle('settings:load', () => {
@@ -528,6 +545,15 @@ app.whenReady().then(() => {
   createMainWindow();
   initServices();
   registerIpcHandlers();
+  let storedProxyUrl = '';
+  try {
+    const Store = require('electron-store');
+    const stored = new Store().get('settings', {});
+    storedProxyUrl = (stored && typeof stored.proxyUrl === 'string') ? stored.proxyUrl : '';
+  } catch {
+    storedProxyUrl = '';
+  }
+  applyProxyConfiguration(storedProxyUrl);
 });
 
 app.on('window-all-closed', () => {

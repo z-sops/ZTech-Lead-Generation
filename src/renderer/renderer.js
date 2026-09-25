@@ -56,6 +56,7 @@ let pollTimerId = null;
 let pollInFlight = false;
 let viewClaimSeq = 0;
 let viewClaimKind = 'none';
+let displayedResultRowMap = new Map();
 
 function isCurrentRun(gen, slug) {
   return gen === runGeneration && slug === currentRunSlug;
@@ -86,9 +87,11 @@ function startPolling(gen, slug) {
 function clearCurrentResultPresentation() {
   window.__collectResults = [];
   window.__filteredResults = null;
+  displayedResultRowMap = new Map();
   document.getElementById('collect-result-card').style.display = 'none';
   document.getElementById('collect-result-body').textContent = '';
   document.getElementById('stat-collected').textContent = '0';
+  syncResultSelectAll();
 }
 
 document.getElementById('btn-start-collect').addEventListener('click', async () => {
@@ -260,13 +263,75 @@ async function loadRunResult(currentRunSlug, gen) {
   }
 }
 
+function buildResultRowKeyMap(items) {
+  const list = Array.isArray(items) ? items : [];
+  const occurrences = new Map();
+  const keys = [];
+  const rowMap = new Map();
+  for (let i = 0; i < list.length; i++) {
+    const item = (list[i] && typeof list[i] === 'object') ? list[i] : {};
+    const base = [
+      item.title,
+      item.phone,
+      item.address,
+      item.website,
+      item.email_1 || item.all_emails
+    ].map(value => (value === undefined || value === null ? '' : String(value))).join('\u001f');
+    const seen = occurrences.get(base) || 0;
+    occurrences.set(base, seen + 1);
+    const key = base + '\u001f#' + seen;
+    keys.push(key);
+    rowMap.set(key, item);
+  }
+  return { keys, rowMap };
+}
+
+function resolveSelectedRows(checkedKeys, rowMap) {
+  const rows = [];
+  if (!Array.isArray(checkedKeys) || !rowMap) return rows;
+  for (const key of checkedKeys) {
+    const row = rowMap.get(key);
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
+function computeSelectAllState(checkedCount, totalCount) {
+  const total = Number.isInteger(totalCount) ? totalCount : 0;
+  const checked = Number.isInteger(checkedCount) ? checkedCount : 0;
+  if (total <= 0 || checked <= 0) return { checked: false, indeterminate: false };
+  return { checked: checked >= total, indeterminate: checked < total };
+}
+
+function getSelectedResultRows() {
+  const checkedKeys = [];
+  document.querySelectorAll('#collect-result-body .result-check:checked').forEach(box => {
+    if (box && box.dataset && typeof box.dataset.key === 'string') checkedKeys.push(box.dataset.key);
+  });
+  return resolveSelectedRows(checkedKeys, displayedResultRowMap);
+}
+
+function syncResultSelectAll() {
+  const selectAll = document.getElementById('select-all-results');
+  if (!selectAll) return;
+  const boxes = document.querySelectorAll('#collect-result-body .result-check');
+  let checkedCount = 0;
+  boxes.forEach(box => { if (box.checked) checkedCount += 1; });
+  const state = computeSelectAllState(checkedCount, boxes.length);
+  selectAll.checked = state.checked;
+  selectAll.indeterminate = state.indeterminate;
+}
+
 function renderCollectResults(items, preserveOriginal = false) {
   const card = document.getElementById('collect-result-card');
   const tbody = document.getElementById('collect-result-body');
   card.style.display = 'block';
 
+  const rowIdentity = buildResultRowKeyMap(items);
+  displayedResultRowMap = rowIdentity.rowMap;
+
   tbody.innerHTML = items.map((item, i) => `<tr>
-    <td><input type="checkbox" data-index="${i}" class="result-check"></td>
+    <td><input type="checkbox" data-key="${escapeHtml(rowIdentity.keys[i])}" class="result-check"></td>
     <td>${escapeHtml(item.title || '')}</td>
     <td>${escapeHtml(item.phone || '')}</td>
     <td>${escapeHtml(item.address || '')}</td>
@@ -278,6 +343,7 @@ function renderCollectResults(items, preserveOriginal = false) {
     window.__collectResults = items;
   }
   document.getElementById('stat-collected').textContent = items.length;
+  syncResultSelectAll();
 }
 
 // 手机号判断（按国家号码规则）
@@ -389,24 +455,36 @@ function renderPagination(containerId, totalPages, currentPage, onPageChange) {
 }
 
 // 采集历史
-document.getElementById('btn-refresh-history').addEventListener('click', loadHistory);
+document.getElementById('btn-refresh-history').addEventListener('click', () => loadHistory());
 document.getElementById('history-table-body').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-slug]');
   if (!btn) return;
   window.viewRunResult(btn.dataset.slug);
 });
 
-async function loadHistory() {
+const HISTORY_PAGE_SIZE = 20;
+let historyPage = 1;
+let historyLoadSeq = 0;
+
+async function loadHistory(page = 1) {
   const settings = await window.appAPI.settings.load();
   if (!settings.apiKey) return;
 
-  const result = await window.appAPI.collection.getHistory(20, 0);
+  const targetPage = page < 1 ? 1 : page;
+  const seq = ++historyLoadSeq;
+  const result = await window.appAPI.collection.getHistory(HISTORY_PAGE_SIZE, (targetPage - 1) * HISTORY_PAGE_SIZE);
+  if (seq !== historyLoadSeq) return;
   if (!result.success) {
     toast(result.error || '获取采集历史失败', 'error');
     return;
   }
 
   const list = result.data?.list || [];
+  if (!list.length && targetPage > 1) {
+    return loadHistory(targetPage - 1);
+  }
+  historyPage = targetPage;
+
   const tbody = document.getElementById('history-table-body');
 
   tbody.innerHTML = list.map(item => {
@@ -424,6 +502,8 @@ async function loadHistory() {
       <td><button class="btn btn-sm" data-slug="${escapeHtml(item.slug)}">查看结果</button></td>
     </tr>`;
   }).join('');
+
+  renderPagination('history-pagination', historyPage + (list.length >= HISTORY_PAGE_SIZE ? 1 : 0), historyPage, (p) => loadHistory(p));
 }
 
 window.viewRunResult = async (slug) => {
@@ -540,8 +620,11 @@ document.getElementById('btn-test-taskkey').addEventListener('click', async () =
 
 // === 保存采集结果到号码库 ===
 document.getElementById('btn-save-numbers').addEventListener('click', async () => {
-  const source = window.__filteredResults || window.__collectResults;
-  if (!source || !source.length) return;
+  const source = getSelectedResultRows();
+  if (!source.length) {
+    showStatus('请先勾选要保存的结果', true);
+    return;
+  }
   const numbers = source.map((item) => ({
     id: crypto.randomUUID(),
     phone: item.phone || '',
@@ -568,9 +651,13 @@ function csvField(value) {
 
 // === 采集结果导出 CSV ===
 document.getElementById('btn-export-results').addEventListener('click', () => {
-  if (!window.__collectResults || !window.__collectResults.length) return;
+  const source = getSelectedResultRows();
+  if (!source.length) {
+    showStatus('请先勾选要导出的结果', true);
+    return;
+  }
   const header = 'title,phone,address,website,email\n';
-  const rows = window.__collectResults.map(item =>
+  const rows = source.map(item =>
     `"${csvField(item.title || '')}","${csvField(item.phone || '')}","${csvField(item.address || '')}","${csvField(item.website || '')}","${csvField(item.email_1 || item.all_emails || '')}"`
   ).join('\n');
   const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv' });
@@ -584,7 +671,13 @@ document.getElementById('btn-export-results').addEventListener('click', () => {
 
 // === 全选 checkbox ===
 document.getElementById('select-all-results').addEventListener('change', (e) => {
-  document.querySelectorAll('.result-check').forEach(cb => { cb.checked = e.target.checked; });
+  const shouldCheck = !!e.target.checked;
+  document.querySelectorAll('#collect-result-body .result-check').forEach(cb => { cb.checked = shouldCheck; });
+  syncResultSelectAll();
+});
+document.getElementById('collect-result-body').addEventListener('change', (e) => {
+  const target = e.target;
+  if (target && target.classList && target.classList.contains('result-check')) syncResultSelectAll();
 });
 document.getElementById('select-all-numbers').addEventListener('change', (e) => {
   document.querySelectorAll('.number-check').forEach(cb => { cb.checked = e.target.checked; });

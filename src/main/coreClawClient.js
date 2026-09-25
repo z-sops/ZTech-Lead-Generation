@@ -4,6 +4,16 @@ const BASE_URL = 'https://openapi.coreclaw.com';
 const DEFAULT_WORKER = 'coreclaw~google-maps-scraper';
 const REQUEST_TIMEOUT_MS = 30000;
 
+let netFetch = null;
+try {
+  const electron = require('electron');
+  if (electron && electron.net && typeof electron.net.fetch === 'function') {
+    netFetch = electron.net.fetch.bind(electron.net);
+  }
+} catch {
+  netFetch = null;
+}
+
 class CoreClawClient {
   constructor() {
     this.apiKey = '';
@@ -22,7 +32,7 @@ class CoreClawClient {
     const url = `${BASE_URL}${path}`;
 
     try {
-      const response = await fetch(url, {
+      const response = await (netFetch || fetch)(url, {
         method,
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
