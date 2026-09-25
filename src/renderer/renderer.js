@@ -51,6 +51,45 @@ function renderWebsite(value) {
 
 // 采集
 let currentRunSlug = null;
+let runGeneration = 0;
+let pollTimerId = null;
+let pollInFlight = false;
+let viewClaimSeq = 0;
+let viewClaimKind = 'none';
+
+function isCurrentRun(gen, slug) {
+  return gen === runGeneration && slug === currentRunSlug;
+}
+
+function claimResultView(kind) {
+  viewClaimSeq += 1;
+  viewClaimKind = kind;
+  return viewClaimSeq;
+}
+
+function isViewClaimCurrent(seq) {
+  return seq === viewClaimSeq;
+}
+
+function cancelPollTimer() {
+  if (pollTimerId !== null) {
+    clearTimeout(pollTimerId);
+    pollTimerId = null;
+  }
+}
+
+function startPolling(gen, slug) {
+  cancelPollTimer();
+  pollRunStatus(gen, slug);
+}
+
+function clearCurrentResultPresentation() {
+  window.__collectResults = [];
+  window.__filteredResults = null;
+  document.getElementById('collect-result-card').style.display = 'none';
+  document.getElementById('collect-result-body').textContent = '';
+  document.getElementById('stat-collected').textContent = '0';
+}
 
 document.getElementById('btn-start-collect').addEventListener('click', async () => {
   const settings = await window.appAPI.settings.load();
@@ -70,6 +109,11 @@ document.getElementById('btn-start-collect').addEventListener('click', async () 
   }
 
   showStatus('正在提交采集任务...');
+
+  runGeneration += 1;
+  const gen = runGeneration;
+  cancelPollTimer();
+  currentRunSlug = null;
 
   const result = await window.appAPI.collection.submit({
     keywords: keywords.split(',').map(k => k.trim()),
@@ -98,11 +142,16 @@ document.getElementById('btn-start-collect').addEventListener('click', async () 
     includeReviewerInfo: document.getElementById('collect-reviewer-info').checked
   });
 
+  if (gen !== runGeneration) return;
+
   if (result.success) {
     currentRunSlug = result.data.run_slug;
     showStatus(`任务已提交，ID: ${currentRunSlug}，等待执行中...`);
-    pollRunStatus();
+    claimResultView('run');
+    clearCurrentResultPresentation();
+    startPolling(gen, currentRunSlug);
   } else {
+    claimResultView('none');
     showStatus(`提交失败: ${result.error}`, true);
   }
 });
@@ -112,31 +161,42 @@ document.getElementById('btn-check-status').addEventListener('click', async () =
     showStatus('没有进行中的任务', true);
     return;
   }
-  pollRunStatus();
+  if (pollTimerId !== null || pollInFlight) return;
+  claimResultView('run');
+  startPolling(runGeneration, currentRunSlug);
 });
 
-async function pollRunStatus() {
-  if (!currentRunSlug) return;
+async function pollRunStatus(gen, slug) {
+  if (!isCurrentRun(gen, slug)) return;
 
-  showStatus(`正在查询任务状态... (${currentRunSlug})`);
+  pollInFlight = true;
+  try {
+    showStatus(`正在查询任务状态... (${slug})`);
 
-  const status = await window.appAPI.collection.getStatus(currentRunSlug);
+    const status = await window.appAPI.collection.getStatus(slug);
 
-  if (!status.success) {
-    showStatus(`查询失败: ${status.error}`, true);
-    return;
-  }
+    if (!isCurrentRun(gen, slug)) return;
 
-  const state = status.data?.status || status.data?.state;
+    if (!status.success) {
+      showStatus(`查询失败: ${status.error}`, true);
+      return;
+    }
 
-  if (state === 'succeeded' || state === 'completed' || state === 'success') {
-    showStatus('采集完成，正在获取结果...');
-    loadRunResult();
-  } else if (state === 'failed' || state === 'error') {
-    showStatus(`采集失败: ${status.data?.error || '未知错误'}`, true);
-  } else {
-    showStatus(`任务状态: ${state}，稍后自动刷新...`);
-    setTimeout(pollRunStatus, 5000);
+    const state = status.data?.status || status.data?.state;
+
+    if (state === 'succeeded' || state === 'completed' || state === 'success') {
+      loadRunResult(slug, gen);
+    } else if (state === 'failed' || state === 'error') {
+      showStatus(`采集失败: ${status.data?.error || '未知错误'}`, true);
+    } else {
+      showStatus(`任务状态: ${state}，稍后自动刷新...`);
+      pollTimerId = setTimeout(() => {
+        pollTimerId = null;
+        pollRunStatus(gen, slug);
+      }, 5000);
+    }
+  } finally {
+    if (gen === runGeneration) pollInFlight = false;
   }
 }
 
@@ -162,8 +222,23 @@ async function fetchAllRunResults(slug) {
   return { success: true, data: { list: all } };
 }
 
-async function loadRunResult() {
+async function loadRunResult(currentRunSlug, gen) {
+  if (!isCurrentRun(gen, currentRunSlug)) return;
+  if (viewClaimKind === 'history') {
+    showStatus('采集完成，本次结果未加载');
+    return;
+  }
+  const seq = claimResultView('run');
+
+  showStatus('采集完成，正在获取结果...');
+
   const result = await fetchAllRunResults(currentRunSlug);
+
+  if (!isCurrentRun(gen, currentRunSlug)) return;
+  if (!isViewClaimCurrent(seq)) {
+    if (viewClaimKind === 'history') showStatus('采集完成，本次结果未加载');
+    return;
+  }
 
   if (!result.success) {
     showStatus(`获取结果失败: ${result.error}`, true);
@@ -355,7 +430,10 @@ window.viewRunResult = async (slug) => {
   const settings = await window.appAPI.settings.load();
   if (!settings.apiKey) return;
 
+  const seq = claimResultView('history');
+
   const result = await fetchAllRunResults(slug);
+  if (!isViewClaimCurrent(seq)) return;
   if (result.success) {
     const items = result.data?.list || [];
     // 切到采集页显示结果
