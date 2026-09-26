@@ -970,6 +970,98 @@ document.querySelector('#view-numbers .data-table thead').addEventListener('clic
   renderNumbers();
 }));
 
+// === Lead Detail overlay (B3) ===
+// Independent of the B2 page-query sequence: opening or closing the detail
+// never touches the page query state and never re-renders the table.
+let detailLoadSeq = 0;
+
+// Row labels are compile-time literals; every lead value must be passed
+// through escapeHtml (or the protocol-checked renderWebsite) before it is
+// interpolated into this template.
+function leadDetailTemplate(lead) {
+  const row = (label, value) =>
+    `<div class="lead-detail-row"><span class="lead-detail-label">${label}</span><span class="lead-detail-value">${value}</span></div>`;
+  const id = escapeHtml(lead.id || '') || '—';
+  const phone = escapeHtml(lead.phone || '') || '—';
+  const source = escapeHtml(lead.source || '') || '—';
+  const keyword = escapeHtml(lead.keyword || '') || '—';
+  const status = escapeHtml(lead.status || '') || '—';
+  const title = escapeHtml(lead.title || '') || '—';
+  const email = escapeHtml(lead.email || '') || '—';
+  const address = escapeHtml(lead.address || '') || '—';
+  const runSlug = escapeHtml(lead.runSlug || '') || '—';
+  const websiteRaw = typeof lead.website === 'string' ? lead.website.trim() : '';
+  const website = websiteRaw ? renderWebsite(websiteRaw) : '—';
+  let collectedAt = '—';
+  if (lead.collectedAt) {
+    const collected = new Date(lead.collectedAt);
+    if (!isNaN(collected.getTime())) collectedAt = escapeHtml(collected.toLocaleString('zh-CN'));
+  }
+  return [
+    row('ID', id),
+    row('Phone', phone),
+    row('Source', source),
+    row('Keywords', keyword),
+    row('Status', status),
+    row('采集Time', collectedAt),
+    row('Title', title),
+    row('Website', website),
+    row('Email', email),
+    row('Address', address),
+    row('Run Slug', runSlug)
+  ].join('');
+}
+
+async function openLeadDetail(id) {
+  const overlay = document.getElementById('lead-detail-overlay');
+  const body = document.getElementById('lead-detail-body');
+  const seq = ++detailLoadSeq;
+  body.innerHTML = '<div class="lead-detail-loading">加载中...</div>';
+  overlay.hidden = false;
+  try {
+    const result = await window.appAPI.collector.getNumbers({ limit: 1, offset: 0, id });
+    if (seq !== detailLoadSeq) return;
+    const rows = result && Array.isArray(result.rows) ? result.rows : [];
+    const lead = rows[0];
+    if (!lead) {
+      closeLeadDetail();
+      toast('未找到该线索', 'error');
+      return;
+    }
+    body.innerHTML = leadDetailTemplate(lead);
+  } catch (err) {
+    if (seq !== detailLoadSeq) return;
+    closeLeadDetail();
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'openLeadDetail' });
+  }
+}
+
+function closeLeadDetail() {
+  detailLoadSeq += 1;
+  const overlay = document.getElementById('lead-detail-overlay');
+  if (overlay) overlay.hidden = true;
+  const body = document.getElementById('lead-detail-body');
+  if (body) body.innerHTML = '';
+}
+
+// Row clicks open the detail; checkbox/input clicks keep selection intact.
+document.getElementById('numbers-table-body').addEventListener('click', safeAsync(async (e) => {
+  if (e.target.closest('input, a, button')) return;
+  const tr = e.target.closest('tr');
+  if (!tr) return;
+  const cb = tr.querySelector('.number-check');
+  const leadId = cb && cb.dataset.id;
+  if (!leadId) return;
+  await openLeadDetail(leadId);
+}));
+
+document.getElementById('btn-close-lead-detail').addEventListener('click', () => closeLeadDetail());
+document.getElementById('lead-detail-overlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeLeadDetail();
+});
+
 document.getElementById('btn-delete-selected').addEventListener('click', safeAsync(async () => {
     const ids = [...document.querySelectorAll('.number-check:checked')].map(cb => cb.dataset.id);
     if (!ids.length) return;

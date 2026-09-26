@@ -399,6 +399,18 @@ class AccountStore {
         if (typeof value === 'string') normalized.filters[field] = value;
       }
     }
+    // B3 single-lead lookup: an optional exact id predicate. Omitted id
+    // keeps list semantics; a provided id must be a non-empty string of at
+    // most 100 chars or the lookup short-circuits to an empty envelope, so
+    // malformed input behaves identically on both storages and can never be
+    // coerced by SQL type affinity.
+    if (q.id !== undefined && q.id !== null) {
+      const valid = typeof q.id === 'string' && q.id.length > 0 && q.id.length <= 100;
+      if (!valid) {
+        return { rows: [], total: 0, limit: normalized.limit, offset: normalized.offset };
+      }
+      normalized.id = q.id;
+    }
     if (!this.db) return this._queryNumbersJson(normalized);
     return this._queryNumbersSql(normalized);
   }
@@ -406,6 +418,10 @@ class AccountStore {
   _queryNumbersSql(query) {
     const where = [];
     const params = [];
+    if (query.id !== undefined) {
+      where.push('id = ?');
+      params.push(query.id);
+    }
     if (query.search) {
       const pattern = '%' + escapeLikePattern(query.search) + '%';
       where.push('(' + QUERY_SEARCH_FIELDS.map(f => `${f} LIKE ? ESCAPE '\\'`).join(' OR ') + ')');
@@ -449,6 +465,7 @@ class AccountStore {
   _queryNumbersJson(query) {
     const search = query.search ? asciiFold(query.search) : '';
     const matched = (this._numbers || []).filter((row) => {
+      if (query.id !== undefined && row.id !== query.id) return false;
       if (search) {
         let hit = false;
         for (const field of QUERY_SEARCH_FIELDS) {

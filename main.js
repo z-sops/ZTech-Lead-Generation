@@ -190,13 +190,20 @@ const NUMBERS_QUERY_SORT_FIELDS = ['collectedAt', 'title', 'phone', 'source', 'k
 // Validates the optional collector:get-numbers query payload. Paging bounds
 // are reused verbatim from validateHistoryPaging; unknown keys are ignored
 // (validateSettingsPayload convention); a non-object payload collapses to
-// the paging defaults; order is only meaningful together with sort.
+// the paging defaults; order is only meaningful together with sort; an
+// optional id (B3) restricts the query to a single lead by primary key.
 function validateNumbersQuery(payload) {
   const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
   const { limit, offset } = validateHistoryPaging(p);
   const out = { limit, offset };
   assertOptionalString(p.search, 'search', MAX_KEY_LENGTH);
   if (typeof p.search === 'string' && p.search.trim()) out.search = p.search.trim();
+  // B3 single-lead lookup: optional exact id (mirrors validateIdList bounds).
+  if (p.id !== undefined && p.id !== null) {
+    assertOptionalString(p.id, 'id', 100);
+    if (!p.id) throw invalidParams('Invalid params: id (non-empty required)');
+    out.id = p.id;
+  }
   if (p.filters !== undefined && p.filters !== null) {
     assertPlainObject(p.filters, 'filters');
     const filters = {};

@@ -247,6 +247,16 @@
             </table>
             <div class="pagination" id="numbers-pagination"></div>
           </div>
+          <!-- Lead Detail overlay (B3): 11 field slots are rendered by leadDetailTemplate -->
+          <div class="lead-detail-overlay" id="lead-detail-overlay" hidden>
+            <div class="lead-detail-panel" role="dialog" aria-modal="true" aria-label="Lead Detail">
+              <div class="lead-detail-header">
+                <span class="lead-detail-title">Lead Detail</span>
+                <button type="button" class="btn btn-sm btn-secondary" id="btn-close-lead-detail">Close</button>
+              </div>
+              <div class="lead-detail-body" id="lead-detail-body"></div>
+            </div>
+          </div>
         </section>
 
         <!-- Settings视图 -->

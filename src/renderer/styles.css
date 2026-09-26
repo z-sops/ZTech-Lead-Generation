@@ -594,3 +594,78 @@ textarea {
   line-height: 1.5;
   word-break: break-all;
 }
+
+/* Lead Detail overlay (B3) */
+.lead-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+
+.lead-detail-overlay[hidden] {
+  display: none;
+}
+
+.lead-detail-panel {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.lead-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lead-detail-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lead-detail-body {
+  padding: 8px 18px 14px;
+}
+
+.lead-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.lead-detail-row:last-child {
+  border-bottom: none;
+}
+
+.lead-detail-label {
+  min-width: 110px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.lead-detail-value {
+  flex: 1;
+  word-break: break-all;
+  color: var(--text-primary);
+}
+
+.lead-detail-loading {
+  padding: 18px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
