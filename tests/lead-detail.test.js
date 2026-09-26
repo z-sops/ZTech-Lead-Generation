@@ -43,26 +43,33 @@ function test(name, fn) {
   // B3 fixture: d1 = complete record (title carries HTML metacharacters that
   // must round-trip byte-exact), d2 = every optional field empty (empty
   // runSlug), d3 = NULL source + runSlug (NULL parity across storages).
+  // B6 adds the three user-owned fields; d1 carries real values so the
+  // round-trip covers them, d2/d3 carry the contract defaults.
   const D1 = {
     id: 'd1', phone: '+66911111111', source: 'B3 Source', keyword: 'b3',
     status: 'pending', collectedAt: '2026-02-01T00:00:00.000Z',
     title: 'Cafe <b>&"Aroma"</b>', website: 'https://b3.example',
-    email: 'b3@example.com', address: '3 B3 Rd', runSlug: 'run-b3'
+    email: 'b3@example.com', address: '3 B3 Rd', runSlug: 'run-b3',
+    qualification: 'qualified', tags: ['vip', 'Wholesale'], notes: 'note <b>one</b>'
   };
   const D2 = {
     id: 'd2', phone: '+66922222222', source: '', keyword: '',
     status: 'pending', collectedAt: '2026-02-02T00:00:00.000Z',
-    title: '', website: '', email: '', address: '', runSlug: ''
+    title: '', website: '', email: '', address: '', runSlug: '',
+    qualification: 'unqualified', tags: [], notes: ''
   };
   const D3 = {
     id: 'd3', phone: '+66933333333', source: null, keyword: 'cafe',
     status: 'pending', collectedAt: '2026-02-03T00:00:00.000Z',
-    title: 'noodle', website: '', email: '', address: '', runSlug: 'run-9'
+    title: 'noodle', website: '', email: '', address: '', runSlug: 'run-9',
+    qualification: 'unqualified', tags: [], notes: ''
   };
   const FIXTURE = [D1, D2, D3];
 
+  // B6 tags are stored as a JSON array string in SQL, so the raw insert takes
+  // the encoded form while the JSON store keeps the native array.
   const INSERT_SQL =
-    'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+    'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
   async function openStore() {
     const store = new AccountStore();
@@ -89,29 +96,30 @@ function test(name, fn) {
   for (const row of FIXTURE) {
     sqlStore.db.run(INSERT_SQL, [
       row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt,
-      row.title, row.website, row.email, row.address, row.runSlug
+      row.title, row.website, row.email, row.address, row.runSlug,
+      row.qualification, JSON.stringify(row.tags), row.notes
     ]);
   }
   jsonStore.db = null;
   jsonStore._numbers = JSON.parse(JSON.stringify(FIXTURE));
 
-  test('1. SQL single-lead retrieval returns the complete 11-field record', async () => {
+  test('1. SQL single-lead retrieval returns the complete 14-field record', async () => {
     const result = await sqlStore.queryNumbers({ limit: 1, offset: 0, id: 'd1' });
     assertEnvelope(result, 1, 0);
     assert.strictEqual(result.total, 1, 'exactly one row for a primary-key hit');
-    assert.deepStrictEqual(result.rows, [D1], 'all 11 fields returned byte-exact (HTML metacharacters intact)');
+    assert.deepStrictEqual(result.rows, [D1], 'all 14 fields returned byte-exact (HTML metacharacters intact)');
     const row = result.rows[0];
     for (const field of ['id', 'phone', 'source', 'keyword', 'status', 'collectedAt',
-      'title', 'website', 'email', 'address', 'runSlug']) {
+      'title', 'website', 'email', 'address', 'runSlug', 'qualification', 'tags', 'notes']) {
       assert.ok(Object.prototype.hasOwnProperty.call(row, field), 'field present: ' + field);
     }
   });
 
-  test('2. JSON single-lead retrieval returns the complete 11-field record', async () => {
+  test('2. JSON single-lead retrieval returns the complete 14-field record', async () => {
     const result = await jsonStore.queryNumbers({ limit: 1, offset: 0, id: 'd2' });
     assertEnvelope(result, 1, 0);
     assert.strictEqual(result.total, 1);
-    assert.deepStrictEqual(result.rows, [D2], 'all 11 fields returned byte-exact from JSON storage');
+    assert.deepStrictEqual(result.rows, [D2], 'all 14 fields returned byte-exact from JSON storage');
     const row = result.rows[0];
     for (const field of ['id', 'phone', 'source', 'keyword', 'status', 'collectedAt',
       'title', 'website', 'email', 'address', 'runSlug']) {
@@ -226,8 +234,8 @@ function test(name, fn) {
     assert.ok(!qBlock.includes('UPDATE numbers'), 'query path updates nothing');
     assert.ok(!qBlock.includes('DELETE FROM'), 'query path deletes nothing');
     assert.strictEqual(
-      storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1, 2,
-      'JSON write call sites unchanged'
+      storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1, 3,
+      'JSON write call sites: add, delete and the B6 user-field write'
     );
     assert.strictEqual(storeSource.split('new Set(ids)').length - 1, 2, 'delete Set usage unchanged');
     // B4 justification: the local job ledger intentionally introduces the

@@ -35,7 +35,7 @@ function test(name, fn) {
   const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'renderer.js'), 'utf8');
   const htmlSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
-  const { AccountStore } = require(accountStorePath);
+  const { AccountStore, normalizeLeadRow } = require(accountStorePath);
 
   const dataDir = path.join(testRoot, 'data');
   fs.mkdirSync(dataDir, { recursive: true });
@@ -142,7 +142,10 @@ function test(name, fn) {
     ]);
   }
   jsonStore.db = null;
+  // B6: rows loaded from numbers.json always pass through the normaliser, so
+  // the JSON fixture is put through the same path to keep parity honest.
   jsonStore._numbers = JSON.parse(JSON.stringify(FIXTURE));
+  for (const row of jsonStore._numbers) normalizeLeadRow(row);
 
   const CASES = [
     { name: 'default order is newest-first on both storages', q: { limit: 20, offset: 0 },
@@ -350,8 +353,8 @@ function test(name, fn) {
     const qBlock = storeSource.slice(qStart, qEnd);
     assert.ok(!qBlock.includes('logger.'), 'query path performs no logging (banned-token safety)');
     assert.ok(!qBlock.includes('saveDB('), 'query path never persists');
-    assert.ok(storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1 === 2,
-      'JSON write call sites unchanged');
+    assert.ok(storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1 === 3,
+      'JSON write call sites: add, delete and the B6 user-field write');
     assert.ok(storeSource.split('new Set(ids)').length - 1 === 2, 'delete Set usage unchanged');
     assert.ok(!storeSource.includes('ids.includes'));
     assert.ok(!storeSource.toLowerCase().includes('country'), 'country not implemented');

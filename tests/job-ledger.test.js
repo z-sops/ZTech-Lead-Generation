@@ -168,7 +168,7 @@ function test(name, fn) {
     assert.ok(!fks.length || !fks[0].values.length, 'no foreign key between jobs and numbers');
 
     const numInfo = store.db.exec('PRAGMA table_info(numbers)');
-    assert.strictEqual(numInfo[0].values.length, 11, 'numbers schema untouched by B4');
+    assert.strictEqual(numInfo[0].values.length, 14, 'numbers schema carries the 11 B1 columns plus the 3 B6 user-owned columns');
   });
 
   test('2. idempotent initialization: reopen keeps jobs; a legacy numbers-only database gains them', async () => {

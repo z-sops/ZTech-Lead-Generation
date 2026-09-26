@@ -20,6 +20,116 @@ function canonicalPhone(phone) {
 // camelCase convention (cf. collectedAt / runSlug in the renderer).
 const LEAD_NEW_FIELDS = ['title', 'website', 'email', 'address', 'runSlug'];
 
+// B6 user-owned lead fields. They are deliberately NOT part of
+// LEAD_NEW_FIELDS: that list also feeds mergeEmptyLeadFields, so a merge
+// would let an untrusted collection or import row populate - or overwrite -
+// user data. B6 fields are written only by setLeadUserFields and are stripped
+// from every provider/import payload in _addNumbers.
+const LEAD_B6_FIELDS = ['qualification', 'tags', 'notes'];
+// Compile-time defaults shared by the table-creation literals, the legacy
+// migration backfill and read normalisation, so a fresh row, a migrated row
+// and a row loaded from numbers.json expose identical logical values.
+const LEAD_B6_DEFAULTS = { qualification: 'unqualified', tags: '[]', notes: '' };
+const LEAD_QUALIFICATION_VALUES = ['unqualified', 'qualified'];
+const MAX_LEAD_TAGS = 20;
+const MAX_LEAD_TAG_LENGTH = 50;
+const MAX_LEAD_NOTES_LENGTH = 5000;
+
+// B6 tags are a bounded ordered set: trimmed, non-empty, at most 20 entries of
+// at most 50 characters, deduplicated case-insensitively with the first
+// occurrence kept. Any unexpected value degrades to an empty set instead of
+// throwing, so hand-edited or legacy data can never break a read.
+function normalizeLeadTags(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const tag of value) {
+    if (typeof tag !== 'string') continue;
+    const trimmed = tag.trim();
+    if (!trimmed || trimmed.length > MAX_LEAD_TAG_LENGTH) continue;
+    const key = trimmed.toLowerCase();
+    if (out.some(existing => existing.toLowerCase() === key)) continue;
+    out.push(trimmed);
+    if (out.length === MAX_LEAD_TAGS) break;
+  }
+  return out;
+}
+
+// SQL stores tags as a JSON array string, the JSON store keeps a native
+// array; both are read back as string[].
+function parseLeadTags(value) {
+  if (Array.isArray(value)) return normalizeLeadTags(value);
+  if (typeof value !== 'string' || value.trim() === '') return [];
+  try {
+    return normalizeLeadTags(JSON.parse(value));
+  } catch (err) {
+    return [];
+  }
+}
+
+// Normalises the three user-owned fields in place. Only missing or
+// out-of-contract values are replaced, so valid stored user data is never
+// rewritten by a load or a read.
+function normalizeLeadB6Fields(row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+  if (!LEAD_QUALIFICATION_VALUES.includes(row.qualification)) {
+    row.qualification = LEAD_B6_DEFAULTS.qualification;
+  }
+  row.tags = parseLeadTags(row.tags);
+  if (typeof row.notes !== 'string') row.notes = LEAD_B6_DEFAULTS.notes;
+  return row;
+}
+
+// Ownership boundary: a collection or import payload may carry any key, so
+// the user-owned keys are removed before the row reaches either storage.
+// Deliberately not folded into normalizeLeadRow, which also runs when
+// already-stored records are loaded.
+function stripUserOwnedLeadFields(row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+  for (const field of LEAD_B6_FIELDS) delete row[field];
+  return row;
+}
+
+// Store-side guard for setLeadUserFields. The main process remains the
+// primary validator (B6.2); this re-checks so no caller can persist an
+// out-of-contract user-owned state directly. Mirrors validateJobRecord.
+function validateLeadUserFields(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, error: 'Invalid lead update (object required)' };
+  }
+  if (typeof payload.id !== 'string' || !payload.id || payload.id.length > 100) {
+    return { ok: false, error: 'Invalid lead update: id' };
+  }
+  if (!LEAD_QUALIFICATION_VALUES.includes(payload.qualification)) {
+    return { ok: false, error: 'Invalid lead update: qualification' };
+  }
+  if (!Array.isArray(payload.tags) || payload.tags.length > MAX_LEAD_TAGS) {
+    return { ok: false, error: 'Invalid lead update: tags' };
+  }
+  const tags = [];
+  for (const tag of payload.tags) {
+    if (typeof tag !== 'string') return { ok: false, error: 'Invalid lead update: tags' };
+    const trimmed = tag.trim();
+    if (!trimmed || trimmed.length > MAX_LEAD_TAG_LENGTH) {
+      return { ok: false, error: 'Invalid lead update: tags' };
+    }
+    const key = trimmed.toLowerCase();
+    if (tags.some(existing => existing.toLowerCase() === key)) continue;
+    tags.push(trimmed);
+  }
+  if (typeof payload.notes !== 'string' || payload.notes.length > MAX_LEAD_NOTES_LENGTH) {
+    return { ok: false, error: 'Invalid lead update: notes' };
+  }
+  return {
+    ok: true,
+    value: {
+      id: payload.id,
+      qualification: payload.qualification,
+      tags,
+      notes: payload.notes
+    }
+  };
+}
+
 // Exact provenance literal written by the manual-import save path
 // (renderer.js: source: '手动导入'). Used to map legacy `source` values.
 const LEGACY_IMPORT_SOURCE = '手动导入';
@@ -107,6 +217,16 @@ function normalizeLeadRow(row) {
       changed = true;
     }
   }
+  // B6 user-owned fields: default only, never rewritten when already valid.
+  const beforeQualification = row.qualification;
+  const beforeTags = row.tags;
+  const beforeNotes = row.notes;
+  normalizeLeadB6Fields(row);
+  if (row.qualification !== beforeQualification ||
+      JSON.stringify(row.tags) !== JSON.stringify(beforeTags) ||
+      row.notes !== beforeNotes) {
+    changed = true;
+  }
   return { row, changed };
 }
 
@@ -126,7 +246,11 @@ function migrateSchema(db) {
   if (!info.length || !info[0].values.length) return 0;
   const existing = new Set(info[0].values.map(r => r[1]));
   const added = [];
-  for (const field of LEAD_NEW_FIELDS) {
+  // B1 fields first (unchanged order and behaviour), then the B6 user-owned
+  // columns. B6 columns are added as plain TEXT: their defaults come from the
+  // shared backfill below, and a default clause cannot be added to an
+  // existing column by ALTER TABLE.
+  for (const field of [...LEAD_NEW_FIELDS, ...LEAD_B6_FIELDS]) {
     if (existing.has(field)) continue;
     db.run(`ALTER TABLE numbers ADD COLUMN ${field} TEXT`);
     added.push(field);
@@ -139,7 +263,12 @@ function migrateSchema(db) {
     );
   }
   for (const field of added) {
-    db.run(`UPDATE numbers SET ${field} = '' WHERE ${field} IS NULL`);
+    // B1 columns keep the historical '' backfill; B6 columns get their own
+    // defaults so migrated rows are byte-identical to fresh ones.
+    const fallback = Object.prototype.hasOwnProperty.call(LEAD_B6_DEFAULTS, field)
+      ? LEAD_B6_DEFAULTS[field]
+      : '';
+    db.run(`UPDATE numbers SET ${field} = ? WHERE ${field} IS NULL`, [fallback]);
   }
   return added.length;
 }
@@ -153,6 +282,9 @@ function rowToObject(columns, values) {
   for (const field of LEAD_NEW_FIELDS) {
     if (out[field] === undefined || out[field] === null) out[field] = '';
   }
+  // B6: text columns (tags) and legacy/NULL values are projected to the
+  // logical API shape. `out` is a fresh object, so stored rows are untouched.
+  normalizeLeadB6Fields(out);
   return out;
 }
 
@@ -322,7 +454,10 @@ class AccountStore {
         website TEXT,
         email TEXT,
         address TEXT,
-        runSlug TEXT
+        runSlug TEXT,
+        qualification TEXT DEFAULT '${LEAD_B6_DEFAULTS.qualification}',
+        tags TEXT DEFAULT '${LEAD_B6_DEFAULTS.tags}',
+        notes TEXT DEFAULT '${LEAD_B6_DEFAULTS.notes}'
       )`);
 
       this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_phone ON numbers(phone)`);
@@ -636,7 +771,14 @@ class AccountStore {
   }
 
   _addNumbers(newNumbers) {
-    for (const n of newNumbers) normalizeLeadRow(n);
+    // Ownership boundary: this is the collection/import entry point, so any
+    // user-owned key smuggled into a payload is removed before the row can
+    // reach either storage. The SQL INSERT below stays limited to the 11
+    // provider fields so the column defaults populate the B6 fields.
+    for (const n of newNumbers) {
+      stripUserOwnedLeadFields(n);
+      normalizeLeadRow(n);
+    }
     if (!this.db) {
       const backup = (this._numbers || []).map(n => ({ ...n }));
       const byPhone = new Map();
@@ -784,13 +926,15 @@ class AccountStore {
     } catch (err) {
       try {
         for (const row of removed) {
+          // Complete 14-column restore: a partial restore would silently drop
+          // the user-owned B6 fields (and their tag text) on a failed persist.
           this.db.run(
-            'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt) VALUES (?, ?, ?, ?, ?, ?)',
-            [row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt]
-          );
-          this.db.run(
-            'UPDATE numbers SET title = ?, website = ?, email = ?, address = ?, runSlug = ? WHERE id = ?',
-            [row.title || '', row.website || '', row.email || '', row.address || '', row.runSlug || '', row.id]
+            'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt,
+              row.title || '', row.website || '', row.email || '', row.address || '', row.runSlug || '',
+              row.qualification || LEAD_B6_DEFAULTS.qualification,
+              JSON.stringify(parseLeadTags(row.tags)),
+              row.notes || '']
           );
         }
       } catch (revertErr) {
@@ -800,6 +944,102 @@ class AccountStore {
     }
     logger.info('collector', 'numbers deleted', { count: ids.length, storage: 'sql' });
     return { success: true };
+  }
+
+  // === B6 user-owned lead fields ===
+  // The only writer of qualification/tags/notes. The collection and import
+  // paths cannot reach these fields (see stripUserOwnedLeadFields), so this
+  // method is the single boundary between user input and storage. Values are
+  // re-validated here, mirrored on both storages, and never logged by value.
+
+  async setLeadUserFields(payload) {
+    await this.ready;
+    const validated = validateLeadUserFields(payload);
+    if (!validated.ok) return { success: false, error: validated.error };
+    if (!this.db) return this._setLeadUserFieldsJson(validated.value);
+    return this._setLeadUserFieldsSql(validated.value);
+  }
+
+  // Raw (un-normalised) single-lead row: the revert path must restore the
+  // exact stored text, so this deliberately does not call rowToObject.
+  _findLeadSql(id) {
+    const stmt = this.db.prepare('SELECT * FROM numbers WHERE id = ?');
+    try {
+      stmt.bind([id]);
+      if (!stmt.step()) return null;
+      const columns = stmt.getColumnNames();
+      const values = stmt.get();
+      const out = {};
+      for (let i = 0; i < columns.length; i++) out[columns[i]] = values[i];
+      return out;
+    } finally {
+      stmt.free();
+    }
+  }
+
+  _setLeadUserFieldsSql(value) {
+    const existing = this._findLeadSql(value.id);
+    if (!existing) return { success: true, updated: false, reason: 'not-found' };
+    const tagsText = JSON.stringify(value.tags);
+    // State-change gate: an identical save never persists. Compared on the
+    // logical values, so a legacy NULL-raw row is not rewritten needlessly.
+    const currentQualification = LEAD_QUALIFICATION_VALUES.includes(existing.qualification)
+      ? existing.qualification
+      : LEAD_B6_DEFAULTS.qualification;
+    const currentNotes = typeof existing.notes === 'string' ? existing.notes : LEAD_B6_DEFAULTS.notes;
+    if (currentQualification === value.qualification &&
+        tagsText === JSON.stringify(parseLeadTags(existing.tags)) &&
+        currentNotes === value.notes) {
+      return { success: true, updated: false, reason: 'unchanged' };
+    }
+    this.db.run(
+      'UPDATE numbers SET qualification = ?, tags = ?, notes = ? WHERE id = ?',
+      [value.qualification, tagsText, value.notes, value.id]
+    );
+    try {
+      this.saveDB();
+    } catch (err) {
+      try {
+        // Restore the exact stored bytes, not the normalised projection.
+        this.db.run(
+          'UPDATE numbers SET qualification = ?, tags = ?, notes = ? WHERE id = ?',
+          [existing.qualification === null || existing.qualification === undefined ? '' : existing.qualification,
+            existing.tags === null || existing.tags === undefined ? '' : existing.tags,
+            existing.notes === null || existing.notes === undefined ? '' : existing.notes,
+            value.id]
+        );
+      } catch (revertErr) {
+        logger.error('accountStore', 'lead user field restore after failed persistence incomplete', { error: revertErr.message });
+      }
+      throw err;
+    }
+    logger.info('collector', 'lead user fields updated', { leadId: value.id, updated: true, storage: 'sql' });
+    return { success: true, updated: true };
+  }
+
+  _setLeadUserFieldsJson(value) {
+    const existing = (this._numbers || []).find(n => n && n.id === value.id);
+    if (!existing) return { success: true, updated: false, reason: 'not-found' };
+    const current = normalizeLeadB6Fields({ ...existing });
+    // State-change gate: an identical save never persists.
+    if (current.qualification === value.qualification &&
+        JSON.stringify(current.tags) === JSON.stringify(value.tags) &&
+        current.notes === value.notes) {
+      return { success: true, updated: false, reason: 'unchanged' };
+    }
+    const backup = { ...existing };
+    existing.qualification = value.qualification;
+    existing.tags = value.tags.slice();
+    existing.notes = value.notes;
+    try {
+      writeJsonAtomic(path.join(DATA_DIR, 'numbers.json'), JSON.stringify(this._numbers, null, 2));
+    } catch (err) {
+      Object.assign(existing, backup);
+      logger.error('accountStore', 'failed to write numbers.json', { error: err.message });
+      throw err;
+    }
+    logger.info('collector', 'lead user fields updated', { leadId: value.id, updated: true, storage: 'json' });
+    return { success: true, updated: true };
   }
 
   async exportNumbers(format = 'csv') {
