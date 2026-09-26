@@ -67,14 +67,14 @@ test('5. zero live renderer/html references to removed APIs', () => {
   assert.ok(!htmlSource.includes('getStore') && !htmlSource.includes('coreclaw:'), 'html references none');
 });
 
-test('6. all 16 live main IPC channels present exactly once', () => {
+test('6. all 17 live main IPC channels present exactly once', () => {
   const expected = [
     'provider:set-credentials', 'provider:test-connection',
     'collection:submit', 'collection:job-status', 'collection:job-result', 'collection:job-history',
     'settings:save', 'settings:load',
     'collector:get-numbers', 'collector:add-numbers', 'collector:export-numbers',
     'collector:delete-numbers', 'collector:storage-status',
-    'logs:export', 'logs:dir',
+    'logs:export', 'logs:dir', 'logs:report',
     'proxy:detect'
   ];
   const actual = mainChannels(mainSource);

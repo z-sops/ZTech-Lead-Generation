@@ -194,7 +194,7 @@ test('P9-A RES-01 history pagination preserved', () => {
   assert.ok(source.includes('let historyLoadSeq = 0;'));
   assert.ok(source.includes('if (seq !== historyLoadSeq) return;'));
   assert.ok(source.includes('return loadHistory(targetPage - 1);'));
-  assert.ok(source.includes("btn-refresh-history').addEventListener('click', () => loadHistory())"));
+  assert.ok(source.includes("btn-refresh-history').addEventListener('click', safeAsync(() => loadHistory())"));
   assert.ok(source.includes("renderPagination('history-pagination'"));
 });
 

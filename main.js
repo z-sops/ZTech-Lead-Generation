@@ -27,6 +27,18 @@ app.on('second-instance', () => {
   }
 });
 
+process.on('uncaughtException', (err) => {
+  try {
+    logger.error('process', 'uncaughtException', { error: err.message, stack: err.stack });
+  } catch {}
+});
+
+process.on('unhandledRejection', (reason) => {
+  try {
+    logger.error('process', 'unhandledRejection', { error: String(reason) });
+  } catch {}
+});
+
 const MAX_KEY_LENGTH = 500;
 
 function invalidParams(message) {
@@ -214,6 +226,15 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
     app.quit();
+  });
+
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    try {
+      logger.error('renderer', 'render-process-gone', {
+        reason: details.reason,
+        exitCode: details.exitCode
+      });
+    } catch {}
   });
 }
 
@@ -501,6 +522,23 @@ function registerIpcHandlers() {
     return logger.getLogDir();
   });
 
+  ipcMain.handle('logs:report', (_, payload) => {
+    try {
+      if (!payload || typeof payload !== 'object') return { success: false };
+      const message = typeof payload.message === 'string' ? payload.message.slice(0, 500) : 'Unknown renderer error';
+      const context = payload.context && typeof payload.context === 'object' ? payload.context : {};
+      const sanitized = {};
+      for (const [k, v] of Object.entries(context)) {
+        if (typeof v === 'string' && v.length > 200) sanitized[k] = v.slice(0, 200) + '...';
+        else sanitized[k] = v;
+      }
+      logger.error('renderer', message, sanitized);
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  });
+
   ipcMain.handle('proxy:detect', async () => {
     const { autoDetectProxy } = require('./src/main/proxyDetector');
     const result = await autoDetectProxy();
@@ -510,21 +548,25 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(() => {
-  if (!gotTheLock) return;
-  logger.info('app', 'application started', { version: app.getVersion(), isDev });
-  createMainWindow();
-  initServices();
-  registerIpcHandlers();
-  let storedProxyUrl = '';
-  try {
-    const Store = require('electron-store');
-    const stored = new Store().get('settings', {});
-    storedProxyUrl = (stored && typeof stored.proxyUrl === 'string') ? stored.proxyUrl : '';
-  } catch {
-    storedProxyUrl = '';
-  }
-  applyProxyConfiguration(storedProxyUrl);
-});
+    if (!gotTheLock) return;
+    logger.info('app', 'application started', { version: app.getVersion(), isDev });
+    createMainWindow();
+    initServices();
+    registerIpcHandlers();
+    let storedProxyUrl = '';
+    try {
+      const Store = require('electron-store');
+      const stored = new Store().get('settings', {});
+      storedProxyUrl = (stored && typeof stored.proxyUrl === 'string') ? stored.proxyUrl : '';
+    } catch {
+      storedProxyUrl = '';
+    }
+    applyProxyConfiguration(storedProxyUrl);
+  }).catch((err) => {
+    try {
+      logger.error('app', 'whenReady failed', { error: err.message, stack: err.stack });
+    } catch {}
+  });
 
 app.on('window-all-closed', () => {
   app.quit();

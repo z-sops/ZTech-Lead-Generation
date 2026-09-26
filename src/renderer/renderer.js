@@ -49,6 +49,26 @@ function renderWebsite(value) {
   return `<a href="${escapeHtml(website)}" target="_blank" rel="noopener">链接</a>`;
 }
 
+function reportError(message, context = {}) {
+  try {
+    if (window.appAPI?.logs?.report) {
+      window.appAPI.logs.report({ message: String(message).slice(0, 500), context });
+    }
+  } catch {}
+}
+
+function safeAsync(handler) {
+  return async (...args) => {
+    try {
+      return await handler(...args);
+    } catch (err) {
+      const msg = err?.message || String(err);
+      toast(msg, 'error');
+      reportError(msg, { handler: handler.name || 'anonymous' });
+    }
+  };
+}
+
 // 采集
 let currentRunSlug = null;
 let runGeneration = 0;
@@ -98,82 +118,82 @@ function clearCurrentResultPresentation() {
   syncResultSelectAll();
 }
 
-document.getElementById('btn-start-collect').addEventListener('click', async () => {
-  const settings = await window.appAPI.settings.load();
-  const apiKey = settings.apiKey;
-  const keywords = document.getElementById('collect-keywords').value.trim();
-  const region = document.getElementById('collect-region').value.trim();
-  const lang = document.getElementById('collect-lang').value;
-  const maxResults = parseInt(document.getElementById('collect-max').value) || 20;
+document.getElementById('btn-start-collect').addEventListener('click', safeAsync(async () => {
+    const settings = await window.appAPI.settings.load();
+    const apiKey = settings.apiKey;
+    const keywords = document.getElementById('collect-keywords').value.trim();
+    const region = document.getElementById('collect-region').value.trim();
+    const lang = document.getElementById('collect-lang').value;
+    const maxResults = parseInt(document.getElementById('collect-max').value) || 20;
 
-  if (!apiKey) {
-    showStatus('请先在「设置」中配置 API Key', true);
-    return;
-  }
-  if (!keywords) {
-    showStatus('请输入关键词', true);
-    return;
-  }
+    if (!apiKey) {
+      showStatus('请先在「设置」中配置 API Key', true);
+      return;
+    }
+    if (!keywords) {
+      showStatus('请输入关键词', true);
+      return;
+    }
 
-  showStatus('正在提交采集任务...');
+    showStatus('正在提交采集任务...');
 
-  runGeneration += 1;
-  const gen = runGeneration;
-  cancelPollTimer();
-  currentRunSlug = null;
-  pollFailureCount = 0;
+    runGeneration += 1;
+    const gen = runGeneration;
+    cancelPollTimer();
+    currentRunSlug = null;
+    pollFailureCount = 0;
 
-  const result = await window.appAPI.collection.submit({
-    keywords: keywords.split(',').map(k => k.trim()),
-    location: region,
-    lang,
-    maxResults,
-    titleMatchMode: document.getElementById('collect-title-match').value,
-    minRating: document.getElementById('collect-min-rating').value,
-    websiteFilter: document.getElementById('collect-website-filter').value,
-    skipClosed: document.getElementById('collect-skip-closed').checked,
-    fetchSocialInfo: document.getElementById('collect-social').checked,
-    facebook: document.getElementById('collect-facebook').checked,
-    instagram: document.getElementById('collect-instagram').checked,
-    youtube: document.getElementById('collect-youtube').checked,
-    tiktok: document.getElementById('collect-tiktok').checked,
-    linkedin: document.getElementById('collect-linkedin').checked,
-    fetchPlaceDetails: document.getElementById('collect-place-details').checked,
-    fetchReservation: document.getElementById('collect-reservation').checked,
-    fetchOnlineOrder: document.getElementById('collect-online-order').checked,
-    fetchWebResult: document.getElementById('collect-web-result').checked,
-    emailVerification: document.getElementById('collect-email-verify').checked,
-    fetchReviews: document.getElementById('collect-reviews').checked,
-    maxReviewsPerPlace: parseInt(document.getElementById('collect-max-reviews').value) || 5,
-    reviewSortBy: document.getElementById('collect-review-sort').value,
-    reviewKeyword: document.getElementById('collect-review-keyword').value.trim(),
-    includeReviewerInfo: document.getElementById('collect-reviewer-info').checked
-  });
+    const result = await window.appAPI.collection.submit({
+      keywords: keywords.split(',').map(k => k.trim()),
+      location: region,
+      lang,
+      maxResults,
+      titleMatchMode: document.getElementById('collect-title-match').value,
+      minRating: document.getElementById('collect-min-rating').value,
+      websiteFilter: document.getElementById('collect-website-filter').value,
+      skipClosed: document.getElementById('collect-skip-closed').checked,
+      fetchSocialInfo: document.getElementById('collect-social').checked,
+      facebook: document.getElementById('collect-facebook').checked,
+      instagram: document.getElementById('collect-instagram').checked,
+      youtube: document.getElementById('collect-youtube').checked,
+      tiktok: document.getElementById('collect-tiktok').checked,
+      linkedin: document.getElementById('collect-linkedin').checked,
+      fetchPlaceDetails: document.getElementById('collect-place-details').checked,
+      fetchReservation: document.getElementById('collect-reservation').checked,
+      fetchOnlineOrder: document.getElementById('collect-online-order').checked,
+      fetchWebResult: document.getElementById('collect-web-result').checked,
+      emailVerification: document.getElementById('collect-email-verify').checked,
+      fetchReviews: document.getElementById('collect-reviews').checked,
+      maxReviewsPerPlace: parseInt(document.getElementById('collect-max-reviews').value) || 5,
+      reviewSortBy: document.getElementById('collect-review-sort').value,
+      reviewKeyword: document.getElementById('collect-review-keyword').value.trim(),
+      includeReviewerInfo: document.getElementById('collect-reviewer-info').checked
+    });
 
-  if (gen !== runGeneration) return;
+    if (gen !== runGeneration) return;
 
-  if (result.success) {
-    currentRunSlug = result.data.run_slug;
-    showStatus(`任务已提交，ID: ${currentRunSlug}，等待执行中...`);
+    if (result.success) {
+      currentRunSlug = result.data.run_slug;
+      showStatus(`任务已提交，ID: ${currentRunSlug}，等待执行中...`);
+      claimResultView('run');
+      clearCurrentResultPresentation();
+      startPolling(gen, currentRunSlug);
+    } else {
+      claimResultView('none');
+      showStatus(`提交失败: ${result.error}`, true);
+    }
+  }));
+
+document.getElementById('btn-check-status').addEventListener('click', safeAsync(async () => {
+    if (!currentRunSlug) {
+      showStatus('没有进行中的任务', true);
+      return;
+    }
+    if (pollTimerId !== null || pollInFlight) return;
+    pollFailureCount = 0;
     claimResultView('run');
-    clearCurrentResultPresentation();
-    startPolling(gen, currentRunSlug);
-  } else {
-    claimResultView('none');
-    showStatus(`提交失败: ${result.error}`, true);
-  }
-});
-
-document.getElementById('btn-check-status').addEventListener('click', async () => {
-  if (!currentRunSlug) {
-    showStatus('没有进行中的任务', true);
-    return;
-  }
-  if (pollTimerId !== null || pollInFlight) return;
-  pollFailureCount = 0;
-  claimResultView('run');
-  startPolling(runGeneration, currentRunSlug);
-});
+    startPolling(runGeneration, currentRunSlug);
+  }));
 
 function evaluatePollOutcome(status) {
   if (!status || status.success !== true) {
@@ -195,7 +215,11 @@ function evaluatePollOutcome(status) {
 function scheduleNextPoll(gen, slug) {
   pollTimerId = setTimeout(() => {
     pollTimerId = null;
-    pollRunStatus(gen, slug);
+    Promise.resolve().then(() => pollRunStatus(gen, slug)).catch((err) => {
+      const msg = err?.message || String(err);
+      showStatus(`轮询异常: ${msg}`, true);
+      reportError(msg, { handler: 'scheduleNextPoll', gen, slug });
+    });
   }, POLL_RETRY_DELAY_MS);
 }
 
@@ -275,40 +299,46 @@ async function fetchAllRunResults(slug) {
 }
 
 async function loadRunResult(currentRunSlug, gen) {
-  if (!isCurrentRun(gen, currentRunSlug)) return;
-  if (viewClaimKind === 'history') {
-    showStatus('采集完成，本次结果未加载');
-    return;
-  }
-  const seq = claimResultView('run');
+  try {
+    if (!isCurrentRun(gen, currentRunSlug)) return;
+    if (viewClaimKind === 'history') {
+      showStatus('采集完成，本次结果未加载');
+      return;
+    }
+    const seq = claimResultView('run');
 
-  showStatus('采集完成，正在获取结果...');
+    showStatus('采集完成，正在获取结果...');
 
-  const result = await fetchAllRunResults(currentRunSlug);
+    const result = await fetchAllRunResults(currentRunSlug);
 
-  if (!isCurrentRun(gen, currentRunSlug)) return;
-  if (!isViewClaimCurrent(seq)) {
-    if (viewClaimKind === 'history') showStatus('采集完成，本次结果未加载');
-    return;
-  }
+    if (!isCurrentRun(gen, currentRunSlug)) return;
+    if (!isViewClaimCurrent(seq)) {
+      if (viewClaimKind === 'history') showStatus('采集完成，本次结果未加载');
+      return;
+    }
 
-  if (!result.success) {
-    showStatus(`获取结果失败: ${result.error}`, true);
-    return;
-  }
+    if (!result.success) {
+      showStatus(`获取结果失败: ${result.error}`, true);
+      return;
+    }
 
-  const items = result.data?.list || [];
-  showStatus(`采集完成，已加载 ${items.length} 条结果`);
-  window.__collectResults = items;
-  const mobileOnly = document.getElementById('collect-mobile-only').checked;
-  if (mobileOnly) {
-    const filtered = items.filter(item => isMobileNumber(item.phone));
-    renderCollectResults(filtered, true);
-    toast(`筛选出 ${filtered.length} 个手机号（已加载 ${items.length} 条）`, 'success');
-    window.__filteredResults = filtered;
-  } else {
-    renderCollectResults(items);
-    window.__filteredResults = null;
+    const items = result.data?.list || [];
+    showStatus(`采集完成，已加载 ${items.length} 条结果`);
+    window.__collectResults = items;
+    const mobileOnly = document.getElementById('collect-mobile-only').checked;
+    if (mobileOnly) {
+      const filtered = items.filter(item => isMobileNumber(item.phone));
+      renderCollectResults(filtered, true);
+      toast(`筛选出 ${filtered.length} 个手机号（已加载 ${items.length} 条）`, 'success');
+      window.__filteredResults = filtered;
+    } else {
+      renderCollectResults(items);
+      window.__filteredResults = null;
+    }
+  } catch (err) {
+    const msg = err?.message || String(err);
+    showStatus(`加载结果异常: ${msg}`, true);
+    reportError(msg, { handler: 'loadRunResult', slug: currentRunSlug, gen });
   }
 }
 
@@ -504,7 +534,7 @@ function renderPagination(containerId, totalPages, currentPage, onPageChange) {
 }
 
 // 采集历史
-document.getElementById('btn-refresh-history').addEventListener('click', () => loadHistory());
+document.getElementById('btn-refresh-history').addEventListener('click', safeAsync(() => loadHistory()));
 document.getElementById('history-table-body').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-slug]');
   if (!btn) return;
@@ -516,85 +546,97 @@ let historyPage = 1;
 let historyLoadSeq = 0;
 
 async function loadHistory(page = 1) {
-  const settings = await window.appAPI.settings.load();
-  if (!settings.apiKey) return;
+  try {
+    const settings = await window.appAPI.settings.load();
+    if (!settings.apiKey) return;
 
-  const targetPage = page < 1 ? 1 : page;
-  const seq = ++historyLoadSeq;
-  const result = await window.appAPI.collection.getHistory(HISTORY_PAGE_SIZE, (targetPage - 1) * HISTORY_PAGE_SIZE);
-  if (seq !== historyLoadSeq) return;
-  if (!result.success) {
-    toast(result.error || '获取采集历史失败', 'error');
-    return;
+    const targetPage = page < 1 ? 1 : page;
+    const seq = ++historyLoadSeq;
+    const result = await window.appAPI.collection.getHistory(HISTORY_PAGE_SIZE, (targetPage - 1) * HISTORY_PAGE_SIZE);
+    if (seq !== historyLoadSeq) return;
+    if (!result.success) {
+      toast(result.error || '获取采集历史失败', 'error');
+      return;
+    }
+
+    const list = result.data?.list || [];
+    if (!list.length && targetPage > 1) {
+      return loadHistory(targetPage - 1);
+    }
+    historyPage = targetPage;
+
+    const tbody = document.getElementById('history-table-body');
+
+    tbody.innerHTML = list.map(item => {
+      const startTime = item.started_at ? new Date(item.started_at * 1000).toLocaleString('zh-CN') : '-';
+      const statusClass = item.status === 'succeeded' ? 'color:var(--accent)' : item.status === 'failed' ? 'color:var(--danger)' : 'color:var(--warning)';
+      const statusText = item.status === 'succeeded' ? '成功' : item.status === 'failed' ? '失败' : item.status === 'running' ? '运行中' : item.status;
+      return `<tr>
+        <td>${escapeHtml(item.scraper_title || '-')}</td>
+        <td style="${statusClass}">${escapeHtml(statusText)}</td>
+        <td>${escapeHtml(item.results || 0)}</td>
+        <td>${escapeHtml(item.usage || '0')}</td>
+        <td>${escapeHtml(item.duration ? item.duration + 's' : '-')}</td>
+        <td>${escapeHtml(item.origin || '-')}</td>
+        <td>${startTime}</td>
+        <td><button class="btn btn-sm" data-slug="${escapeHtml(item.slug)}">查看结果</button></td>
+      </tr>`;
+    }).join('');
+
+    renderPagination('history-pagination', historyPage + (list.length >= HISTORY_PAGE_SIZE ? 1 : 0), historyPage, (p) => loadHistory(p));
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'loadHistory', page });
   }
-
-  const list = result.data?.list || [];
-  if (!list.length && targetPage > 1) {
-    return loadHistory(targetPage - 1);
-  }
-  historyPage = targetPage;
-
-  const tbody = document.getElementById('history-table-body');
-
-  tbody.innerHTML = list.map(item => {
-    const startTime = item.started_at ? new Date(item.started_at * 1000).toLocaleString('zh-CN') : '-';
-    const statusClass = item.status === 'succeeded' ? 'color:var(--accent)' : item.status === 'failed' ? 'color:var(--danger)' : 'color:var(--warning)';
-    const statusText = item.status === 'succeeded' ? '成功' : item.status === 'failed' ? '失败' : item.status === 'running' ? '运行中' : item.status;
-    return `<tr>
-      <td>${escapeHtml(item.scraper_title || '-')}</td>
-      <td style="${statusClass}">${escapeHtml(statusText)}</td>
-      <td>${escapeHtml(item.results || 0)}</td>
-      <td>${escapeHtml(item.usage || '0')}</td>
-      <td>${escapeHtml(item.duration ? item.duration + 's' : '-')}</td>
-      <td>${escapeHtml(item.origin || '-')}</td>
-      <td>${startTime}</td>
-      <td><button class="btn btn-sm" data-slug="${escapeHtml(item.slug)}">查看结果</button></td>
-    </tr>`;
-  }).join('');
-
-  renderPagination('history-pagination', historyPage + (list.length >= HISTORY_PAGE_SIZE ? 1 : 0), historyPage, (p) => loadHistory(p));
 }
 
-window.viewRunResult = async (slug) => {
-  const settings = await window.appAPI.settings.load();
-  if (!settings.apiKey) return;
+window.viewRunResult = safeAsync(async (slug) => {
+    const settings = await window.appAPI.settings.load();
+    if (!settings.apiKey) return;
 
-  const seq = claimResultView('history');
+    const seq = claimResultView('history');
 
-  const result = await fetchAllRunResults(slug);
-  if (!isViewClaimCurrent(seq)) return;
-  if (result.success) {
-    const items = result.data?.list || [];
-    // 切到采集页显示结果
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.querySelector('[data-view="collector"]').classList.add('active');
-    document.getElementById('view-collector').classList.add('active');
-    document.getElementById('page-title').textContent = '关键词采集';
-    window.__collectResults = items;
-    const mobileOnly = document.getElementById('collect-mobile-only').checked;
-    if (mobileOnly) {
-      const filtered = items.filter(item => isMobileNumber(item.phone));
-      renderCollectResults(filtered, true);
-      window.__filteredResults = filtered;
+    const result = await fetchAllRunResults(slug);
+    if (!isViewClaimCurrent(seq)) return;
+    if (result.success) {
+      const items = result.data?.list || [];
+      // 切到采集页显示结果
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelector('[data-view="collector"]').classList.add('active');
+      document.getElementById('view-collector').classList.add('active');
+      document.getElementById('page-title').textContent = '关键词采集';
+      window.__collectResults = items;
+      const mobileOnly = document.getElementById('collect-mobile-only').checked;
+      if (mobileOnly) {
+        const filtered = items.filter(item => isMobileNumber(item.phone));
+        renderCollectResults(filtered, true);
+        window.__filteredResults = filtered;
+      } else {
+        renderCollectResults(items);
+        window.__filteredResults = null;
+      }
     } else {
-      renderCollectResults(items);
-      window.__filteredResults = null;
+      toast(result.error || '获取结果失败', 'error');
     }
-  } else {
-    toast(result.error || '获取结果失败', 'error');
-  }
-};
+  });
 
 // 初始化
-loadSettings();
+safeAsync(loadSettings)();
 
 // 设置管理
 async function loadSettings() {
-  const settings = await window.appAPI.settings.load();
-  if (settings.apiKey) document.getElementById('settings-apikey').value = settings.apiKey;
-  if (settings.taskKey) document.getElementById('settings-task-key').value = settings.taskKey;
-  if (settings.proxyUrl) document.getElementById('settings-proxy-url').value = settings.proxyUrl;
+  try {
+    const settings = await window.appAPI.settings.load();
+    if (settings.apiKey) document.getElementById('settings-apikey').value = settings.apiKey;
+    if (settings.taskKey) document.getElementById('settings-task-key').value = settings.taskKey;
+    if (settings.proxyUrl) document.getElementById('settings-proxy-url').value = settings.proxyUrl;
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'loadSettings' });
+  }
 }
 
 function settingsSaveFeedback(result) {
@@ -607,108 +649,108 @@ function settingsSaveFeedback(result) {
   return { message: '保存设置失败，请检查设置内容', type: 'error' };
 }
 
-document.getElementById('btn-save-settings').addEventListener('click', async () => {
-  const settings = {
-    apiKey: document.getElementById('settings-apikey').value.trim(),
-    taskKey: document.getElementById('settings-task-key').value.trim(),
-    proxyUrl: document.getElementById('settings-proxy-url').value.trim()
-  };
-  let result = null;
-  try {
-    result = await window.appAPI.settings.save(settings);
-  } catch {
-    const feedback = settingsSaveFeedback(null);
-    toast(feedback.message, feedback.type);
-    return;
-  }
-  const feedback = settingsSaveFeedback(result);
-  toast(feedback.message, feedback.type);
-});
-
-document.getElementById('btn-detect-proxy').addEventListener('click', async () => {
-  toast('正在检测系统代理...', 'info');
-  const result = await window.appAPI.proxy.detect();
-  if (result && result.proxyUrl) {
-    document.getElementById('settings-proxy-url').value = result.proxyUrl;
-    if (result.whatsappReachable === false) {
-      toast(`已检测到代理，但 WhatsApp 连通性测试未通过: ${result.proxyUrl} (${result.source})`, 'info');
-    } else if (result.whatsappReachable === true) {
-      toast(`检测到代理，WhatsApp 连通性测试通过: ${result.proxyUrl} (${result.source})`, 'success');
-    } else {
-      toast(`检测到代理: ${result.proxyUrl} (${result.source})`, 'success');
+document.getElementById('btn-save-settings').addEventListener('click', safeAsync(async () => {
+    const settings = {
+      apiKey: document.getElementById('settings-apikey').value.trim(),
+      taskKey: document.getElementById('settings-task-key').value.trim(),
+      proxyUrl: document.getElementById('settings-proxy-url').value.trim()
+    };
+    let result = null;
+    try {
+      result = await window.appAPI.settings.save(settings);
+    } catch {
+      const feedback = settingsSaveFeedback(null);
+      toast(feedback.message, feedback.type);
+      return;
     }
-  } else {
-    toast('未检测到可用代理', 'error');
-  }
-});
+    const feedback = settingsSaveFeedback(result);
+    toast(feedback.message, feedback.type);
+  }));
 
-document.getElementById('btn-export-logs').addEventListener('click', async () => {
-  toast('正在导出日志...', 'info');
-  const logs = await window.appAPI.logs.exportLogs();
-  if (logs) {
-  const blob = new Blob([logs], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `app-logs-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast('日志已导出', 'success');
-  } else {
-    toast('暂无日志', 'error');
-  }
-});
+document.getElementById('btn-detect-proxy').addEventListener('click', safeAsync(async () => {
+    toast('正在检测系统代理...', 'info');
+    const result = await window.appAPI.proxy.detect();
+    if (result && result.proxyUrl) {
+      document.getElementById('settings-proxy-url').value = result.proxyUrl;
+      if (result.whatsappReachable === false) {
+        toast(`已检测到代理，但 WhatsApp 连通性测试未通过: ${result.proxyUrl} (${result.source})`, 'info');
+      } else if (result.whatsappReachable === true) {
+        toast(`检测到代理，WhatsApp 连通性测试通过: ${result.proxyUrl} (${result.source})`, 'success');
+      } else {
+        toast(`检测到代理: ${result.proxyUrl} (${result.source})`, 'success');
+      }
+    } else {
+      toast('未检测到可用代理', 'error');
+    }
+  }));
 
-document.getElementById('btn-test-apikey').addEventListener('click', async () => {
-  const apiKey = document.getElementById('settings-apikey').value.trim();
-  if (!apiKey) { toast('请输入 API Key', 'error'); return; }
-  toast('正在测试 API Key...', 'info');
-  const result = await window.appAPI.provider.testConnection(apiKey, '');
-  if (result.success && result.apiKeyValid) {
-    toast('API Key 连接成功', 'success');
-  } else {
-    toast('API Key 连接失败', 'error');
-  }
-});
+document.getElementById('btn-export-logs').addEventListener('click', safeAsync(async () => {
+    toast('正在导出日志...', 'info');
+    const logs = await window.appAPI.logs.exportLogs();
+    if (logs) {
+      const blob = new Blob([logs], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `app-logs-${Date.now()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('日志已导出', 'success');
+    } else {
+      toast('暂无日志', 'error');
+    }
+  }));
 
-document.getElementById('btn-test-taskkey').addEventListener('click', async () => {
-  const apiKey = document.getElementById('settings-apikey').value.trim();
-  const taskKey = document.getElementById('settings-task-key').value.trim();
-  if (!apiKey) { toast('请先填写 API Key', 'error'); return; }
-  if (!taskKey) { toast('请输入任务流 Key', 'error'); return; }
-  toast('正在测试任务流 Key...', 'info');
-  const result = await window.appAPI.provider.testConnection(apiKey, taskKey);
-  if (result.success && result.taskKeyValid) {
-    toast('任务流 Key 验证成功', 'success');
-  } else {
-    toast('任务流 Key 验证失败', 'error');
-  }
-});
+document.getElementById('btn-test-apikey').addEventListener('click', safeAsync(async () => {
+    const apiKey = document.getElementById('settings-apikey').value.trim();
+    if (!apiKey) { toast('请输入 API Key', 'error'); return; }
+    toast('正在测试 API Key...', 'info');
+    const result = await window.appAPI.provider.testConnection(apiKey, '');
+    if (result.success && result.apiKeyValid) {
+      toast('API Key 连接成功', 'success');
+    } else {
+      toast('API Key 连接失败', 'error');
+    }
+  }));
+
+document.getElementById('btn-test-taskkey').addEventListener('click', safeAsync(async () => {
+    const apiKey = document.getElementById('settings-apikey').value.trim();
+    const taskKey = document.getElementById('settings-task-key').value.trim();
+    if (!apiKey) { toast('请先填写 API Key', 'error'); return; }
+    if (!taskKey) { toast('请输入任务流 Key', 'error'); return; }
+    toast('正在测试任务流 Key...', 'info');
+    const result = await window.appAPI.provider.testConnection(apiKey, taskKey);
+    if (result.success && result.taskKeyValid) {
+      toast('任务流 Key 验证成功', 'success');
+    } else {
+      toast('任务流 Key 验证失败', 'error');
+    }
+  }));
 
 // === 保存采集结果到号码库 ===
-document.getElementById('btn-save-numbers').addEventListener('click', async () => {
-  const source = getSelectedResultRows();
-  if (!source.length) {
-    showStatus('请先勾选要保存的结果', true);
-    return;
-  }
-  const numbers = source.map((item) => ({
-    id: crypto.randomUUID(),
-    phone: item.phone || '',
-    source: item.title || '',
-    keyword: item.source_keyword || '',
-    status: 'pending',
-    collectedAt: new Date().toISOString()
-  })).filter(n => n.phone);
-  let result;
-  try {
-    result = await window.appAPI.collector.addNumbers(numbers);
-  } catch (err) {
-    showStatus(err?.message || '保存失败', true);
-    return;
-  }
-  showStatus(`已保存 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复`);
-});
+document.getElementById('btn-save-numbers').addEventListener('click', safeAsync(async () => {
+    const source = getSelectedResultRows();
+    if (!source.length) {
+      showStatus('请先勾选要保存的结果', true);
+      return;
+    }
+    const numbers = source.map((item) => ({
+      id: crypto.randomUUID(),
+      phone: item.phone || '',
+      source: item.title || '',
+      keyword: item.source_keyword || '',
+      status: 'pending',
+      collectedAt: new Date().toISOString()
+    })).filter(n => n.phone);
+    let result;
+    try {
+      result = await window.appAPI.collector.addNumbers(numbers);
+    } catch (err) {
+      showStatus(err?.message || '保存失败', true);
+      return;
+    }
+    showStatus(`已保存 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复`);
+  }));
 
 function csvField(value) {
   let s = value === undefined || value === null ? '' : String(value);
@@ -717,24 +759,24 @@ function csvField(value) {
 }
 
 // === 采集结果导出 CSV ===
-document.getElementById('btn-export-results').addEventListener('click', () => {
-  const source = getSelectedResultRows();
-  if (!source.length) {
-    showStatus('请先勾选要导出的结果', true);
-    return;
-  }
-  const header = 'title,phone,address,website,email\n';
-  const rows = source.map(item =>
-    `"${csvField(item.title || '')}","${csvField(item.phone || '')}","${csvField(item.address || '')}","${csvField(item.website || '')}","${csvField(item.email_1 || item.all_emails || '')}"`
-  ).join('\n');
-  const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `collect-results-${Date.now()}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-});
+document.getElementById('btn-export-results').addEventListener('click', safeAsync(() => {
+    const source = getSelectedResultRows();
+    if (!source.length) {
+      showStatus('请先勾选要导出的结果', true);
+      return;
+    }
+    const header = 'title,phone,address,website,email\n';
+    const rows = source.map(item =>
+      `"${csvField(item.title || '')}","${csvField(item.phone || '')}","${csvField(item.address || '')}","${csvField(item.website || '')}","${csvField(item.email_1 || item.all_emails || '')}"`
+    ).join('\n');
+    const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `collect-results-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }));
 
 // === 全选 checkbox ===
 document.getElementById('select-all-results').addEventListener('change', (e) => {
@@ -756,9 +798,15 @@ let numbersPage = 1;
 const NUMBERS_PER_PAGE = 50;
 
 async function loadNumbers() {
-  allNumbers = await window.appAPI.collector.getNumbers();
-  numbersPage = 1;
-  renderNumbers();
+  try {
+    allNumbers = await window.appAPI.collector.getNumbers();
+    numbersPage = 1;
+    renderNumbers();
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'loadNumbers' });
+  }
 }
 
 function renderNumbers() {
@@ -786,39 +834,39 @@ function renderNumbers() {
   renderPagination('numbers-pagination', totalPages, numbersPage, (p) => { numbersPage = p; renderNumbers(); });
 }
 
-document.getElementById('number-search').addEventListener('input', renderNumbers);
-document.getElementById('number-filter-status').addEventListener('change', renderNumbers);
+document.getElementById('number-search').addEventListener('input', safeAsync(renderNumbers));
+document.getElementById('number-filter-status').addEventListener('change', safeAsync(renderNumbers));
 
-document.getElementById('btn-delete-selected').addEventListener('click', async () => {
-  const ids = [...document.querySelectorAll('.number-check:checked')].map(cb => cb.dataset.id);
-  if (!ids.length) return;
-  try {
-    await window.appAPI.collector.deleteNumbers(ids);
-  } catch (err) {
-    toast(err?.message || '删除失败', 'error');
-    return;
-  }
-  loadNumbers();
-});
+document.getElementById('btn-delete-selected').addEventListener('click', safeAsync(async () => {
+    const ids = [...document.querySelectorAll('.number-check:checked')].map(cb => cb.dataset.id);
+    if (!ids.length) return;
+    try {
+      await window.appAPI.collector.deleteNumbers(ids);
+    } catch (err) {
+      toast(err?.message || '删除失败', 'error');
+      return;
+    }
+    loadNumbers();
+  }));
 
-document.getElementById('btn-export-csv').addEventListener('click', async () => {
-  let csv;
-  try {
-    csv = await window.appAPI.collector.exportNumbers('csv');
-  } catch (err) {
-    toast(err?.message || '导出失败', 'error');
-    return;
-  }
-  if (csv) {
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `numbers-${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-});
+document.getElementById('btn-export-csv').addEventListener('click', safeAsync(async () => {
+    let csv;
+    try {
+      csv = await window.appAPI.collector.exportNumbers('csv');
+    } catch (err) {
+      toast(err?.message || '导出失败', 'error');
+      return;
+    }
+    if (csv) {
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `numbers-${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }));
 
 function splitImportLines(text) {
   return String(text).split(/\r\n|\r|\n/);
@@ -845,42 +893,42 @@ function buildImportBatch(text) {
 }
 
 document.getElementById('btn-import-numbers').addEventListener('click', () => {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.txt,.csv';
-  input.addEventListener('change', async () => {
-    const file = input.files[0];
-    if (!file) return;
-    const text = await file.text();
-    const { valid, invalid } = buildImportBatch(text);
-    if (!valid.length) {
-      toast(invalid > 0 ? `文件中没有有效号码（已跳过 ${invalid} 行无效内容）` : '文件中没有有效号码', 'error');
-      return;
-    }
-    const numbers = valid.map((phone) => ({
-      id: crypto.randomUUID(),
-      phone,
-      source: '手动导入',
-      keyword: '',
-      status: 'pending',
-      collectedAt: new Date().toISOString()
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.txt,.csv';
+    input.addEventListener('change', safeAsync(async () => {
+      const file = input.files[0];
+      if (!file) return;
+      const text = await file.text();
+      const { valid, invalid } = buildImportBatch(text);
+      if (!valid.length) {
+        toast(invalid > 0 ? `文件中没有有效号码（已跳过 ${invalid} 行无效内容）` : '文件中没有有效号码', 'error');
+        return;
+      }
+      const numbers = valid.map((phone) => ({
+        id: crypto.randomUUID(),
+        phone,
+        source: '手动导入',
+        keyword: '',
+        status: 'pending',
+        collectedAt: new Date().toISOString()
+      }));
+      let result;
+      try {
+        result = await window.appAPI.collector.addNumbers(numbers);
+      } catch (err) {
+        toast(err?.message || '导入失败', 'error');
+        return;
+      }
+      toast(
+        `已导入 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复` +
+          (invalid > 0 ? `，忽略 ${invalid} 行无效` : ''),
+        invalid > 0 ? 'info' : 'success'
+      );
+      loadNumbers();
     }));
-    let result;
-    try {
-      result = await window.appAPI.collector.addNumbers(numbers);
-    } catch (err) {
-      toast(err?.message || '导入失败', 'error');
-      return;
-    }
-    toast(
-      `已导入 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复` +
-        (invalid > 0 ? `，忽略 ${invalid} 行无效` : ''),
-      invalid > 0 ? 'info' : 'success'
-    );
-    loadNumbers();
+    input.click();
   });
-  input.click();
-});
 
 // === 视图切换时加载数据 ===
 navItems.forEach(item => {

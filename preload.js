@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('appAPI', {
   // 日志
   logs: {
     exportLogs: () => ipcRenderer.invoke('logs:export'),
-    getLogDir: () => ipcRenderer.invoke('logs:dir')
+    getLogDir: () => ipcRenderer.invoke('logs:dir'),
+    report: (payload) => ipcRenderer.invoke('logs:report', payload)
   }
 });
