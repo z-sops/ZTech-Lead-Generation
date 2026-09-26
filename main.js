@@ -5,6 +5,7 @@ const { logger } = require('./src/main/logger');
 const { ProviderManager } = require('./src/main/providers/providerManager');
 const { CoreClawAdapter } = require('./src/main/providers/coreclawAdapter');
 const { migrateLegacySettingsToProviders } = require('./src/main/providers/legacySettingsMigration');
+const credentialVault = require('./src/main/credentialVault');
 
 let mainWindow = null;
 let providerManager = null;
@@ -100,13 +101,19 @@ async function applyProxyConfiguration(proxyUrl) {
 
 function validateSettingsPayload(settings) {
   assertPlainObject(settings, 'settings');
-  const out = { apiKey: '', taskKey: '', proxyUrl: '' };
+  const out = { apiKey: '', taskKey: '', proxyUrl: '', clearApiKey: false, clearTaskKey: false };
   for (const key of ['apiKey', 'taskKey', 'proxyUrl']) {
     const value = settings[key];
     if (value === undefined || value === null) continue;
     if (typeof value !== 'string') throw invalidParams(`Invalid settings: ${key} (string required)`);
     if (value.length > MAX_KEY_LENGTH) throw invalidParams(`Invalid settings: ${key} (max ${MAX_KEY_LENGTH} chars)`);
     out[key] = value;
+  }
+  for (const flag of ['clearApiKey', 'clearTaskKey']) {
+    const value = settings[flag];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'boolean') throw invalidParams(`Invalid settings: ${flag} (boolean required)`);
+    out[flag] = value;
   }
   out.proxyUrl = validateProxyUrl(out.proxyUrl);
   return out;
@@ -269,6 +276,17 @@ function loadProviderCredentials(store, providerId) {
   return record.credentials;
 }
 
+function canRevealCredential(value) {
+  if (!credentialVault.isPresent(value)) return false;
+  if (!credentialVault.isSealed(value)) return true;
+  try {
+    return credentialVault.unseal(value).length > 0;
+  } catch {
+    logger.warn('vault', 'stored credential could not be decrypted');
+    return false;
+  }
+}
+
 function initServices() {
   accountStore = new AccountStore();
   providerManager = new ProviderManager();
@@ -276,9 +294,35 @@ function initServices() {
   const Store = require('electron-store');
   const store = new Store();
   migrateLegacySettingsToProviders(store, adapter.providerId);
+  const migration = credentialVault.migrateStoredCredentials(store, adapter.providerId);
+  if (migration.status === 'complete') {
+    if (migration.sealed > 0 || migration.removed > 0) {
+      logger.info('vault', 'credential encryption migration complete', {
+        sealed: migration.sealed,
+        removed: migration.removed
+      });
+    }
+  } else {
+    logger.warn('vault', 'credential encryption migration deferred', {
+      status: migration.status,
+      reason: migration.reason || 'unknown'
+    });
+  }
   const credentials = loadProviderCredentials(store, adapter.providerId);
   if (credentials) {
-    providerManager.setCredentials(adapter.providerId, credentials);
+    const plaintext = {};
+    for (const field of ['apiKey', 'taskKey']) {
+      const raw = credentials[field];
+      if (typeof raw !== 'string' || raw === '') continue;
+      try {
+        plaintext[field] = credentialVault.reveal(raw);
+      } catch {
+        logger.warn('vault', 'stored credential could not be decrypted', { field });
+      }
+    }
+    if (Object.keys(plaintext).length > 0) {
+      providerManager.setCredentials(adapter.providerId, plaintext);
+    }
   }
 }
 
@@ -370,6 +414,40 @@ function registerIpcHandlers() {
 
   async function handleTestConnection(channel, providerId, payload) {
     const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+    if (p.useStored === true) {
+      let activeProviderId = providerId;
+      if (typeof activeProviderId !== 'string' || activeProviderId === '') {
+        try {
+          activeProviderId = providerManager.resolveCollectionProvider().providerId;
+        } catch (err) {
+          if (err.invalidParams) return rejectEnvelope(channel, err.message);
+          logger.error('ipc', `${channel} failed`, { error: err.message });
+          return { success: false, error: err.message };
+        }
+      }
+      const Store = require('electron-store');
+      const credentials = loadProviderCredentials(new Store(), activeProviderId) || {};
+      let apiKey = '';
+      let taskKey = '';
+      try {
+        apiKey = credentialVault.reveal(typeof credentials.apiKey === 'string' ? credentials.apiKey : '');
+        taskKey = credentialVault.reveal(typeof credentials.taskKey === 'string' ? credentials.taskKey : '');
+      } catch {
+        logger.warn('ipc', 'stored credentials could not be decrypted');
+        return { success: false, error: 'Stored credentials could not be decrypted' };
+      }
+      if (!apiKey && !taskKey) {
+        return { success: false, error: 'No stored credentials' };
+      }
+      try {
+        const adapter = providerManager.resolveCollectionProvider(activeProviderId);
+        return await adapter.testConnection({ apiKey, taskKey });
+      } catch (err) {
+        if (err.invalidParams) return rejectEnvelope(channel, err.message);
+        logger.error('ipc', `${channel} failed`, { error: err.message });
+        return { success: false, error: err.message };
+      }
+    }
     const apiKey = p.apiKey;
     const taskKey = p.taskKey;
     if (typeof apiKey !== 'string' || !apiKey || apiKey.length > MAX_KEY_LENGTH) {
@@ -430,7 +508,6 @@ function registerIpcHandlers() {
     }
     const Store = require('electron-store');
     const store = new Store();
-    store.set('settings', nextSettings);
     let activeProviderId;
     try {
       activeProviderId = providerManager.resolveCollectionProvider().providerId;
@@ -438,14 +515,44 @@ function registerIpcHandlers() {
       if (err.invalidParams) rejectLog('settings:save', err.message);
       throw err;
     }
+    const currentCredentials = loadProviderCredentials(store, activeProviderId) || {};
+    let plannedApiKey;
+    let plannedTaskKey;
+    let proxySealed = '';
+    try {
+      plannedApiKey = credentialVault.planCredentialUpdate(
+        typeof currentCredentials.apiKey === 'string' ? currentCredentials.apiKey : '',
+        { value: nextSettings.apiKey, clear: nextSettings.clearApiKey }
+      );
+      plannedTaskKey = credentialVault.planCredentialUpdate(
+        typeof currentCredentials.taskKey === 'string' ? currentCredentials.taskKey : '',
+        { value: nextSettings.taskKey, clear: nextSettings.clearTaskKey }
+      );
+      proxySealed = nextSettings.proxyUrl ? credentialVault.seal(nextSettings.proxyUrl) : '';
+    } catch {
+      logger.warn('settings', 'settings could not be encrypted', { reason: 'encryption-unavailable' });
+      return { success: false, error: 'Settings could not be encrypted on this system' };
+    }
+    const storedSettings = store.get('settings', null);
+    const settingsRecord = (storedSettings && typeof storedSettings === 'object' && !Array.isArray(storedSettings))
+      ? { ...storedSettings }
+      : {};
+    if (plannedApiKey.action !== 'keep') delete settingsRecord.apiKey;
+    if (plannedTaskKey.action !== 'keep') delete settingsRecord.taskKey;
+    settingsRecord.proxyUrl = proxySealed;
     persistProviderCredentials(store, activeProviderId, {
-      apiKey: nextSettings.apiKey,
-      taskKey: nextSettings.taskKey
+      apiKey: plannedApiKey.next,
+      taskKey: plannedTaskKey.next
     });
-    providerManager.setCredentials(activeProviderId, {
-      apiKey: nextSettings.apiKey,
-      taskKey: nextSettings.taskKey
-    });
+    store.set('settings', settingsRecord);
+    const memoryCredentials = {};
+    if (plannedApiKey.action === 'set') memoryCredentials.apiKey = plannedApiKey.plaintext;
+    else if (plannedApiKey.action === 'clear') memoryCredentials.apiKey = '';
+    if (plannedTaskKey.action === 'set') memoryCredentials.taskKey = plannedTaskKey.plaintext;
+    else if (plannedTaskKey.action === 'clear') memoryCredentials.taskKey = '';
+    if (Object.keys(memoryCredentials).length > 0) {
+      providerManager.setCredentials(activeProviderId, memoryCredentials);
+    }
     logger.info('settings', 'settings saved', {
       hasApiKey: !!nextSettings.apiKey,
       hasTaskKey: !!nextSettings.taskKey,
@@ -467,15 +574,19 @@ function registerIpcHandlers() {
       activeProviderId = null;
     }
     const credentials = activeProviderId ? loadProviderCredentials(store, activeProviderId) : null;
-    return {
-      apiKey: credentials && typeof credentials.apiKey === 'string'
-        ? credentials.apiKey
-        : (typeof base.apiKey === 'string' ? base.apiKey : ''),
-      taskKey: credentials && typeof credentials.taskKey === 'string'
-        ? credentials.taskKey
-        : (typeof base.taskKey === 'string' ? base.taskKey : ''),
-      proxyUrl: typeof base.proxyUrl === 'string' ? base.proxyUrl : ''
-    };
+    const storedApiKey = credentials && typeof credentials.apiKey === 'string' ? credentials.apiKey : '';
+    const storedTaskKey = credentials && typeof credentials.taskKey === 'string' ? credentials.taskKey : '';
+    const legacyApiKey = typeof base.apiKey === 'string' ? base.apiKey : '';
+    const legacyTaskKey = typeof base.taskKey === 'string' ? base.taskKey : '';
+    const hasApiKey = canRevealCredential(storedApiKey) || canRevealCredential(legacyApiKey);
+    const hasTaskKey = canRevealCredential(storedTaskKey) || canRevealCredential(legacyTaskKey);
+    let proxyUrl = '';
+    try {
+      proxyUrl = credentialVault.reveal(typeof base.proxyUrl === 'string' ? base.proxyUrl : '');
+    } catch {
+      logger.warn('proxy', 'stored proxy could not be decrypted');
+    }
+    return { hasApiKey, hasTaskKey, proxyUrl };
   });
 
   // 采集结果管理
@@ -557,9 +668,13 @@ app.whenReady().then(() => {
     try {
       const Store = require('electron-store');
       const stored = new Store().get('settings', {});
-      storedProxyUrl = (stored && typeof stored.proxyUrl === 'string') ? stored.proxyUrl : '';
+      const rawProxyUrl = (stored && typeof stored.proxyUrl === 'string') ? stored.proxyUrl : '';
+      if (rawProxyUrl) {
+        storedProxyUrl = credentialVault.reveal(rawProxyUrl);
+      }
     } catch {
       storedProxyUrl = '';
+      logger.warn('proxy', 'stored proxy could not be decrypted');
     }
     applyProxyConfiguration(storedProxyUrl);
   }).catch((err) => {

@@ -120,13 +120,12 @@ function clearCurrentResultPresentation() {
 
 document.getElementById('btn-start-collect').addEventListener('click', safeAsync(async () => {
     const settings = await window.appAPI.settings.load();
-    const apiKey = settings.apiKey;
     const keywords = document.getElementById('collect-keywords').value.trim();
     const region = document.getElementById('collect-region').value.trim();
     const lang = document.getElementById('collect-lang').value;
     const maxResults = parseInt(document.getElementById('collect-max').value) || 20;
 
-    if (!apiKey) {
+    if (!settings.hasApiKey) {
       showStatus('请先在「设置」中配置 API Key', true);
       return;
     }
@@ -548,7 +547,7 @@ let historyLoadSeq = 0;
 async function loadHistory(page = 1) {
   try {
     const settings = await window.appAPI.settings.load();
-    if (!settings.apiKey) return;
+    if (!settings.hasApiKey) return;
 
     const targetPage = page < 1 ? 1 : page;
     const seq = ++historyLoadSeq;
@@ -593,7 +592,7 @@ async function loadHistory(page = 1) {
 
 window.viewRunResult = safeAsync(async (slug) => {
     const settings = await window.appAPI.settings.load();
-    if (!settings.apiKey) return;
+    if (!settings.hasApiKey) return;
 
     const seq = claimResultView('history');
 
@@ -629,9 +628,16 @@ safeAsync(loadSettings)();
 async function loadSettings() {
   try {
     const settings = await window.appAPI.settings.load();
-    if (settings.apiKey) document.getElementById('settings-apikey').value = settings.apiKey;
-    if (settings.taskKey) document.getElementById('settings-task-key').value = settings.taskKey;
-    if (settings.proxyUrl) document.getElementById('settings-proxy-url').value = settings.proxyUrl;
+    const apiInput = document.getElementById('settings-apikey');
+    const taskInput = document.getElementById('settings-task-key');
+    const proxyInput = document.getElementById('settings-proxy-url');
+    apiInput.value = '';
+    apiInput.placeholder = settings.hasApiKey ? '已保存（留空保持不变）' : 'Enter API key';
+    taskInput.value = '';
+    taskInput.placeholder = settings.hasTaskKey ? '已保存（留空保持不变）' : '如: 01KWA7xxxx';
+    document.getElementById('btn-clear-apikey').disabled = !settings.hasApiKey;
+    document.getElementById('btn-clear-taskkey').disabled = !settings.hasTaskKey;
+    proxyInput.value = settings.proxyUrl || '';
   } catch (err) {
     const msg = err?.message || String(err);
     toast(msg, 'error');
@@ -665,6 +671,7 @@ document.getElementById('btn-save-settings').addEventListener('click', safeAsync
     }
     const feedback = settingsSaveFeedback(result);
     toast(feedback.message, feedback.type);
+    if (result && result.success === true) loadSettings();
   }));
 
 document.getElementById('btn-detect-proxy').addEventListener('click', safeAsync(async () => {
@@ -703,7 +710,16 @@ document.getElementById('btn-export-logs').addEventListener('click', safeAsync(a
 
 document.getElementById('btn-test-apikey').addEventListener('click', safeAsync(async () => {
     const apiKey = document.getElementById('settings-apikey').value.trim();
-    if (!apiKey) { toast('请输入 API Key', 'error'); return; }
+    if (!apiKey) {
+      toast('正在测试已保存的 API Key...', 'info');
+      const stored = await window.appAPI.provider.testConnection(undefined, undefined, undefined, true);
+      if (stored && stored.success && stored.apiKeyValid) {
+        toast('API Key 连接成功', 'success');
+      } else {
+        toast((stored && stored.error) || 'API Key 连接失败', 'error');
+      }
+      return;
+    }
     toast('正在测试 API Key...', 'info');
     const result = await window.appAPI.provider.testConnection(apiKey, '');
     if (result.success && result.apiKeyValid) {
@@ -716,6 +732,16 @@ document.getElementById('btn-test-apikey').addEventListener('click', safeAsync(a
 document.getElementById('btn-test-taskkey').addEventListener('click', safeAsync(async () => {
     const apiKey = document.getElementById('settings-apikey').value.trim();
     const taskKey = document.getElementById('settings-task-key').value.trim();
+    if (!apiKey && !taskKey) {
+      toast('正在测试已保存的任务流 Key...', 'info');
+      const stored = await window.appAPI.provider.testConnection(undefined, undefined, undefined, true);
+      if (stored && stored.success && stored.taskKeyValid) {
+        toast('任务流 Key 验证成功', 'success');
+      } else {
+        toast((stored && stored.error) || '任务流 Key 验证失败', 'error');
+      }
+      return;
+    }
     if (!apiKey) { toast('请先填写 API Key', 'error'); return; }
     if (!taskKey) { toast('请输入任务流 Key', 'error'); return; }
     toast('正在测试任务流 Key...', 'info');
@@ -725,6 +751,46 @@ document.getElementById('btn-test-taskkey').addEventListener('click', safeAsync(
     } else {
       toast('任务流 Key 验证失败', 'error');
     }
+  }));
+
+document.getElementById('btn-clear-apikey').addEventListener('click', safeAsync(async () => {
+    const settings = {
+      apiKey: '',
+      taskKey: document.getElementById('settings-task-key').value.trim(),
+      proxyUrl: document.getElementById('settings-proxy-url').value.trim(),
+      clearApiKey: true
+    };
+    let result = null;
+    try {
+      result = await window.appAPI.settings.save(settings);
+    } catch {
+      const feedback = settingsSaveFeedback(null);
+      toast(feedback.message, feedback.type);
+      return;
+    }
+    const feedback = settingsSaveFeedback(result);
+    toast(feedback.message, feedback.type);
+    if (result && result.success === true) loadSettings();
+  }));
+
+document.getElementById('btn-clear-taskkey').addEventListener('click', safeAsync(async () => {
+    const settings = {
+      apiKey: document.getElementById('settings-apikey').value.trim(),
+      taskKey: '',
+      proxyUrl: document.getElementById('settings-proxy-url').value.trim(),
+      clearTaskKey: true
+    };
+    let result = null;
+    try {
+      result = await window.appAPI.settings.save(settings);
+    } catch {
+      const feedback = settingsSaveFeedback(null);
+      toast(feedback.message, feedback.type);
+      return;
+    }
+    const feedback = settingsSaveFeedback(result);
+    toast(feedback.message, feedback.type);
+    if (result && result.success === true) loadSettings();
   }));
 
 // === 保存采集结果到号码库 ===

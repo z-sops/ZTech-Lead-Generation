@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('appAPI', {
   provider: {
-    testConnection: (apiKey, taskKey, providerId) => ipcRenderer.invoke('provider:test-connection', { providerId, apiKey, taskKey })
+    testConnection: (apiKey, taskKey, providerId, useStored) => ipcRenderer.invoke('provider:test-connection', { providerId, apiKey, taskKey, useStored })
   },
 
   collection: {
