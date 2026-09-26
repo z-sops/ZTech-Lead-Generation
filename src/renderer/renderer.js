@@ -893,7 +893,13 @@ function numbersQueryPayload() {
   const search = document.getElementById('number-search').value.trim();
   if (search) query.search = search;
   const filterStatus = document.getElementById('number-filter-status').value;
-  if (filterStatus !== 'all') query.filters = { status: filterStatus };
+  // B6.4.2: qualification is merged into the same filters object; assigning
+  // query.filters twice would silently drop the other filter.
+  const filters = {};
+  if (filterStatus !== 'all') filters.status = filterStatus;
+  const filterQualification = document.getElementById('number-filter-qualification').value;
+  if (filterQualification !== 'all') filters.qualification = filterQualification;
+  if (Object.keys(filters).length) query.filters = filters;
   if (numbersSort) {
     query.sort = numbersSort;
     query.order = numbersOrder;
@@ -955,6 +961,12 @@ document.getElementById('number-search').addEventListener('input', safeAsync(() 
   numbersSearchTimer = setTimeout(() => { renderNumbers(); }, NUMBERS_SEARCH_DEBOUNCE_MS);
 }));
 document.getElementById('number-filter-status').addEventListener('change', safeAsync(() => { renderNumbers(); }));
+// B6.4.2: a qualification change can empty the current page, so the list
+// returns to page one before re-querying through the existing flow.
+document.getElementById('number-filter-qualification').addEventListener('change', safeAsync(() => {
+  numbersPage = 1;
+  renderNumbers();
+}));
 
 document.querySelector('#view-numbers .data-table thead').addEventListener('click', safeAsync((e) => {
   const th = e.target.closest('th');

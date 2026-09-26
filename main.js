@@ -261,7 +261,7 @@ function validateNumbersQuery(payload) {
   if (p.filters !== undefined && p.filters !== null) {
     assertPlainObject(p.filters, 'filters');
     const filters = {};
-    for (const key of ['status', 'source', 'keyword']) {
+    for (const key of ['status', 'source', 'keyword', 'qualification']) {
       const value = p.filters[key];
       if (value === undefined || value === null) continue;
       assertOptionalString(value, `filters.${key}`, MAX_KEY_LENGTH);

@@ -1011,6 +1011,239 @@ function test(name, fn) {
     assert.ok(!migrateFn.includes('repairLeadUserFields'), 'migrateSchema semantics unchanged');
   });
 
+  // === B6.4.2 qualification filter plumbing ===
+  // The filter rides the existing B2 query path: one allowlist token in the
+  // store, one in the main-process validator, one select in the Lead Library
+  // and a merged filters object in the renderer. No new IPC channel and no
+  // query-time NULL special case (B6.4.1's startup repair is canonical).
+
+  function loadNumbersQueryValidator() {
+    // Two contiguous production slices: the shared guards (invalidParams,
+    // assertPlainObject, assertOptionalString) and the query validator with
+    // its paging/sort helpers. Nothing is re-implemented here.
+    const head = between(mainSource, 'const MAX_KEY_LENGTH = 500;', 'function validateNumbersPayload(');
+    const tail = between(mainSource, 'function validateHistoryPaging(', '// === B4 local collection-job ledger hooks ===');
+    const factory = new Function('logger', head + '\n' + tail + '\nreturn validateNumbersQuery;');
+    return factory({ warn() {}, info() {}, error() {}, ok() {} });
+  }
+
+  const validateNumbersQuery = loadNumbersQueryValidator();
+
+  async function seedQualificationDataset(store) {
+    await store.addNumbers([
+      { id: 'q-a', phone: '+66180000001', source: 'src', keyword: 'cafe', status: 'pending', collectedAt: '2026-06-01T00:00:00.000Z', title: 'Cafe A' },
+      { id: 'q-b', phone: '+66180000002', source: 'src', keyword: 'spa', status: 'pending', collectedAt: '2026-06-02T00:00:00.000Z', title: 'Spa B' },
+      { id: 'q-c', phone: '+66180000003', source: 'other', keyword: 'cafe', status: 'pending', collectedAt: '2026-06-03T00:00:00.000Z', title: 'Cafe C' }
+    ]);
+    await store.setLeadUserFields({ id: 'q-b', qualification: 'qualified', tags: [], notes: '' });
+  }
+
+  const idsOf = (result) => result.rows.map(r => r.id).sort();
+
+  test('42. main-process validation accepts qualification and keeps rejecting junk', () => {
+    const out = validateNumbersQuery({ limit: 20, offset: 0, filters: { qualification: 'qualified' } });
+    assert.deepStrictEqual(out.filters, { qualification: 'qualified' }, 'qualification is forwarded');
+    const both = validateNumbersQuery({
+      limit: 20, offset: 0, filters: { status: 'pending', qualification: 'unqualified' }
+    });
+    assert.deepStrictEqual(both.filters, { status: 'pending', qualification: 'unqualified' },
+      'status and qualification coexist in one filters object');
+    const none = validateNumbersQuery({ limit: 20, offset: 0, filters: {} });
+    assert.deepStrictEqual(none.filters, {}, 'an empty filter object stays empty');
+    // Unknown keys are still dropped, non-string values still refused.
+    assert.deepStrictEqual(
+      validateNumbersQuery({ limit: 20, offset: 0, filters: { bogus: 'x' } }).filters, {},
+      'unknown filter keys are ignored as before'
+    );
+    for (const bad of [42, true, {}, ['qualified']]) {
+      let err = null;
+      try {
+        validateNumbersQuery({ limit: 20, offset: 0, filters: { qualification: bad } });
+      } catch (e) {
+        err = e;
+      }
+      assert.ok(err && err.invalidParams, 'non-string qualification refused: ' + JSON.stringify(bad));
+    }
+    let notObject = null;
+    try {
+      validateNumbersQuery({ limit: 20, offset: 0, filters: 'nope' });
+    } catch (e) {
+      notObject = e;
+    }
+    assert.ok(notObject && notObject.invalidParams, 'non-object filters still refused');
+  });
+
+  test('43. SQL storage filters qualification exactly', async () => {
+    fs.rmSync(dbPath, { force: true });
+    const store = await openStore();
+    await seedQualificationDataset(store);
+    const all = await store.queryNumbers({ limit: 20, offset: 0 });
+    assert.strictEqual(all.total, 3, 'no filter returns every lead');
+    assert.deepStrictEqual(idsOf(all), ['q-a', 'q-b', 'q-c']);
+    const unqualified = await store.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'unqualified' } });
+    assert.deepStrictEqual(idsOf(unqualified), ['q-a', 'q-c'], 'unqualified returns only unqualified leads');
+    assert.strictEqual(unqualified.total, 2);
+    const qualified = await store.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'qualified' } });
+    assert.deepStrictEqual(idsOf(qualified), ['q-b'], 'qualified returns only qualified leads');
+    assert.strictEqual(qualified.total, 1);
+    const unknown = await store.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'scored' } });
+    assert.deepStrictEqual(idsOf(unknown), [], 'an out-of-vocabulary value matches nothing');
+  });
+
+  test('44. JSON fallback storage filters qualification identically', async () => {
+    const store = await openJsonStore();
+    await seedQualificationDataset(store);
+    assert.strictEqual((await store.queryNumbers({ limit: 20, offset: 0 })).total, 3);
+    assert.deepStrictEqual(
+      idsOf(await store.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'unqualified' } })),
+      ['q-a', 'q-c'], 'JSON unqualified');
+    assert.deepStrictEqual(
+      idsOf(await store.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'qualified' } })),
+      ['q-b'], 'JSON qualified');
+    assert.deepStrictEqual(
+      idsOf(await store.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'scored' } })),
+      [], 'JSON out-of-vocabulary value');
+  });
+
+  test('45. SQL and JSON produce equivalent qualification filter results', async () => {
+    fs.rmSync(dbPath, { force: true });
+    const sqlStore = await openStore();
+    const jsonStore = await openJsonStore();
+    await seedQualificationDataset(sqlStore);
+    await seedQualificationDataset(jsonStore);
+    for (const query of [
+      { limit: 20, offset: 0 },
+      { limit: 20, offset: 0, filters: { qualification: 'unqualified' } },
+      { limit: 20, offset: 0, filters: { qualification: 'qualified' } },
+      { limit: 1, offset: 1, filters: { qualification: 'unqualified' } }
+    ]) {
+      const sql = await sqlStore.queryNumbers(query);
+      const json = await jsonStore.queryNumbers(query);
+      assert.strictEqual(json.total, sql.total, 'parity total for ' + JSON.stringify(query));
+      assert.deepStrictEqual(idsOf(json), idsOf(sql), 'parity rows for ' + JSON.stringify(query));
+    }
+  });
+
+  test('46. qualification combines with search, sort and the other filters', async () => {
+    fs.rmSync(dbPath, { force: true });
+    const store = await openStore();
+    await seedQualificationDataset(store);
+    const withSearch = await store.queryNumbers({
+      limit: 20, offset: 0, search: 'cafe', filters: { qualification: 'unqualified' }
+    });
+    assert.deepStrictEqual(idsOf(withSearch), ['q-a', 'q-c'], 'search AND qualification');
+    const withStatus = await store.queryNumbers({
+      limit: 20, offset: 0, filters: { status: 'pending', qualification: 'qualified' }
+    });
+    assert.deepStrictEqual(idsOf(withStatus), ['q-b'], 'status AND qualification');
+    const withSource = await store.queryNumbers({
+      limit: 20, offset: 0, filters: { source: 'other', qualification: 'unqualified' }
+    });
+    assert.deepStrictEqual(idsOf(withSource), ['q-c'], 'source AND qualification');
+    const withKeyword = await store.queryNumbers({
+      limit: 20, offset: 0, filters: { keyword: 'cafe', qualification: 'qualified' }
+    });
+    assert.deepStrictEqual(idsOf(withKeyword), [], 'keyword AND qualification both apply (no match)');
+    const withMatchingKeyword = await store.queryNumbers({
+      limit: 20, offset: 0, filters: { keyword: 'spa', qualification: 'qualified' }
+    });
+    assert.deepStrictEqual(idsOf(withMatchingKeyword), ['q-b'], 'keyword AND qualification combine');
+    const sorted = await store.queryNumbers({
+      limit: 20, offset: 0, filters: { qualification: 'unqualified' }, sort: 'title', order: 'asc'
+    });
+    assert.deepStrictEqual(idsOf(sorted), ['q-a', 'q-c'], 'sort still applies with a filter');
+    const paged = await store.queryNumbers({
+      limit: 1, offset: 1, filters: { qualification: 'unqualified' }
+    });
+    assert.strictEqual(paged.total, 2, 'total ignores paging');
+    assert.strictEqual(paged.rows.length, 1, 'paging applies inside the filtered set');
+    const contradicted = await store.queryNumbers({
+      limit: 20, offset: 0, search: 'spa', filters: { qualification: 'unqualified' }
+    });
+    assert.strictEqual(contradicted.total, 0, 'contradicting filters return nothing');
+  });
+
+  test('47. the query layer keeps its read-only guarantees and gained no NULL special case', () => {
+    const queryBlock = storeSource.slice(
+      storeSource.indexOf('// B2 query layer: server-side search'),
+      storeSource.indexOf('async addNumbers(')
+    );
+    assert.ok(storeSource.includes("const QUERY_FILTER_FIELDS = ['status', 'source', 'keyword', 'qualification'];"),
+      'the store allowlist gained exactly one field');
+    assert.ok(!queryBlock.includes('saveDB('), 'query path still never persists');
+    assert.ok(!queryBlock.includes('logger.'), 'query path still logs nothing');
+    assert.ok(!queryBlock.includes('IS NULL'), 'no query-time NULL condition was introduced');
+    assert.ok(!queryBlock.includes('UPDATE numbers'), 'the query path still updates nothing');
+    const sqlBranch = storeSource.slice(
+      storeSource.indexOf('for (const field of QUERY_FILTER_FIELDS) {', storeSource.indexOf('_queryNumbersSql')),
+      storeSource.indexOf('const whereSql', storeSource.indexOf('_queryNumbersSql'))
+    );
+    assert.ok(sqlBranch.includes('where.push(`${field} = ?`)'), 'the generic SQL predicate loop is reused');
+    const jsonBranch = storeSource.slice(
+      storeSource.indexOf('for (const field of QUERY_FILTER_FIELDS) {', storeSource.indexOf('_queryNumbersJson')),
+      storeSource.indexOf('const total = matched.length;', storeSource.indexOf('_queryNumbersJson'))
+    );
+    assert.ok(jsonBranch.includes('row[field] !== value'), 'the generic JSON predicate loop is reused');
+  });
+
+  test('48. the Lead Library filter UI is wired through the existing query flow', () => {
+    assert.ok(htmlSource.includes('id="number-filter-qualification"'), 'qualification select exists');
+    const select = between(htmlSource, '<select id="number-filter-qualification">', '</select>');
+    const options = [...select.matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)].map(m => [m[1], m[2]]);
+    assert.deepStrictEqual(options, [['all', 'All'], ['unqualified', 'Unqualified'], ['qualified', 'Qualified']],
+      'exactly the three approved options with English labels');
+    assert.ok(htmlSource.includes('<label>Qualification</label>'), 'English label');
+    assert.ok(/id="number-filter-qualification"/.test(htmlSource) && htmlSource.includes('class="form-item"'),
+      'reuses the existing form-item markup');
+    const payload = between(rendererSource, 'function numbersQueryPayload()', 'function updateNumbersSortHeaders()');
+    assert.ok(payload.includes('const filters = {};'), 'a single filters object is built');
+    assert.ok(payload.includes("filters.status = filterStatus"), 'status filter preserved');
+    assert.ok(payload.includes("filters.qualification = filterQualification"), 'qualification merged in');
+    assert.strictEqual(payload.split('query.filters =').length - 1, 1,
+      'query.filters is assigned exactly once');
+    assert.ok(payload.includes("if (Object.keys(filters).length) query.filters = filters;"),
+      'an all/all selection sends no filters at all');
+    const listener = between(rendererSource,
+      "getElementById('number-filter-qualification').addEventListener",
+      "document.querySelector('#view-numbers .data-table thead')");
+    assert.ok(listener.includes('numbersPage = 1;'), 'page resets to 1 on change');
+    assert.ok(listener.includes('renderNumbers();'), 'reloads through the existing flow');
+    assert.ok(listener.includes('safeAsync('), 'the new listener is guarded');
+    const statusListener = between(rendererSource,
+      "getElementById('number-filter-status').addEventListener",
+      "getElementById('number-filter-qualification').addEventListener");
+    assert.ok(!statusListener.includes('numbersPage'), 'existing status-filter behaviour untouched');
+  });
+
+  test('49. B6.4.2 adds no channel, table column, tag filter, metric or export change', () => {
+    assert.strictEqual(mainChannels().length, 19, 'still exactly 19 IPC channels');
+    assert.ok(!mainSource.includes('ipcMain.handle(\'collector:filter'), 'no filter-specific channel');
+    const table = between(htmlSource, 'id="view-numbers"', 'id="view-dashboard"');
+    for (const column of ['<th>Qualification</th>', '<th>Tags</th>', '<th>Notes</th>']) {
+      assert.ok(!table.includes(column), 'no B6 column in the Lead Library table: ' + column);
+    }
+    assert.ok(!rendererSource.includes('number-filter-tag'), 'no tag filtering UI');
+    assert.ok(!/tags:\s*row\.tags|filters\.tags|tagFilter/.test(rendererSource), 'no tag filter logic');
+    const exportFn = between(storeSource, 'async exportNumbers(', '// === B4 local collection-job ledger ===');
+    assert.ok(exportFn.includes('run_slug,qualification,tags,notes'),
+      'the export is still the B6.4.1 13-column form, untouched by this batch');
+    assert.ok(!exportFn.includes('QUERY_FILTER_FIELDS'), 'export does not consult the filter allowlist');
+    const dash = between(rendererSource, '// === B5 Lead Library Dashboard ===', '// === 视图切换时加载数据 ===');
+    assert.ok(!/qualification|qualified/.test(dash), 'no dashboard qualification metric');
+    assert.ok(!mainSource.includes('providerId.*qualification'), 'no provider coupling');
+  });
+
+  test('50. repaired legacy NULL rows filter as unqualified, without a query-time rule', async () => {
+    fs.rmSync(dbPath, { force: true });
+    await seedMigratedDbWithNullB6();
+    const store = await openStore();
+    const unqualified = await store.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'unqualified' } });
+    assert.deepStrictEqual(idsOf(unqualified), ['null-b6'],
+      'the repaired row is matched by the plain equality predicate');
+    const qualified = await store.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'qualified' } });
+    assert.strictEqual(qualified.total, 0, 'it is not reported as qualified');
+  });
+
   for (const [name, fn] of tests) {
     try {
       await fn();

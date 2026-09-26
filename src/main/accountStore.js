@@ -164,7 +164,7 @@ const JOB_TEXT_FIELDS = ['runSlug', 'providerId', 'query', 'startedAt', 'complet
 // exact-match only; sort identifiers reach SQL exclusively through the
 // QUERY_SORT_COLUMNS values, which are compile-time literals.
 const QUERY_SEARCH_FIELDS = ['phone', 'title', 'website', 'email', 'address', 'source', 'keyword'];
-const QUERY_FILTER_FIELDS = ['status', 'source', 'keyword'];
+const QUERY_FILTER_FIELDS = ['status', 'source', 'keyword', 'qualification'];
 const QUERY_SORT_COLUMNS = {
   collectedAt: 'collectedAt',
   title: 'title',
