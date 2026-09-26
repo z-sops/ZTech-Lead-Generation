@@ -231,6 +231,72 @@ function validateNumbersQuery(payload) {
   return out;
 }
 
+// === B4 local collection-job ledger hooks ===
+// Every ledger call is best-effort: the provider-side operation has already
+// succeeded when these run, so a ledger persistence failure must never
+// change the collection IPC result (it is logged and swallowed instead —
+// a reported failure for an accepted run would invite duplicate submits).
+
+// Mirrors the poll-side terminal mapping in the renderer: only the states
+// evidenced by the repository are recognised; anything else is non-terminal
+// and the ledger stays untouched.
+function normalizeJobStatus(rawState) {
+  if (rawState === 'succeeded' || rawState === 'completed' || rawState === 'success') return 'succeeded';
+  if (rawState === 'failed' || rawState === 'error') return 'failed';
+  return null;
+}
+
+async function recordJobSubmitted(providerId, shaped, submitResult) {
+  try {
+    if (!submitResult || submitResult.success !== true) return;
+    const runSlug = submitResult.data && submitResult.data.run_slug;
+    if (typeof runSlug !== 'string') return;
+    await accountStore.insertJob({
+      runSlug,
+      providerId,
+      query: Array.isArray(shaped.keywords) ? shaped.keywords.join(', ') : '',
+      startedAt: new Date().toISOString(),
+      completedAt: '',
+      status: 'running',
+      resultCount: null,
+      error: ''
+    });
+  } catch (err) {
+    logger.error('job', 'job ledger write failed', { error: err.message });
+  }
+}
+
+async function recordJobState(providerId, jobId, stateResult) {
+  try {
+    if (!stateResult || stateResult.success !== true) return;
+    const data = stateResult.data && typeof stateResult.data === 'object' ? stateResult.data : {};
+    const rawState = data.status !== undefined && data.status !== null ? data.status : data.state;
+    const canonical = normalizeJobStatus(rawState);
+    if (!canonical) return;
+    const errorText = canonical === 'failed' && typeof data.error === 'string' ? data.error : '';
+    await accountStore.updateJobState(providerId, jobId, canonical, errorText);
+  } catch (err) {
+    logger.error('job', 'job ledger state update failed', { error: err.message });
+  }
+}
+
+async function recordJobResultCount(providerId, jobId, options, result) {
+  try {
+    if (!result || result.success !== true) return;
+    const list = result.data && Array.isArray(result.data.list) ? result.data.list : null;
+    if (!list) return;
+    const limit = options && Number.isInteger(options.limit) ? options.limit : 100;
+    const offset = options && Number.isInteger(options.offset) ? options.offset : 0;
+    // Final-page rule: only a short page proves the run's result set ends
+    // here. Full pages (including duplicate-page terminations) are not
+    // reliable counts and leave resultCount NULL rather than guessing.
+    if (list.length >= limit) return;
+    await accountStore.setJobResultCount(providerId, jobId, offset + list.length);
+  } catch (err) {
+    logger.error('job', 'job ledger result count failed', { error: err.message });
+  }
+}
+
 function createMainWindow() {
   Menu.setApplicationMenu(null);
 
@@ -407,7 +473,9 @@ function registerIpcHandlers() {
     try {
       const shaped = validateSubmitShape(params);
       const adapter = providerManager.resolveCollectionProvider(providerId);
-      return await adapter.submitCollection(shaped);
+      const result = await adapter.submitCollection(shaped);
+      await recordJobSubmitted(adapter.providerId, shaped, result);
+      return result;
     } catch (err) {
       if (err.invalidParams) return rejectEnvelope(channel, err.message);
       logger.error('ipc', `${channel} failed`, { error: err.message });
@@ -418,7 +486,9 @@ function registerIpcHandlers() {
   async function handleGetJobState(channel, providerId, jobId) {
     try {
       const adapter = providerManager.resolveCollectionProvider(providerId);
-      return await adapter.getJobState(jobId);
+      const result = await adapter.getJobState(jobId);
+      await recordJobState(adapter.providerId, jobId, result);
+      return result;
     } catch (err) {
       if (err.invalidParams) return rejectEnvelope(channel, err.message);
       logger.error('ipc', `${channel} failed`, { error: err.message });
@@ -439,7 +509,9 @@ function registerIpcHandlers() {
         }
       }
       const adapter = providerManager.resolveCollectionProvider(providerId);
-      return await adapter.getJobResults(jobId, options);
+      const result = await adapter.getJobResults(jobId, options);
+      await recordJobResultCount(adapter.providerId, jobId, options, result);
+      return result;
     } catch (err) {
       if (err.invalidParams) return rejectEnvelope(channel, err.message);
       logger.error('ipc', `${channel} failed`, { error: err.message });

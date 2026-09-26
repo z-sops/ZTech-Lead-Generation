@@ -230,8 +230,14 @@ function test(name, fn) {
       'JSON write call sites unchanged'
     );
     assert.strictEqual(storeSource.split('new Set(ids)').length - 1, 2, 'delete Set usage unchanged');
-    assert.strictEqual(storeSource.split('CREATE INDEX').length - 1, 2, 'no new indexes introduced');
-    assert.strictEqual(storeSource.split('CREATE TABLE').length - 1, 1, 'no new tables introduced');
+    // B4 justification: the local job ledger intentionally introduces the
+    // jobs CREATE TABLE plus its two CREATE INDEX statements
+    // (idx_jobs_startedAt and idx_jobs_provider_run backing the
+    // UNIQUE(providerId, runSlug) upsert key), so the exact counts rise
+    // 2 -> 4 (CREATE INDEX) and 1 -> 2 (CREATE TABLE). Kept as exact
+    // equality (never >=) so any further DDL must still be declared here.
+    assert.strictEqual(storeSource.split('CREATE INDEX').length - 1, 4, 'B4 adds exactly two job indexes');
+    assert.strictEqual(storeSource.split('CREATE TABLE').length - 1, 2, 'B4 adds exactly one job table');
   });
 
   const detailStart = rendererSource.indexOf('// === Lead Detail overlay (B3) ===');

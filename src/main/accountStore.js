@@ -24,6 +24,22 @@ const LEAD_NEW_FIELDS = ['title', 'website', 'email', 'address', 'runSlug'];
 // (renderer.js: source: '手动导入'). Used to map legacy `source` values.
 const LEGACY_IMPORT_SOURCE = '手动导入';
 
+// B4 local collection-job ledger. Status vocabulary is limited to the three
+// states evidenced by the repository's polling/history behaviour; no other
+// lifecycle state exists (there is no cancel/partial/retry API anywhere).
+const JOB_STATUS_VALUES = ['running', 'succeeded', 'failed'];
+// Provider run-identifier shape (RFC 3986 unreserved characters, max 200) —
+// the same format the collection adapter validates, re-checked here so the
+// store never persists unvalidated provider-supplied text.
+const JOB_RUN_SLUG_PATTERN = /^[A-Za-z0-9._~-]{1,200}$/;
+// ISO-8601 shape gate for startedAt/completedAt (plus Date.parse sanity).
+const JOB_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+const MAX_JOB_PROVIDER_ID_LENGTH = 100;
+const MAX_JOB_QUERY_LENGTH = 20000;
+const MAX_JOB_ERROR_LENGTH = 500;
+const MAX_JOB_TIME_LENGTH = 100;
+const JOB_TEXT_FIELDS = ['runSlug', 'providerId', 'query', 'startedAt', 'completedAt', 'status', 'error'];
+
 // B2 query layer. Free-text search covers the human-meaningful lead fields
 // (runSlug is an opaque run identifier and is not searched); filters are
 // exact-match only; sort identifiers reach SQL exclusively through the
@@ -169,6 +185,74 @@ function writeJsonAtomic(filePath, contents) {
   }
 }
 
+// B4 ledger: validate and normalise one job record. Returns { ok: false,
+// error } or { ok: true, row } with a freshly generated local id. The input
+// is constructed in the main process from already-validated data, but every
+// field is re-checked here so malformed input can never reach either storage.
+function validateJobRecord(job) {
+  if (!job || typeof job !== 'object' || Array.isArray(job)) {
+    return { ok: false, error: 'Invalid job (object required)' };
+  }
+  if (typeof job.runSlug !== 'string' || !JOB_RUN_SLUG_PATTERN.test(job.runSlug)) {
+    return { ok: false, error: 'Invalid job: runSlug' };
+  }
+  if (typeof job.providerId !== 'string' || job.providerId.length < 1 ||
+      job.providerId.length > MAX_JOB_PROVIDER_ID_LENGTH) {
+    return { ok: false, error: 'Invalid job: providerId' };
+  }
+  const query = job.query === undefined || job.query === null ? '' : job.query;
+  if (typeof query !== 'string' || query.length > MAX_JOB_QUERY_LENGTH) {
+    return { ok: false, error: 'Invalid job: query' };
+  }
+  if (typeof job.startedAt !== 'string' || !job.startedAt ||
+      job.startedAt.length > MAX_JOB_TIME_LENGTH ||
+      !JOB_TIME_PATTERN.test(job.startedAt) || Number.isNaN(Date.parse(job.startedAt))) {
+    return { ok: false, error: 'Invalid job: startedAt' };
+  }
+  const completedAt = job.completedAt === undefined || job.completedAt === null ? '' : job.completedAt;
+  if (completedAt !== '' && (typeof completedAt !== 'string' ||
+      completedAt.length > MAX_JOB_TIME_LENGTH ||
+      !JOB_TIME_PATTERN.test(completedAt) || Number.isNaN(Date.parse(completedAt)))) {
+    return { ok: false, error: 'Invalid job: completedAt' };
+  }
+  if (!JOB_STATUS_VALUES.includes(job.status)) {
+    return { ok: false, error: 'Invalid job: status' };
+  }
+  const resultCount = job.resultCount === undefined || job.resultCount === null ? null : job.resultCount;
+  if (resultCount !== null && (!Number.isInteger(resultCount) || resultCount < 0)) {
+    return { ok: false, error: 'Invalid job: resultCount' };
+  }
+  const error = typeof job.error === 'string' ? job.error.slice(0, MAX_JOB_ERROR_LENGTH) : '';
+  return {
+    ok: true,
+    row: {
+      id: randomUUID(),
+      runSlug: job.runSlug,
+      providerId: job.providerId,
+      query,
+      startedAt: job.startedAt,
+      completedAt,
+      status: job.status,
+      resultCount,
+      error
+    }
+  };
+}
+
+// Map a positional SELECT row of the jobs table to an object with the fixed
+// B4 field set; text columns normalise NULL to '' (mirrors rowToObject's B1
+// handling) while resultCount keeps null as the explicit "unknown" value.
+function jobRowToObject(columns, values) {
+  const out = {};
+  for (let i = 0; i < columns.length; i++) out[columns[i]] = values[i];
+  if (out.id === undefined || out.id === null) out.id = '';
+  for (const field of JOB_TEXT_FIELDS) {
+    if (out[field] === undefined || out[field] === null) out[field] = '';
+  }
+  if (out.resultCount === undefined) out.resultCount = null;
+  return out;
+}
+
 let initSQL;
 try {
   initSQL = require('sql.js');
@@ -184,6 +268,7 @@ class AccountStore {
     this.dbPath = path.join(DATA_DIR, 'whatsapp.db');
     this.db = null;
     this._numbers = [];
+    this._jobs = [];
     this._sessionQuarantine = null;
     this.storageStatus = { mode: 'json-fallback', reason: null, quarantine: null, dataMayBeIncomplete: false };
     this.ready = this.initDB();
@@ -242,6 +327,26 @@ class AccountStore {
 
       this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_phone ON numbers(phone)`);
       this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_status ON numbers(status)`);
+
+      // B4 job ledger: one row per local collection execution, keyed uniquely
+      // by (providerId, runSlug) so a repeated reference to the same provider
+      // run is always the same row. No foreign key to numbers on purpose:
+      // lead provenance stays exactly as B1/B3 defined it.
+      this.db.run(`CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        runSlug TEXT,
+        providerId TEXT,
+        query TEXT,
+        startedAt TEXT,
+        completedAt TEXT,
+        status TEXT,
+        resultCount INTEGER,
+        error TEXT,
+        UNIQUE(providerId, runSlug)
+      )`);
+
+      this.db.run(`CREATE INDEX IF NOT EXISTS idx_jobs_startedAt ON jobs(startedAt)`);
+      this.db.run(`CREATE INDEX IF NOT EXISTS idx_jobs_provider_run ON jobs(providerId, runSlug)`);
     } catch (err) {
       this.db = null;
       logger.error('accountStore', 'database init failed, falling back to JSON storage', { error: err.message });
@@ -340,6 +445,23 @@ class AccountStore {
   }
 
   fallbackToJson() {
+    // B4: load the job ledger with the same tolerance as numbers.json —
+    // missing file means an empty ledger, unreadable/non-array content is
+    // logged and ignored rather than crashing the fallback path.
+    this._jobs = [];
+    const jf = path.join(DATA_DIR, 'jobs.json');
+    if (fs.existsSync(jf)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(jf, 'utf-8'));
+        if (Array.isArray(parsed)) {
+          this._jobs = parsed;
+        } else {
+          logger.warn('accountStore', 'jobs.json is not an array, ignoring');
+        }
+      } catch (err) {
+        logger.error('accountStore', 'failed to read jobs.json', { error: err.message });
+      }
+    }
     this._numbers = [];
     const nf = path.join(DATA_DIR, 'numbers.json');
     if (!fs.existsSync(nf)) return;
@@ -692,6 +814,290 @@ class AccountStore {
       return header + rows;
     }
     return JSON.stringify(numbers, null, 2);
+  }
+
+  // === B4 local collection-job ledger ===
+  // Ledger writes are best-effort from the collection handlers' perspective:
+  // a persistence failure is reverted in memory, logged and rethrown HERE so
+  // the caller (which wraps every ledger call in try/catch) can log it without
+  // affecting the already-successful provider result.
+
+  async insertJob(job) {
+    await this.ready;
+    const validated = validateJobRecord(job);
+    if (!validated.ok) return { success: false, error: validated.error };
+    return this._insertJob(validated.row);
+  }
+
+  async updateJobState(providerId, runSlug, status, errorMessage) {
+    await this.ready;
+    if (typeof providerId !== 'string' || providerId.length < 1 ||
+        providerId.length > MAX_JOB_PROVIDER_ID_LENGTH) {
+      return { success: false, error: 'Invalid job: providerId' };
+    }
+    if (typeof runSlug !== 'string' || !JOB_RUN_SLUG_PATTERN.test(runSlug)) {
+      return { success: false, error: 'Invalid job: runSlug' };
+    }
+    if (status !== 'succeeded' && status !== 'failed') {
+      return { success: false, error: 'Invalid job: status' };
+    }
+    const errorText = typeof errorMessage === 'string' ? errorMessage.slice(0, MAX_JOB_ERROR_LENGTH) : '';
+    if (!this.db) return this._updateJobStateJson(providerId, runSlug, status, errorText);
+    return this._updateJobStateSql(providerId, runSlug, status, errorText);
+  }
+
+  async setJobResultCount(providerId, runSlug, resultCount) {
+    await this.ready;
+    if (typeof providerId !== 'string' || providerId.length < 1 ||
+        providerId.length > MAX_JOB_PROVIDER_ID_LENGTH) {
+      return { success: false, error: 'Invalid job: providerId' };
+    }
+    if (typeof runSlug !== 'string' || !JOB_RUN_SLUG_PATTERN.test(runSlug)) {
+      return { success: false, error: 'Invalid job: runSlug' };
+    }
+    if (!Number.isInteger(resultCount) || resultCount < 0) {
+      return { success: false, error: 'Invalid job: resultCount' };
+    }
+    if (!this.db) return this._setJobResultCountJson(providerId, runSlug, resultCount);
+    return this._setJobResultCountSql(providerId, runSlug, resultCount);
+  }
+
+  // B5-ready read API: same {rows,total,limit,offset} envelope and paging
+  // bounds as the lead library, newest job first. Never an unbounded read.
+  async queryJobs(query) {
+    await this.ready;
+    const q = (query && typeof query === 'object' && !Array.isArray(query)) ? query : {};
+    const normalized = {
+      limit: Number.isInteger(q.limit) && q.limit >= 1 && q.limit <= 100 ? q.limit : 20,
+      offset: Number.isInteger(q.offset) && q.offset >= 0 && q.offset <= 100000 ? q.offset : 0
+    };
+    if (!this.db) return this._queryJobsJson(normalized);
+    return this._queryJobsSql(normalized);
+  }
+
+  _findJobSql(providerId, runSlug) {
+    const stmt = this.db.prepare('SELECT * FROM jobs WHERE providerId = ? AND runSlug = ?');
+    try {
+      stmt.bind([providerId, runSlug]);
+      if (stmt.step()) {
+        return jobRowToObject(stmt.getColumnNames(), stmt.get());
+      }
+      return null;
+    } finally {
+      stmt.free();
+    }
+  }
+
+  _insertJob(row) {
+    if (!this.db) return this._insertJobJson(row);
+    const existing = this._findJobSql(row.providerId, row.runSlug);
+    if (existing) {
+      this.db.run(
+        'UPDATE jobs SET query = ?, startedAt = ?, completedAt = ?, status = ?, resultCount = ?, error = ? WHERE providerId = ? AND runSlug = ?',
+        [row.query, row.startedAt, row.completedAt, row.status, row.resultCount, row.error,
+         row.providerId, row.runSlug]
+      );
+      try {
+        this.saveDB();
+      } catch (err) {
+        try {
+          this.db.run(
+            'UPDATE jobs SET query = ?, startedAt = ?, completedAt = ?, status = ?, resultCount = ?, error = ? WHERE providerId = ? AND runSlug = ?',
+            [existing.query, existing.startedAt, existing.completedAt, existing.status,
+             existing.resultCount, existing.error, row.providerId, row.runSlug]
+          );
+        } catch (revertErr) {
+          logger.error('accountStore', 'in-memory job restore after failed persistence incomplete', { error: revertErr.message });
+        }
+        throw err;
+      }
+      logger.info('job', 'job recorded', { jobId: existing.id, providerId: row.providerId, status: row.status, storage: 'sql' });
+      return { success: true, id: existing.id };
+    }
+    this.db.run(
+      'INSERT INTO jobs (id, runSlug, providerId, query, startedAt, completedAt, status, resultCount, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.id, row.runSlug, row.providerId, row.query, row.startedAt, row.completedAt,
+       row.status, row.resultCount, row.error]
+    );
+    try {
+      this.saveDB();
+    } catch (err) {
+      try {
+        this.db.run('DELETE FROM jobs WHERE id = ?', [row.id]);
+      } catch (revertErr) {
+        logger.error('accountStore', 'in-memory job rollback after failed persistence incomplete', { error: revertErr.message });
+      }
+      throw err;
+    }
+    logger.info('job', 'job recorded', { jobId: row.id, providerId: row.providerId, status: row.status, storage: 'sql' });
+    return { success: true, id: row.id };
+  }
+
+  _insertJobJson(row) {
+    if (!this._jobs) this._jobs = [];
+    const backup = this._jobs.map(j => ({ ...j }));
+    const existing = this._jobs.find(j => j.providerId === row.providerId && j.runSlug === row.runSlug);
+    let id;
+    if (existing) {
+      Object.assign(existing, {
+        query: row.query, startedAt: row.startedAt, completedAt: row.completedAt,
+        status: row.status, resultCount: row.resultCount, error: row.error
+      });
+      id = existing.id;
+    } else {
+      this._jobs.push(row);
+      id = row.id;
+    }
+    try {
+      writeJsonAtomic(path.join(DATA_DIR, 'jobs.json'), JSON.stringify(this._jobs, null, 2));
+    } catch (err) {
+      this._jobs = backup;
+      logger.error('accountStore', 'failed to write jobs.json', { error: err.message });
+      throw err;
+    }
+    logger.info('job', 'job recorded', { jobId: id, providerId: row.providerId, status: row.status, storage: 'json' });
+    return { success: true, id };
+  }
+
+  _updateJobStateSql(providerId, runSlug, status, errorText) {
+    const existing = this._findJobSql(providerId, runSlug);
+    if (!existing) return { success: true, updated: false, reason: 'not-found' };
+    // State-change gate: an unchanged canonical status never persists.
+    if (existing.status === status) return { success: true, updated: false, reason: 'unchanged' };
+    // completedAt is stamped once, on the first terminal transition only.
+    const completedAt = existing.completedAt ? existing.completedAt : new Date().toISOString();
+    const errorValue = status === 'failed' ? errorText : existing.error;
+    this.db.run(
+      'UPDATE jobs SET status = ?, completedAt = ?, error = ? WHERE providerId = ? AND runSlug = ?',
+      [status, completedAt, errorValue, providerId, runSlug]
+    );
+    try {
+      this.saveDB();
+    } catch (err) {
+      try {
+        this.db.run(
+          'UPDATE jobs SET status = ?, completedAt = ?, error = ? WHERE providerId = ? AND runSlug = ?',
+          [existing.status, existing.completedAt, existing.error, providerId, runSlug]
+        );
+      } catch (revertErr) {
+        logger.error('accountStore', 'in-memory job state restore after failed persistence incomplete', { error: revertErr.message });
+      }
+      throw err;
+    }
+    logger.info('job', 'job state updated', { runSlug, providerId, status, storage: 'sql' });
+    return { success: true, updated: true };
+  }
+
+  _updateJobStateJson(providerId, runSlug, status, errorText) {
+    if (!this._jobs) this._jobs = [];
+    const existing = this._jobs.find(j => j.providerId === providerId && j.runSlug === runSlug);
+    if (!existing) return { success: true, updated: false, reason: 'not-found' };
+    // State-change gate: an unchanged canonical status never persists.
+    if (existing.status === status) return { success: true, updated: false, reason: 'unchanged' };
+    const backup = { ...existing };
+    existing.completedAt = existing.completedAt ? existing.completedAt : new Date().toISOString();
+    existing.status = status;
+    if (status === 'failed') existing.error = errorText;
+    try {
+      writeJsonAtomic(path.join(DATA_DIR, 'jobs.json'), JSON.stringify(this._jobs, null, 2));
+    } catch (err) {
+      Object.assign(existing, backup);
+      logger.error('accountStore', 'failed to write jobs.json', { error: err.message });
+      throw err;
+    }
+    logger.info('job', 'job state updated', { runSlug, providerId, status, storage: 'json' });
+    return { success: true, updated: true };
+  }
+
+  _setJobResultCountSql(providerId, runSlug, resultCount) {
+    const existing = this._findJobSql(providerId, runSlug);
+    if (!existing) return { success: true, updated: false, reason: 'not-found' };
+    // Set-once: an already-finalised count is never overwritten, and an
+    // unknown count stays NULL rather than being coerced to zero.
+    if (existing.resultCount !== null && existing.resultCount !== undefined) {
+      return { success: true, updated: false, reason: 'already-set' };
+    }
+    this.db.run(
+      'UPDATE jobs SET resultCount = ? WHERE providerId = ? AND runSlug = ?',
+      [resultCount, providerId, runSlug]
+    );
+    try {
+      this.saveDB();
+    } catch (err) {
+      try {
+        this.db.run(
+          'UPDATE jobs SET resultCount = NULL WHERE providerId = ? AND runSlug = ?',
+          [providerId, runSlug]
+        );
+      } catch (revertErr) {
+        logger.error('accountStore', 'in-memory job count restore after failed persistence incomplete', { error: revertErr.message });
+      }
+      throw err;
+    }
+    logger.info('job', 'job result count recorded', { runSlug, providerId, resultCount, storage: 'sql' });
+    return { success: true, updated: true };
+  }
+
+  _setJobResultCountJson(providerId, runSlug, resultCount) {
+    if (!this._jobs) this._jobs = [];
+    const existing = this._jobs.find(j => j.providerId === providerId && j.runSlug === runSlug);
+    if (!existing) return { success: true, updated: false, reason: 'not-found' };
+    if (existing.resultCount !== null && existing.resultCount !== undefined) {
+      return { success: true, updated: false, reason: 'already-set' };
+    }
+    const previous = existing.resultCount === undefined ? null : existing.resultCount;
+    existing.resultCount = resultCount;
+    try {
+      writeJsonAtomic(path.join(DATA_DIR, 'jobs.json'), JSON.stringify(this._jobs, null, 2));
+    } catch (err) {
+      existing.resultCount = previous;
+      logger.error('accountStore', 'failed to write jobs.json', { error: err.message });
+      throw err;
+    }
+    logger.info('job', 'job result count recorded', { runSlug, providerId, resultCount, storage: 'json' });
+    return { success: true, updated: true };
+  }
+
+  _queryJobsSql(query) {
+    let total = 0;
+    const countStmt = this.db.prepare('SELECT COUNT(*) AS c FROM jobs');
+    try {
+      if (countStmt.step()) total = countStmt.getAsObject().c;
+    } finally {
+      countStmt.free();
+    }
+    const rowStmt = this.db.prepare('SELECT * FROM jobs ORDER BY startedAt DESC, rowid DESC LIMIT ? OFFSET ?');
+    try {
+      rowStmt.bind([query.limit, query.offset]);
+      const rows = [];
+      let columns = null;
+      while (rowStmt.step()) {
+        if (!columns) columns = rowStmt.getColumnNames();
+        rows.push(jobRowToObject(columns, rowStmt.get()));
+      }
+      return { rows, total, limit: query.limit, offset: query.offset };
+    } finally {
+      rowStmt.free();
+    }
+  }
+
+  _queryJobsJson(query) {
+    const source = this._jobs || [];
+    const indexed = source.map((row, i) => ({ row, i }));
+    // Mirrors SQL: startedAt DESC (NULLs smallest, i.e. last), later insert
+    // wins the tie-break exactly like rowid DESC.
+    indexed.sort((a, b) => {
+      const cmp = compareQueryValues(b.row.startedAt, a.row.startedAt);
+      if (cmp !== 0) return cmp;
+      return b.i - a.i;
+    });
+    const ordered = indexed.map(entry => entry.row);
+    return {
+      rows: ordered.slice(query.offset, query.offset + query.limit),
+      total: source.length,
+      limit: query.limit,
+      offset: query.offset
+    };
   }
 
 }
