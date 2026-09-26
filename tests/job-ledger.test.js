@@ -890,13 +890,12 @@ function test(name, fn) {
   });
 
   test('33. ledger internals stay unexposed; reads use only the declared B5 channel', () => {
-    // B5 declared lock update: channel count 17 -> 18 and the previous
-    // negative assertion against collector:get-jobs becomes a positive
-    // contract — that single channel is the audited dashboard read. Store
-    // internals (queryJobs symbol, write APIs) still must not reach
-    // preload/renderer, and no separate jobs namespace may appear.
+    // B6.2 declared lock update: channel count 18 -> 19. The addition is
+    // collector:update-lead, the B6 user-owned lead write; it is unrelated to
+    // the B4 ledger, whose internals (queryJobs symbol, write APIs) must still
+    // not reach preload/renderer, and no separate jobs namespace may appear.
     const handles = mainSource.match(/ipcMain\.handle\(/g) || [];
-    assert.strictEqual(handles.length, 18, 'exactly 18 IPC channels (B5 added collector:get-jobs)');
+    assert.strictEqual(handles.length, 19, 'exactly 19 IPC channels (B6.2 added collector:update-lead)');
     assert.ok(mainSource.includes("ipcMain.handle('collector:get-jobs'"), 'B5 jobs read channel registered');
     const ledgerApis = ['queryJobs', 'insertJob', 'updateJobState', 'setJobResultCount'];
     for (const api of ledgerApis) {
@@ -930,10 +929,10 @@ function test(name, fn) {
     assert.strictEqual(nonTerminal.count, 0, 'non-terminal target refused without a write');
   });
 
-  test('35. declared 18-channel contract intact, byte for byte', () => {
-    // B5 declared lock update: the set grows by exactly one audited channel,
-    // collector:get-jobs (dashboard ledger read); everything else is byte
-    // identical to the B4 contract.
+  test('35. declared 19-channel contract intact, byte for byte', () => {
+    // B6.2 declared lock update: the set grows by exactly one audited channel,
+    // collector:update-lead (B6 user-owned lead write); everything else is
+    // byte identical to the B5 contract.
     const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
     const expected = [
       'provider:set-credentials', 'provider:test-connection',
@@ -942,12 +941,13 @@ function test(name, fn) {
       'collector:get-numbers', 'collector:add-numbers', 'collector:export-numbers',
       'collector:delete-numbers', 'collector:storage-status',
       'collector:get-jobs',
+      'collector:update-lead',
       'logs:export', 'logs:dir', 'logs:report',
       'proxy:detect'
     ];
-    assert.strictEqual(channels.length, 18, 'exactly 18 channels');
+    assert.strictEqual(channels.length, 19, 'exactly 19 channels');
     assert.deepStrictEqual(channels.slice().sort(), expected.slice().sort(),
-      'the channel set is the B4 set plus collector:get-jobs only');
+      'the channel set is the B5 set plus collector:update-lead only');
     for (const ch of expected) {
       const occurrences = mainSource.split(`ipcMain.handle('${ch}'`).length - 1;
       assert.strictEqual(occurrences, 1, 'channel registered exactly once: ' + ch);

@@ -174,7 +174,7 @@ function test(name, fn) {
     assert.strictEqual(listSql.total, 3, 'list queries unaffected by the id predicate');
   });
 
-  test('6. main: id validated with existing conventions; 18 channels unchanged', () => {
+  test('6. main: id validated with existing conventions; 19 channels unchanged', () => {
     assert.ok(mainSource.includes('if (p.id !== undefined && p.id !== null)'), 'optional id extracted');
     assert.ok(mainSource.includes("assertOptionalString(p.id, 'id', 100)"), 'string + max-100 via existing guard');
     assert.ok(mainSource.includes("Invalid params: id (non-empty required)"), 'empty id rejected');
@@ -185,7 +185,7 @@ function test(name, fn) {
     );
     assert.ok(mainSource.includes('accountStore.queryNumbers(validateNumbersQuery(query))'), 'handler path unchanged');
     const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((m) => m[1]);
-    assert.strictEqual(channels.length, 18, 'exactly 18 IPC channels remain (no detail channel added)');
+    assert.strictEqual(channels.length, 19, 'exactly 19 IPC channels remain (no detail channel added)');
     assert.ok(!channels.includes('collector:get-number'), 'no single-lead channel introduced');
   });
 

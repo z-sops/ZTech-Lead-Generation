@@ -67,11 +67,11 @@ test('5. zero live renderer/html references to removed APIs', () => {
   assert.ok(!htmlSource.includes('getStore') && !htmlSource.includes('coreclaw:'), 'html references none');
 });
 
-test('6. all 18 live main IPC channels present exactly once', () => {
-  // B5 declared lock update: channel count 17 -> 18. The single addition is
-  // collector:get-jobs, the audited read-only dashboard access to the local
-  // collection-job ledger (validated via validateHistoryPaging, returning
-  // the accountStore.queryJobs envelope unchanged). No other channel moved.
+test('6. all 19 live main IPC channels present exactly once', () => {
+  // B6.2 declared lock update: channel count 18 -> 19. The single addition is
+  // collector:update-lead, the audited write path for the user-owned lead
+  // fields (qualification/tags/notes), validated by validateLeadUpdatePayload
+  // and delegated to accountStore.setLeadUserFields. No other channel moved.
   const expected = [
     'provider:set-credentials', 'provider:test-connection',
     'collection:submit', 'collection:job-status', 'collection:job-result', 'collection:job-history',
@@ -79,6 +79,7 @@ test('6. all 18 live main IPC channels present exactly once', () => {
     'collector:get-numbers', 'collector:add-numbers', 'collector:export-numbers',
     'collector:delete-numbers', 'collector:storage-status',
     'collector:get-jobs',
+    'collector:update-lead',
     'logs:export', 'logs:dir', 'logs:report',
     'proxy:detect'
   ];

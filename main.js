@@ -171,6 +171,60 @@ function validateIdList(ids) {
   return ids;
 }
 
+// B6 user-owned lead fields. This is the authoritative validator: the
+// renderer is never trusted, so every bound below is enforced here before
+// the payload reaches the store. Limits are compile-time constants shared by
+// contract, not by import, so main and store cannot drift silently.
+const LEAD_QUALIFICATION_VALUES = ['unqualified', 'qualified'];
+const MAX_LEAD_TAGS = 20;
+const MAX_LEAD_TAG_LENGTH = 50;
+const MAX_LEAD_NOTES_LENGTH = 5000;
+
+// Validates one collector:update-lead payload and returns the normalised
+// { id, qualification, tags, notes } written to storage. Tags are trimmed,
+// empties rejected and deduplicated case-insensitively with the first
+// occurrence kept, so the renderer may send optimistic input.
+function validateLeadUpdatePayload(payload) {
+  assertPlainObject(payload, 'lead update');
+  // Same bounds and messages as the B3 single-lead id predicate.
+  if (typeof payload.id !== 'string' || !payload.id || payload.id.length > 100) {
+    throw invalidParams('Invalid params: id (non-empty required)');
+  }
+  if (!LEAD_QUALIFICATION_VALUES.includes(payload.qualification)) {
+    throw invalidParams('Invalid params: qualification (unqualified|qualified required)');
+  }
+  if (!Array.isArray(payload.tags)) {
+    throw invalidParams('Invalid params: tags (array required)');
+  }
+  if (payload.tags.length > MAX_LEAD_TAGS) {
+    throw invalidParams(`Invalid params: tags (max ${MAX_LEAD_TAGS})`);
+  }
+  const tags = [];
+  for (let i = 0; i < payload.tags.length; i++) {
+    const raw = payload.tags[i];
+    if (typeof raw !== 'string') {
+      throw invalidParams(`Invalid params: tags[${i}] (string required)`);
+    }
+    const tag = raw.trim();
+    if (!tag) {
+      throw invalidParams(`Invalid params: tags[${i}] (non-empty required)`);
+    }
+    if (tag.length > MAX_LEAD_TAG_LENGTH) {
+      throw invalidParams(`Invalid params: tags[${i}] (max ${MAX_LEAD_TAG_LENGTH} chars)`);
+    }
+    const key = tag.toLowerCase();
+    if (tags.some(existing => existing.toLowerCase() === key)) continue;
+    tags.push(tag);
+  }
+  if (typeof payload.notes !== 'string') {
+    throw invalidParams('Invalid params: notes (string required)');
+  }
+  if (payload.notes.length > MAX_LEAD_NOTES_LENGTH) {
+    throw invalidParams(`Invalid params: notes (max ${MAX_LEAD_NOTES_LENGTH} chars)`);
+  }
+  return { id: payload.id, qualification: payload.qualification, tags, notes: payload.notes };
+}
+
 function validateHistoryPaging(payload) {
   const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
   const limit = p.limit === undefined ? 20 : p.limit;
@@ -757,6 +811,19 @@ function registerIpcHandlers() {
       return accountStore.queryJobs(validateHistoryPaging(query));
     } catch (err) {
       if (err.invalidParams) rejectLog('collector:get-jobs', err.message);
+      throw err;
+    }
+  });
+
+  // B6.2: the single write path for the user-owned lead fields. Validation is
+  // authoritative here; the store re-checks defensively. Responses follow the
+  // B4 job-state precedent ({success, updated} plus a reason when nothing was
+  // written). Nothing in this handler logs tags or notes content.
+  ipcMain.handle('collector:update-lead', (_, payload) => {
+    try {
+      return accountStore.setLeadUserFields(validateLeadUpdatePayload(payload));
+    } catch (err) {
+      if (err.invalidParams) rejectLog('collector:update-lead', err.message);
       throw err;
     }
   });

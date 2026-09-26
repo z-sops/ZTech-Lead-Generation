@@ -40,6 +40,7 @@ const expectedChannels = [
   'collector:get-numbers', 'collector:add-numbers', 'collector:export-numbers',
   'collector:delete-numbers', 'collector:storage-status',
   'collector:get-jobs',
+  'collector:update-lead',
   'logs:export', 'logs:dir', 'logs:report',
   'proxy:detect'
 ];
@@ -126,9 +127,12 @@ test('8. pagination wired to the bounded jobs page', () => {
 
 test('9. single IPC read channel with validated passthrough', () => {
   const handlers = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
+  // B6.2 declared lock update: the declared set grows by exactly one audited
+  // channel, collector:update-lead (the B6 user-owned lead write). The B5
+  // dashboard read contract asserted below is unchanged.
   assert.deepStrictEqual(handlers.slice().sort(), expectedChannels.slice().sort(),
-    'channel set is the declared 18-channel contract');
-  assert.strictEqual(handlers.length, 18, 'exactly 18 channels');
+    'channel set is the declared 19-channel contract');
+  assert.strictEqual(handlers.length, 19, 'exactly 19 channels');
   const handler = between(mainSource, "ipcMain.handle('collector:get-jobs'", '});');
   assert.ok(handler.includes('validateHistoryPaging(query)'), 'paging validated');
   assert.ok(handler.includes('accountStore.queryJobs'), 'queryJobs passthrough');

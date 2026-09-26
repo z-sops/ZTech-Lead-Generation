@@ -543,6 +543,203 @@ function test(name, fn) {
     assert.strictEqual(nonObject.success, false, 'non-object payload refused');
   });
 
+  // === B6.2 main-process validation and IPC surface ===
+  // The B6.2 contract is a main-process contract, so the validator is
+  // extracted from main.js and executed here for real, and the handler
+  // registration, preload exposure and channel count are asserted against the
+  // actual sources. Storage behaviour is proven separately in the B6.1 block.
+
+  const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
+  const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'renderer.js'), 'utf8');
+  const providerSource =
+    fs.readFileSync(path.join(root, 'src', 'main', 'providers', 'providerManager.js'), 'utf8') +
+    fs.readFileSync(path.join(root, 'src', 'main', 'providers', 'collectionProvider.js'), 'utf8') +
+    fs.readFileSync(path.join(root, 'src', 'main', 'providers', 'coreclawAdapter.js'), 'utf8');
+
+  function between(source, start, end) {
+    const from = source.indexOf(start);
+    const to = source.indexOf(end, from + start.length);
+    assert.ok(from !== -1 && to !== -1, 'slice markers found: ' + start);
+    return source.slice(from, to);
+  }
+
+  function mainChannels() {
+    return [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
+  }
+
+  // Loads the real validator out of main.js together with the guards it uses
+  // (invalidParams, assertPlainObject), so the tests exercise production code
+  // rather than a copy of it.
+  function loadValidator() {
+    const slice = between(mainSource, 'function invalidParams(', 'function validateHistoryPaging(');
+    const factory = new Function('logger', slice + '\nreturn validateLeadUpdatePayload;');
+    return factory({ warn() {}, info() {}, error() {}, ok() {} });
+  }
+
+  const validateLeadUpdatePayload = loadValidator();
+
+  function expectInvalid(payload) {
+    let err = null;
+    try {
+      validateLeadUpdatePayload(payload);
+    } catch (e) {
+      err = e;
+    }
+    assert.ok(err, 'payload must be refused: ' + JSON.stringify(payload));
+    assert.strictEqual(err.invalidParams, true, 'refusal must carry invalidParams for rejectLog');
+    return err;
+  }
+
+  const VALID = { id: 'lead-b6-2', qualification: 'qualified', tags: ['VIP'], notes: 'note' };
+
+  test('18. valid qualified and unqualified payloads are accepted and normalised', () => {
+    assert.deepStrictEqual(validateLeadUpdatePayload({ ...VALID }), {
+      id: 'lead-b6-2', qualification: 'qualified', tags: ['VIP'], notes: 'note'
+    });
+    const unqualified = validateLeadUpdatePayload({
+      id: 'lead-b6-2', qualification: 'unqualified', tags: [], notes: ''
+    });
+    assert.deepStrictEqual(unqualified, {
+      id: 'lead-b6-2', qualification: 'unqualified', tags: [], notes: ''
+    });
+  });
+
+  test('19. qualification must be exactly unqualified or qualified', () => {
+    for (const bad of ['QUALIFIED', 'Qualified', 'scored', 'pending', '', null, undefined, 1, true, {}, []]) {
+      expectInvalid({ ...VALID, qualification: bad });
+    }
+    expectInvalid({ id: 'lead-b6-2', tags: [], notes: '' });
+  });
+
+  test('20. id must be a non-empty string of at most 100 characters', () => {
+    for (const bad of ['', null, undefined, 42, {}, [], 'x'.repeat(101)]) {
+      expectInvalid({ ...VALID, id: bad });
+    }
+    expectInvalid({ qualification: 'qualified', tags: [], notes: '' });
+    const boundary = validateLeadUpdatePayload({ ...VALID, id: 'x'.repeat(100) });
+    assert.strictEqual(boundary.id.length, 100, 'exactly 100 characters is accepted');
+  });
+
+  test('21. tags must be an array of at most 20 strings of at most 50 characters', () => {
+    const distinct = (count) => Array.from({ length: count }, (_, i) => 'tag' + i);
+    for (const bad of ['not-an-array', null, undefined, 42, {}, new Set(['a'])]) {
+      expectInvalid({ ...VALID, tags: bad });
+    }
+    expectInvalid({ ...VALID, tags: distinct(21) });
+    const atLimit = validateLeadUpdatePayload({ ...VALID, tags: distinct(20) });
+    assert.strictEqual(atLimit.tags.length, 20, 'exactly 20 distinct tags is accepted');
+    expectInvalid({ ...VALID, tags: ['ok', 42] });
+    expectInvalid({ ...VALID, tags: ['ok', '   '] });
+    expectInvalid({ ...VALID, tags: ['', 'ok'] });
+    expectInvalid({ ...VALID, tags: ['x'.repeat(51)] });
+    const atTagLimit = validateLeadUpdatePayload({ ...VALID, tags: ['y'.repeat(50)] });
+    assert.strictEqual(atTagLimit.tags[0].length, 50, 'exactly 50 characters is accepted');
+  });
+
+  test('22. tags are trimmed and deduplicated case-insensitively, first occurrence wins', () => {
+    const out = validateLeadUpdatePayload({
+      ...VALID,
+      tags: ['  Alpha  ', 'alpha', 'ALPHA', 'Beta', ' beta ', 'Gamma']
+    });
+    assert.deepStrictEqual(out.tags, ['Alpha', 'Beta', 'Gamma'],
+      'trimmed, case-insensitively deduplicated, original order preserved');
+  });
+
+  test('23. notes must be a string of at most 5000 characters and is never coerced', () => {
+    for (const bad of [null, undefined, 42, true, {}, ['note'], new String('x')]) {
+      expectInvalid({ ...VALID, notes: bad });
+    }
+    expectInvalid({ ...VALID, notes: 'n'.repeat(5001) });
+    const boundary = validateLeadUpdatePayload({ ...VALID, notes: 'n'.repeat(5000) });
+    assert.strictEqual(boundary.notes.length, 5000, 'exactly 5000 characters is accepted');
+    const multiline = validateLeadUpdatePayload({ ...VALID, notes: 'line one\nline two' });
+    assert.strictEqual(multiline.notes, 'line one\nline two', 'newlines preserved verbatim');
+  });
+
+  test('24. the payload must be a plain object', () => {
+    for (const bad of [null, undefined, 'garbage', 42, [], true]) {
+      expectInvalid(bad);
+    }
+  });
+
+  test('25. the handler delegates the validated payload to the B6.1 store method', () => {
+    const handler = between(mainSource, "ipcMain.handle('collector:update-lead'", '  });\n');
+    assert.ok(handler.includes('validateLeadUpdatePayload(payload)'),
+      'handler validates before touching the store');
+    assert.ok(handler.includes('accountStore.setLeadUserFields('),
+      'handler delegates to the existing B6.1 store method');
+    assert.ok(handler.includes("if (err.invalidParams) rejectLog('collector:update-lead', err.message);"),
+      'invalid params are logged through rejectLog');
+    assert.ok(handler.includes('throw err'), 'refusals propagate to the renderer');
+    const storeSlice = between(storeSource, 'async setLeadUserFields(payload)', '  _findLeadSql(id) {');
+    assert.ok(!storeSlice.includes('status'), 'the B6 store method never touches the status column');
+  });
+
+  test('26. exactly 19 IPC channels exist and update-lead is registered once', () => {
+    const channels = mainChannels();
+    assert.strictEqual(channels.length, 19, 'exactly 19 channels');
+    assert.strictEqual(new Set(channels).size, 19, 'no duplicate channel names');
+    const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
+    assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
+    assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
+    for (const ch of ['collector:get-numbers', 'collector:add-numbers', 'collector:export-numbers',
+      'collector:delete-numbers', 'collector:storage-status', 'collector:get-jobs']) {
+      assert.ok(channels.includes(ch), 'pre-existing collector channel intact: ' + ch);
+    }
+  });
+
+  test('27. preload exposes collector.updateLead and nothing else new', () => {
+    assert.ok(preloadSource.includes(
+      "updateLead: (payload) => ipcRenderer.invoke('collector:update-lead', payload)"),
+      'preload exposes updateLead on the collector namespace');
+    const invocations = [...preloadSource.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map(m => m[1]);
+    assert.strictEqual(invocations.filter(ch => ch === 'collector:update-lead').length, 1,
+      'the channel is invoked exactly once');
+    assert.deepStrictEqual(
+      [...new Set(invocations)].sort(),
+      mainChannels().filter(ch => ch !== 'provider:set-credentials').sort(),
+      'preload channel set matches main (provider:set-credentials stays unexposed)'
+    );
+    assert.ok(!preloadSource.includes('setLeadUserFields'), 'preload stays store-agnostic');
+    assert.ok(!preloadSource.includes('queryJobs'), 'preload never leaks store internals');
+    assert.ok(!/exposeInMainWorld\([^)]{0,80}ipcRenderer/.test(preloadSource),
+      'ipcRenderer is never exposed directly');
+  });
+
+  test('28. the B6 write surface leaks no credentials and no raw channel name', () => {
+    const validator = between(mainSource, 'function validateLeadUpdatePayload(', 'function validateHistoryPaging(');
+    const handler = between(mainSource, "ipcMain.handle('collector:update-lead'", '  });\n');
+    const preload = between(preloadSource, 'updateLead:', '  },');
+    for (const [name, region] of [['validator', validator], ['handler', handler], ['preload', preload]]) {
+      assert.ok(!/apiKey|taskKey|credentials|Bearer|authorization/i.test(region),
+        'no credential surface in the B6 ' + name);
+    }
+    assert.ok(!/logger\.[a-z]+\([^)]*(notes|tags)\s*[:,)]/i.test(validator),
+      'the validator never logs notes or tags content');
+    assert.ok(!rendererSource.includes('collector:update-lead'),
+      'the renderer never references the raw channel name (B6.3 will use the preload API)');
+    assert.ok(!rendererSource.includes('setLeadUserFields'),
+      'the renderer never sees the store method');
+  });
+
+  test('29. provider neutrality: no provider surface in the B6 write path', () => {
+    const handler = between(mainSource, "ipcMain.handle('collector:update-lead'", '  });\n');
+    const validator = between(mainSource, 'function validateLeadUpdatePayload(', 'function validateHistoryPaging(');
+    assert.ok(!/providerId|providerManager|CoreClaw|coreclaw/.test(handler),
+      'the B6 handler references no provider identifier');
+    assert.ok(!/providerId|providerManager|CoreClaw|coreclaw/.test(validator),
+      'the B6 validator references no provider identifier');
+    assert.ok(!/qualification|tags|notes|setLeadUserFields/.test(providerSource),
+      'provider sources carry no B6 code');
+    const queryBlock = storeSource.slice(
+      storeSource.indexOf('// B2 query layer: server-side search'),
+      storeSource.indexOf('async addNumbers(')
+    );
+    assert.ok(!/qualification/.test(queryBlock),
+      'the B2 query layer is untouched by B6.1/B6.2 (filtering arrives in B6.4)');
+  });
+
   for (const [name, fn] of tests) {
     try {
       await fn();
