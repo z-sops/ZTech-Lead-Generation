@@ -740,6 +740,139 @@ function test(name, fn) {
       'the B2 query layer is untouched by B6.1/B6.2 (filtering arrives in B6.4)');
   });
 
+  // === B6.3 Lead Profile UI ===
+  // The renderer cannot be executed in this harness, so the B6.3 contract is
+  // asserted against the real renderer source and the shipped markup: the form
+  // exists, is populated from the existing single-lead read, writes only
+  // through the preload API, and never autosaves or leaks content.
+
+  const htmlSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const cssSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'styles.css'), 'utf8');
+
+  const b6Start = rendererSource.indexOf('// === B6 Lead Profile: user-owned qualification');
+  const b6End = rendererSource.indexOf("document.getElementById('btn-delete-selected')");
+  const b6Region = between(rendererSource, '// === B6 Lead Profile:', "getElementById('btn-delete-selected')");
+  const b6Save = between(b6Region, 'async function saveLeadDetail()', "getElementById('btn-save-lead-detail').addEventListener");
+  const b6Tags = between(b6Region, 'function addLeadDetailTag()', 'function populateLeadDetailB6(');
+
+  test('30. the Lead Profile exposes the B6 form with English labels and no table columns', () => {
+    assert.ok(b6Start > -1 && b6End > b6Start, 'B6 renderer block located');
+    for (const id of ['lead-detail-b6', 'lead-detail-qualification', 'lead-detail-tag-list',
+      'lead-detail-tag-input', 'btn-lead-detail-add-tag', 'lead-detail-notes', 'btn-save-lead-detail']) {
+      assert.ok(htmlSource.includes('id="' + id + '"'), 'markup present: ' + id);
+    }
+    assert.ok(/id="lead-detail-b6" hidden/.test(htmlSource), 'the form starts hidden until a lead loads');
+    assert.ok(htmlSource.includes('<option value="unqualified">Unqualified</option>'), 'Unqualified option');
+    assert.ok(htmlSource.includes('<option value="qualified">Qualified</option>'), 'Qualified option');
+    assert.ok(htmlSource.includes('>Add tag</button>'), 'English add-tag label');
+    assert.ok(htmlSource.includes('>Save</button>'), 'English save label');
+    assert.ok(htmlSource.includes('>Notes</label>'), 'English notes label');
+    assert.ok(htmlSource.includes('>Tags</label>'), 'English tags label');
+    assert.ok(htmlSource.includes('>Qualification</label>'), 'English qualification label');
+    const table = between(htmlSource, 'id="view-numbers"', 'id="view-dashboard"');
+    for (const column of ['<th>Qualification</th>', '<th>Tags</th>', '<th>Notes</th>']) {
+      assert.ok(!table.includes(column), 'no B6 column in the Lead Library table: ' + column);
+    }
+  });
+
+  test('31. the form is populated from the existing single-lead read path', () => {
+    const openRegion = between(rendererSource, 'async function openLeadDetail', 'function closeLeadDetail');
+    assert.ok(openRegion.includes("getNumbers({ limit: 1, offset: 0, id })"),
+      'B3 single-lead read unchanged - no second read architecture');
+    assert.ok(openRegion.includes('populateLeadDetailB6(lead)'), 'load populates the B6 form');
+    const populate = between(b6Region, 'function populateLeadDetailB6(', 'async function saveLeadDetail()');
+    assert.ok(populate.includes("row.qualification === 'qualified'"), 'qualification read from the lead');
+    assert.ok(populate.includes('Array.isArray(row.tags)'), 'tags read defensively from the lead');
+    assert.ok(populate.includes("typeof row.notes === 'string'"), 'notes read defensively from the lead');
+    assert.ok(populate.includes('region.hidden = !leadDetailContext.id'), 'form only shown for a real lead');
+    assert.ok(!/getNumbers|queryNumbers|updateLead/.test(b6Tags), 'the tag editor performs no I/O');
+  });
+
+  test('32. save sends only the four contract fields through the preload API', () => {
+    assert.ok(b6Save.includes('window.appAPI.collector.updateLead({'), 'save uses the preload API');
+    assert.ok(b6Save.includes('id,'), 'sends id');
+    assert.ok(b6Save.includes('qualification:'), 'sends qualification');
+    assert.ok(b6Save.includes('tags: leadDetailContext.tags.slice()'), 'sends a copy of the tags');
+    assert.ok(b6Save.includes('notes: noteValue'), 'sends notes');
+    const payload = b6Save.slice(
+      b6Save.indexOf('window.appAPI.collector.updateLead({'),
+      b6Save.indexOf('});', b6Save.indexOf('window.appAPI.collector.updateLead({'))
+    );
+    for (const forbidden of ['phone', 'title', 'email', 'address', 'runSlug', 'status', 'source',
+      'keyword', 'collectedAt', 'providerId', 'apiKey', 'taskKey', 'credentials']) {
+      assert.ok(!payload.includes(forbidden), 'the B6 save must not send: ' + forbidden);
+    }
+    assert.ok(!rendererSource.includes('collector:update-lead'), 'no raw channel name in the renderer');
+    assert.ok(!b6Region.includes('queryJobs'), 'no store internals in the renderer');
+  });
+
+  test('33. no autosave: the form only writes from the Save control', () => {
+    assert.strictEqual(b6Save.split('appAPI.collector.updateLead').length - 1, 1,
+      'exactly one update call site');
+    const writeCallers = between(b6Region, 'async function saveLeadDetail()', "getElementById('lead-detail-tag-list').addEventListener");
+    assert.ok(!/addEventListener\('(input|change)'/.test(writeCallers),
+      'no input/change listener can trigger a save');
+    for (const hook of ['setInterval', 'setTimeout', 'requestAnimationFrame']) {
+      assert.ok(!b6Region.includes(hook), 'no ' + hook + ' in the B6 renderer block');
+    }
+    assert.ok(rendererSource.includes(
+      "getElementById('btn-save-lead-detail').addEventListener('click', safeAsync(() => saveLeadDetail()))"),
+      'the Save button is the only save trigger');
+    assert.ok(b6Save.includes('if (leadDetailSaveInFlight) return;'), 'duplicate submits are refused');
+    assert.ok(b6Save.includes('setLeadDetailControlsEnabled(false)'), 'controls disabled while saving');
+    assert.ok(b6Save.includes('leadDetailSaveInFlight = false;'), 'in-flight flag always cleared');
+  });
+
+  test('34. a failed save preserves the user input and reports through the existing UI', () => {
+    assert.ok(b6Save.includes('if (seq !== detailLoadSeq) return;'),
+      'a stale save result is discarded after a close/reopen');
+    assert.ok(b6Save.includes("toast(msg, 'error')"), 'failures surface through toast');
+    assert.ok(b6Save.includes("reportError(msg, { handler: 'saveLeadDetail' })"),
+      'failures are reported through reportError');
+    const catchBlock = b6Save.slice(b6Save.indexOf('} catch (err) {'));
+    for (const forbidden of ['populateLeadDetailB6(', 'closeLeadDetail(', ".value = ''"]) {
+      assert.ok(!catchBlock.includes(forbidden), 'the failure path must not touch the form: ' + forbidden);
+    }
+    assert.ok(b6Save.includes('if (result && result.success === false)'),
+      'a store-level refusal is reported, not swallowed');
+    assert.ok(b6Save.includes("result.reason === 'unchanged'"), 'the unchanged response is handled');
+  });
+
+  test('35. tag editing enforces the contract client-side and escapes every value', () => {
+    assert.ok(b6Tags.includes("input.value.trim()"), 'tags are trimmed before use');
+    assert.ok(b6Tags.includes('if (!tag)'), 'empty tags refused');
+    assert.ok(b6Tags.includes('tag.length > LEAD_TAG_MAX_LENGTH'), '50-character bound enforced');
+    assert.ok(b6Tags.includes('leadDetailContext.tags.length >= LEAD_TAG_MAX'), '20-tag bound enforced');
+    assert.ok(b6Tags.includes("existing.toLowerCase() === key"), 'case-insensitive duplicate detection');
+    const render = between(b6Region, 'function renderLeadDetailTags()', 'function addLeadDetailTag()');
+    assert.ok(render.includes('escapeHtml(tag)'), 'rendered tag text is escaped');
+    assert.ok(render.includes('data-tag-index'), 'the remove control carries an index, not tag text');
+    assert.ok(!render.includes('data-tag-text'), 'tag text is never placed in an attribute');
+    const notesInput = between(htmlSource, 'id="lead-detail-notes"', '</textarea>');
+    assert.ok(notesInput.includes('maxlength="5000"'), 'notes input is bounded at 5000 characters');
+    assert.ok(htmlSource.includes('maxlength="50"'), 'tag input is bounded at 50 characters');
+  });
+
+  test('36. the B6 form adds no provider, credential, dashboard or B6.4 surface', () => {
+    for (const forbidden of ['providerId', 'providerManager', 'apiKey', 'taskKey', 'credentials', 'Bearer',
+      'collection.submit', 'dashboard', 'GROUP BY', 'exportNumbers', 'renderNumbers(', 'numbersQueryPayload']) {
+      assert.ok(!b6Region.includes(forbidden), 'the B6 renderer block must not reference: ' + forbidden);
+    }
+    assert.ok(!b6Region.includes('lead-detail-filters'), 'no B6 filtering in this batch');
+    assert.ok(!b6Region.includes('run_slug'), 'no CSV export work in this batch');
+    assert.ok(!/lead-detail-b6[^{]*\{[^}]*display:\s*flex[^}]*\}\s*\.dashboard/.test(cssSource),
+      'dashboard layout untouched');
+    const b6StyleStart = cssSource.indexOf('/* Lead Profile B6 user-owned fields');
+    assert.ok(b6StyleStart > -1, 'B6 style block located');
+    const b6Styles = cssSource.slice(b6StyleStart);
+    for (const selector of ['.lead-detail-b6', '.lead-tag-list', '.lead-tag', '.lead-tag-remove', '.lead-tag-add']) {
+      assert.ok(b6Styles.includes(selector), 'expected B6 selector: ' + selector);
+    }
+    assert.ok(!b6Styles.includes('@import') && !/url\(/i.test(b6Styles), 'no new imports or external resources');
+    assert.ok(cssSource.includes("frame-src 'none'") || htmlSource.includes("frame-src 'none'"),
+      'CSP frame-src canary intact');
+  });
+
   for (const [name, fn] of tests) {
     try {
       await fn();
@@ -751,7 +884,6 @@ function test(name, fn) {
       console.log(String((err && err.stack) || err));
     }
   }
-
   try {
     fs.rmSync(testRoot, { recursive: true, force: true });
   } catch (cleanupErr) {}

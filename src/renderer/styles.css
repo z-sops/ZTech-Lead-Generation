@@ -706,3 +706,54 @@ textarea {
   color: var(--text-secondary);
   margin-top: 8px;
 }
+
+/* Lead Profile B6 user-owned fields (qualification, tags, notes) */
+.lead-detail-b6 {
+  border-top: 1px solid var(--border);
+  padding: 12px 18px 16px;
+}
+.lead-detail-b6[hidden] {
+  display: none;
+}
+.lead-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.lead-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.lead-tag-text {
+  word-break: break-all;
+}
+.lead-tag-remove {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.lead-tag-remove:hover {
+  color: var(--danger);
+}
+.lead-tag-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.lead-tag-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.lead-tag-add input {
+  flex: 1;
+}

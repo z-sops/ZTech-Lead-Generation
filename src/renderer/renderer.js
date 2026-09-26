@@ -1030,6 +1030,7 @@ async function openLeadDetail(id) {
       return;
     }
     body.innerHTML = leadDetailTemplate(lead);
+    populateLeadDetailB6(lead);
   } catch (err) {
     if (seq !== detailLoadSeq) return;
     closeLeadDetail();
@@ -1045,6 +1046,9 @@ function closeLeadDetail() {
   if (overlay) overlay.hidden = true;
   const body = document.getElementById('lead-detail-body');
   if (body) body.innerHTML = '';
+  const region = document.getElementById('lead-detail-b6');
+  if (region) region.hidden = true;
+  leadDetailContext = { id: null, tags: [] };
 }
 
 // Row clicks open the detail; checkbox/input clicks keep selection intact.
@@ -1062,6 +1066,160 @@ document.getElementById('btn-close-lead-detail').addEventListener('click', () =>
 document.getElementById('lead-detail-overlay').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeLeadDetail();
 });
+
+// === B6 Lead Profile: user-owned qualification, tags and notes ===
+// The Lead Profile is the only UI that can write these fields: the collection
+// and import paths cannot reach them (B6.1) and the main process re-validates
+// every value (B6.2). No autosave - values are sent only when Save is
+// pressed, and a failed save leaves the user's input untouched.
+const LEAD_TAG_MAX = 20;
+const LEAD_TAG_MAX_LENGTH = 50;
+const LEAD_NOTES_MAX = 5000;
+let leadDetailContext = { id: null, tags: [] };
+let leadDetailSaveInFlight = false;
+
+function setLeadDetailControlsEnabled(enabled) {
+  for (const id of ['btn-save-lead-detail', 'btn-lead-detail-add-tag', 'lead-detail-tag-input']) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
+  }
+  const select = document.getElementById('lead-detail-qualification');
+  if (select) select.disabled = !enabled;
+  const notes = document.getElementById('lead-detail-notes');
+  if (notes) notes.disabled = !enabled;
+}
+
+// Tag chips carry an index, never the tag text, and every rendered tag value
+// is escaped: tags are free-form user input.
+function renderLeadDetailTags() {
+  const list = document.getElementById('lead-detail-tag-list');
+  if (!list) return;
+  if (!leadDetailContext.tags.length) {
+    list.innerHTML = '<span class="lead-tag-empty">No tags</span>';
+    return;
+  }
+  list.innerHTML = leadDetailContext.tags.map((tag, index) =>
+    '<span class="lead-tag"><span class="lead-tag-text">' + escapeHtml(tag) +
+    '</span><button type="button" class="lead-tag-remove" data-tag-index="' + index +
+    '" aria-label="Remove tag">Remove</button></span>'
+  ).join('');
+}
+
+function addLeadDetailTag() {
+  const input = document.getElementById('lead-detail-tag-input');
+  if (!input) return;
+  const tag = typeof input.value === 'string' ? input.value.trim() : '';
+  if (!tag) {
+    toast('Tag cannot be empty', 'error');
+    return;
+  }
+  if (tag.length > LEAD_TAG_MAX_LENGTH) {
+    toast(`Tag cannot exceed ${LEAD_TAG_MAX_LENGTH} characters`, 'error');
+    return;
+  }
+  if (leadDetailContext.tags.length >= LEAD_TAG_MAX) {
+    toast(`A lead can have at most ${LEAD_TAG_MAX} tags`, 'error');
+    return;
+  }
+  const key = tag.toLowerCase();
+  if (leadDetailContext.tags.some(existing => existing.toLowerCase() === key)) {
+    toast('Tag already added', 'error');
+    return;
+  }
+  leadDetailContext = { ...leadDetailContext, tags: leadDetailContext.tags.concat([tag]) };
+  input.value = '';
+  renderLeadDetailTags();
+}
+
+function removeLeadDetailTag(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= leadDetailContext.tags.length) return;
+  leadDetailContext = {
+    ...leadDetailContext,
+    tags: leadDetailContext.tags.filter((_, i) => i !== index)
+  };
+  renderLeadDetailTags();
+}
+
+function populateLeadDetailB6(lead) {
+  const row = lead && typeof lead === 'object' ? lead : {};
+  leadDetailContext = {
+    id: typeof row.id === 'string' ? row.id : null,
+    tags: Array.isArray(row.tags) ? row.tags.slice(0, LEAD_TAG_MAX) : []
+  };
+  const select = document.getElementById('lead-detail-qualification');
+  if (select) select.value = row.qualification === 'qualified' ? 'qualified' : 'unqualified';
+  const notes = document.getElementById('lead-detail-notes');
+  if (notes) notes.value = typeof row.notes === 'string' ? row.notes : '';
+  const input = document.getElementById('lead-detail-tag-input');
+  if (input) input.value = '';
+  renderLeadDetailTags();
+  const region = document.getElementById('lead-detail-b6');
+  if (region) region.hidden = !leadDetailContext.id;
+  setLeadDetailControlsEnabled(true);
+}
+
+async function saveLeadDetail() {
+  if (leadDetailSaveInFlight) return;
+  const id = leadDetailContext.id;
+  if (!id) {
+    toast('No lead selected', 'error');
+    return;
+  }
+  const select = document.getElementById('lead-detail-qualification');
+  const notes = document.getElementById('lead-detail-notes');
+  const noteValue = notes && typeof notes.value === 'string' ? notes.value : '';
+  if (noteValue.length > LEAD_NOTES_MAX) {
+    toast(`Notes cannot exceed ${LEAD_NOTES_MAX} characters`, 'error');
+    return;
+  }
+  // A close/reopen during the round trip changes detailLoadSeq, and the
+  // result of this save must never be applied to a different lead.
+  const seq = detailLoadSeq;
+  leadDetailSaveInFlight = true;
+  setLeadDetailControlsEnabled(false);
+  try {
+    const result = await window.appAPI.collector.updateLead({
+      id,
+      qualification: select && select.value === 'qualified' ? 'qualified' : 'unqualified',
+      tags: leadDetailContext.tags.slice(),
+      notes: noteValue
+    });
+    if (result && result.success === false) {
+      const msg = (result && result.error) || 'Update refused';
+      toast(msg, 'error');
+      reportError(msg, { handler: 'saveLeadDetail' });
+      return;
+    }
+    if (seq !== detailLoadSeq) return;
+    if (result && result.updated === false && result.reason === 'unchanged') {
+      toast('No changes to save');
+    } else {
+      toast('Saved');
+    }
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'saveLeadDetail' });
+  } finally {
+    // Cleared even when the profile was closed mid-save, so reopening it never
+    // leaves Save permanently disabled.
+    leadDetailSaveInFlight = false;
+    setLeadDetailControlsEnabled(true);
+  }
+}
+
+document.getElementById('btn-save-lead-detail').addEventListener('click', safeAsync(() => saveLeadDetail()));
+document.getElementById('btn-lead-detail-add-tag').addEventListener('click', safeAsync(() => addLeadDetailTag()));
+document.getElementById('lead-detail-tag-input').addEventListener('keydown', safeAsync((e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  addLeadDetailTag();
+}));
+document.getElementById('lead-detail-tag-list').addEventListener('click', safeAsync((e) => {
+  const removeBtn = e.target.closest('[data-tag-index]');
+  if (!removeBtn) return;
+  removeLeadDetailTag(parseInt(removeBtn.dataset.tagIndex, 10));
+}));
 
 document.getElementById('btn-delete-selected').addEventListener('click', safeAsync(async () => {
     const ids = [...document.querySelectorAll('.number-check:checked')].map(cb => cb.dataset.id);

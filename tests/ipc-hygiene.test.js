@@ -110,6 +110,7 @@ test('8. renderer still uses every exposed flow', () => {
     'appAPI.collector.getNumbers', 'appAPI.collector.addNumbers', 'appAPI.collector.exportNumbers',
     'appAPI.collector.deleteNumbers', 'appAPI.collector.storageStatus',
     'appAPI.collector.getJobs',
+    'appAPI.collector.updateLead',
     'appAPI.logs.exportLogs'
   ];
   for (const use of rendererUses) {

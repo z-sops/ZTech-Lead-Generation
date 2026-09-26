@@ -332,13 +332,23 @@ function test(name, fn) {
     assert.ok(rendererSource.includes("sort: 'collectedAt', label: '采集Time'"), 'B2 sort map unchanged');
   });
 
-  test('16. detail view is read-only: no mutation APIs reachable from the detail flow', () => {
+  test('16. detail view writes only the B6 user-owned fields; destructive/global APIs stay unreachable', () => {
+    // B6.3 lock update: the Lead Profile is no longer display-only - it owns
+    // exactly one narrow write, the user-owned qualification/tags/notes update
+    // through collector:update-lead. Every previously banned API must still be
+    // unreachable from the detail flow; nothing else may be added.
     for (const banned of ['addNumbers(', 'deleteNumbers(', 'exportNumbers(', 'saveDB(', 'storageStatus(']) {
       assert.ok(!detailRegion.includes(banned), 'detail region must not call: ' + banned);
     }
     assert.ok(!detailRegion.includes('appAPI.settings'), 'detail touches no settings');
     assert.ok(!detailRegion.includes('collection.submit'), 'detail triggers no collection');
     assert.ok(detailRegion.includes('leadDetailTemplate(lead)'), 'display-only rendering path');
+    assert.ok(detailRegion.includes('appAPI.collector.updateLead'), 'the single permitted write');
+    const calls = [...new Set([...detailRegion.matchAll(/appAPI\.collector\.(\w+)/g)].map(m => m[1]))].sort();
+    assert.deepStrictEqual(calls, ['getNumbers', 'updateLead'],
+      'the Lead Profile may only read via getNumbers and write via updateLead');
+    assert.strictEqual(detailRegion.split('appAPI.collector.updateLead').length - 1, 1,
+      'exactly one updateLead call site');
   });
 
   test('17. overlay markup and styles present; CSP/frame surface untouched', () => {
