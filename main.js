@@ -184,6 +184,46 @@ function validateHistoryPaging(payload) {
   return { limit, offset };
 }
 
+// B2 query layer: the only sort identifiers ever handed to the store.
+const NUMBERS_QUERY_SORT_FIELDS = ['collectedAt', 'title', 'phone', 'source', 'keyword'];
+
+// Validates the optional collector:get-numbers query payload. Paging bounds
+// are reused verbatim from validateHistoryPaging; unknown keys are ignored
+// (validateSettingsPayload convention); a non-object payload collapses to
+// the paging defaults; order is only meaningful together with sort.
+function validateNumbersQuery(payload) {
+  const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+  const { limit, offset } = validateHistoryPaging(p);
+  const out = { limit, offset };
+  assertOptionalString(p.search, 'search', MAX_KEY_LENGTH);
+  if (typeof p.search === 'string' && p.search.trim()) out.search = p.search.trim();
+  if (p.filters !== undefined && p.filters !== null) {
+    assertPlainObject(p.filters, 'filters');
+    const filters = {};
+    for (const key of ['status', 'source', 'keyword']) {
+      const value = p.filters[key];
+      if (value === undefined || value === null) continue;
+      assertOptionalString(value, `filters.${key}`, MAX_KEY_LENGTH);
+      filters[key] = value;
+    }
+    out.filters = filters;
+  }
+  if (p.sort !== undefined && p.sort !== null) {
+    if (typeof p.sort !== 'string' || !NUMBERS_QUERY_SORT_FIELDS.includes(p.sort)) {
+      throw invalidParams('Invalid params: sort');
+    }
+    out.sort = p.sort;
+    out.order = 'asc';
+    if (p.order !== undefined && p.order !== null) {
+      if (p.order !== 'asc' && p.order !== 'desc') {
+        throw invalidParams('Invalid params: order');
+      }
+      out.order = p.order;
+    }
+  }
+  return out;
+}
+
 function createMainWindow() {
   Menu.setApplicationMenu(null);
 
@@ -590,8 +630,13 @@ function registerIpcHandlers() {
   });
 
   // 采集结果管理
-  ipcMain.handle('collector:get-numbers', () => {
-    return accountStore.getCollectedNumbers();
+  ipcMain.handle('collector:get-numbers', (_, query) => {
+    try {
+      return accountStore.queryNumbers(validateNumbersQuery(query));
+    } catch (err) {
+      if (err.invalidParams) rejectLog('collector:get-numbers', err.message);
+      throw err;
+    }
   });
 
   ipcMain.handle('collector:add-numbers', (_, numbers) => {

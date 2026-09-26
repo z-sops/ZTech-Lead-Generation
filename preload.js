@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('appAPI', {
 
   // 采集结果
   collector: {
-    getNumbers: () => ipcRenderer.invoke('collector:get-numbers'),
+    getNumbers: (query) => ipcRenderer.invoke('collector:get-numbers', query),
     addNumbers: (numbers) => ipcRenderer.invoke('collector:add-numbers', numbers),
     exportNumbers: (format) => ipcRenderer.invoke('collector:export-numbers', format),
     deleteNumbers: (ids) => ipcRenderer.invoke('collector:delete-numbers', ids),

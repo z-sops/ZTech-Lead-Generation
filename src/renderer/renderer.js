@@ -870,36 +870,61 @@ document.getElementById('select-all-numbers').addEventListener('change', (e) => 
 });
 
 // === 号码管理 ===
-let allNumbers = [];
 let numbersPage = 1;
+let numbersSort = '';
+let numbersOrder = 'asc';
+let numbersLoadSeq = 0;
+let numbersSearchTimer = null;
 const NUMBERS_PER_PAGE = 50;
+const NUMBERS_SEARCH_DEBOUNCE_MS = 300;
 
-async function loadNumbers() {
-  try {
-    allNumbers = await window.appAPI.collector.getNumbers();
-    numbersPage = 1;
-    renderNumbers();
-  } catch (err) {
-    const msg = err?.message || String(err);
-    toast(msg, 'error');
-    reportError(msg, { handler: 'loadNumbers' });
+// Sortable columns by th cellIndex (checkbox, Website and Status excluded).
+const NUMBERS_SORTABLE_COLUMNS = [
+  { index: 1, sort: 'phone', label: 'Phone' },
+  { index: 2, sort: 'title', label: 'Title' },
+  { index: 4, sort: 'source', label: 'Source' },
+  { index: 5, sort: 'keyword', label: 'Keywords' },
+  { index: 7, sort: 'collectedAt', label: '采集Time' }
+];
+
+function numbersQueryPayload() {
+  const query = { limit: NUMBERS_PER_PAGE, offset: (numbersPage - 1) * NUMBERS_PER_PAGE };
+  const search = document.getElementById('number-search').value.trim();
+  if (search) query.search = search;
+  const filterStatus = document.getElementById('number-filter-status').value;
+  if (filterStatus !== 'all') query.filters = { status: filterStatus };
+  if (numbersSort) {
+    query.sort = numbersSort;
+    query.order = numbersOrder;
   }
+  return query;
 }
 
-function renderNumbers() {
-  const search = document.getElementById('number-search').value.toLowerCase();
-  const filterStatus = document.getElementById('number-filter-status').value;
-  let filtered = allNumbers;
-  if (search) filtered = filtered.filter(n => n.phone.includes(search));
-  if (filterStatus !== 'all') filtered = filtered.filter(n => n.status === filterStatus);
+function updateNumbersSortHeaders() {
+  document.querySelectorAll('#view-numbers .data-table thead th').forEach((th) => {
+    const col = NUMBERS_SORTABLE_COLUMNS.find((c) => c.index === th.cellIndex);
+    if (!col) return;
+    th.textContent = numbersSort === col.sort
+      ? col.label + (numbersOrder === 'asc' ? ' ▲' : ' ▼')
+      : col.label;
+  });
+}
 
-  const totalPages = Math.ceil(filtered.length / NUMBERS_PER_PAGE) || 1;
-  if (numbersPage > totalPages) numbersPage = totalPages;
-  const start = (numbersPage - 1) * NUMBERS_PER_PAGE;
-  const pageData = filtered.slice(start, start + NUMBERS_PER_PAGE);
+async function renderNumbers() {
+  try {
+    const seq = ++numbersLoadSeq;
+    const result = await window.appAPI.collector.getNumbers(numbersQueryPayload());
+    if (seq !== numbersLoadSeq) return;
+    const rows = result && Array.isArray(result.rows) ? result.rows : [];
+    const total = result && Number.isInteger(result.total) ? result.total : rows.length;
+    const totalPages = Math.ceil(total / NUMBERS_PER_PAGE) || 1;
+    if (numbersPage > totalPages) {
+      numbersPage = totalPages;
+      return renderNumbers();
+    }
 
-  const tbody = document.getElementById('numbers-table-body');
-  tbody.innerHTML = pageData.map(n => `<tr>
+    const tbody = document.getElementById('numbers-table-body');
+    tbody.innerHTML = rows.map(n => `<tr>
     <td><input type="checkbox" class="number-check" data-id="${escapeHtml(n.id)}"></td>
     <td>${escapeHtml(n.phone)}</td>
     <td>${escapeHtml(n.title || '-')}</td>
@@ -910,11 +935,40 @@ function renderNumbers() {
     <td>${n.collectedAt ? new Date(n.collectedAt).toLocaleString('zh-CN') : '-'}</td>
   </tr>`).join('');
 
-  renderPagination('numbers-pagination', totalPages, numbersPage, (p) => { numbersPage = p; renderNumbers(); });
+    renderPagination('numbers-pagination', totalPages, numbersPage, (p) => { numbersPage = p; renderNumbers(); });
+    updateNumbersSortHeaders();
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'renderNumbers' });
+  }
 }
 
-document.getElementById('number-search').addEventListener('input', safeAsync(renderNumbers));
-document.getElementById('number-filter-status').addEventListener('change', safeAsync(renderNumbers));
+function loadNumbers() {
+  numbersPage = 1;
+  return renderNumbers();
+}
+
+document.getElementById('number-search').addEventListener('input', safeAsync(() => {
+  clearTimeout(numbersSearchTimer);
+  numbersSearchTimer = setTimeout(() => { renderNumbers(); }, NUMBERS_SEARCH_DEBOUNCE_MS);
+}));
+document.getElementById('number-filter-status').addEventListener('change', safeAsync(() => { renderNumbers(); }));
+
+document.querySelector('#view-numbers .data-table thead').addEventListener('click', safeAsync((e) => {
+  const th = e.target.closest('th');
+  if (!th) return;
+  const col = NUMBERS_SORTABLE_COLUMNS.find((c) => c.index === th.cellIndex);
+  if (!col) return;
+  if (numbersSort === col.sort) {
+    numbersOrder = numbersOrder === 'asc' ? 'desc' : 'asc';
+  } else {
+    numbersSort = col.sort;
+    numbersOrder = 'asc';
+  }
+  numbersPage = 1;
+  renderNumbers();
+}));
 
 document.getElementById('btn-delete-selected').addEventListener('click', safeAsync(async () => {
     const ids = [...document.querySelectorAll('.number-check:checked')].map(cb => cb.dataset.id);

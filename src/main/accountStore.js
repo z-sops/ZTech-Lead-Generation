@@ -24,6 +24,44 @@ const LEAD_NEW_FIELDS = ['title', 'website', 'email', 'address', 'runSlug'];
 // (renderer.js: source: '手动导入'). Used to map legacy `source` values.
 const LEGACY_IMPORT_SOURCE = '手动导入';
 
+// B2 query layer. Free-text search covers the human-meaningful lead fields
+// (runSlug is an opaque run identifier and is not searched); filters are
+// exact-match only; sort identifiers reach SQL exclusively through the
+// QUERY_SORT_COLUMNS values, which are compile-time literals.
+const QUERY_SEARCH_FIELDS = ['phone', 'title', 'website', 'email', 'address', 'source', 'keyword'];
+const QUERY_FILTER_FIELDS = ['status', 'source', 'keyword'];
+const QUERY_SORT_COLUMNS = {
+  collectedAt: 'collectedAt',
+  title: 'title',
+  phone: 'phone',
+  source: 'source',
+  keyword: 'keyword'
+};
+
+// SQLite LIKE folds ASCII letters only; the JSON fallback must apply the
+// identical folding or the two storages diverge on non-ASCII case.
+function asciiFold(value) {
+  return value.replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 32));
+}
+
+// Escape LIKE wildcards so a search term matches literally on both storages.
+function escapeLikePattern(term) {
+  return term.replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
+// NULL sorts smallest (SQLite default); otherwise compare as SQLite's
+// BINARY collation does (code-unit order matches byte order for BMP text).
+function compareQueryValues(a, b) {
+  const aNull = a === null || a === undefined;
+  const bNull = b === null || b === undefined;
+  if (aNull || bNull) {
+    if (aNull && bNull) return 0;
+    return aNull ? -1 : 1;
+  }
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 function asText(value) {
   return typeof value === 'string' ? value : '';
 }
@@ -339,6 +377,118 @@ class AccountStore {
     const rows = this.db.exec('SELECT * FROM numbers ORDER BY rowid DESC');
     if (!rows.length) return [];
     return rows[0].values.map(r => rowToObject(rows[0].columns, r));
+  }
+
+  // B2 query layer: server-side search/filter/sort/paging over the lead
+  // library. Returns { rows, total, limit, offset }. Read-only: never calls
+  // saveDB and never mutates stored rows on either storage branch.
+  async queryNumbers(query) {
+    await this.ready;
+    const q = (query && typeof query === 'object' && !Array.isArray(query)) ? query : {};
+    const normalized = {
+      limit: Number.isInteger(q.limit) && q.limit >= 1 && q.limit <= 100 ? q.limit : 20,
+      offset: Number.isInteger(q.offset) && q.offset >= 0 && q.offset <= 100000 ? q.offset : 0,
+      search: typeof q.search === 'string' ? q.search.trim() : '',
+      filters: {},
+      sort: typeof q.sort === 'string' && QUERY_SORT_COLUMNS[q.sort] ? q.sort : '',
+      order: q.order === 'desc' ? 'desc' : 'asc'
+    };
+    if (q.filters && typeof q.filters === 'object' && !Array.isArray(q.filters)) {
+      for (const field of QUERY_FILTER_FIELDS) {
+        const value = q.filters[field];
+        if (typeof value === 'string') normalized.filters[field] = value;
+      }
+    }
+    if (!this.db) return this._queryNumbersJson(normalized);
+    return this._queryNumbersSql(normalized);
+  }
+
+  _queryNumbersSql(query) {
+    const where = [];
+    const params = [];
+    if (query.search) {
+      const pattern = '%' + escapeLikePattern(query.search) + '%';
+      where.push('(' + QUERY_SEARCH_FIELDS.map(f => `${f} LIKE ? ESCAPE '\\'`).join(' OR ') + ')');
+      for (let i = 0; i < QUERY_SEARCH_FIELDS.length; i++) params.push(pattern);
+    }
+    for (const field of QUERY_FILTER_FIELDS) {
+      const value = query.filters[field];
+      if (value === undefined || value === null) continue;
+      where.push(`${field} = ?`);
+      params.push(value);
+    }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+    const orderSql = query.sort
+      ? `ORDER BY ${QUERY_SORT_COLUMNS[query.sort]} ${query.order === 'desc' ? 'DESC' : 'ASC'}, rowid DESC`
+      : 'ORDER BY rowid DESC';
+
+    let total = 0;
+    const countStmt = this.db.prepare(`SELECT COUNT(*) AS c FROM numbers${whereSql}`);
+    try {
+      countStmt.bind(params);
+      if (countStmt.step()) total = countStmt.getAsObject().c;
+    } finally {
+      countStmt.free();
+    }
+
+    const rowStmt = this.db.prepare(`SELECT * FROM numbers${whereSql} ${orderSql} LIMIT ? OFFSET ?`);
+    try {
+      rowStmt.bind([...params, query.limit, query.offset]);
+      const rows = [];
+      let columns = null;
+      while (rowStmt.step()) {
+        if (!columns) columns = rowStmt.getColumnNames();
+        rows.push(rowToObject(columns, rowStmt.get()));
+      }
+      return { rows, total, limit: query.limit, offset: query.offset };
+    } finally {
+      rowStmt.free();
+    }
+  }
+
+  _queryNumbersJson(query) {
+    const search = query.search ? asciiFold(query.search) : '';
+    const matched = (this._numbers || []).filter((row) => {
+      if (search) {
+        let hit = false;
+        for (const field of QUERY_SEARCH_FIELDS) {
+          const raw = row[field];
+          const hay = raw === null || raw === undefined ? '' : asciiFold(String(raw));
+          if (hay.includes(search)) {
+            hit = true;
+            break;
+          }
+        }
+        if (!hit) return false;
+      }
+      for (const field of QUERY_FILTER_FIELDS) {
+        const value = query.filters[field];
+        if (value === undefined || value === null) continue;
+        if (row[field] !== value) return false;
+      }
+      return true;
+    });
+    const total = matched.length;
+    let ordered;
+    if (query.sort) {
+      const dir = query.order === 'desc' ? -1 : 1;
+      const indexed = matched.map((row, i) => ({ row, i }));
+      indexed.sort((a, b) => {
+        const cmp = compareQueryValues(a.row[query.sort], b.row[query.sort]);
+        if (cmp !== 0) return cmp * dir;
+        return b.i - a.i;
+      });
+      ordered = indexed.map((entry) => entry.row);
+    } else {
+      // Default mirrors the SQL branch: newest insert first (rowid DESC).
+      ordered = matched.slice().reverse();
+    }
+    return {
+      rows: ordered.slice(query.offset, query.offset + query.limit),
+      total,
+      limit: query.limit,
+      offset: query.offset
+    };
   }
 
   async addNumbers(newNumbers) {
