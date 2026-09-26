@@ -30,6 +30,10 @@
           <span class="nav-icon">📋</span>
           <span class="nav-label">Lead Management</span>
         </button>
+        <button class="nav-item" data-view="dashboard">
+          <span class="nav-icon">📈</span>
+          <span class="nav-label">Dashboard</span>
+        </button>
         <button class="nav-item" data-view="settings">
           <span class="nav-icon">⚙️</span>
           <span class="nav-label">Settings</span>
@@ -256,6 +260,73 @@
               </div>
               <div class="lead-detail-body" id="lead-detail-body"></div>
             </div>
+          </div>
+        </section>
+
+        <!-- Dashboard view (B5): local lead library + job ledger + storage health -->
+        <section class="view" id="view-dashboard">
+          <div class="view-top">
+            <div class="form-actions">
+              <button class="btn btn-sm" data-goto-view="collector">Keyword Collection</button>
+              <button class="btn btn-sm" data-goto-view="history">Collection History</button>
+              <button class="btn btn-sm" data-goto-view="numbers">Lead Management</button>
+            </div>
+            <div class="dashboard-stats">
+              <div class="card dashboard-card">
+                <div class="card-body">
+                  <div class="dashboard-stat-label">Total Leads</div>
+                  <div class="dashboard-stat-value" id="dashboard-total-leads">-</div>
+                </div>
+              </div>
+              <div class="card dashboard-card">
+                <div class="card-body">
+                  <div class="dashboard-stat-label">Storage Health</div>
+                  <div class="dashboard-stat-value" id="dashboard-storage-state">-</div>
+                </div>
+              </div>
+              <div class="card dashboard-card">
+                <div class="card-body">
+                  <div class="dashboard-stat-label">Total Runs</div>
+                  <div class="dashboard-stat-value" id="dashboard-total-runs">-</div>
+                </div>
+              </div>
+              <div class="card dashboard-card">
+                <div class="card-body">
+                  <div class="dashboard-stat-label">Running</div>
+                  <div class="dashboard-stat-value" id="dashboard-runs-running">-</div>
+                </div>
+              </div>
+              <div class="card dashboard-card">
+                <div class="card-body">
+                  <div class="dashboard-stat-label">Succeeded</div>
+                  <div class="dashboard-stat-value" id="dashboard-runs-succeeded">-</div>
+                </div>
+              </div>
+              <div class="card dashboard-card">
+                <div class="card-body">
+                  <div class="dashboard-stat-label">Failed</div>
+                  <div class="dashboard-stat-value" id="dashboard-runs-failed">-</div>
+                </div>
+              </div>
+            </div>
+            <div class="dashboard-note" id="dashboard-counts-window" hidden></div>
+          </div>
+          <div class="view-bottom">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Run Slug</th>
+                  <th>Provider</th>
+                  <th>Status</th>
+                  <th>Started</th>
+                  <th>Completed</th>
+                  <th>Results</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody id="dashboard-jobs-body"></tbody>
+            </table>
+            <div class="pagination" id="dashboard-jobs-pagination"></div>
           </div>
         </section>
 

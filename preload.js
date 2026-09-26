@@ -29,7 +29,8 @@ contextBridge.exposeInMainWorld('appAPI', {
     addNumbers: (numbers) => ipcRenderer.invoke('collector:add-numbers', numbers),
     exportNumbers: (format) => ipcRenderer.invoke('collector:export-numbers', format),
     deleteNumbers: (ids) => ipcRenderer.invoke('collector:delete-numbers', ids),
-    storageStatus: () => ipcRenderer.invoke('collector:storage-status')
+    storageStatus: () => ipcRenderer.invoke('collector:storage-status'),
+    getJobs: (query) => ipcRenderer.invoke('collector:get-jobs', query)
   },
 
   // 日志

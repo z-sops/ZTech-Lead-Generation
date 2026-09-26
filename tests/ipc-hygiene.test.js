@@ -67,13 +67,18 @@ test('5. zero live renderer/html references to removed APIs', () => {
   assert.ok(!htmlSource.includes('getStore') && !htmlSource.includes('coreclaw:'), 'html references none');
 });
 
-test('6. all 17 live main IPC channels present exactly once', () => {
+test('6. all 18 live main IPC channels present exactly once', () => {
+  // B5 declared lock update: channel count 17 -> 18. The single addition is
+  // collector:get-jobs, the audited read-only dashboard access to the local
+  // collection-job ledger (validated via validateHistoryPaging, returning
+  // the accountStore.queryJobs envelope unchanged). No other channel moved.
   const expected = [
     'provider:set-credentials', 'provider:test-connection',
     'collection:submit', 'collection:job-status', 'collection:job-result', 'collection:job-history',
     'settings:save', 'settings:load',
     'collector:get-numbers', 'collector:add-numbers', 'collector:export-numbers',
     'collector:delete-numbers', 'collector:storage-status',
+    'collector:get-jobs',
     'logs:export', 'logs:dir', 'logs:report',
     'proxy:detect'
   ];
@@ -103,6 +108,7 @@ test('8. renderer still uses every exposed flow', () => {
     'appAPI.proxy.detect',
     'appAPI.collector.getNumbers', 'appAPI.collector.addNumbers', 'appAPI.collector.exportNumbers',
     'appAPI.collector.deleteNumbers', 'appAPI.collector.storageStatus',
+    'appAPI.collector.getJobs',
     'appAPI.logs.exportLogs'
   ];
   for (const use of rendererUses) {

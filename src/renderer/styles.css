@@ -669,3 +669,40 @@ textarea {
   font-size: 13px;
   text-align: center;
 }
+
+/* Dashboard (B5): additive layout for the local lead library overview */
+#view-dashboard .view-top {
+  flex: none;
+}
+#view-dashboard .view-bottom {
+  flex: 1;
+  min-height: 0;
+}
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.dashboard-card {
+  margin-bottom: 0;
+}
+.dashboard-card .card-body {
+  padding: 14px 16px;
+}
+.dashboard-stat-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.dashboard-stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+.dashboard-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}

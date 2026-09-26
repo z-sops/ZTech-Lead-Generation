@@ -749,6 +749,18 @@ function registerIpcHandlers() {
     return accountStore.getStorageStatus();
   });
 
+  // B5: read-only access to the local collection-job ledger for the
+  // dashboard. Same validated paging contract as the other list reads;
+  // returns the accountStore.queryJobs envelope unchanged.
+  ipcMain.handle('collector:get-jobs', (_, query) => {
+    try {
+      return accountStore.queryJobs(validateHistoryPaging(query));
+    } catch (err) {
+      if (err.invalidParams) rejectLog('collector:get-jobs', err.message);
+      throw err;
+    }
+  });
+
   ipcMain.handle('logs:export', () => {
     return logger.exportLogs();
   });

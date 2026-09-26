@@ -7,6 +7,7 @@ const viewTitles = {
   collector: '关键词采集',
   history: '采集历史',
   numbers: '号码管理',
+  dashboard: '仪表盘',
   settings: '设置'
 };
 
@@ -1155,6 +1156,115 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
     input.click();
   });
 
+// === B5 Lead Library Dashboard ===
+// Lazy, read-only overview over the lead library, the local collection-job
+// ledger and storage health. Bounded pages only: loads when the view is
+// selected, has no timer and never polls or auto-refreshes.
+const DASHBOARD_JOBS_PAGE_SIZE = 50;
+let dashboardJobsPage = 1;
+let dashboardLoadSeq = 0;
+let dashboardCounts = { running: 0, succeeded: 0, failed: 0, windowed: false };
+
+function formatJobTime(value) {
+  if (typeof value !== 'string' || !value) return '-';
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('zh-CN');
+}
+
+async function loadDashboard(page = 1) {
+  try {
+    const targetPage = page < 1 ? 1 : page;
+    const seq = ++dashboardLoadSeq;
+
+    const leads = await window.appAPI.collector.getNumbers({ limit: 1, offset: 0 });
+    if (seq !== dashboardLoadSeq) return;
+    const storage = await window.appAPI.collector.storageStatus();
+    if (seq !== dashboardLoadSeq) return;
+    const offset = (targetPage - 1) * DASHBOARD_JOBS_PAGE_SIZE;
+    const jobs = await window.appAPI.collector.getJobs({ limit: DASHBOARD_JOBS_PAGE_SIZE, offset });
+    if (seq !== dashboardLoadSeq) return;
+
+    const totalLeads = leads && Number.isInteger(leads.total) ? leads.total : 0;
+    const rows = jobs && Array.isArray(jobs.rows) ? jobs.rows : [];
+    const totalJobs = jobs && Number.isInteger(jobs.total) ? jobs.total : rows.length;
+
+    document.getElementById('dashboard-total-leads').textContent = String(totalLeads);
+    document.getElementById('dashboard-total-runs').textContent = String(totalJobs);
+
+    const storageState = storage && typeof storage === 'object' ? storage : {};
+    const storageProblems = [];
+    if (storageState.mode !== 'sql') storageProblems.push('JSON storage');
+    if (storageState.quarantine) storageProblems.push('Quarantine: ' + storageState.quarantine);
+    else if (storageState.reason === 'corrupt-open') storageProblems.push('Unreadable database');
+    if (storageState.dataMayBeIncomplete) storageProblems.push('Data may be incomplete');
+    document.getElementById('dashboard-storage-state').textContent =
+      storageProblems.length ? storageProblems.join('; ') : 'OK';
+
+    // Job status counts: client-side over the bounded ledger page, using only
+    // the approved vocabulary (running | succeeded | failed). Recomputed on
+    // the first page of each dashboard load so pagination never changes them.
+    if (targetPage === 1) {
+      const counts = { running: 0, succeeded: 0, failed: 0 };
+      for (const job of rows) {
+        if (!job || typeof job !== 'object') continue;
+        if (job.status === 'running') counts.running += 1;
+        else if (job.status === 'succeeded') counts.succeeded += 1;
+        else if (job.status === 'failed') counts.failed += 1;
+      }
+      dashboardCounts = {
+        running: counts.running,
+        succeeded: counts.succeeded,
+        failed: counts.failed,
+        windowed: totalJobs > rows.length
+      };
+    }
+    document.getElementById('dashboard-runs-running').textContent = String(dashboardCounts.running);
+    document.getElementById('dashboard-runs-succeeded').textContent = String(dashboardCounts.succeeded);
+    document.getElementById('dashboard-runs-failed').textContent = String(dashboardCounts.failed);
+    const countsWindowNote = document.getElementById('dashboard-counts-window');
+    countsWindowNote.textContent = dashboardCounts.windowed
+      ? 'Run counts cover the most recent ' + rows.length + ' runs'
+      : '';
+    countsWindowNote.hidden = !dashboardCounts.windowed;
+
+    dashboardJobsPage = targetPage;
+    const tbody = document.getElementById('dashboard-jobs-body');
+    tbody.innerHTML = rows.map(job => {
+      const ledgerRow = job && typeof job === 'object' ? job : {};
+      const statusClass = ledgerRow.status === 'succeeded' ? 'color:var(--accent)' : ledgerRow.status === 'failed' ? 'color:var(--danger)' : ledgerRow.status === 'running' ? 'color:var(--warning)' : '';
+      const statusText = ledgerRow.status === 'succeeded' ? 'Succeeded' : ledgerRow.status === 'failed' ? 'Failed' : ledgerRow.status === 'running' ? 'Running' : (ledgerRow.status || '-');
+      return `<tr>
+        <td>${escapeHtml(ledgerRow.runSlug || '-')}</td>
+        <td>${escapeHtml(ledgerRow.providerId || '-')}</td>
+        <td style="${statusClass}">${escapeHtml(statusText)}</td>
+        <td>${escapeHtml(formatJobTime(ledgerRow.startedAt))}</td>
+        <td>${escapeHtml(formatJobTime(ledgerRow.completedAt))}</td>
+        <td>${escapeHtml(ledgerRow.resultCount === null || ledgerRow.resultCount === undefined ? '-' : String(ledgerRow.resultCount))}</td>
+        <td>${escapeHtml(ledgerRow.error || '-')}</td>
+      </tr>`;
+    }).join('');
+
+    const totalPages = Math.ceil(totalJobs / DASHBOARD_JOBS_PAGE_SIZE) || 1;
+    renderPagination('dashboard-jobs-pagination', totalPages, dashboardJobsPage, (p) => {
+      dashboardJobsPage = p;
+      loadDashboard(p);
+    });
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'loadDashboard' });
+  }
+}
+
+// Dashboard quick links reuse the sidebar switch so the existing lazy-load
+// behaviour (and history/numbers refresh) keeps working unchanged.
+document.getElementById('view-dashboard').addEventListener('click', (e) => {
+  const gotoBtn = e.target.closest('[data-goto-view]');
+  if (!gotoBtn) return;
+  const nav = document.querySelector(`.nav-item[data-view="${gotoBtn.dataset.gotoView}"]`);
+  if (nav) nav.click();
+});
+
 // === 视图切换时加载数据 ===
 navItems.forEach(item => {
   item.addEventListener('click', () => {
@@ -1164,6 +1274,7 @@ navItems.forEach(item => {
       checkStorageStatus();
     }
     if (viewId === 'history') loadHistory();
+    if (viewId === 'dashboard') loadDashboard();
   });
 });
 

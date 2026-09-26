@@ -889,11 +889,16 @@ function test(name, fn) {
     }
   });
 
-  test('33. no new IPC channel and no renderer/preload exposure of the ledger', () => {
+  test('33. ledger internals stay unexposed; reads use only the declared B5 channel', () => {
+    // B5 declared lock update: channel count 17 -> 18 and the previous
+    // negative assertion against collector:get-jobs becomes a positive
+    // contract — that single channel is the audited dashboard read. Store
+    // internals (queryJobs symbol, write APIs) still must not reach
+    // preload/renderer, and no separate jobs namespace may appear.
     const handles = mainSource.match(/ipcMain\.handle\(/g) || [];
-    assert.strictEqual(handles.length, 17, 'exactly 17 IPC channels, none added by B4');
-    assert.ok(!mainSource.includes("ipcMain.handle('collector:get-jobs'"), 'no jobs channel registered');
-    const ledgerApis = ['queryJobs', 'insertJob', 'updateJobState', 'setJobResultCount', 'collector:get-jobs'];
+    assert.strictEqual(handles.length, 18, 'exactly 18 IPC channels (B5 added collector:get-jobs)');
+    assert.ok(mainSource.includes("ipcMain.handle('collector:get-jobs'"), 'B5 jobs read channel registered');
+    const ledgerApis = ['queryJobs', 'insertJob', 'updateJobState', 'setJobResultCount'];
     for (const api of ledgerApis) {
       assert.ok(!preloadSource.includes(api), 'preload must not expose: ' + api);
       assert.ok(!rendererSource.includes(api), 'renderer must not reference: ' + api);
@@ -925,7 +930,10 @@ function test(name, fn) {
     assert.strictEqual(nonTerminal.count, 0, 'non-terminal target refused without a write');
   });
 
-  test('35. existing 17-channel contract intact, byte for byte', () => {
+  test('35. declared 18-channel contract intact, byte for byte', () => {
+    // B5 declared lock update: the set grows by exactly one audited channel,
+    // collector:get-jobs (dashboard ledger read); everything else is byte
+    // identical to the B4 contract.
     const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
     const expected = [
       'provider:set-credentials', 'provider:test-connection',
@@ -933,12 +941,13 @@ function test(name, fn) {
       'settings:save', 'settings:load',
       'collector:get-numbers', 'collector:add-numbers', 'collector:export-numbers',
       'collector:delete-numbers', 'collector:storage-status',
+      'collector:get-jobs',
       'logs:export', 'logs:dir', 'logs:report',
       'proxy:detect'
     ];
-    assert.strictEqual(channels.length, 17, 'exactly 17 channels');
+    assert.strictEqual(channels.length, 18, 'exactly 18 channels');
     assert.deepStrictEqual(channels.slice().sort(), expected.slice().sort(),
-      'the channel set is unchanged by B4');
+      'the channel set is the B4 set plus collector:get-jobs only');
     for (const ch of expected) {
       const occurrences = mainSource.split(`ipcMain.handle('${ch}'`).length - 1;
       assert.strictEqual(occurrences, 1, 'channel registered exactly once: ' + ch);
