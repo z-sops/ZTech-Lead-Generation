@@ -150,7 +150,7 @@ function validateNumbersPayload(numbers) {
     if (n.id !== undefined && n.id !== null && (typeof n.id !== 'string' || n.id.length > 100)) {
       throw invalidParams(`Invalid params: numbers[${i}].id`);
     }
-    for (const key of ['source', 'keyword', 'collectedAt']) {
+    for (const key of ['source', 'keyword', 'collectedAt', 'title', 'website', 'email', 'address', 'runSlug']) {
       assertOptionalString(n[key], `numbers[${i}].${key}`, 500);
     }
     if (n.status !== undefined && n.status !== null && n.status !== 'pending') {

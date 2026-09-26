@@ -71,6 +71,9 @@ function safeAsync(handler) {
 
 // 采集
 let currentRunSlug = null;
+// Slug of the run currently presented in the results table. Stamped onto rows
+// saved to the number library so saved leads stay traceable to their run.
+let currentResultsRunSlug = null;
 let runGeneration = 0;
 let pollTimerId = null;
 let pollInFlight = false;
@@ -111,6 +114,7 @@ function startPolling(gen, slug) {
 function clearCurrentResultPresentation() {
   window.__collectResults = [];
   window.__filteredResults = null;
+  currentResultsRunSlug = null;
   displayedResultRowMap = new Map();
   document.getElementById('collect-result-card').style.display = 'none';
   document.getElementById('collect-result-body').textContent = '';
@@ -324,6 +328,7 @@ async function loadRunResult(currentRunSlug, gen) {
     const items = result.data?.list || [];
     showStatus(`采集完成，已加载 ${items.length} 条结果`);
     window.__collectResults = items;
+    currentResultsRunSlug = currentRunSlug;
     const mobileOnly = document.getElementById('collect-mobile-only').checked;
     if (mobileOnly) {
       const filtered = items.filter(item => isMobileNumber(item.phone));
@@ -607,6 +612,7 @@ window.viewRunResult = safeAsync(async (slug) => {
       document.getElementById('view-collector').classList.add('active');
       document.getElementById('page-title').textContent = '关键词采集';
       window.__collectResults = items;
+      currentResultsRunSlug = slug;
       const mobileOnly = document.getElementById('collect-mobile-only').checked;
       if (mobileOnly) {
         const filtered = items.filter(item => isMobileNumber(item.phone));
@@ -803,10 +809,15 @@ document.getElementById('btn-save-numbers').addEventListener('click', safeAsync(
     const numbers = source.map((item) => ({
       id: crypto.randomUUID(),
       phone: item.phone || '',
-      source: item.title || '',
+      title: item.title || '',
+      website: item.website || '',
+      email: item.email_1 || item.all_emails || '',
+      address: item.address || '',
+      source: '',
       keyword: item.source_keyword || '',
       status: 'pending',
-      collectedAt: new Date().toISOString()
+      collectedAt: new Date().toISOString(),
+      runSlug: currentResultsRunSlug || ''
     })).filter(n => n.phone);
     let result;
     try {
@@ -891,6 +902,8 @@ function renderNumbers() {
   tbody.innerHTML = pageData.map(n => `<tr>
     <td><input type="checkbox" class="number-check" data-id="${escapeHtml(n.id)}"></td>
     <td>${escapeHtml(n.phone)}</td>
+    <td>${escapeHtml(n.title || '-')}</td>
+    <td>${escapeHtml(n.website || '-')}</td>
     <td>${escapeHtml(n.source || '-')}</td>
     <td>${escapeHtml(n.keyword || '-')}</td>
     <td>${escapeHtml(n.status || 'pending')}</td>

@@ -16,9 +16,98 @@ function canonicalPhone(phone) {
   return phone.replace(/[\s\-.()]/g, '');
 }
 
+// B1 lead schema: new persisted fields. Naming follows the existing
+// camelCase convention (cf. collectedAt / runSlug in the renderer).
+const LEAD_NEW_FIELDS = ['title', 'website', 'email', 'address', 'runSlug'];
+
+// Exact provenance literal written by the manual-import save path
+// (renderer.js: source: '手动导入'). Used to map legacy `source` values.
+const LEGACY_IMPORT_SOURCE = '手动导入';
+
+function asText(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+// Legacy `source` was overloaded: the collection save path wrote the business
+// title into it (renderer wrote source: item.title), the import path wrote the
+// provenance literal. Map the title meaning best-effort for NEW fields only;
+// the original `source` value itself is never modified or destroyed.
+function legacySourceTitle(sourceValue) {
+  if (sourceValue === LEGACY_IMPORT_SOURCE) return '';
+  return asText(sourceValue);
+}
+
+// Adds missing B1 fields to a lead row without touching existing values.
+// Idempotent: a row that already carries the fields is returned unchanged.
+// Returns { row, changed }.
+function normalizeLeadRow(row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return { row, changed: false };
+  let changed = false;
+  if (row.title === undefined || row.title === null) {
+    row.title = legacySourceTitle(row.source);
+    changed = true;
+  }
+  for (const field of ['website', 'email', 'address', 'runSlug']) {
+    if (row[field] === undefined || row[field] === null) {
+      row[field] = '';
+      changed = true;
+    }
+  }
+  return { row, changed };
+}
+
+// One-time schema extension for an existing 6-column numbers table.
+// Adds missing B1 columns, backfills title from the legacy `source` value
+// (import provenance literal maps to an empty title; `source` untouched),
+// and normalises NULLs to ''. Returns the number of columns added.
+// Returns 0 on an already-migrated or fresh table (zero writes / idempotent).
+function migrateSchema(db) {
+  if (!db) return 0;
+  let info;
+  try {
+    info = db.exec('PRAGMA table_info(numbers)');
+  } catch {
+    return 0;
+  }
+  if (!info.length || !info[0].values.length) return 0;
+  const existing = new Set(info[0].values.map(r => r[1]));
+  const added = [];
+  for (const field of LEAD_NEW_FIELDS) {
+    if (existing.has(field)) continue;
+    db.run(`ALTER TABLE numbers ADD COLUMN ${field} TEXT`);
+    added.push(field);
+  }
+  if (!added.length) return 0;
+  if (added.includes('title')) {
+    db.run(
+      "UPDATE numbers SET title = CASE WHEN source = ? THEN '' ELSE IFNULL(source, '') END",
+      [LEGACY_IMPORT_SOURCE]
+    );
+  }
+  for (const field of added) {
+    db.run(`UPDATE numbers SET ${field} = '' WHERE ${field} IS NULL`);
+  }
+  return added.length;
+}
+
+// Map a positional SELECT row to an object using the result's column names,
+// so reads work both before and after the B1 column migration. Original
+// columns keep their raw values; B1 columns default to '' when absent.
+function rowToObject(columns, values) {
+  const out = {};
+  for (let i = 0; i < columns.length; i++) out[columns[i]] = values[i];
+  for (const field of LEAD_NEW_FIELDS) {
+    if (out[field] === undefined || out[field] === null) out[field] = '';
+  }
+  return out;
+}
+
+// Duplicate-phone merge rule: existing non-empty values win (first writer
+// wins); empty/missing metadata fields are filled from the incoming row.
+// Applies to the original four fields plus the B1 fields.
 function mergeEmptyLeadFields(existing, incoming) {
   let changed = false;
-  for (const field of ['source', 'keyword', 'status', 'collectedAt']) {
+  for (const field of ['source', 'keyword', 'status', 'collectedAt', ...LEAD_NEW_FIELDS]) {
     const cur = existing[field];
     const inc = incoming[field];
     const curEmpty = cur === undefined || cur === null || (typeof cur === 'string' && cur.trim() === '');
@@ -105,7 +194,12 @@ class AccountStore {
         source TEXT,
         keyword TEXT,
         status TEXT DEFAULT 'pending',
-        collectedAt TEXT
+        collectedAt TEXT,
+        title TEXT,
+        website TEXT,
+        email TEXT,
+        address TEXT,
+        runSlug TEXT
       )`);
 
       this.db.run(`CREATE INDEX IF NOT EXISTS idx_numbers_phone ON numbers(phone)`);
@@ -120,6 +214,10 @@ class AccountStore {
     }
 
     try {
+      const migratedColumns = migrateSchema(this.db);
+      if (migratedColumns) {
+        logger.info('accountStore', 'lead schema migration applied', { columns: migratedColumns });
+      }
       this.saveDB();
     } catch (err) {
       this.db = null;
@@ -210,6 +308,7 @@ class AccountStore {
     try {
       const parsed = JSON.parse(fs.readFileSync(nf, 'utf-8'));
       if (Array.isArray(parsed)) {
+        for (const row of parsed) normalizeLeadRow(row);
         this._numbers = parsed;
       } else {
         logger.warn('accountStore', 'numbers.json is not an array, ignoring');
@@ -239,9 +338,7 @@ class AccountStore {
     if (!this.db) return this._numbers || [];
     const rows = this.db.exec('SELECT * FROM numbers ORDER BY rowid DESC');
     if (!rows.length) return [];
-    return rows[0].values.map(r => ({
-      id: r[0], phone: r[1], source: r[2], keyword: r[3], status: r[4], collectedAt: r[5]
-    }));
+    return rows[0].values.map(r => rowToObject(rows[0].columns, r));
   }
 
   async addNumbers(newNumbers) {
@@ -250,6 +347,7 @@ class AccountStore {
   }
 
   _addNumbers(newNumbers) {
+    for (const n of newNumbers) normalizeLeadRow(n);
     if (!this.db) {
       const backup = (this._numbers || []).map(n => ({ ...n }));
       const byPhone = new Map();
@@ -287,9 +385,8 @@ class AccountStore {
     const byPhone = new Map();
     if (scan.length) {
       for (const r of scan[0].values) {
-        byPhone.set(canonicalPhone(r[1]), {
-          id: r[0], phone: r[1], source: r[2], keyword: r[3], status: r[4], collectedAt: r[5]
-        });
+        const row = rowToObject(scan[0].columns, r);
+        byPhone.set(canonicalPhone(row.phone), row);
       }
     }
     const pristine = new Map();
@@ -302,13 +399,17 @@ class AccountStore {
         if (!pristine.has(existing.id)) {
           pristine.set(existing.id, {
             id: existing.id, source: existing.source, keyword: existing.keyword,
-            status: existing.status, collectedAt: existing.collectedAt
+            status: existing.status, collectedAt: existing.collectedAt,
+            title: existing.title, website: existing.website, email: existing.email,
+            address: existing.address, runSlug: existing.runSlug
           });
         }
         if (mergeEmptyLeadFields(existing, n)) {
           this.db.run(
-            'UPDATE numbers SET source = ?, keyword = ?, status = ?, collectedAt = ? WHERE id = ?',
-            [existing.source, existing.keyword, existing.status, existing.collectedAt, existing.id]
+            'UPDATE numbers SET source = ?, keyword = ?, status = ?, collectedAt = ?, title = ?, website = ?, email = ?, address = ?, runSlug = ? WHERE id = ?',
+            [existing.source, existing.keyword, existing.status, existing.collectedAt,
+              existing.title, existing.website, existing.email, existing.address, existing.runSlug,
+              existing.id]
           );
           mergedIds.add(existing.id);
         }
@@ -321,11 +422,17 @@ class AccountStore {
         source: n.source || '',
         keyword: n.keyword || '',
         status: n.status || 'pending',
-        collectedAt: n.collectedAt || new Date().toISOString()
+        collectedAt: n.collectedAt || new Date().toISOString(),
+        title: n.title || '',
+        website: n.website || '',
+        email: n.email || '',
+        address: n.address || '',
+        runSlug: n.runSlug || ''
       };
       this.db.run(
-        'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt) VALUES (?, ?, ?, ?, ?, ?)',
-        [row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt]
+        'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt,
+          row.title, row.website, row.email, row.address, row.runSlug]
       );
       byPhone.set(key, row);
       insertedIds.push(row.id);
@@ -342,8 +449,9 @@ class AccountStore {
           const prev = pristine.get(id);
           if (prev) {
             this.db.run(
-              'UPDATE numbers SET source = ?, keyword = ?, status = ?, collectedAt = ? WHERE id = ?',
-              [prev.source, prev.keyword, prev.status, prev.collectedAt, id]
+              'UPDATE numbers SET source = ?, keyword = ?, status = ?, collectedAt = ?, title = ?, website = ?, email = ?, address = ?, runSlug = ? WHERE id = ?',
+              [prev.source, prev.keyword, prev.status, prev.collectedAt,
+                prev.title, prev.website, prev.email, prev.address, prev.runSlug, id]
             );
           }
         }
@@ -376,8 +484,8 @@ class AccountStore {
     const scan = this.db.exec('SELECT * FROM numbers ORDER BY rowid DESC');
     const removed = scan.length
       ? scan[0].values
-          .filter(r => idSet.has(r[0]))
-          .map(r => ({ id: r[0], phone: r[1], source: r[2], keyword: r[3], status: r[4], collectedAt: r[5] }))
+          .map(r => rowToObject(scan[0].columns, r))
+          .filter(row => idSet.has(row.id))
       : [];
     for (const id of ids) {
       this.db.run('DELETE FROM numbers WHERE id = ?', [id]);
@@ -390,6 +498,10 @@ class AccountStore {
           this.db.run(
             'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt) VALUES (?, ?, ?, ?, ?, ?)',
             [row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt]
+          );
+          this.db.run(
+            'UPDATE numbers SET title = ?, website = ?, email = ?, address = ?, runSlug = ? WHERE id = ?',
+            [row.title || '', row.website || '', row.email || '', row.address || '', row.runSlug || '', row.id]
           );
         }
       } catch (revertErr) {
@@ -406,9 +518,9 @@ class AccountStore {
     const numbers = await this.getCollectedNumbers();
     logger.info('collector', 'numbers exported', { format: format === 'json' ? 'json' : 'csv', count: numbers.length });
     if (format === 'csv') {
-      const header = 'phone,source,keyword,status,collected_at\n';
+      const header = 'phone,source,keyword,status,collected_at,title,website,email,address,run_slug\n';
       const rows = numbers.map(n =>
-        `"${csvField(n.phone)}","${csvField(n.source || '')}","${csvField(n.keyword || '')}","${csvField(n.status || '')}","${csvField(n.collectedAt || '')}"`
+        `"${csvField(n.phone)}","${csvField(n.source || '')}","${csvField(n.keyword || '')}","${csvField(n.status || '')}","${csvField(n.collectedAt || '')}","${csvField(n.title || '')}","${csvField(n.website || '')}","${csvField(n.email || '')}","${csvField(n.address || '')}","${csvField(n.runSlug || '')}"`
       ).join('\n');
       return header + rows;
     }
@@ -417,4 +529,4 @@ class AccountStore {
 
 }
 
-module.exports = { AccountStore };
+module.exports = { AccountStore, migrateSchema, normalizeLeadRow };
