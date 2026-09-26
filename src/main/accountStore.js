@@ -11,6 +11,15 @@ function csvField(value) {
   return s.replace(/"/g, '""');
 }
 
+// CSV-only note normalisation. A stored note may contain line breaks and the
+// lead library CSV joins rows with '\n', so a multi-line note would split one
+// lead across several physical lines. Storage, the Lead Profile and the JSON
+// export keep the value verbatim; only the CSV field is collapsed to spaces.
+function csvNotes(value) {
+  if (value === undefined || value === null) return '';
+  return String(value).replace(/\r\n|\r|\n/g, ' ');
+}
+
 function canonicalPhone(phone) {
   if (typeof phone !== 'string') return phone;
   return phone.replace(/[\s\-.()]/g, '');
@@ -273,6 +282,36 @@ function migrateSchema(db) {
   return added.length;
 }
 
+// B6.4.1 idempotent repair of the user-owned lead columns.
+// Rows written after the B6.1 ALTER TABLE migration have no stored value for
+// these columns (SQLite cannot attach a default to a column added that way),
+// so their raw bytes are NULL even though every read path already reports the
+// defaults. The repair runs once per startup, is scoped strictly to the three
+// B6 columns, and is a no-op on a second run.
+//
+// It is deliberately one UPDATE PER COLUMN: a single combined statement
+// ("WHERE qualification IS NULL OR tags IS NULL OR notes IS NULL") would also
+// rewrite the already-set values of the other two columns, so a row saved as
+// qualified with a NULL note would silently lose its qualification.
+// Returns the number of rows touched.
+function repairLeadUserFields(db) {
+  if (!db) return 0;
+  let changed = 0;
+  for (const field of LEAD_B6_FIELDS) {
+    const stmt = db.prepare(`UPDATE numbers SET ${field} = ? WHERE ${field} IS NULL`);
+    try {
+      stmt.bind([LEAD_B6_DEFAULTS[field]]);
+      stmt.run();
+      // sql.js exposes the affected-row count on the database, not the
+      // statement; it reports 0 once the data is already canonical.
+      if (typeof db.getRowsModified === 'function') changed += db.getRowsModified();
+    } finally {
+      stmt.free();
+    }
+  }
+  return changed;
+}
+
 // Map a positional SELECT row to an object using the result's column names,
 // so reads work both before and after the B1 column migration. Original
 // columns keep their raw values; B1 columns default to '' when absent.
@@ -495,6 +534,13 @@ class AccountStore {
       const migratedColumns = migrateSchema(this.db);
       if (migratedColumns) {
         logger.info('accountStore', 'lead schema migration applied', { columns: migratedColumns });
+      }
+      // B6.4.1: make the stored B6 bytes canonical (NULL -> default) before
+      // the first save, so later filters and exports need no NULL special
+      // case. Count only, never field values.
+      const repairedRows = repairLeadUserFields(this.db);
+      if (repairedRows) {
+        logger.info('accountStore', 'lead user-owned field repair applied', { rows: repairedRows });
       }
       this.saveDB();
     } catch (err) {
@@ -1047,9 +1093,13 @@ class AccountStore {
     const numbers = await this.getCollectedNumbers();
     logger.info('collector', 'numbers exported', { format: format === 'json' ? 'json' : 'csv', count: numbers.length });
     if (format === 'csv') {
-      const header = 'phone,source,keyword,status,collected_at,title,website,email,address,run_slug\n';
+      // B6.4.1: the B6 user-owned columns are appended after the existing
+      // ten, which stay byte-for-byte unchanged. tags are ';'-joined for CSV
+      // only and notes are newline-collapsed by csvNotes; every field still
+      // goes through csvField, so formula-like values stay neutralised.
+      const header = 'phone,source,keyword,status,collected_at,title,website,email,address,run_slug,qualification,tags,notes\n';
       const rows = numbers.map(n =>
-        `"${csvField(n.phone)}","${csvField(n.source || '')}","${csvField(n.keyword || '')}","${csvField(n.status || '')}","${csvField(n.collectedAt || '')}","${csvField(n.title || '')}","${csvField(n.website || '')}","${csvField(n.email || '')}","${csvField(n.address || '')}","${csvField(n.runSlug || '')}"`
+        `"${csvField(n.phone)}","${csvField(n.source || '')}","${csvField(n.keyword || '')}","${csvField(n.status || '')}","${csvField(n.collectedAt || '')}","${csvField(n.title || '')}","${csvField(n.website || '')}","${csvField(n.email || '')}","${csvField(n.address || '')}","${csvField(n.runSlug || '')}","${csvField(n.qualification || '')}","${csvField((n.tags || []).join(';'))}","${csvField(csvNotes(n.notes))}"`
       ).join('\n');
       return header + rows;
     }

@@ -261,7 +261,7 @@ function test(name, fn) {
   });
 
   // --- 12/13. export --------------------------------------------------------
-  test('12. CSV export carries the extended header and quotes formula-like values', async () => {
+  test('12. CSV export carries the 13-column header and quotes formula-like values', async () => {
     const store = await openStore();
     await store.addNumbers([{
       id: 'lead-csv', phone: '+66899999999', source: 'csv-src', keyword: 'csvkw',
@@ -269,12 +269,53 @@ function test(name, fn) {
       title: '=HYPERLINK("http://evil")', website: 'https://site.example',
       email: 'csv@example.com', address: '8 Rama IV', runSlug: 'run-csv'
     }]);
+    // B6.4.1 lock update: the B6 user-owned columns are appended after the
+    // existing ten, which keep their order and names exactly.
+    await store.setLeadUserFields({
+      id: 'lead-csv', qualification: 'qualified', tags: ['VIP', 'Wholesale'],
+      notes: 'first line\nsecond line\r\nthird\rfourth'
+    });
     const csv = await store.exportNumbers('csv');
     const lines = csv.split('\n');
-    assert.strictEqual(lines[0], 'phone,source,keyword,status,collected_at,title,website,email,address,run_slug');
+    assert.strictEqual(lines[0],
+      'phone,source,keyword,status,collected_at,title,website,email,address,run_slug,qualification,tags,notes');
     assert.ok(csv.includes('"\'=HYPERLINK'), 'leading = must be neutralised by csvField');
     assert.ok(csv.includes('run-csv'), 'runSlug value must be exported');
-    assert.strictEqual(csv.split('\n').length, 1 + (await store.getCollectedNumbers()).length);
+    assert.ok(csv.includes('"qualified"'), 'qualification value exported');
+    assert.ok(csv.includes('"VIP;Wholesale"'), 'tags joined with ; for CSV');
+    assert.ok(csv.includes('"first line second line third fourth"'),
+      'note newlines collapse to single spaces in the CSV field only');
+    assert.strictEqual(csv.split('\n').length, 1 + (await store.getCollectedNumbers()).length,
+      'a multi-line note must not split one lead across physical lines');
+    // Stored data stays lossless: the newline survives in storage and JSON.
+    const stored = (await store.getCollectedNumbers()).find(r => r.id === 'lead-csv');
+    assert.strictEqual(stored.notes, 'first line\nsecond line\r\nthird\rfourth',
+      'stored note remains verbatim');
+    const jsonRow = JSON.parse(await store.exportNumbers('json')).find(r => r.id === 'lead-csv');
+    assert.strictEqual(jsonRow.notes, 'first line\nsecond line\r\nthird\rfourth',
+      'JSON export keeps the note verbatim');
+  });
+
+  test('12b. CSV export neutralises formula-like B6 tags and notes', async () => {
+    const store = await openStore();
+    await store.addNumbers([{
+      id: 'lead-csv-b6', phone: '+66899999998', status: 'pending',
+      collectedAt: '2026-02-09T00:00:00.000Z'
+    }]);
+    await store.setLeadUserFields({
+      id: 'lead-csv-b6', qualification: 'unqualified',
+      tags: ['=SUM(1)', '@handle'],
+      notes: '-2+3 is not a command here'
+    });
+    const csv = await store.exportNumbers('csv');
+    // The guard applies to the joined cell: a spreadsheet only evaluates a
+    // cell that STARTS with a formula character, so prefixing the joined tags
+    // value protects every tag in it.
+    assert.ok(csv.includes("\"'=SUM(1);@handle\""),
+      'a leading = in the joined tags field is neutralised');
+    assert.ok(csv.includes("\"'-2+3 is not a command here\""), 'a leading - in a note is neutralised');
+    assert.ok(!csv.includes('"=SUM(1)'), 'the raw formula prefix never reaches the CSV');
+    assert.ok(!csv.includes('"@handle"'), 'no unprefixed @ cell is emitted');
   });
 
   test('13. JSON export includes the new fields as plain object keys', async () => {
@@ -290,6 +331,28 @@ function test(name, fn) {
     }
     const full = parsed.find(r => r.phone === '+66844444444');
     assert.ok(full && full.title === 'Noodle Shop' && full.runSlug === 'run-abc');
+  });
+
+  test('13b. JSON export exposes the B6 fields with their native types', async () => {
+    const store = await openStore();
+    await store.addNumbers([{
+      id: 'lead-json-b6', phone: '+66899999997', status: 'pending',
+      collectedAt: '2026-02-10T00:00:00.000Z'
+    }]);
+    await store.setLeadUserFields({
+      id: 'lead-json-b6', qualification: 'qualified', tags: ['VIP'], notes: 'a\nb'
+    });
+    const row = JSON.parse(await store.exportNumbers('json')).find(r => r.id === 'lead-json-b6');
+    assert.strictEqual(row.qualification, 'qualified', 'qualification exported as a string');
+    assert.ok(Array.isArray(row.tags), 'tags exported as a native array, never stringified');
+    assert.deepStrictEqual(row.tags, ['VIP']);
+    assert.strictEqual(row.notes, 'a\nb', 'notes exported verbatim, newlines preserved');
+    const untouched = JSON.parse(await store.exportNumbers('json')).find(r => r.id === 'lead-json-b6-x' || r.id === 'lead-minimal');
+    if (untouched) {
+      assert.strictEqual(untouched.qualification, 'unqualified', 'defaults are exported as values');
+      assert.deepStrictEqual(untouched.tags, []);
+      assert.strictEqual(untouched.notes, '');
+    }
   });
 
   // --- 14-18. source contracts ---------------------------------------------

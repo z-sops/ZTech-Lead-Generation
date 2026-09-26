@@ -873,6 +873,144 @@ function test(name, fn) {
       'CSP frame-src canary intact');
   });
 
+  // === B6.4.1 startup NULL repair and CSV export ===
+  // A row inserted after the B6.1 ALTER TABLE migration stores NULL for the
+  // three user-owned columns (SQLite cannot attach a default that way), so
+  // initDB repairs the bytes once. The repair is proven here against real
+  // databases, including the per-column safety property and idempotency.
+
+  async function seedMigratedDbWithNullB6() {
+    const initSQL = require('sql.js');
+    const SQL = await initSQL();
+    const db = new SQL.Database();
+    db.run(`CREATE TABLE numbers (
+      id TEXT PRIMARY KEY, phone TEXT, source TEXT, keyword TEXT,
+      status TEXT DEFAULT 'pending', collectedAt TEXT
+    )`);
+    fs.writeFileSync(dbPath, Buffer.from(db.export()));
+    db.close();
+    // First open migrates the schema; rows added afterwards inherit NULL B6
+    // columns because the provider INSERT is limited to the 11 B1 columns.
+    const first = await openStore();
+    await first.addNumbers([{
+      id: 'null-b6', phone: '+66170000001', source: 'src', keyword: 'kw',
+      status: 'pending', collectedAt: '2026-05-01T00:00:00.000Z', title: 'Keep Me'
+    }]);
+    return first;
+  }
+
+  test('37. initDB repairs NULL user-owned bytes on the next startup', async () => {
+    fs.rmSync(dbPath, { force: true });
+    const first = await seedMigratedDbWithNullB6();
+    const beforeRepair = rawRow(first, 'null-b6');
+    assert.strictEqual(beforeRepair.qualification, null, 'precondition: NULL qualification stored');
+    assert.strictEqual(beforeRepair.tags, null, 'precondition: NULL tags stored');
+    assert.strictEqual(beforeRepair.notes, null, 'precondition: NULL notes stored');
+
+    const second = await openStore();
+    const afterRepair = rawRow(second, 'null-b6');
+    assert.strictEqual(afterRepair.qualification, 'unqualified', 'NULL qualification repaired');
+    assert.strictEqual(afterRepair.tags, '[]', 'NULL tags repaired to an empty array');
+    assert.strictEqual(afterRepair.notes, '', 'NULL notes repaired to an empty string');
+    const row = await findById(second, 'null-b6');
+    assert.strictEqual(row.title, 'Keep Me', 'unrelated B1 fields untouched by the repair');
+    assert.strictEqual(row.source, 'src', 'unrelated source untouched');
+    assert.strictEqual(row.status, 'pending', 'unrelated status untouched');
+    assert.strictEqual(row.phone, '+66170000001', 'unrelated phone untouched');
+  });
+
+  test('38. the repair preserves non-NULL user values and is idempotent', async () => {
+    fs.rmSync(dbPath, { force: true });
+    const first = await seedMigratedDbWithNullB6();
+    // Set real user values on a row, then wipe only one column directly in SQL
+    // to model a partially-NULL row: the other two must survive untouched.
+    first.db.run(
+      "UPDATE numbers SET qualification = 'qualified', tags = '[\"Keep\"]', notes = 'kept note' WHERE id = 'null-b6'"
+    );
+    first.db.run("UPDATE numbers SET notes = NULL WHERE id = 'null-b6'");
+    first.saveDB();
+
+    const second = await openStore();
+    const repaired = rawRow(second, 'null-b6');
+    assert.strictEqual(repaired.notes, '', 'the NULL column is repaired');
+    assert.strictEqual(repaired.qualification, 'qualified',
+      'a non-NULL qualification is never rewritten by the repair of another column');
+    assert.strictEqual(repaired.tags, '["Keep"]', 'non-NULL tags survive the repair');
+
+    const bytesBefore = Buffer.from(second.db.export());
+    const third = await openStore();
+    assert.ok(bytesBefore.equals(Buffer.from(third.db.export())),
+      'a second startup changes nothing: the repair is idempotent');
+    assert.strictEqual(rawRow(third, 'null-b6').qualification, 'qualified',
+      'still qualified after repeated startups');
+  });
+
+  test('39. CSV export appends the B6 columns with the approved representation', async () => {
+    const store = await openStore();
+    await store.addNumbers([{
+      id: 'csv-b6', phone: '+66170000002', source: 'src', keyword: 'kw',
+      status: 'pending', collectedAt: '2026-05-02T00:00:00.000Z'
+    }]);
+    await store.setLeadUserFields({
+      id: 'csv-b6', qualification: 'qualified', tags: ['Alpha', 'Beta'],
+      notes: 'line one\nline two'
+    });
+    const csv = await store.exportNumbers('csv');
+    const lines = csv.split('\n');
+    assert.strictEqual(lines[0],
+      'phone,source,keyword,status,collected_at,title,website,email,address,run_slug,qualification,tags,notes',
+      'exact 13-column header');
+    assert.strictEqual(lines[1].split('","').length, 13, 'exactly 13 CSV fields per row');
+    assert.ok(csv.includes('"qualified"'), 'qualification mapped');
+    assert.ok(csv.includes('"Alpha;Beta"'), 'tags joined with ;');
+    assert.ok(csv.includes('"line one line two"'), 'notes collapsed for CSV only');
+    assert.ok(!csv.includes('line one\nline two'), 'no raw newline survives inside a CSV field');
+    const stored = (await store.getCollectedNumbers()).find(r => r.id === 'csv-b6');
+    assert.strictEqual(stored.notes, 'line one\nline two', 'stored note remains lossless');
+    const jsonRow = JSON.parse(await store.exportNumbers('json')).find(r => r.id === 'csv-b6');
+    assert.deepStrictEqual(jsonRow.tags, ['Alpha', 'Beta'], 'JSON tags stay a native array');
+    assert.strictEqual(jsonRow.notes, 'line one\nline two', 'JSON notes stay verbatim');
+  });
+
+  test('40. a NULL-origin lead exports as the documented defaults in both formats', async () => {
+    fs.rmSync(dbPath, { force: true });
+    await seedMigratedDbWithNullB6();
+    const store = await openStore();
+    const row = await findById(store, 'null-b6');
+    assert.strictEqual(row.qualification, 'unqualified');
+    assert.deepStrictEqual(row.tags, []);
+    assert.strictEqual(row.notes, '');
+    const csvLine = (await store.exportNumbers('csv')).split('\n')[1];
+    assert.ok(csvLine.endsWith('"unqualified","",""'), 'CSV shows the defaults for a repaired row');
+    const jsonRow = JSON.parse(await store.exportNumbers('json')).find(r => r.id === 'null-b6');
+    assert.strictEqual(jsonRow.qualification, 'unqualified');
+    assert.deepStrictEqual(jsonRow.tags, []);
+    assert.strictEqual(jsonRow.notes, '');
+  });
+
+  test('41. the repair is scoped to the B6 columns and never logs field values', () => {
+    const repair = between(storeSource, 'function repairLeadUserFields(db) {', '// Map a positional SELECT row');
+    // Coverage of the three columns comes from the shared B6 literal, not from
+    // three hand-written statements, so the two lists can never diverge.
+    assert.ok(repair.includes('for (const field of LEAD_B6_FIELDS)'), 'iterates the B6 field list');
+    assert.ok(repair.includes('LEAD_B6_DEFAULTS[field]'), 'writes the shared B6 defaults');
+    for (const forbidden of ['status', 'phone', 'source', 'keyword', 'collectedAt', 'title', 'website',
+      'email', 'address', 'runSlug']) {
+      assert.ok(!repair.includes(forbidden), 'repair must not touch column: ' + forbidden);
+    }
+    assert.ok(repair.includes('WHERE ${field} IS NULL'), 'per-column NULL predicate only');
+    assert.ok(!/logger\./.test(repair), 'the repair logs nothing itself');
+    const initRegion = between(storeSource, 'const migratedColumns = migrateSchema(this.db);', 'this.migrateJsonData();');
+    assert.ok(initRegion.includes('repairLeadUserFields(this.db)'), 'repair runs during initDB');
+    const repairIdx = initRegion.indexOf('repairLeadUserFields(this.db)');
+    const saveIdx = initRegion.indexOf('this.saveDB()');
+    assert.ok(repairIdx > -1 && saveIdx > repairIdx, 'the repair runs before the first saveDB');
+    assert.ok(!/logger\.[a-z]+\([^)]*(notes|tags|qualification)\s*[:,)]/i.test(initRegion),
+      'the repair log records counts, never field values');
+    const migrateFn = between(storeSource, 'function migrateSchema(db) {', 'function repairLeadUserFields');
+    assert.ok(!migrateFn.includes('repairLeadUserFields'), 'migrateSchema semantics unchanged');
+  });
+
   for (const [name, fn] of tests) {
     try {
       await fn();
