@@ -1244,6 +1244,175 @@ function test(name, fn) {
     assert.strictEqual(qualified.total, 0, 'it is not reported as qualified');
   });
 
+  // === B6.4.3 final contract verification (test-only batch) ===
+  // No new functionality: these tests only pin the contracts the B6 batches
+  // already established. Anything found broken here is reported, not fixed.
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const exportFn = between(storeSource, 'async exportNumbers(', '// === B4 local collection-job ledger ===');
+  // Only the B6 regions are scanned for banned product surface; slicing the
+  // whole files would sweep in pre-existing unrelated code (taskKey, pipeline
+  // comments, credential handling) and produce false positives.
+  const b6Code = [
+    between(storeSource, '// B6 user-owned lead fields', '// Exact provenance literal'),
+    between(storeSource, 'function repairLeadUserFields(db) {', '// Map a positional SELECT row'),
+    between(storeSource, '// === B6 user-owned lead fields ===', 'async exportNumbers('),
+    between(mainSource, '// B6 user-owned lead fields.', 'function validateHistoryPaging('),
+    between(mainSource, "ipcMain.handle('collector:update-lead'", "ipcMain.handle('logs:export'"),
+    between(rendererSource, '// === B6 Lead Profile:', "document.getElementById('btn-save-lead-detail')")
+  ].join('\n');
+
+  test('51. combined-filter parity holds on both storages, values included', async () => {
+    fs.rmSync(dbPath, { force: true });
+    const sqlStore = await openStore();
+    const jsonStore = await openJsonStore();
+    await seedQualificationDataset(sqlStore);
+    await seedQualificationDataset(jsonStore);
+    await sqlStore.setLeadUserFields({ id: 'q-a', qualification: 'qualified', tags: [], notes: '' });
+    await jsonStore.setLeadUserFields({ id: 'q-a', qualification: 'qualified', tags: [], notes: '' });
+    const cases = [
+      { label: 'all', q: { limit: 20, offset: 0 } },
+      { label: 'unqualified', q: { limit: 20, offset: 0, filters: { qualification: 'unqualified' } } },
+      { label: 'qualified', q: { limit: 20, offset: 0, filters: { qualification: 'qualified' } } },
+      { label: 'search+qualification', q: { limit: 20, offset: 0, search: 'cafe', filters: { qualification: 'qualified' } } },
+      { label: 'sort+qualification', q: { limit: 20, offset: 0, filters: { qualification: 'unqualified' }, sort: 'title', order: 'asc' } },
+      { label: 'status+qualification', q: { limit: 20, offset: 0, filters: { status: 'pending', qualification: 'unqualified' } } },
+      { label: 'source+qualification', q: { limit: 20, offset: 0, filters: { source: 'other', qualification: 'unqualified' } } },
+      { label: 'keyword+qualification', q: { limit: 20, offset: 0, filters: { keyword: 'cafe', qualification: 'qualified' } } },
+      { label: 'paged+qualification', q: { limit: 1, offset: 1, filters: { qualification: 'unqualified' } } }
+    ];
+    for (const { label, q } of cases) {
+      const sql = await sqlStore.queryNumbers(q);
+      const json = await jsonStore.queryNumbers(q);
+      assert.strictEqual(json.total, sql.total, 'parity total: ' + label);
+      assert.deepStrictEqual(idsOf(json), idsOf(sql), 'parity ids: ' + label);
+      const sqlValues = sql.rows.map(r => `${r.id}:${r.qualification}`).sort();
+      const jsonValues = json.rows.map(r => `${r.id}:${r.qualification}`).sort();
+      assert.deepStrictEqual(jsonValues, sqlValues, 'parity qualification values: ' + label);
+      for (const row of sql.rows) {
+        assert.ok(['unqualified', 'qualified'].includes(row.qualification),
+          'every returned qualification is in the vocabulary: ' + label);
+      }
+    }
+    const qualifiedBoth = await sqlStore.queryNumbers({ limit: 20, offset: 0, filters: { qualification: 'qualified' } });
+    assert.deepStrictEqual(idsOf(qualifiedBoth), ['q-a', 'q-b'], 'two qualified leads after the second save');
+  });
+
+  test('52. CSV contract: 13 columns, stable prefix, representation and losslessness', async () => {
+    const store = await openStore();
+    await store.addNumbers([{
+      id: 'csv-contract', phone: '+66190000001', source: 'src', keyword: 'kw',
+      status: 'pending', collectedAt: '2026-07-01T00:00:00.000Z',
+      title: 'T', website: 'w', email: 'e', address: 'a', runSlug: 'r'
+    }]);
+    await store.setLeadUserFields({
+      id: 'csv-contract', qualification: 'qualified', tags: ['One', 'Two'],
+      notes: 'a\r\nb\rc\nd'
+    });
+    const csv = await store.exportNumbers('csv');
+    const header = csv.split('\n')[0];
+    const columns = header.split(',');
+    assert.deepStrictEqual(columns, [
+      'phone', 'source', 'keyword', 'status', 'collected_at', 'title', 'website', 'email',
+      'address', 'run_slug', 'qualification', 'tags', 'notes'
+    ], 'exactly the 13 contract columns, in order');
+    assert.strictEqual(columns.length, 13, 'header has exactly 13 columns');
+    assert.deepStrictEqual(columns.slice(0, 10),
+      ['phone', 'source', 'keyword', 'status', 'collected_at', 'title', 'website', 'email', 'address', 'run_slug'],
+      'the original ten columns keep their exact names and order');
+    const dataLines = csv.split('\n').slice(1).filter(line => line.length);
+    assert.strictEqual(dataLines.length, (await store.getCollectedNumbers()).length,
+      'one physical CSV row per lead');
+    const row = dataLines[0];
+    assert.strictEqual(row.split('","').length, 13, 'each row carries 13 quoted fields');
+    assert.ok(row.includes('"qualified"'), 'qualification exported');
+    assert.ok(row.includes('"One;Two"'), 'tags joined with ;');
+    assert.ok(row.includes('"a b c d"'), 'CRLF, CR and LF all collapse to single spaces');
+    assert.ok(!row.includes('\r'), 'no carriage return survives into a CSV row');
+    const stored = (await store.getCollectedNumbers()).find(r => r.id === 'csv-contract');
+    assert.strictEqual(stored.notes, 'a\r\nb\rc\nd', 'stored note is lossless');
+    const jsonRow = JSON.parse(await store.exportNumbers('json')).find(r => r.id === 'csv-contract');
+    assert.strictEqual(jsonRow.notes, 'a\r\nb\rc\nd', 'JSON note is lossless');
+  });
+
+  test('53. formula protection covers all three B6 CSV fields', async () => {
+    // The row template must wrap every B6 field in csvField, and the enum
+    // guard makes a formula-like qualification unreachable through the API.
+    assert.ok(exportFn.includes('csvField(n.qualification || \'\')'), 'qualification goes through csvField');
+    assert.ok(exportFn.includes("csvField((n.tags || []).join(';'))"), 'tags go through csvField');
+    assert.ok(exportFn.includes('csvField(csvNotes(n.notes))'), 'notes go through csvField');
+    for (const field of ['n.phone', 'n.source', 'n.runSlug']) {
+      assert.ok(exportFn.includes('csvField(' + field), 'pre-existing field still guarded: ' + field);
+    }
+    const store = await openStore();
+    await store.addNumbers([{
+      id: 'csv-guard', phone: '+66190000002', status: 'pending', collectedAt: '2026-07-02T00:00:00.000Z'
+    }]);
+    const refused = await store.setLeadUserFields({
+      id: 'csv-guard', qualification: '=cmd', tags: ['ok'], notes: ''
+    });
+    assert.strictEqual(refused.success, false, 'a formula-like qualification is refused at the boundary');
+    await store.setLeadUserFields({
+      id: 'csv-guard', qualification: 'qualified', tags: ['=1+1', '@user', '+plus', '-minus'],
+      notes: '=SUM(A1:A9)'
+    });
+    const csv = await store.exportNumbers('csv');
+    assert.ok(csv.includes("\"'=1+1;@user;+plus;-minus\""), 'a leading formula char in the joined tags cell is prefixed');
+    assert.ok(csv.includes("\"'=SUM(A1:A9)\""), 'a leading formula char in a note is prefixed');
+    assert.ok(!csv.includes('"=1+1'), 'no raw = cell');
+    assert.ok(!csv.includes('"=SUM'), 'no raw formula cell');
+  });
+
+  test('54. final B6 scope, IPC and dependency guards', () => {
+    // JSON production code is untouched by this batch and still native.
+    assert.ok(exportFn.includes('return JSON.stringify(numbers, null, 2);'), 'JSON export unchanged');
+    assert.ok(!/JSON\.stringify\((n|row)\.(tags|notes)\)/.test(exportFn), 'tags are never stringified for JSON');
+    // IPC: the filter still rides collector:get-numbers.
+    assert.strictEqual(mainChannels().length, 19, 'exactly 19 channels');
+    const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
+    assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
+      'collector:get-numbers is still the qualification filter path');
+    assert.ok(preloadSource.includes("getNumbers: (query) => ipcRenderer.invoke('collector:get-numbers', query)"),
+      'preload still forwards the query payload unchanged');
+    // No query-time NULL workaround and a per-column repair remain.
+    const queryBlock = storeSource.slice(
+      storeSource.indexOf('// B2 query layer: server-side search'),
+      storeSource.indexOf('async addNumbers(')
+    );
+    assert.ok(!queryBlock.includes('IS NULL'), 'no IS NULL in the query layer');
+    const repair = between(storeSource, 'function repairLeadUserFields(db) {', '// Map a positional SELECT row');
+    assert.ok(repair.includes('WHERE ${field} IS NULL'), 'the per-column startup repair is the NULL remedy');
+    assert.ok(!repair.includes('OR tags IS NULL'), 'no combined OR repair was reintroduced');
+    // Banned product surface across every B6 code block. Feature-shaped
+    // identifiers are used (e.g. 'assignee'), not bare words, so ordinary
+    // JavaScript assignment is not a false positive.
+    for (const term of ['pipeline', 'stage', 'activity', 'reminder', 'scoring', 'probability',
+      'enrichment', 'assignee', 'assignedTo', 'leadOwner', 'revenue', 'ROI', 'conversion',
+      'Zuni', 'MCP', 'multi-tenant']) {
+      assert.ok(!new RegExp(term, 'i').test(b6Code), 'no B6 code may reference: ' + term);
+    }
+    assert.ok(!b6Code.includes('apiKey') && !b6Code.includes('taskKey'), 'no credentials in B6 code');
+    // Dependencies unchanged (the exact sets are also pinned by
+    // runtime-containment test 12; this is the B6-scoped restatement).
+    assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(), ['electron-store', 'sql.js'],
+      'no production dependency added');
+    assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
+      ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'],
+      'no dev dependency added');
+    assert.ok(pkg.scripts.test.includes('run-all.js'), 'test runner wiring unchanged');
+    const dash = between(rendererSource, '// === B5 Lead Library Dashboard ===', '// === 视图切换时加载数据 ===');
+    assert.ok(!/qualification|qualified|tags|notes/.test(dash), 'no B6 metric in the dashboard');
+    assert.ok(dash.includes("'Run counts cover the most recent ' + rows.length + ' runs'"),
+      'the pre-existing B5 window-note text is untouched by B6');
+    const table = between(htmlSource, 'id="view-numbers"', 'id="view-dashboard"');
+    for (const column of ['<th>Qualification</th>', '<th>Tags</th>', '<th>Notes</th>']) {
+      assert.ok(!table.includes(column), 'no B6 column added to the Lead Library table: ' + column);
+    }
+    const statusSelect = between(htmlSource, 'id="number-filter-status"', '</select>');
+    assert.ok(statusSelect.includes('<option value="pending">Pending</option>'), 'status options unchanged');
+    assert.ok(!statusSelect.includes('qualified'), 'no qualification value in the status filter');
+  });
+
   for (const [name, fn] of tests) {
     try {
       await fn();
