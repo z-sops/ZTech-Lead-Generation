@@ -711,8 +711,12 @@ function test(name, fn) {
   });
 
   test('26. no new dependency, provider capability or CSP change', () => {
-    assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(), ['electron-store', 'sql.js'],
-      'no production dependency added');
+    // The three Zuni-SEO runtime dependencies were added deliberately for
+    // prospect research (MCP client + contract validation). Everything else is
+    // still pinned, and no dev dependency was introduced.
+    assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
+      ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
+      'production dependencies are exactly the two originals plus the three prospect-research ones');
     assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
       ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'],
       'no dev dependency added');

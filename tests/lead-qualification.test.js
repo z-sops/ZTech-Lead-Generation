@@ -575,6 +575,18 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     return [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
   }
 
+  // A4: the seven research channels live in src/main/prospect-research/research-ipc.js,
+  // so a main.js scan alone no longer sees the complete set.
+  function researchChannels() {
+    const src = fs.readFileSync(path.join(root, 'src', 'main', 'prospect-research', 'research-ipc.js'), 'utf8');
+    return [...src.matchAll(/ipcMain\.handle\(CHANNELS\.(\w+)/g)]
+      .map(m => `prospect-research:${m[1].replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`);
+  }
+
+  function allChannels() {
+    return [...mainChannels(), ...researchChannels()];
+  }
+
   // Loads the real validator out of main.js together with the guards it uses
   // (invalidParams, assertPlainObject), so the tests exercise production code
   // rather than a copy of it.
@@ -683,13 +695,15 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     assert.ok(!storeSlice.includes('status'), 'the B6 store method never touches the status column');
   });
 
-  test('26. exactly 24 IPC channels exist and the user-owned writes are registered once', () => {
-    const channels = mainChannels();
+  test('26. exactly 33 IPC channels exist and the user-owned writes are registered once', () => {
+    const channels = allChannels();
     // P1-E declared lock update: 20 -> 21, the single addition being the
     // read-only collector:duplicate-review. Both user-owned writes are still
     // registered exactly once.
-    assert.strictEqual(channels.length, 26, 'exactly 26 channels');
-    assert.strictEqual(new Set(channels).size, 26, 'no duplicate channel names');
+    // A4 declared lock update: 26 -> 33, the seven additions being the
+    // prospect-research channels, all sender-checked and none user-owned writes.
+    assert.strictEqual(channels.length, 33, 'exactly 33 channels');
+    assert.strictEqual(new Set(channels).size, 33, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -708,8 +722,8 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
       'the channel is invoked exactly once');
     assert.deepStrictEqual(
       [...new Set(invocations)].sort(),
-      mainChannels().filter(ch => ch !== 'provider:set-credentials').sort(),
-      'preload channel set matches main (provider:set-credentials stays unexposed)'
+      allChannels().filter(ch => ch !== 'provider:set-credentials').sort(),
+      'preload channel set matches main plus the research module (provider:set-credentials stays unexposed)'
     );
     assert.ok(!preloadSource.includes('setLeadUserFields'), 'preload stays store-agnostic');
     assert.ok(!preloadSource.includes('queryJobs'), 'preload never leaks store internals');
@@ -1382,7 +1396,7 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     assert.ok(exportFn.includes('return JSON.stringify(numbers, null, 2);'), 'JSON export unchanged');
     assert.ok(!/JSON\.stringify\((n|row)\.(tags|notes)\)/.test(exportFn), 'tags are never stringified for JSON');
     // IPC: the filter still rides collector:get-numbers.
-    assert.strictEqual(mainChannels().length, 26, 'exactly 26 channels (P1-G added two read-only report channels)');
+    assert.strictEqual(allChannels().length, 33, 'exactly 33 channels (A4 added the seven prospect-research channels)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');
@@ -1407,9 +1421,11 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     }
     assert.ok(!b6Code.includes('apiKey') && !b6Code.includes('taskKey'), 'no credentials in B6 code');
     // Dependencies unchanged (the exact sets are also pinned by
-    // runtime-containment test 12; this is the B6-scoped restatement).
-    assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(), ['electron-store', 'sql.js'],
-      'no production dependency added');
+    // runtime-containment test 12; this is the B6-scoped restatement). The
+    // prospect-research trio is the one deliberate production addition.
+    assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
+      ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
+      'production dependencies are exactly the two originals plus the three prospect-research ones');
     assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
       ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'],
       'no dev dependency added');

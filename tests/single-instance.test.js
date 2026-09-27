@@ -65,10 +65,13 @@ test('5. failed-lock instance never creates window or initializes services', () 
 test('6. primary startup order preserved after the guard', () => {
   const readyIdx = mainSource.indexOf('app.whenReady()');
   const body = mainSource.slice(readyIdx);
+  // A5: the database must be open and the research objects constructed before
+  // the window exists. initServices() is awaited, gateway.start() is not.
   const marks = [
     "logger.info('app', 'application started'",
+    'await initServices();',
+    'initResearch();',
     'createMainWindow();',
-    'initServices();',
     'registerIpcHandlers();',
     'applyProxyConfiguration(storedProxyUrl);'
   ];

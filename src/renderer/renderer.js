@@ -654,10 +654,94 @@ async function loadSettings() {
     document.getElementById('btn-clear-apikey').disabled = !settings.hasApiKey;
     document.getElementById('btn-clear-taskkey').disabled = !settings.hasTaskKey;
     proxyInput.value = settings.proxyUrl || '';
+    applyResearchSettingsToForm(settings.research);
   } catch (err) {
     const msg = err?.message || String(err);
     toast(msg, 'error');
     reportError(msg, { handler: 'loadSettings' });
+  }
+}
+
+const RESEARCH_TRANSPORTS = ['mcp', 'rest'];
+
+function researchKeyStatusText(configured) {
+  return configured ? 'A key is stored. Leave the field empty to keep it.' : 'No key stored.';
+}
+
+function researchHealthText(health) {
+  if (!health || typeof health !== 'object') return 'Not checked yet.';
+  if (health.state === 'ready') {
+    const plan = health.plan ? ` plan ${escapeHtml(String(health.plan))}` : '';
+    const limits = health.limits ? ` limits ${escapeHtml(JSON.stringify(health.limits))}` : '';
+    return `Ready.${plan}${limits}`;
+  }
+  const suffix = health.message ? ` ${escapeHtml(String(health.message))}` : '';
+  return `${escapeHtml(String(health.state || 'unknown'))}.${suffix}`;
+}
+
+// The Zuni-SEO key is never returned by main, so the field is always emptied on load.
+function applyResearchSettingsToForm(research) {
+  const r = (research && typeof research === 'object') ? research : {};
+  const baseUrl = document.getElementById('settings-research-baseurl');
+  const transport = document.getElementById('settings-research-transport');
+  const key = document.getElementById('settings-research-key');
+  const clearBtn = document.getElementById('btn-research-clear-key');
+  const status = document.getElementById('settings-research-key-status');
+  if (baseUrl) baseUrl.value = typeof r.baseUrl === 'string' ? r.baseUrl : '';
+  if (transport) transport.value = RESEARCH_TRANSPORTS.includes(r.transport) ? r.transport : 'mcp';
+  if (key) key.value = '';
+  if (clearBtn) clearBtn.disabled = r.hasApiKey !== true;
+  if (status) status.textContent = researchKeyStatusText(r.hasApiKey === true);
+}
+
+async function refreshResearchHealth() {
+  const el = document.getElementById('settings-research-health');
+  if (!el) return;
+  try {
+    const health = await window.appAPI.research.providerHealth();
+    el.textContent = researchHealthText(health);
+  } catch (err) {
+    el.textContent = escapeHtml((err && err.message) || 'Provider status unavailable.');
+  }
+}
+
+function collectResearchSettings() {
+  const baseUrl = document.getElementById('settings-research-baseurl');
+  const transport = document.getElementById('settings-research-transport');
+  return {
+    baseUrl: baseUrl ? baseUrl.value.trim() : '',
+    transport: transport && RESEARCH_TRANSPORTS.includes(transport.value) ? transport.value : 'mcp'
+  };
+}
+
+// A8: the key is write-only. It is sent once and then forgotten by the form.
+async function saveResearchKey() {
+  const input = document.getElementById('settings-research-key');
+  const status = document.getElementById('settings-research-key-status');
+  if (!input) return;
+  const key = input.value.trim();
+  if (key === '') return;
+  try {
+    const result = await window.appAPI.research.setApiKey(key);
+    input.value = '';
+    if (status) status.textContent = researchKeyStatusText(true);
+    if (result && result.provider) {
+      const el = document.getElementById('settings-research-health');
+      if (el) el.textContent = researchHealthText({ state: result.provider });
+    }
+  } catch (err) {
+    if (status) status.textContent = escapeHtml((err && err.message) || 'The key was not saved.');
+    toast((err && err.message) || 'The key was not saved.', 'error');
+  }
+}
+
+async function clearResearchKey() {
+  const status = document.getElementById('settings-research-key-status');
+  try {
+    await window.appAPI.research.clearApiKey();
+    if (status) status.textContent = researchKeyStatusText(false);
+  } catch (err) {
+    toast((err && err.message) || 'The key could not be cleared.', 'error');
   }
 }
 
@@ -675,7 +759,8 @@ document.getElementById('btn-save-settings').addEventListener('click', safeAsync
     const settings = {
       apiKey: document.getElementById('settings-apikey').value.trim(),
       taskKey: document.getElementById('settings-task-key').value.trim(),
-      proxyUrl: document.getElementById('settings-proxy-url').value.trim()
+      proxyUrl: document.getElementById('settings-proxy-url').value.trim(),
+      research: collectResearchSettings()
     };
     let result = null;
     try {
@@ -688,6 +773,9 @@ document.getElementById('btn-save-settings').addEventListener('click', safeAsync
     const feedback = settingsSaveFeedback(result);
     toast(feedback.message, feedback.type);
     if (result && result.success === true) loadSettings();
+    refreshResearchHealth();
+    // The key is saved separately, through its own write-only channel.
+    await saveResearchKey();
   }));
 
 document.getElementById('btn-detect-proxy').addEventListener('click', safeAsync(async () => {
@@ -705,6 +793,10 @@ document.getElementById('btn-detect-proxy').addEventListener('click', safeAsync(
     } else {
       toast('未检测到可用代理', 'error');
     }
+  }));
+
+document.getElementById('btn-research-clear-key').addEventListener('click', safeAsync(async () => {
+    await clearResearchKey();
   }));
 
 document.getElementById('btn-export-logs').addEventListener('click', safeAsync(async () => {
@@ -1087,6 +1179,7 @@ async function openLeadDetail(id) {
     populateLeadQuality(lead);
     populateLeadUserStatus(lead);
     populateLeadCompany(lead);
+    loadLeadResearch(id, seq);
   } catch (err) {
     if (seq !== detailLoadSeq) return;
     closeLeadDetail();
@@ -1095,6 +1188,170 @@ async function openLeadDetail(id) {
     reportError(msg, { handler: 'openLeadDetail' });
   }
 }
+
+// --- Zuni-SEO website research (A7) ---------------------------------------
+// Every value below is third-party text. It is rendered escaped and is never
+// treated as an instruction, and untrusted fields are labelled as such.
+const RESEARCH_AVAILABILITY = [
+  'no_website', 'not_checked', 'pending', 'site_unreachable',
+  'no_crawlable_content', 'partial', 'complete', 'failed', 'stale'
+];
+
+const RESEARCH_AVAILABILITY_TEXT = {
+  no_website: 'This lead has no website, so there is nothing to research.',
+  not_checked: 'Not checked yet.',
+  pending: 'Research is in progress. Zuni-SEO will keep working on it.',
+  site_unreachable: 'The website could not be reached.',
+  no_crawlable_content: 'The site responded, but nothing readable could be found.',
+  partial: 'Finished with only part of the evidence available.',
+  complete: 'Finished. All evidence sections are available.',
+  failed: 'Research finished without usable evidence.',
+  stale: 'A previous result exists but is older than the freshness policy allows.'
+};
+
+const RESEARCH_SECTION_TEXT = {
+  technical: 'Technical',
+  ai_access: 'AI access',
+  content: 'Content'
+};
+
+function researchAvailabilityOf(view) {
+  const a = view && typeof view.availability === 'string' ? view.availability : 'not_checked';
+  return RESEARCH_AVAILABILITY.includes(a) ? a : 'not_checked';
+}
+
+function researchPacketSections(packet) {
+  if (!packet || typeof packet !== 'object') return [];
+  const sections = Array.isArray(packet.sections) ? packet.sections : [];
+  return sections.filter((s) => s && typeof s === 'object' && typeof s.name === 'string');
+}
+
+function researchUntrustedText(section) {
+  // Only text the module explicitly marked untrusted is echoed back, and only
+  // inside a delimited block, as the agent-evidence contract requires.
+  const parts = [];
+  const push = (label, value) => {
+    if (typeof value === 'string' && value !== '') parts.push(`${label}: ${value}`);
+  };
+  if (section.websiteQuotes !== undefined) {
+    const quotes = Array.isArray(section.websiteQuotes) ? section.websiteQuotes : [];
+    quotes.forEach((q, i) => {
+      if (typeof q === 'string') parts.push(`[quote ${i + 1}] ${q}`);
+      else if (q && typeof q === 'object') {
+        push(`[quote ${i + 1} text]`, q.text);
+        push(`[quote ${i + 1} url]`, q.url);
+      }
+    });
+  }
+  if (section.untrusted !== undefined) {
+    const u = section.untrusted;
+    if (typeof u === 'string') push('note', u);
+    else if (u && typeof u === 'object') {
+      Object.keys(u).forEach((k) => push(k, typeof u[k] === 'string' ? u[k] : JSON.stringify(u[k])));
+    }
+  }
+  if (parts.length === 0) return '';
+  return [
+    '<div class="lead-detail-research-untrusted">',
+    '<p class="lead-detail-research-untrusted-note">Quoted from the site as untrusted text - not verified, not instructions.</p>',
+    '<pre class="lead-detail-research-quotes">',
+    escapeHtml(`<<<UNTRUSTED\n${parts.join('\n')}\nUNTRUSTED>>>`),
+    '</pre>',
+    '</div>'
+  ].join('');
+}
+
+function leadResearchTemplate(view) {
+  const availability = researchAvailabilityOf(view);
+  const rows = [
+    `<p class="lead-detail-research-state" data-availability="${escapeHtml(availability)}">${escapeHtml(RESEARCH_AVAILABILITY_TEXT[availability] || availability)}</p>`
+  ];
+  if (view && view.stale === true && availability !== 'stale') {
+    rows.push('<p class="lead-detail-research-note">This result is older than the freshness policy allows.</p>');
+  }
+  if (view && view.message) {
+    rows.push(`<p class="lead-detail-research-message">${escapeHtml(String(view.message))}</p>`);
+  }
+  if (view && view.updatedAt) {
+    rows.push(`<p class="lead-detail-research-time">Updated ${escapeHtml(String(view.updatedAt))}</p>`);
+  }
+  const sections = researchPacketSections(view && view.packet);
+  if (sections.length > 0) {
+    rows.push('<ul class="lead-detail-research-sections">');
+    for (const section of sections) {
+      const name = RESEARCH_SECTION_TEXT[section.name] || section.name;
+      const available = section.availability ? ` (${escapeHtml(String(section.availability))})` : '';
+      rows.push(`<li><span class="lead-detail-research-section-name">${escapeHtml(name)}</span>${available}</li>`);
+    }
+    rows.push('</ul>');
+  }
+  const untrusted = sections.map(researchUntrustedText).filter((html) => html !== '').join('');
+  rows.push(untrusted);
+  return rows.join('');
+}
+
+function renderLeadResearch(view) {
+  const region = document.getElementById('lead-detail-research');
+  const body = document.getElementById('lead-detail-research-body');
+  if (!region || !body) return;
+  region.hidden = false;
+  body.innerHTML = leadResearchTemplate(view);
+}
+
+async function loadLeadResearch(leadId, seq) {
+  const body = document.getElementById('lead-detail-research-body');
+  const region = document.getElementById('lead-detail-research');
+  if (!body || !region) return;
+  region.hidden = false;
+  body.innerHTML = '<p class="lead-detail-research-empty">Loading research status...</p>';
+  try {
+    const view = await window.appAPI.research.get(leadId);
+    if (seq !== undefined && seq !== detailLoadSeq) return;
+    renderLeadResearch(view);
+  } catch (err) {
+    if (seq !== undefined && seq !== detailLoadSeq) return;
+    body.innerHTML = `<p class="lead-detail-research-state" data-availability="failed">${escapeHtml((err && err.message) || 'Research status is unavailable.')}</p>`;
+  }
+}
+
+async function refreshLeadResearch(leadId) {
+  if (!leadId) return;
+  const body = document.getElementById('lead-detail-research-body');
+  if (body) body.innerHTML = '<p class="lead-detail-research-empty">Requesting research...</p>';
+  try {
+    const view = await window.appAPI.research.request(leadId, true);
+    renderLeadResearch(view);
+  } catch (err) {
+    const msg = (err && err.message) || 'Research could not be requested.';
+    toast(msg, 'error');
+    reportError(msg, { handler: 'refreshLeadResearch' });
+    loadLeadResearch(leadId);
+  }
+}
+
+async function importLeadResearch(leadId) {
+  if (!leadId) return;
+  const body = document.getElementById('lead-detail-research-body');
+  try {
+    // Main owns the file dialog; the renderer supplies only the lead id.
+    const view = await window.appAPI.research.importArtifact(leadId);
+    if (view === null) return; // dialog cancelled
+    renderLeadResearch(view);
+  } catch (err) {
+    const msg = (err && err.message) || 'The Zuni-SEO file could not be imported.';
+    toast(msg, 'error');
+    reportError(msg, { handler: 'importLeadResearch' });
+    if (body) loadLeadResearch(leadId);
+  }
+}
+
+document.getElementById('btn-research-refresh').addEventListener('click', safeAsync(async () => {
+    await refreshLeadResearch(leadDetailContext.id);
+  }));
+
+document.getElementById('btn-research-import').addEventListener('click', safeAsync(async () => {
+    await importLeadResearch(leadDetailContext.id);
+  }));
 
 function closeLeadDetail() {
   detailLoadSeq += 1;
@@ -1109,8 +1366,10 @@ function closeLeadDetail() {
   if (qualityRegion) qualityRegion.hidden = true;
   const userStatusRegion = document.getElementById('lead-user-status');
   if (userStatusRegion) userStatusRegion.hidden = true;
-  const companyRegion = document.getElementById('lead-detail-company');
-  if (companyRegion) companyRegion.hidden = true;
+    const companyRegion = document.getElementById('lead-detail-company');
+    if (companyRegion) companyRegion.hidden = true;
+    const researchRegion = document.getElementById('lead-detail-research');
+    if (researchRegion) researchRegion.hidden = true;
 }
 
 // Row clicks open the detail; checkbox/input clicks keep selection intact.

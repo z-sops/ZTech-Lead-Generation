@@ -765,8 +765,11 @@ function test(name, fn) {
   // --- 18. dependencies and logging ---
 
   test('18. no dependency change and no PII logging', () => {
-    assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(), ['electron-store', 'sql.js'],
-      'no production dependency added');
+    // The only production dependency change in the project's history is the
+    // deliberate prospect-research trio; no dev dependency was introduced.
+    assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
+      ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
+      'production dependencies are exactly the two originals plus the three prospect-research ones');
     assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
       ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'],
       'no dev dependency added');

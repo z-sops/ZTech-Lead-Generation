@@ -28,6 +28,13 @@ function mainChannels(src) {
   return [...src.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
 }
 
+// A4: the seven research channels are registered by registerResearchIpc in
+// src/main/prospect-research/research-ipc.js, so they are read from there.
+function researchChannels() {
+  const src = fs.readFileSync(path.join(root, 'src', 'main', 'prospect-research', 'research-ipc.js'), 'utf8');
+  return [...src.matchAll(/ipcMain\.handle\(CHANNELS\.(\w+)/g)].map(m => `prospect-research:${m[1].replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`);
+}
+
 function preloadChannels(src) {
   return [...src.matchAll(/invoke\('([^']+)'/g)].map(m => m[1]);
 }
@@ -95,7 +102,7 @@ test('6. all 21 live main IPC channels present exactly once', () => {
 });
 
 test('7. preload channel set matches main; only documented exception', () => {
-  const main = new Set(mainChannels(mainSource));
+  const main = new Set([...mainChannels(mainSource), ...researchChannels()]);
   const preload = [...new Set(preloadChannels(preloadSource))];
   for (const ch of preload) {
     assert.ok(main.has(ch), 'preload channel missing in main: ' + ch);
@@ -103,6 +110,16 @@ test('7. preload channel set matches main; only documented exception', () => {
   const notExposed = [...main].filter(ch => !preload.includes(ch));
   assert.deepStrictEqual(notExposed, ['provider:set-credentials'],
     'only provider:set-credentials may remain unexposed (retained provider-neutral handler, out of removal scope)');
+  // Every research channel is exposed and every one of them is sender-checked.
+  const research = researchChannels();
+  assert.strictEqual(research.length, 7, 'exactly seven research channels are registered');
+  for (const ch of research) {
+    assert.ok(preload.includes(ch), 'research channel exposed to the renderer: ' + ch);
+  }
+  const ipcSource = fs.readFileSync(path.join(root, 'src', 'main', 'prospect-research', 'research-ipc.js'), 'utf8');
+  const handlers = [...ipcSource.matchAll(/ipcMain\.handle\(/g)].length;
+  const guards = [...ipcSource.matchAll(/guard\(async/g)].length;
+  assert.strictEqual(guards, handlers, 'every research handler is wrapped in the sender guard');
 });
 
 test('8. renderer still uses every exposed flow', () => {

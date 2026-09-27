@@ -162,9 +162,11 @@ test('12. package.json wires a dependency-free npm test script', () => {
   const devDeps = Object.keys(pkg.devDependencies || {});
   const deps = Object.keys(pkg.dependencies || {});
   const before = ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'];
-  const prodBefore = ['electron-store', 'sql.js'];
+  // The one deliberate production addition: the Zuni-SEO MCP client plus the
+  // ajv pair used to validate its contract. No dev dependency was introduced.
+  const prodBefore = ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'];
   assert.deepStrictEqual(devDeps.slice().sort(), before.slice().sort(), 'no dev dependencies added');
-  assert.deepStrictEqual(deps.slice().sort(), prodBefore.slice().sort(), 'no dependencies added');
+  assert.deepStrictEqual(deps.slice().sort(), prodBefore.slice().sort(), 'dependencies are the two originals plus the prospect-research trio');
 });
 
 test('13. test runner covers every *.test.js and fails non-zero', () => {

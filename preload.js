@@ -18,6 +18,19 @@ contextBridge.exposeInMainWorld('appAPI', {
     load: () => ipcRenderer.invoke('settings:load')
   },
 
+  // 官网调研 (prospect research). Every method passes through a trusted-sender
+  // check in main. The API key is write-only from here: no method returns it.
+  // importArtifact takes no path - main owns the file dialog.
+  research: {
+    request: (leadRef, force) => ipcRenderer.invoke('prospect-research:request', leadRef, force === true),
+    get: (leadRef) => ipcRenderer.invoke('prospect-research:get', leadRef),
+    importArtifact: (leadRef) => ipcRenderer.invoke('prospect-research:import-artifact', leadRef),
+    providerHealth: () => ipcRenderer.invoke('prospect-research:provider-health'),
+    setApiKey: (key) => ipcRenderer.invoke('prospect-research:set-api-key', key),
+    clearApiKey: () => ipcRenderer.invoke('prospect-research:clear-api-key'),
+    keyStatus: () => ipcRenderer.invoke('prospect-research:key-status')
+  },
+
   // 代理
   proxy: {
     detect: () => ipcRenderer.invoke('proxy:detect')

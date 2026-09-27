@@ -111,8 +111,16 @@ test('7. shell.openExternal rejection is caught and logged', () => {
 
 test('8. existing will-navigate guard remains intact', () => {
   const { region } = extractCallbackBody(mainSource, "mainWindow.webContents.on('will-navigate'");
-  const pdCount = mainSource.split('event.preventDefault()').length - 1;
-  assert.strictEqual(pdCount, 1, 'exactly one preventDefault in main.js');
+  // The only other preventDefault in main.js belongs to the A5 before-quit hook,
+  // which defers the first quit while the research transport closes. Count them
+  // separately so a second navigation guard could not slip in unnoticed.
+  const quitHookStart = mainSource.indexOf("app.on('before-quit'");
+  const quitHookEnd = mainSource.indexOf("app.on('window-all-closed'", quitHookStart);
+  const navCode = mainSource.slice(0, quitHookStart) + mainSource.slice(quitHookEnd);
+  const pdCount = navCode.split('event.preventDefault()').length - 1;
+  assert.strictEqual(pdCount, 1, 'exactly one navigation preventDefault in main.js');
+  const quitHook = mainSource.slice(quitHookStart, quitHookEnd);
+  assert.strictEqual(quitHook.split('event.preventDefault()').length - 1, 1, 'the before-quit hook has its own single preventDefault');
   const pdIdx = region.indexOf('event.preventDefault()');
   assert.ok(pdIdx > -1, 'preventDefault inside the will-navigate callback body');
   const devRetIdx = region.indexOf('new URL(url).origin === devOrigin) return;');

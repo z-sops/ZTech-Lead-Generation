@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
 const { AccountStore } = require('./src/main/accountStore');
 const { logger } = require('./src/main/logger');
@@ -6,10 +6,16 @@ const { ProviderManager } = require('./src/main/providers/providerManager');
 const { CoreClawAdapter } = require('./src/main/providers/coreclawAdapter');
 const { migrateLegacySettingsToProviders } = require('./src/main/providers/legacySettingsMigration');
 const credentialVault = require('./src/main/credentialVault');
+const prospectResearch = require('./src/main/prospect-research/research-service');
+const { registerResearchIpc, ALL_CHANNELS: RESEARCH_CHANNELS } = require('./src/main/prospect-research/research-ipc');
+const { createTrustedSender } = require('./src/main/prospect-research/trusted-sender');
 
 let mainWindow = null;
 let providerManager = null;
 let accountStore = null;
+let researchService = null;
+let researchClosing = false;
+let researchTrustedSender = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -116,6 +122,16 @@ function validateSettingsPayload(settings) {
     out[flag] = value;
   }
   out.proxyUrl = validateProxyUrl(out.proxyUrl);
+  // A8: the only user-editable research settings are the Zuni-SEO base URL and,
+  // optionally, the transport. Every other research value stays a code default.
+  if (settings.research !== undefined && settings.research !== null) {
+    assertPlainObject(settings.research, 'settings.research');
+    const research = {
+      baseUrl: prospectResearch.validateBaseUrl(settings.research.baseUrl),
+      transport: prospectResearch.validateTransport(settings.research.transport)
+    };
+    out.research = research;
+  }
   return out;
 }
 
@@ -711,7 +727,7 @@ function canRevealCredential(value) {
   }
 }
 
-function initServices() {
+async function initServices() {
   accountStore = new AccountStore();
   providerManager = new ProviderManager();
   const adapter = providerManager.register(new CoreClawAdapter());
@@ -747,6 +763,135 @@ function initServices() {
     if (Object.keys(plaintext).length > 0) {
       providerManager.setCredentials(adapter.providerId, plaintext);
     }
+  }
+  // The database must be open before prospect research is constructed (A1/A5).
+  await accountStore.ready;
+}
+
+// A5: constructs the research objects only. It performs NO network I/O, so a
+// slow or offline Zuni-SEO server can never delay the main window. gateway.start()
+// is called separately and is deliberately not awaited.
+function loadResearchSettings() {
+  try {
+    const Store = require('electron-store');
+    const stored = new Store().get('settings', {});
+    return stored && typeof stored.research === 'object' && stored.research !== null
+      ? stored.research
+      : null;
+  } catch (err) {
+    logger.warn('research', 'stored research settings could not be read', { error: err.message });
+    return null;
+  }
+}
+
+function initResearch() {
+  try {
+    researchService = prospectResearch.initResearchService({
+      accountStore,
+      secretsDir: path.join(app.getPath('userData'), 'secrets'),
+      clientVersion: app.getVersion(),
+      researchSettings: loadResearchSettings(),
+      log: (msg, detail) => {
+        const fields = (detail && typeof detail === 'object') ? detail : {};
+        logger.warn('research', String(msg), fields);
+      }
+    });
+    logger.info('research', 'research service constructed');
+  } catch (err) {
+    researchService = null;
+    logger.error('research', 'research service unavailable', { error: err.message });
+  }
+}
+
+// Starts the gateway without blocking startup, then prunes quarantined payloads to
+// the same retention as research data.
+function startResearch() {
+  if (!researchService) return;
+  researchService.gateway.start()
+    .then(() => researchService.quarantine.prune().catch((err) => {
+      logger.warn('research', 'quarantine prune failed', { error: err.message });
+    }))
+    .catch((err) => {
+      logger.error('research', 'research start failed', { error: err.message });
+    });
+}
+
+// A8: the base URL is the only user-editable research setting. When it changes the
+// running service is closed and rebuilt, so the app never keeps using the old
+// endpoint silently.
+async function recreateResearchService() {
+  const previous = researchService;
+  researchService = null;
+  if (previous) {
+    try {
+      await Promise.race([
+        previous.close(),
+        new Promise((resolve) => setTimeout(resolve, 3000))
+      ]);
+    } catch (err) {
+      logger.warn('research', 'previous research service did not close cleanly', { error: err.message });
+    }
+  }
+  initResearch();
+  startResearch();
+}
+
+// A4: the lead's website and name always come from ZTech's own database.
+// market/language stay null: the lead schema has no such columns and none are added.
+async function loadResearchLead(leadRef) {
+  const result = await accountStore.queryNumbers({ limit: 1, offset: 0, id: leadRef });
+  const rows = result && Array.isArray(result.rows) ? result.rows : [];
+  const lead = rows[0];
+  if (!lead) return null;
+  const asText = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
+  return {
+    leadRef: lead.id,
+    website: asText(lead.website),
+    companyName: asText(lead.title),
+    market: null,
+    language: null
+  };
+}
+
+// A4/A7: the renderer never names a file. Main opens the dialog and passes the path.
+async function pickResearchArtifactFile() {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow || undefined, {
+      title: 'Import Zuni-SEO research file',
+      filters: [{ name: 'Zuni-SEO envelope', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+    if (!result || result.canceled) return null;
+    const paths = Array.isArray(result.filePaths) ? result.filePaths : [];
+    return paths.length > 0 ? paths[0] : null;
+  } catch (err) {
+    logger.warn('research', 'artifact file dialog failed', { error: err.message });
+    return null;
+  }
+}
+
+function registerResearchIpcHandlers() {
+  if (!researchService) return;
+  if (!researchTrustedSender) {
+    researchTrustedSender = createTrustedSender(() => mainWindow, {
+      isDev,
+      port: Number(process.env.VITE_PORT) || undefined,
+      indexPath: path.join(__dirname, 'index.html'),
+      onReject: (reason) => logger.warn('ipc', `prospect-research rejected: ${reason}`)
+    });
+  }
+  try {
+    registerResearchIpc(ipcMain, {
+      gateway: researchService.gateway,
+      keys: researchService.keys,
+      isTrustedSender: researchTrustedSender,
+      loadLead: loadResearchLead,
+      showOpenDialog: pickResearchArtifactFile,
+      logger: { warn: (scope, msg, fields) => logger.warn(scope, msg, fields), error: (scope, msg, fields) => logger.error(scope, msg, fields) }
+    });
+    logger.info('research', `registered ${RESEARCH_CHANNELS.length} research channels`);
+  } catch (err) {
+    logger.error('research', 'research IPC registration failed', { error: err.message });
   }
 }
 
@@ -970,6 +1115,7 @@ function registerIpcHandlers() {
     if (plannedApiKey.action !== 'keep') delete settingsRecord.apiKey;
     if (plannedTaskKey.action !== 'keep') delete settingsRecord.taskKey;
     settingsRecord.proxyUrl = proxySealed;
+    if (nextSettings.research) settingsRecord.research = nextSettings.research;
     persistProviderCredentials(store, activeProviderId, {
       apiKey: plannedApiKey.next,
       taskKey: plannedTaskKey.next
@@ -989,10 +1135,16 @@ function registerIpcHandlers() {
       hasProxy: !!nextSettings.proxyUrl
     });
     const proxyResult = await applyProxyConfiguration(nextSettings.proxyUrl);
+    // A8: the endpoint changed, so the running service is closed and rebuilt
+    // rather than silently continuing against the old one. The success envelope
+    // stays exactly { success, proxyApplied }.
+    if (nextSettings.research && prospectResearch.researchSettingsChanged(researchService, nextSettings.research)) {
+      await recreateResearchService();
+    }
     return { success: true, proxyApplied: proxyResult.applied };
   });
 
-  ipcMain.handle('settings:load', () => {
+  ipcMain.handle('settings:load', async () => {
     const Store = require('electron-store');
     const store = new Store();
     const legacy = store.get('settings', {});
@@ -1016,7 +1168,21 @@ function registerIpcHandlers() {
     } catch {
       logger.warn('proxy', 'stored proxy could not be decrypted');
     }
-    return { hasApiKey, hasTaskKey, proxyUrl };
+    // A8: research settings are non-secret and may be returned. The Zuni-SEO key
+    // is never returned - only whether one is stored.
+    const researchSettings = prospectResearch.readResearchSettings(base.research);
+    let researchHasKey = false;
+    try {
+      researchHasKey = Boolean(researchService && await researchService.keys.hasApiKey());
+    } catch (err) {
+      logger.warn('research', 'stored research key could not be read', { error: err.message });
+    }
+    return {
+      hasApiKey,
+      hasTaskKey,
+      proxyUrl,
+      research: { ...researchSettings, hasApiKey: researchHasKey }
+    };
   });
 
   // 采集结果管理
@@ -1226,13 +1392,18 @@ function registerIpcHandlers() {
     return result || { source: null, proxyUrl: null };
   });
 
+  // A4: research channels are registered last, so the service and its trusted
+  // sender exist before any research handler can be invoked.
+  registerResearchIpcHandlers();
+
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     if (!gotTheLock) return;
     logger.info('app', 'application started', { version: app.getVersion(), isDev });
+    await initServices();
+    initResearch();
     createMainWindow();
-    initServices();
     registerIpcHandlers();
     let storedProxyUrl = '';
     try {
@@ -1247,11 +1418,33 @@ app.whenReady().then(() => {
       logger.warn('proxy', 'stored proxy could not be decrypted');
     }
     applyProxyConfiguration(storedProxyUrl);
+    startResearch();
   }).catch((err) => {
     try {
       logger.error('app', 'whenReady failed', { error: err.message, stack: err.stack });
     } catch {}
   });
+
+// A5: stop the research scheduler and close the Zuni-SEO transport on quit.
+// The re-entrancy flag makes the preventDefault/app.quit() pair safe, and the
+// 3s race bounds shutdown so a transport that will not close cannot trap the app.
+app.on('before-quit', (event) => {
+  if (!researchService || researchClosing) return;
+  event.preventDefault();
+  researchClosing = true;
+  const service = researchService;
+  researchService = null;
+  Promise.race([
+    service.close(),
+    new Promise((resolve) => setTimeout(resolve, 3000))
+  ]).catch((err) => {
+    try {
+      logger.error('research', 'close failed', { error: err.message });
+    } catch {}
+  }).finally(() => {
+    app.quit();
+  });
+});
 
 app.on('window-all-closed', () => {
   app.quit();

@@ -281,7 +281,16 @@ test('16. static main: settings:save seals before any write, three-state credent
 
 test('17. static main: settings:load returns presence flags and revealed proxy only', () => {
   const loadRegion = extractRegion(mainSource, "ipcMain.handle('settings:load'", '// 采集结果管理');
-  assert.ok(loadRegion.includes('return { hasApiKey, hasTaskKey, proxyUrl };'), 'returns the approved envelope shape');
+  // A8 extends the envelope with non-secret research settings plus a presence flag.
+  // The Zuni-SEO key itself is never returned.
+  assert.ok(loadRegion.includes('hasApiKey,'), 'provider presence flag retained');
+  assert.ok(loadRegion.includes('hasTaskKey,'), 'task key presence flag retained');
+  assert.ok(loadRegion.includes('proxyUrl,'), 'revealed proxy retained');
+  assert.ok(loadRegion.includes('research: { ...researchSettings, hasApiKey: researchHasKey }'),
+    'research settings exposed as baseUrl/transport plus a presence flag only');
+  assert.ok(!loadRegion.includes('apiKey: researchService'), 'the Zuni-SEO key is never returned');
+  assert.ok(!loadRegion.includes('getApiKey()'), 'the key is never read out for the renderer');
+  assert.ok(loadRegion.includes('await researchService.keys.hasApiKey()'), 'presence is read, not the key');
   assert.ok(loadRegion.includes('credentialVault.reveal('), 'proxyUrl revealed in main');
   assert.ok(!loadRegion.includes('apiKey:'), 'no raw apiKey field returned');
   assert.ok(!loadRegion.includes('taskKey:'), 'no raw taskKey field returned');

@@ -389,6 +389,23 @@
                   <button type="button" class="btn btn-sm" id="btn-save-lead-detail">Save</button>
                 </div>
               </div>
+              <!-- Zuni-SEO website research. Availability is one of nine distinct
+                   states; every value shown here is third-party text and is
+                   rendered as untrusted text, never as instructions. Refresh forces a
+                   new run; Import opens a file dialog owned by main. -->
+              <div class="lead-detail-research" id="lead-detail-research" hidden>
+                <div class="lead-detail-research-header">
+                  <span class="lead-detail-research-title">Website Research</span>
+                  <span class="lead-detail-badge">Zuni-SEO</span>
+                </div>
+                <div class="lead-detail-research-body" id="lead-detail-research-body">
+                  <p class="lead-detail-research-empty">Not checked yet.</p>
+                </div>
+                <div class="lead-detail-research-actions">
+                  <button type="button" class="btn btn-sm" id="btn-research-refresh">Refresh research</button>
+                  <button type="button" class="btn btn-sm btn-secondary" id="btn-research-import">Import Zuni-SEO file</button>
+                </div>
+              </div>
               <!-- P1-A: read-only data-quality signals derived on this device.
                    No value here is persisted, and none of it is a third-party
                    verification claim. -->
@@ -631,6 +648,33 @@
                 <input type="text" id="settings-proxy-url" placeholder="如: http://127.0.0.1:7890 或留空Auto Detect">
                 <button class="btn btn-secondary btn-sm" id="btn-detect-proxy">Auto Detect</button>
               </div>
+            </div>
+            <!-- Zuni-SEO website research. The base URL is the only editable
+                 research setting; timeouts, retry, breaker, freshness and the
+                 scheduler tick stay code defaults. The key is write-only: it is
+                 never loaded back into this form. -->
+            <div class="form-item">
+              <label>Zuni-SEO Base URL</label>
+              <div class="input-with-btn">
+                <input type="text" id="settings-research-baseurl" placeholder="https://api.your-zunitech-domain">
+                <select id="settings-research-transport">
+                  <option value="mcp">MCP</option>
+                  <option value="rest">REST</option>
+                </select>
+              </div>
+              <p class="form-hint" id="settings-research-hint">HTTPS required, except localhost for development.</p>
+            </div>
+            <div class="form-item">
+              <label>Zuni-SEO API Key</label>
+              <div class="input-with-btn">
+                <input type="password" id="settings-research-key" placeholder="zsk_..." autocomplete="off">
+                <button class="btn btn-secondary btn-sm" id="btn-research-clear-key" disabled>Clear</button>
+              </div>
+              <p class="form-hint" id="settings-research-key-status">No key stored.</p>
+            </div>
+            <div class="form-item">
+              <label>Research Provider</label>
+              <p class="form-hint" id="settings-research-health">Not checked yet.</p>
             </div>
             <div class="form-actions">
               <button class="btn btn-primary" id="btn-save-settings">保存Settings</button>
