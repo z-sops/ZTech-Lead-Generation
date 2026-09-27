@@ -50,6 +50,7 @@ function test(name, fn) {
     'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
   const B6_COLUMNS = ['qualification', 'tags', 'notes'];
+const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessStatus'];
 
   function schemaColumns(db) {
     const info = db.exec('PRAGMA table_info(numbers)');
@@ -123,26 +124,32 @@ function test(name, fn) {
   }
 
   // --- 1. fresh schema ----------------------------------------------------
-  test('1. fresh database is created with the 14-column lead schema', async () => {
+  test('1. fresh database is created with the 15-column lead schema', async () => {
     fs.rmSync(dbPath, { force: true });
     const fresh = await openStore();
     const columns = schemaColumns(fresh.db);
     assert.deepStrictEqual(columns, [
       'id', 'phone', 'source', 'keyword', 'status', 'collectedAt',
       'title', 'website', 'email', 'address', 'runSlug',
-      'qualification', 'tags', 'notes'
-    ], 'exactly the 11 B1 columns plus the three B6 columns, in order');
+      'qualification', 'tags', 'notes',
+      'phoneStatus', 'emailStatus', 'websiteStatus', 'businessStatus',
+      // P1-D: the nullable system pointer. companyKey is derived on read and
+      // is therefore not a column, and no companies table exists.
+      'companyId'
+    ], 'exactly the 11 B1, 3 B6, 4 P1-C and 1 P1-D column, in order');
     assert.strictEqual(migrateSchema(fresh.db), 0, 'fresh schema needs no migration');
   });
 
   // --- 2/3. legacy migration ----------------------------------------------
-  test('2. legacy 6-column database gains all eight missing columns', async () => {
+  test('2. legacy 6-column database gains all nine missing columns', async () => {
     await seedLegacySixColumnDb();
     const store = await openStore();
     assert.deepStrictEqual(schemaColumns(store.db), [
       'id', 'phone', 'source', 'keyword', 'status', 'collectedAt',
       'title', 'website', 'email', 'address', 'runSlug',
-      'qualification', 'tags', 'notes'
+      'qualification', 'tags', 'notes',
+      'phoneStatus', 'emailStatus', 'websiteStatus', 'businessStatus',
+      'companyId'
     ], 'migration completes the schema');
     assert.strictEqual(migrateSchema(store.db), 0, 'nothing left to add after init');
   });
@@ -676,10 +683,13 @@ function test(name, fn) {
     assert.ok(!storeSlice.includes('status'), 'the B6 store method never touches the status column');
   });
 
-  test('26. exactly 19 IPC channels exist and update-lead is registered once', () => {
+  test('26. exactly 24 IPC channels exist and the user-owned writes are registered once', () => {
     const channels = mainChannels();
-    assert.strictEqual(channels.length, 19, 'exactly 19 channels');
-    assert.strictEqual(new Set(channels).size, 19, 'no duplicate channel names');
+    // P1-E declared lock update: 20 -> 21, the single addition being the
+    // read-only collector:duplicate-review. Both user-owned writes are still
+    // registered exactly once.
+    assert.strictEqual(channels.length, 26, 'exactly 26 channels');
+    assert.strictEqual(new Set(channels).size, 26, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -958,9 +968,9 @@ function test(name, fn) {
     const csv = await store.exportNumbers('csv');
     const lines = csv.split('\n');
     assert.strictEqual(lines[0],
-      'phone,source,keyword,status,collected_at,title,website,email,address,run_slug,qualification,tags,notes',
-      'exact 13-column header');
-    assert.strictEqual(lines[1].split('","').length, 13, 'exactly 13 CSV fields per row');
+      'phone,source,keyword,status,collected_at,title,website,email,address,run_slug,qualification,tags,notes,phone_status,email_status,website_status,business_status',
+      'exact 17-column header');
+    assert.strictEqual(lines[1].split('","').length, 17, 'exactly 17 CSV fields per row');
     assert.ok(csv.includes('"qualified"'), 'qualification mapped');
     assert.ok(csv.includes('"Alpha;Beta"'), 'tags joined with ;');
     assert.ok(csv.includes('"line one line two"'), 'notes collapsed for CSV only');
@@ -981,7 +991,8 @@ function test(name, fn) {
     assert.deepStrictEqual(row.tags, []);
     assert.strictEqual(row.notes, '');
     const csvLine = (await store.exportNumbers('csv')).split('\n')[1];
-    assert.ok(csvLine.endsWith('"unqualified","",""'), 'CSV shows the defaults for a repaired row');
+    assert.ok(csvLine.endsWith('"unqualified","","","unknown","unknown","unknown","unknown"'),
+      'CSV shows the defaults for a repaired row, statuses included');
     const jsonRow = JSON.parse(await store.exportNumbers('json')).find(r => r.id === 'null-b6');
     assert.strictEqual(jsonRow.qualification, 'unqualified');
     assert.deepStrictEqual(jsonRow.tags, []);
@@ -992,7 +1003,8 @@ function test(name, fn) {
     const repair = between(storeSource, 'function repairLeadUserFields(db) {', '// Map a positional SELECT row');
     // Coverage of the three columns comes from the shared B6 literal, not from
     // three hand-written statements, so the two lists can never diverge.
-    assert.ok(repair.includes('for (const field of LEAD_B6_FIELDS)'), 'iterates the B6 field list');
+    assert.ok(repair.includes('for (const field of LEAD_USER_OWNED_FIELDS)'),
+      'iterates every user-owned field list (B6 and P1-C)');
     assert.ok(repair.includes('LEAD_B6_DEFAULTS[field]'), 'writes the shared B6 defaults');
     for (const forbidden of ['status', 'phone', 'source', 'keyword', 'collectedAt', 'title', 'website',
       'email', 'address', 'runSlug']) {
@@ -1216,7 +1228,8 @@ function test(name, fn) {
   });
 
   test('49. B6.4.2 adds no channel, table column, tag filter, metric or export change', () => {
-    assert.strictEqual(mainChannels().length, 19, 'still exactly 19 IPC channels');
+    assert.strictEqual(mainChannels().length, 26,
+      '26 IPC channels: B6.4.2 added none, P1-E/P1-F/P1-G added six');
     assert.ok(!mainSource.includes('ipcMain.handle(\'collector:filter'), 'no filter-specific channel');
     const table = between(htmlSource, 'id="view-numbers"', 'id="view-dashboard"');
     for (const column of ['<th>Qualification</th>', '<th>Tags</th>', '<th>Notes</th>']) {
@@ -1225,8 +1238,8 @@ function test(name, fn) {
     assert.ok(!rendererSource.includes('number-filter-tag'), 'no tag filtering UI');
     assert.ok(!/tags:\s*row\.tags|filters\.tags|tagFilter/.test(rendererSource), 'no tag filter logic');
     const exportFn = between(storeSource, 'async exportNumbers(', '// === B4 local collection-job ledger ===');
-    assert.ok(exportFn.includes('run_slug,qualification,tags,notes'),
-      'the export is still the B6.4.1 13-column form, untouched by this batch');
+    assert.ok(exportFn.includes('run_slug,qualification,tags,notes,phone_status,email_status,website_status,business_status'),
+      'the export carries the appended user-owned columns');
     assert.ok(!exportFn.includes('QUERY_FILTER_FIELDS'), 'export does not consult the filter allowlist');
     const dash = between(rendererSource, '// === B5 Lead Library Dashboard ===', '// === 视图切换时加载数据 ===');
     assert.ok(!/qualification|qualified/.test(dash), 'no dashboard qualification metric');
@@ -1314,9 +1327,10 @@ function test(name, fn) {
     const columns = header.split(',');
     assert.deepStrictEqual(columns, [
       'phone', 'source', 'keyword', 'status', 'collected_at', 'title', 'website', 'email',
-      'address', 'run_slug', 'qualification', 'tags', 'notes'
-    ], 'exactly the 13 contract columns, in order');
-    assert.strictEqual(columns.length, 13, 'header has exactly 13 columns');
+      'address', 'run_slug', 'qualification', 'tags', 'notes',
+      'phone_status', 'email_status', 'website_status', 'business_status'
+    ], 'exactly the 17 contract columns, in order');
+    assert.strictEqual(columns.length, 17, 'header has exactly 17 columns');
     assert.deepStrictEqual(columns.slice(0, 10),
       ['phone', 'source', 'keyword', 'status', 'collected_at', 'title', 'website', 'email', 'address', 'run_slug'],
       'the original ten columns keep their exact names and order');
@@ -1324,7 +1338,7 @@ function test(name, fn) {
     assert.strictEqual(dataLines.length, (await store.getCollectedNumbers()).length,
       'one physical CSV row per lead');
     const row = dataLines[0];
-    assert.strictEqual(row.split('","').length, 13, 'each row carries 13 quoted fields');
+    assert.strictEqual(row.split('","').length, 17, 'each row carries 17 quoted fields');
     assert.ok(row.includes('"qualified"'), 'qualification exported');
     assert.ok(row.includes('"One;Two"'), 'tags joined with ;');
     assert.ok(row.includes('"a b c d"'), 'CRLF, CR and LF all collapse to single spaces');
@@ -1368,7 +1382,7 @@ function test(name, fn) {
     assert.ok(exportFn.includes('return JSON.stringify(numbers, null, 2);'), 'JSON export unchanged');
     assert.ok(!/JSON\.stringify\((n|row)\.(tags|notes)\)/.test(exportFn), 'tags are never stringified for JSON');
     // IPC: the filter still rides collector:get-numbers.
-    assert.strictEqual(mainChannels().length, 19, 'exactly 19 channels');
+    assert.strictEqual(mainChannels().length, 26, 'exactly 26 channels (P1-G added two read-only report channels)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

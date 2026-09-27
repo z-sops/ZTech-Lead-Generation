@@ -95,7 +95,11 @@ function test(name, fn) {
     assert.strictEqual(JSON.stringify(again._numbers), snapshot, 'restart must not alter rows');
     assert.strictEqual(readFile(), before, 'restart must not rewrite numbers.json');
     const probe = normalizeLeadRow({ ...LEGACY[0], title: 'x', website: '', email: '', address: '', runSlug: '',
-      qualification: 'unqualified', tags: [], notes: '' });
+      qualification: 'unqualified', tags: [], notes: '',
+      phoneStatus: 'unknown', emailStatus: 'unknown', websiteStatus: 'unknown', businessStatus: 'unknown',
+      // P1-D: an already-normalised JSON row already carries the derived key
+      // and the nullable pointer.
+      companyKey: '', companyId: null });
     assert.strictEqual(probe.changed, false, 'already-normalised row reports no change');
   });
 
@@ -159,7 +163,7 @@ function test(name, fn) {
     const direct = source.split("fs.writeFileSync(path.join(DATA_DIR, 'numbers.json')").length - 1;
     assert.strictEqual(direct, 0, 'no direct fs.writeFileSync of numbers.json');
     const callSites = source.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1;
-    assert.strictEqual(callSites, 3, 'atomic write helper call sites (add, delete, B6 user-field write)');
+    assert.strictEqual(callSites, 5, 'atomic write helper call sites (add, delete, B6 write, P1-C status write, P1-D legacy-JSON companyId pointer restore)');
     assert.ok(source.includes('function normalizeLeadRow('), 'normaliser must exist');
     assert.ok(source.includes('for (const row of parsed) normalizeLeadRow(row)'), 'fallback load must normalise');
   });

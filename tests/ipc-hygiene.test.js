@@ -67,11 +67,11 @@ test('5. zero live renderer/html references to removed APIs', () => {
   assert.ok(!htmlSource.includes('getStore') && !htmlSource.includes('coreclaw:'), 'html references none');
 });
 
-test('6. all 19 live main IPC channels present exactly once', () => {
-  // B6.2 declared lock update: channel count 18 -> 19. The single addition is
-  // collector:update-lead, the audited write path for the user-owned lead
-  // fields (qualification/tags/notes), validated by validateLeadUpdatePayload
-  // and delegated to accountStore.setLeadUserFields. No other channel moved.
+test('6. all 21 live main IPC channels present exactly once', () => {
+  // P1-E declared lock update: channel count 20 -> 21. The single addition is
+  // collector:duplicate-review, a READ-ONLY review channel (validated by
+  // validateDuplicateReviewPayload, delegated to accountStore.reviewDuplicates).
+  // No other channel moved, and no write channel was added.
   const expected = [
     'provider:set-credentials', 'provider:test-connection',
     'collection:submit', 'collection:job-status', 'collection:job-result', 'collection:job-history',
@@ -80,6 +80,10 @@ test('6. all 19 live main IPC channels present exactly once', () => {
     'collector:delete-numbers', 'collector:storage-status',
     'collector:get-jobs',
     'collector:update-lead',
+    'collector:update-lead-quality',
+    'collector:duplicate-review',
+    'targets:list', 'targets:save', 'targets:set-status',
+    'collector:quality-report', 'collector:quality-target-report',
     'logs:export', 'logs:dir', 'logs:report',
     'proxy:detect'
   ];
@@ -111,6 +115,8 @@ test('8. renderer still uses every exposed flow', () => {
     'appAPI.collector.deleteNumbers', 'appAPI.collector.storageStatus',
     'appAPI.collector.getJobs',
     'appAPI.collector.updateLead',
+    'appAPI.collector.updateLeadQuality',
+    'appAPI.collector.duplicateReview',
     'appAPI.logs.exportLogs'
   ];
   for (const use of rendererUses) {

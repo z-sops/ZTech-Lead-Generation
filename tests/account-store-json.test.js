@@ -192,7 +192,7 @@ function test(name, fn) {
     assert.ok(source.includes('fs.unlinkSync(tmpPath)'), 'helper must attempt temporary file cleanup');
     assert.ok(source.includes('throw err'), 'helper must rethrow the original error');
     const callSites = source.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1;
-    assert.strictEqual(callSites, 3, 'all JSON write sites must use the helper');
+    assert.strictEqual(callSites, 5, 'all JSON write sites must use the helper');
     const direct = source.split("fs.writeFileSync(path.join(DATA_DIR, 'numbers.json')").length - 1;
     assert.strictEqual(direct, 0, 'no direct fs.writeFileSync of numbers.json may remain');
   });
@@ -201,7 +201,7 @@ function test(name, fn) {
     assert.ok(source.includes("return phone.replace(/[\\s\\-.()]/g, '');"), 'canonicalPhone must be byte-identical');
     assert.ok(source.includes('fs.renameSync(tmpPath, this.dbPath)'), 'SQL saveDB path must remain as before');
     assert.ok(source.includes("this.db.run('DELETE FROM numbers WHERE id = ?', [id])"), 'SQL delete must remain');
-    assert.ok(source.includes('INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes) VALUES'), 'SQL rollback insert must remain');
+    assert.ok(source.includes('INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes, phoneStatus, emailStatus, websiteStatus, businessStatus, companyId) VALUES'), 'SQL rollback insert must remain');
   });
 
   test('10. delete removes exactly matching ids, preserves order and handles duplicate ids', async () => {

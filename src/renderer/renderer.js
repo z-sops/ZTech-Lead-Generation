@@ -7,6 +7,7 @@ const viewTitles = {
   collector: '关键词采集',
   history: '采集历史',
   numbers: '号码管理',
+  targets: 'Targets',
   dashboard: '仪表盘',
   settings: '设置'
 };
@@ -75,6 +76,10 @@ let currentRunSlug = null;
 // Slug of the run currently presented in the results table. Stamped onto rows
 // saved to the number library so saved leads stay traceable to their run.
 let currentResultsRunSlug = null;
+// P1-G: the P1-F target the user applied to the run on screen, if any. It is
+// the only target association the report ever sees, and it is sent with the
+// local save - never with a provider request.
+let currentResultsTargetId = null;
 let runGeneration = 0;
 let pollTimerId = null;
 let pollInFlight = false;
@@ -117,6 +122,10 @@ function clearCurrentResultPresentation() {
   window.__filteredResults = null;
   currentResultsRunSlug = null;
   displayedResultRowMap = new Map();
+  // P1-G: a new run has no report until it is saved, and no target is
+  // associated with it.
+  currentResultsTargetId = null;
+  closeCollectQuality();
   document.getElementById('collect-result-card').style.display = 'none';
   document.getElementById('collect-result-body').textContent = '';
   document.getElementById('stat-collected').textContent = '0';
@@ -822,12 +831,19 @@ document.getElementById('btn-save-numbers').addEventListener('click', safeAsync(
     })).filter(n => n.phone);
     let result;
     try {
-      result = await window.appAPI.collector.addNumbers(numbers);
+      // P1-G: the run context travels with this local save only, so the main
+      // process can record the real submitted/added/duplicate counters. It never
+      // reaches the provider.
+      result = await window.appAPI.collector.addNumbers(numbers, {
+        runSlug: currentResultsRunSlug || '',
+        targetId: currentResultsTargetId || null
+      });
     } catch (err) {
       showStatus(err?.message || '保存失败', true);
       return;
     }
     showStatus(`已保存 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复`);
+    await loadCollectQuality();
   }));
 
 function csvField(value) {
@@ -877,6 +893,16 @@ let numbersOrder = 'asc';
 let numbersLoadSeq = 0;
 let numbersSearchTimer = null;
 const NUMBERS_PER_PAGE = 50;
+
+// P1-B: Lead Library control id -> derived quality filter key. Kept as data so
+// the payload builder and the change listeners cannot drift apart.
+const LEAD_QUALITY_FILTER_CONTROLS = [
+  ['number-filter-phone-quality', 'phoneQuality'],
+  ['number-filter-email-quality', 'emailQuality'],
+  ['number-filter-website-quality', 'websiteQuality'],
+  ['number-filter-business-quality', 'businessQuality'],
+  ['number-filter-completeness', 'completeness']
+];
 const NUMBERS_SEARCH_DEBOUNCE_MS = 300;
 
 // Sortable columns by th cellIndex (checkbox, Website and Status excluded).
@@ -899,6 +925,13 @@ function numbersQueryPayload() {
   if (filterStatus !== 'all') filters.status = filterStatus;
   const filterQualification = document.getElementById('number-filter-qualification').value;
   if (filterQualification !== 'all') filters.qualification = filterQualification;
+  // P1-B: derived quality filters, merged into the same filters object. The
+  // main process allowlists every value, so an unexpected selection is refused
+  // rather than reaching the query layer.
+  for (const [id, key] of LEAD_QUALITY_FILTER_CONTROLS) {
+    const value = document.getElementById(id).value;
+    if (value !== 'all') filters[key] = value;
+  }
   if (Object.keys(filters).length) query.filters = filters;
   if (numbersSort) {
     query.sort = numbersSort;
@@ -967,6 +1000,14 @@ document.getElementById('number-filter-qualification').addEventListener('change'
   numbersPage = 1;
   renderNumbers();
 }));
+// P1-B: a quality change can empty the current page, so the list returns to
+// page one; every other active filter and the search/sort state are untouched.
+for (const [id] of LEAD_QUALITY_FILTER_CONTROLS) {
+  document.getElementById(id).addEventListener('change', safeAsync(() => {
+    numbersPage = 1;
+    renderNumbers();
+  }));
+}
 
 document.querySelector('#view-numbers .data-table thead').addEventListener('click', safeAsync((e) => {
   const th = e.target.closest('th');
@@ -1043,6 +1084,9 @@ async function openLeadDetail(id) {
     }
     body.innerHTML = leadDetailTemplate(lead);
     populateLeadDetailB6(lead);
+    populateLeadQuality(lead);
+    populateLeadUserStatus(lead);
+    populateLeadCompany(lead);
   } catch (err) {
     if (seq !== detailLoadSeq) return;
     closeLeadDetail();
@@ -1061,6 +1105,12 @@ function closeLeadDetail() {
   const region = document.getElementById('lead-detail-b6');
   if (region) region.hidden = true;
   leadDetailContext = { id: null, tags: [] };
+  const qualityRegion = document.getElementById('lead-detail-quality');
+  if (qualityRegion) qualityRegion.hidden = true;
+  const userStatusRegion = document.getElementById('lead-user-status');
+  if (userStatusRegion) userStatusRegion.hidden = true;
+  const companyRegion = document.getElementById('lead-detail-company');
+  if (companyRegion) companyRegion.hidden = true;
 }
 
 // Row clicks open the detail; checkbox/input clicks keep selection intact.
@@ -1233,6 +1283,276 @@ document.getElementById('lead-detail-tag-list').addEventListener('click', safeAs
   removeLeadDetailTag(parseInt(removeBtn.dataset.tagIndex, 10));
 }));
 
+// === P1-C user-provided data-quality status ===
+// Stored USER ASSERTIONS, kept visibly separate from the derived signals above:
+// a status never changes what is computed, and a computed value never changes
+// a status. Explicit save only, no autosave, and a failed save leaves the
+// user's selection on screen.
+const LEAD_USER_STATUS_CONTROLS = [
+  ['lead-status-phone', 'phoneStatus'],
+  ['lead-status-email', 'emailStatus'],
+  ['lead-status-website', 'websiteStatus'],
+  ['lead-status-business', 'businessStatus']
+];
+let leadUserStatusInFlight = false;
+
+function setLeadUserStatusControlsEnabled(enabled) {
+  for (const [id] of LEAD_USER_STATUS_CONTROLS) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
+  }
+  const save = document.getElementById('btn-save-lead-status');
+  if (save) save.disabled = !enabled;
+}
+
+function populateLeadUserStatus(lead) {
+  const region = document.getElementById('lead-user-status');
+  const row = lead && typeof lead === 'object' ? lead : {};
+  const hasLead = typeof row.id === 'string' && Boolean(row.id);
+  if (region) region.hidden = !hasLead;
+  if (!hasLead) return;
+  for (const [id, field] of LEAD_USER_STATUS_CONTROLS) {
+    const select = document.getElementById(id);
+    if (!select) continue;
+    // An unrecognised stored value falls back to the first option rather than
+    // silently becoming a claim.
+    const options = [...select.options].map(option => option.value);
+    select.value = options.includes(row[field]) ? row[field] : 'unknown';
+  }
+  setLeadUserStatusControlsEnabled(true);
+}
+
+async function saveLeadUserStatus() {
+  if (leadUserStatusInFlight) return;
+  const id = leadDetailContext.id;
+  if (!id) {
+    toast('No lead selected', 'error');
+    return;
+  }
+  const payload = { id };
+  for (const [controlId, field] of LEAD_USER_STATUS_CONTROLS) {
+    const select = document.getElementById(controlId);
+    if (select) payload[field] = select.value;
+  }
+  const seq = detailLoadSeq;
+  leadUserStatusInFlight = true;
+  setLeadUserStatusControlsEnabled(false);
+  try {
+    const result = await window.appAPI.collector.updateLeadQuality(payload);
+    if (result && result.success === false) {
+      const msg = (result && result.error) || 'Update refused';
+      toast(msg, 'error');
+      reportError(msg, { handler: 'saveLeadUserStatus' });
+      return;
+    }
+    if (seq !== detailLoadSeq) return;
+    if (result && result.updated === false && result.reason === 'unchanged') {
+      toast('No changes to save');
+    } else {
+      toast('Saved');
+    }
+    // Re-read through the existing single-lead path so the displayed values
+    // come from storage. The derived signals are recomputed from the same row.
+    await openLeadDetail(id);
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'saveLeadUserStatus' });
+  } finally {
+    leadUserStatusInFlight = false;
+    setLeadUserStatusControlsEnabled(true);
+  }
+}
+
+document.getElementById('btn-save-lead-status').addEventListener('click', safeAsync(() => saveLeadUserStatus()));
+
+// === P1-D company foundation (read-only presentation) ===
+// The Lead Profile is the only place the company foundation is shown, and it is
+// read-only: there is no company record, no contact, no merge action and no
+// company management screen in this batch, so nothing here is writable and no
+// IPC is involved. Both values arrive already computed by the main process
+// (companyKey is derived on every read, companyId is a nullable system
+// pointer) and are escaped exactly like every other lead value.
+function renderLeadCompany(lead) {
+  const body = document.getElementById('lead-detail-company-body');
+  if (!body) return;
+  const row = lead && typeof lead === 'object' ? lead : {};
+  const companyKey = typeof row.companyKey === 'string' ? row.companyKey.trim() : '';
+  const companyId = typeof row.companyId === 'string' ? row.companyId.trim() : '';
+  body.innerHTML = [
+    qualityRow('Company key', companyKey || '—', 'derived'),
+    qualityRow('Company ID', companyId || '—', 'not set')
+  ].join('');
+}
+
+function populateLeadCompany(lead) {
+  const region = document.getElementById('lead-detail-company');
+  const hasLead = Boolean(lead && typeof lead === 'object' && typeof lead.id === 'string' && lead.id);
+  if (region) region.hidden = !hasLead;
+  if (hasLead) renderLeadCompany(lead);
+}
+
+// === P1-A deterministic data-quality signals (read-only) ===
+// Every signal below is a pure function of fields already stored on the lead.
+// Nothing here performs I/O, writes to storage, or asserts that a third party
+// verified anything: absence of evidence is reported as UNKNOWN, never as a
+// negative fact. Business status has no local evidence source at all in P1-A,
+// so it is always UNKNOWN until a user-provided value exists (P1-C).
+//
+// The phone line-type rules deliberately reuse the existing isMobileNumber()
+// country table rather than restating it, so the two can never drift.
+const QUALITY_UNKNOWN = 'unknown';
+const QUALITY_INVALID = 'invalid';
+const QUALITY_VALID = 'valid';
+// Country prefixes for which the repository actually carries line-type rules.
+const QUALITY_LINE_TYPE_COUNTRIES = ['+66', '+86', '+1', '+91', '+62', '+84', '+60', '+63'];
+const QUALITY_COMPLETENESS_FIELDS = ['phone', 'title', 'website', 'email', 'address'];
+
+function qualityText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+// Read-only mirror of the store's phone key (accountStore.js, the same
+// whitespace/dash/dot/parenthesis strip) so the profile shows exactly the value
+// the library deduplicates on. This is display only: it never compares or
+// merges rows, so dedup remains exclusively a store concern. Drift between the
+// two implementations is caught by a dedicated equivalence test.
+function qualityPhoneKey(value) {
+  return qualityText(value).replace(/[\s\-().]/g, '');
+}
+
+// Same rule as the import validator: optional '+', digits/spaces/dashes/dots/
+// parentheses only, at least five digits, 50 characters maximum.
+function qualityPhoneSyntax(value) {
+  const raw = qualityText(value);
+  if (!raw) return QUALITY_UNKNOWN;
+  if (raw.length > 50) return QUALITY_INVALID;
+  if (!/^\+?[\d\s.\-()]+$/.test(raw)) return QUALITY_INVALID;
+  const digits = raw.replace(/\D/g, '');
+  return digits.length >= 5 ? QUALITY_VALID : QUALITY_INVALID;
+}
+
+function qualityPhoneCountry(value) {
+  const raw = qualityText(value);
+  if (!raw.startsWith('+')) return null;
+  // Longest match first so '+1' never shadows a longer supported prefix.
+  const match = QUALITY_LINE_TYPE_COUNTRIES
+    .filter(prefix => raw.startsWith(prefix))
+    .sort((a, b) => b.length - a.length)[0];
+  return match || null;
+}
+
+function qualityPhoneSignal(phone) {
+  const syntax = qualityPhoneSyntax(phone);
+  const country = qualityPhoneCountry(phone);
+  let lineType = QUALITY_UNKNOWN;
+  if (country && syntax === QUALITY_VALID) {
+    lineType = isMobileNumber(phone) ? 'mobile' : 'landline';
+  }
+  return {
+    syntax,
+    country: country || QUALITY_UNKNOWN,
+    lineType,
+    normalized: qualityPhoneKey(phone)
+  };
+}
+
+function qualityEmailSignal(email) {
+  const raw = qualityText(email);
+  if (!raw) return { syntax: QUALITY_UNKNOWN, domain: '' };
+  if (/\s/.test(raw) || raw.length > 500) return { syntax: QUALITY_INVALID, domain: '' };
+  const parts = raw.split('@');
+  const domain = parts[1] || '';
+  // A domain must have at least one dot, no empty label, and no trailing dot.
+  if (parts.length !== 2 || !parts[0] || !domain.includes('.') || domain.startsWith('.')
+      || domain.endsWith('.') || domain.includes('..')) {
+    return { syntax: QUALITY_INVALID, domain: '' };
+  }
+  // Deliverability is never claimed: only the syntactic shape and the domain.
+  return { syntax: QUALITY_VALID, domain: domain.toLowerCase() };
+}
+
+function qualityWebsiteSignal(website) {
+  const raw = qualityText(website);
+  if (!raw) return { syntax: QUALITY_UNKNOWN, host: '', normalized: '' };
+  let parsed = null;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    parsed = null;
+  }
+  if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
+    return { syntax: QUALITY_INVALID, host: '', normalized: '' };
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  return { syntax: QUALITY_VALID, host, normalized: raw };
+}
+
+function qualityCompleteness(lead) {
+  const row = lead && typeof lead === 'object' ? lead : {};
+  const present = {};
+  const missing = [];
+  for (const field of QUALITY_COMPLETENESS_FIELDS) {
+    const has = Boolean(qualityText(row[field]));
+    present[field] = has;
+    if (!has) missing.push(field);
+  }
+  return {
+    present,
+    missing,
+    // Deliberately a count, not a score: completeness is reported as "N of 5
+    // fields present" and never as a grade, rank or quality number.
+    presentCount: QUALITY_COMPLETENESS_FIELDS.length - missing.length,
+    total: QUALITY_COMPLETENESS_FIELDS.length
+  };
+}
+
+function leadQualitySignals(lead) {
+  const row = lead && typeof lead === 'object' ? lead : {};
+  return {
+    phone: qualityPhoneSignal(row.phone),
+    email: qualityEmailSignal(row.email),
+    website: qualityWebsiteSignal(row.website),
+    // No local evidence source exists for business status in P1-A.
+    business: { syntax: QUALITY_UNKNOWN, source: 'user-provided (not set)' },
+    completeness: qualityCompleteness(row)
+  };
+}
+
+function qualityRow(label, value, source) {
+  return '<div class="lead-detail-row"><span class="lead-detail-label">' + escapeHtml(label) +
+    '</span><span class="lead-detail-value">' + escapeHtml(value) +
+    ' <span class="lead-detail-source">' + escapeHtml(source) + '</span></span></div>';
+}
+
+function renderLeadQuality(lead) {
+  const body = document.getElementById('lead-detail-quality-body');
+  if (!body) return;
+  const signals = leadQualitySignals(lead);
+  const phone = signals.phone;
+  const lines = [
+    qualityRow('Phone', phone.syntax, 'derived'),
+    qualityRow('Phone (normalized)', phone.normalized || '—', 'derived'),
+    qualityRow('Country prefix', phone.country, phone.country === QUALITY_UNKNOWN ? 'no local rule' : 'derived'),
+    qualityRow('Line type', phone.lineType, phone.lineType === QUALITY_UNKNOWN ? 'no local rule' : 'derived'),
+    qualityRow('Email', signals.email.syntax, 'derived'),
+    qualityRow('Email domain', signals.email.domain || '—', 'derived'),
+    qualityRow('Website', signals.website.syntax, 'derived'),
+    qualityRow('Website host', signals.website.host || '—', 'derived'),
+    qualityRow('Business', signals.business.syntax, signals.business.source),
+    qualityRow('Completeness', signals.completeness.presentCount + '/' + signals.completeness.total, 'derived'),
+    qualityRow('Missing fields', signals.completeness.missing.length ? signals.completeness.missing.join(', ') : 'none', 'derived')
+  ];
+  body.innerHTML = lines.join('');
+}
+
+function populateLeadQuality(lead) {
+  const region = document.getElementById('lead-detail-quality');
+  const hasLead = Boolean(lead && typeof lead === 'object' && typeof lead.id === 'string' && lead.id);
+  if (region) region.hidden = !hasLead;
+  if (hasLead) renderLeadQuality(lead);
+}
+
 document.getElementById('btn-delete-selected').addEventListener('click', safeAsync(async () => {
     const ids = [...document.querySelectorAll('.number-check:checked')].map(cb => cb.dataset.id);
     if (!ids.length) return;
@@ -1325,6 +1645,468 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
     }));
     input.click();
   });
+
+// === P1-G Collection Quality Report (read-only) ===
+// The report for the run on screen. It DISPLAYS counts the main process derived
+// from data already stored on this device: the job's own save counters, the
+// leads of this run, the existing local syntax rules, the existing P1-D
+// companyKey grouping and, when a target was applied, its required fields. It is
+// not a score, a grade, a rank or a probability, it writes nothing, and there is
+// no control here that can change a lead.
+function collectQualityRow(label, value) {
+  return '<div class="lead-detail-row"><span class="lead-detail-label">' + escapeHtml(label)
+    + '</span><span class="lead-detail-value">' + escapeHtml(value) + '</span></div>';
+}
+
+function collectQualityNumber(value) {
+  return Number.isInteger(value) ? String(value) : '0';
+}
+
+function collectQualityPercent(rate) {
+  // A zero denominator is reported as 0%: nothing was saved, so no rate exists
+  // and none is invented.
+  if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) return '0%';
+  return (rate * 100).toFixed(1) + '%';
+}
+
+function renderCollectQuality(report, targetReport) {
+  const body = document.getElementById('collect-quality-body');
+  const targetBody = document.getElementById('collect-quality-target-body');
+  if (!body) return;
+  const row = report && typeof report === 'object' ? report : {};
+  const leadsWith = row.leadsWith && typeof row.leadsWith === 'object' ? row.leadsWith : {};
+  const grouping = row.companyGrouping && typeof row.companyGrouping === 'object' ? row.companyGrouping : {};
+  body.innerHTML = [
+    collectQualityRow('Records collected', collectQualityNumber(row.recordsCollected)),
+    collectQualityRow('Records submitted', collectQualityNumber(row.submittedCount)),
+    collectQualityRow('Added', collectQualityNumber(row.addedCount)),
+    collectQualityRow('Duplicates', collectQualityNumber(row.duplicateCount)),
+    collectQualityRow('Duplicate rate', collectQualityPercent(row.duplicateRate)),
+    collectQualityRow('Leads saved for this run', collectQualityNumber(row.leadsSaved)),
+    collectQualityRow('With email', collectQualityNumber(leadsWith.email)),
+    collectQualityRow('With website', collectQualityNumber(leadsWith.website)),
+    collectQualityRow('With address', collectQualityNumber(leadsWith.address)),
+    collectQualityRow('With title', collectQualityNumber(leadsWith.title)),
+    collectQualityRow('Invalid records', collectQualityNumber(row.invalidRecords)),
+    collectQualityRow('Company groups', collectQualityNumber(grouping.groups)),
+    collectQualityRow('Leads without a company key', collectQualityNumber(grouping.ungrouped))
+  ].join('');
+  if (!targetBody) return;
+  // No attached target means no target metric at all: the section stays empty
+  // rather than showing a fabricated compliance figure.
+  if (!targetReport || targetReport.available !== true || !Array.isArray(targetReport.requiredFields)) {
+    targetBody.innerHTML = '';
+    return;
+  }
+  targetBody.innerHTML = [
+    '<div class="collect-quality-header"><span class="lead-detail-label">Target requirements</span>'
+    + '<span class="lead-detail-badge">' + escapeHtml(targetReport.targetName || '') + '</span></div>',
+    ...targetReport.requiredFields.map((entry) => collectQualityRow(
+      'Missing ' + (entry && entry.field ? entry.field : ''),
+      collectQualityNumber(entry && entry.missing)
+    ))
+  ].join('');
+}
+
+function closeCollectQuality() {
+  const panel = document.getElementById('collect-quality');
+  if (panel) panel.hidden = true;
+  const body = document.getElementById('collect-quality-body');
+  if (body) body.innerHTML = '';
+  const targetBody = document.getElementById('collect-quality-target-body');
+  if (targetBody) targetBody.innerHTML = '';
+}
+
+async function loadCollectQuality() {
+  const runSlug = currentResultsRunSlug;
+  const panel = document.getElementById('collect-quality');
+  if (!runSlug) {
+    closeCollectQuality();
+    return;
+  }
+  try {
+    const result = await window.appAPI.collector.qualityReport({ runSlug, limit: 1, offset: 0 });
+    const report = result && Array.isArray(result.rows) ? result.rows[0] : null;
+    if (!report) {
+      closeCollectQuality();
+      return;
+    }
+    let targetReport = null;
+    try {
+      targetReport = await window.appAPI.collector.qualityTargetReport({ runSlug });
+    } catch (err) {
+      // A target that cannot be read leaves the target section empty; the
+      // counters above are still truthful.
+      targetReport = null;
+    }
+    if (runSlug !== currentResultsRunSlug) return;
+    renderCollectQuality(report, targetReport);
+    if (panel) panel.hidden = false;
+  } catch (err) {
+    closeCollectQuality();
+    const msg = err?.message || String(err);
+    reportError(msg, { handler: 'loadCollectQuality' });
+  }
+}
+
+function qualityReportText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+// === P1-E duplicate review (read-only) ===
+// The Lead Library review panel. It only DISPLAYS the classification the main
+// process derived from exact keys: there is no merge button, no survivor choice
+// and no write call of any kind in this section. Every rendered value goes
+// through escapeHtml, and the panel owns no state beyond the chosen rule and
+// the page being displayed.
+const DUPLICATE_REVIEW_PAGE_SIZE = 20;
+let duplicateReviewPage = 1;
+let duplicateReviewRule = 'all';
+// Independent of the lead table's page-query sequence: opening, paging or
+// closing the review never re-renders or re-queries the lead table.
+let duplicateReviewSeq = 0;
+
+function duplicateReviewText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function duplicateReviewLeadRows(lead) {
+  const row = lead && typeof lead === 'object' ? lead : {};
+  const fields = [
+    ['Phone', row.phone], ['Title', row.title], ['Website', row.website],
+    ['Email', row.email], ['Address', row.address], ['Company key', row.companyKey],
+    ['Source', row.source], ['Keywords', row.keyword], ['Run slug', row.runSlug],
+    ['采集Time', row.collectedAt]
+  ];
+  return fields
+    .map(([label, value]) => `<div class="lead-detail-row"><span class="lead-detail-label">${escapeHtml(label)}</span>`
+      + `<span class="lead-detail-value">${escapeHtml(duplicateReviewText(value) || '—')}</span></div>`)
+    .join('');
+}
+
+function renderDuplicateReviewBody(result) {
+  const body = document.getElementById('dup-review-body');
+  if (!body) return;
+  const rows = result && Array.isArray(result.rows) ? result.rows : [];
+  if (!rows.length) {
+    body.innerHTML = '<p class="dup-review-empty">No duplicate candidate for this rule.</p>';
+    return;
+  }
+  body.innerHTML = rows.map((entry) => {
+    const cls = escapeHtml(entry.dupClass || '');
+    const reason = escapeHtml(entry.dupReason || '');
+    const leadBlock = `<div class="dup-review-side"><div class="lead-detail-label">Lead</div>`
+      + duplicateReviewLeadRows(entry.lead) + '</div>';
+    const candidateBlock = entry.candidate
+      ? `<div class="dup-review-side"><div class="lead-detail-label">Candidate</div>`
+        + duplicateReviewLeadRows(entry.candidate) + '</div>'
+      : '<div class="dup-review-side"><div class="lead-detail-label">Candidate</div>'
+        + '<div class="lead-detail-row"><span class="lead-detail-value">—</span></div></div>';
+    return `<div class="dup-review-candidate">`
+      + `<div class="dup-review-candidate-head"><span class="dup-review-class">${cls}</span>`
+      + `<span class="dup-review-reason">matched: ${reason}</span></div>`
+      + leadBlock + candidateBlock + '</div>';
+  }).join('');
+}
+
+async function loadDuplicateReview(page = 1) {
+  const panel = document.getElementById('dup-review');
+  if (panel) panel.hidden = false;
+  const body = document.getElementById('dup-review-body');
+  const seq = ++duplicateReviewSeq;
+  if (body) body.innerHTML = '<p class="dup-review-empty">Loading...</p>';
+  try {
+    const result = await window.appAPI.collector.duplicateReview({
+      rule: duplicateReviewRule,
+      limit: DUPLICATE_REVIEW_PAGE_SIZE,
+      offset: (page - 1) * DUPLICATE_REVIEW_PAGE_SIZE
+    });
+    if (seq !== duplicateReviewSeq) return;
+    duplicateReviewPage = page;
+    renderDuplicateReviewBody(result);
+    const total = result && Number.isInteger(result.total) ? result.total : 0;
+    const totalPages = Math.max(1, Math.ceil(total / DUPLICATE_REVIEW_PAGE_SIZE));
+    renderPagination('dup-review-pagination', totalPages, duplicateReviewPage, (next) => loadDuplicateReview(next));
+  } catch (err) {
+    if (seq !== duplicateReviewSeq) return;
+    if (body) body.innerHTML = '<p class="dup-review-empty">Review unavailable.</p>';
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'loadDuplicateReview' });
+  }
+}
+
+function closeDuplicateReview() {
+  duplicateReviewSeq += 1;
+  duplicateReviewPage = 1;
+  const panel = document.getElementById('dup-review');
+  if (panel) panel.hidden = true;
+  const body = document.getElementById('dup-review-body');
+  if (body) body.innerHTML = '';
+  const pagination = document.getElementById('dup-review-pagination');
+  if (pagination) pagination.innerHTML = '';
+}
+
+document.getElementById('btn-dup-review-open').addEventListener('click', safeAsync(async () => {
+  // The rule vocabulary is owned by the main process: the renderer forwards the
+  // selected value and main rejects anything outside its allowlist.
+  const select = document.getElementById('dup-review-rule');
+  const value = select && typeof select.value === 'string' ? select.value.trim() : '';
+  duplicateReviewRule = value || 'all';
+  await loadDuplicateReview(1);
+}));
+
+document.getElementById('btn-dup-review-close').addEventListener('click', () => closeDuplicateReview());
+
+// === P1-F Target Builder (user-owned definitions) ===
+// Targets are what the user is looking for, not lead data. This section reads
+// and writes target definitions only: it never calls a lead write path, never
+// reads or writes a lead, and contains no analytics, no scoring and no
+// classification. Required/optional fields are prospecting criteria only - a
+// lead is never rejected from storage because one is missing.
+const TARGET_FIELD_CHOICES = ['phone', 'title', 'website', 'email', 'address'];
+const TARGET_STATUS_CHOICES = ['active', 'archived'];
+// The ONLY collector inputs "Use for collection" may touch. Both already exist
+// in the collector form: no provider parameter, request shape or capability is
+// created, renamed or extended by a target.
+const TARGET_COLLECTOR_PARAM_MAP = { businessTypes: 'collect-keywords', locations: 'collect-region' };
+let targetsLoadSeq = 0;
+let targetEditingId = null;
+
+function targetTermsText(value) {
+  return Array.isArray(value) ? value.join(', ') : '';
+}
+
+function targetFieldsText(value) {
+  return Array.isArray(value) && value.length ? value.join(', ') : '—';
+}
+
+function targetCard(target) {
+  const row = target && typeof target === 'object' ? target : {};
+  const id = typeof row.id === 'string' ? row.id : '';
+  const status = TARGET_STATUS_CHOICES.includes(row.status) ? row.status : 'active';
+  const archived = status === 'archived';
+  return '<div class="target-card" data-id="' + escapeHtml(id) + '">'
+    + '<div class="target-card-head"><span class="target-card-name">' + escapeHtml(row.name || '') + '</span>'
+    + '<span class="lead-detail-badge">' + escapeHtml(status) + '</span></div>'
+    + '<div class="lead-detail-row"><span class="lead-detail-label">Industry</span>'
+    + '<span class="lead-detail-value">' + escapeHtml(row.industry || '—') + '</span></div>'
+    + '<div class="lead-detail-row"><span class="lead-detail-label">Business types</span>'
+    + '<span class="lead-detail-value">' + escapeHtml(targetTermsText(row.businessTypes) || '—') + '</span></div>'
+    + '<div class="lead-detail-row"><span class="lead-detail-label">Locations</span>'
+    + '<span class="lead-detail-value">' + escapeHtml(targetTermsText(row.locations) || '—') + '</span></div>'
+    + '<div class="lead-detail-row"><span class="lead-detail-label">Required</span>'
+    + '<span class="lead-detail-value">' + escapeHtml(targetFieldsText(row.requiredFields)) + '</span></div>'
+    + '<div class="lead-detail-row"><span class="lead-detail-label">Optional</span>'
+    + '<span class="lead-detail-value">' + escapeHtml(targetFieldsText(row.optionalFields)) + '</span></div>'
+    + '<div class="lead-detail-row"><span class="lead-detail-label">Exclusions</span>'
+    + '<span class="lead-detail-value">' + escapeHtml(targetTermsText(row.exclusions) || '—') + '</span></div>'
+    + '<div class="target-card-actions">'
+    + '<button type="button" class="btn btn-sm" data-action="edit">Edit</button>'
+    + '<button type="button" class="btn btn-sm btn-secondary" data-action="toggle-status">'
+    + (archived ? 'Activate' : 'Archive') + '</button>'
+    + '<button type="button" class="btn btn-sm btn-secondary" data-action="use">Use for collection</button>'
+    + '</div></div>';
+}
+
+async function loadTargets() {
+  const list = document.getElementById('target-list');
+  const seq = ++targetsLoadSeq;
+  if (list) list.innerHTML = '<p class="dup-review-empty">Loading...</p>';
+  try {
+    const result = await window.appAPI.targets.list();
+    if (seq !== targetsLoadSeq) return;
+    const rows = result && Array.isArray(result.rows) ? result.rows : [];
+    if (!list) return;
+    list.innerHTML = rows.length
+      ? rows.map(targetCard).join('')
+      : '<p class="dup-review-empty">No target defined yet.</p>';
+  } catch (err) {
+    if (seq !== targetsLoadSeq) return;
+    if (list) list.innerHTML = '<p class="dup-review-empty">Targets unavailable.</p>';
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'loadTargets' });
+  }
+}
+
+function targetCheckedValues(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return [];
+  return [...container.querySelectorAll('input[type="checkbox"]')]
+    .filter(box => box.checked && TARGET_FIELD_CHOICES.includes(box.value))
+    .map(box => box.value);
+}
+
+function setTargetCheckedValues(containerId, values) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const wanted = Array.isArray(values) ? values : [];
+  container.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+    box.checked = wanted.includes(box.value);
+  });
+}
+
+function openTargetEditor(target) {
+  const row = target && typeof target === 'object' ? target : {};
+  targetEditingId = typeof row.id === 'string' && row.id ? row.id : null;
+  const editor = document.getElementById('target-editor');
+  if (editor) editor.hidden = false;
+  const cancel = document.getElementById('btn-target-cancel');
+  if (cancel) cancel.hidden = false;
+  document.getElementById('target-name').value = row.name || '';
+  document.getElementById('target-industry').value = row.industry || '';
+  document.getElementById('target-business-types').value = targetTermsText(row.businessTypes);
+  document.getElementById('target-locations').value = targetTermsText(row.locations);
+  document.getElementById('target-exclusions').value = targetTermsText(row.exclusions);
+  const status = document.getElementById('target-status');
+  if (status) status.value = TARGET_STATUS_CHOICES.includes(row.status) ? row.status : 'active';
+  // An edit loads the stored criteria, which are mutually exclusive by
+  // validation; a new target starts with none.
+  setTargetCheckedValues('target-required-fields', row.requiredFields);
+  setTargetCheckedValues('target-optional-fields', row.optionalFields);
+}
+
+function closeTargetEditor() {
+  targetEditingId = null;
+  const editor = document.getElementById('target-editor');
+  if (editor) editor.hidden = true;
+  const cancel = document.getElementById('btn-target-cancel');
+  if (cancel) cancel.hidden = true;
+  const bar = document.getElementById('target-status-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+function setTargetStatusBar(message, isError) {
+  const bar = document.getElementById('target-status-bar');
+  if (!bar) return;
+  bar.textContent = message;
+  bar.style.display = 'block';
+  bar.classList.toggle('error', !!isError);
+}
+
+async function saveTargetFromEditor() {
+  const payload = {
+    name: document.getElementById('target-name').value,
+    industry: document.getElementById('target-industry').value,
+    businessTypes: document.getElementById('target-business-types').value,
+    locations: document.getElementById('target-locations').value,
+    exclusions: document.getElementById('target-exclusions').value,
+    requiredFields: targetCheckedValues('target-required-fields'),
+    optionalFields: targetCheckedValues('target-optional-fields'),
+    status: document.getElementById('target-status').value
+  };
+  if (targetEditingId) payload.id = targetEditingId;
+  try {
+    const res = await window.appAPI.targets.save(payload);
+    if (!res || res.success !== true) {
+      setTargetStatusBar((res && res.error) || 'Invalid target', true);
+      toast((res && res.error) || '保存失败', 'error');
+      return;
+    }
+    setTargetStatusBar('Saved', false);
+    closeTargetEditor();
+    await loadTargets();
+  } catch (err) {
+    const msg = err?.message || String(err);
+    setTargetStatusBar(msg, true);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'saveTargetFromEditor' });
+  }
+}
+
+async function setTargetArchived(id, status) {
+  try {
+    const res = await window.appAPI.targets.setStatus({ id, status });
+    if (res && res.success === true) {
+      await loadTargets();
+      return;
+    }
+    toast((res && res.error) || '操作失败', 'error');
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'setTargetArchived' });
+  }
+}
+
+// "Use for collection" maps a target onto the collector inputs that already
+// exist, and nothing else: it never adds a parameter, never changes a provider
+// request shape and never triggers a collection by itself. A field the user has
+// already filled in is left alone rather than overwritten.
+function targetToCollectorParams(target) {
+  const row = target && typeof target === 'object' ? target : {};
+  const params = {};
+  for (const [field, inputId] of Object.entries(TARGET_COLLECTOR_PARAM_MAP)) {
+    const terms = Array.isArray(row[field]) ? row[field] : [];
+    if (!terms.length) continue;
+    params[inputId] = terms.join(', ');
+  }
+  // Fallback for a target that names an industry but no business types: the
+  // keyword input is the only place a category can be expressed, and it
+  // already exists.
+  if (!params['collect-keywords']) {
+    const industry = typeof row.industry === 'string' ? row.industry.trim() : '';
+    if (industry) params['collect-keywords'] = industry;
+  }
+  return params;
+}
+
+function useTargetForCollection(target) {
+  const params = targetToCollectorParams(target);
+  let filled = 0;
+  let kept = 0;
+  for (const [inputId, value] of Object.entries(params)) {
+    const input = document.getElementById(inputId);
+    if (!input) continue;
+    if (input.value && input.value.trim()) {
+      kept++;
+      continue;
+    }
+    input.value = value;
+    filled++;
+  }
+  // P1-G: remember which definition the user applied, so the run's report can
+  // state its required-field completeness. Nothing is sent anywhere here.
+  currentResultsTargetId = qualityReportText(target && target.id) || null;
+  const nav = document.querySelector('.nav-item[data-view="collector"]');
+  if (nav) nav.click();
+  toast(`已填充 ${filled} 项${kept ? `，保留 ${kept} 项已填内容` : ''}`, 'success');
+  return { filled, kept };
+}
+
+document.getElementById('btn-target-new').addEventListener('click', () => openTargetEditor(null));
+document.getElementById('btn-target-cancel').addEventListener('click', () => closeTargetEditor());
+document.getElementById('btn-target-save').addEventListener('click', safeAsync(() => saveTargetFromEditor()));
+
+document.getElementById('target-list').addEventListener('click', safeAsync(async (e) => {
+  const button = e.target.closest('button[data-action]');
+  if (!button) return;
+  const card = button.closest('.target-card');
+  const id = card && typeof card.dataset.id === 'string' ? card.dataset.id : '';
+  if (!id) return;
+  let targets = [];
+  try {
+    const result = await window.appAPI.targets.list();
+    targets = result && Array.isArray(result.rows) ? result.rows : [];
+  } catch (err) {
+    const msg = err?.message || String(err);
+    toast(msg, 'error');
+    reportError(msg, { handler: 'targetListAction' });
+    return;
+  }
+  const target = targets.find(row => row && row.id === id);
+  if (!target) {
+    toast('未找到该目标', 'error');
+    return;
+  }
+  if (button.dataset.action === 'edit') openTargetEditor(target);
+  else if (button.dataset.action === 'toggle-status') {
+    await setTargetArchived(id, target.status === 'archived' ? 'active' : 'archived');
+  } else if (button.dataset.action === 'use') {
+    useTargetForCollection(target);
+  }
+}));
 
 // === B5 Lead Library Dashboard ===
 // Lazy, read-only overview over the lead library, the local collection-job
@@ -1445,6 +2227,7 @@ navItems.forEach(item => {
     }
     if (viewId === 'history') loadHistory();
     if (viewId === 'dashboard') loadDashboard();
+    if (viewId === 'targets') loadTargets();
   });
 });
 

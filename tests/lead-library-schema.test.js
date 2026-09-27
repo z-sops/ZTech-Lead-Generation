@@ -50,7 +50,11 @@ function test(name, fn) {
   const EXPECTED_COLUMNS = [
     'id', 'phone', 'source', 'keyword', 'status', 'collectedAt',
     'title', 'website', 'email', 'address', 'runSlug',
-    'qualification', 'tags', 'notes'
+    'qualification', 'tags', 'notes',
+    'phoneStatus', 'emailStatus', 'websiteStatus', 'businessStatus',
+    // P1-D: the nullable system pointer. companyKey is derived, so it is not
+    // a column; no companies table exists.
+    'companyId'
   ];
 
   function schemaColumns(db) {
@@ -102,7 +106,7 @@ function test(name, fn) {
   });
 
   // --- 2. migration of an existing 6-column database ----------------------
-  test('2. migration adds the B1 and B6 columns to a legacy 6-column database', async () => {
+  test('2. migration adds the B1, B6 and P1-C columns to a legacy 6-column database', async () => {
     seedLegacyDb();
     const store = await openStore();
     assert.deepStrictEqual(schemaColumns(store.db), EXPECTED_COLUMNS);
@@ -261,7 +265,7 @@ function test(name, fn) {
   });
 
   // --- 12/13. export --------------------------------------------------------
-  test('12. CSV export carries the 13-column header and quotes formula-like values', async () => {
+  test('12. CSV export carries the 17-column header and quotes formula-like values', async () => {
     const store = await openStore();
     await store.addNumbers([{
       id: 'lead-csv', phone: '+66899999999', source: 'csv-src', keyword: 'csvkw',
@@ -269,8 +273,8 @@ function test(name, fn) {
       title: '=HYPERLINK("http://evil")', website: 'https://site.example',
       email: 'csv@example.com', address: '8 Rama IV', runSlug: 'run-csv'
     }]);
-    // B6.4.1 lock update: the B6 user-owned columns are appended after the
-    // existing ten, which keep their order and names exactly.
+    // B6.4.1/P1-C lock update: the user-owned columns are appended after the
+    // existing thirteen, which keep their order and names exactly.
     await store.setLeadUserFields({
       id: 'lead-csv', qualification: 'qualified', tags: ['VIP', 'Wholesale'],
       notes: 'first line\nsecond line\r\nthird\rfourth'
@@ -278,7 +282,7 @@ function test(name, fn) {
     const csv = await store.exportNumbers('csv');
     const lines = csv.split('\n');
     assert.strictEqual(lines[0],
-      'phone,source,keyword,status,collected_at,title,website,email,address,run_slug,qualification,tags,notes');
+      'phone,source,keyword,status,collected_at,title,website,email,address,run_slug,qualification,tags,notes,phone_status,email_status,website_status,business_status');
     assert.ok(csv.includes('"\'=HYPERLINK'), 'leading = must be neutralised by csvField');
     assert.ok(csv.includes('run-csv'), 'runSlug value must be exported');
     assert.ok(csv.includes('"qualified"'), 'qualification value exported');
@@ -395,25 +399,30 @@ function test(name, fn) {
     assert.ok(rendererSource.includes("source: '手动导入'"), 'import provenance literal unchanged');
     assert.ok(storeSource.includes('migrateSchema'), 'migration entry point present');
     assert.strictEqual(
-      storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1, 3,
-      'JSON write call sites: add, delete and the B6 user-field write'
+      storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1, 5,
+      'JSON write call sites: add, delete, the B6 write, the P1-C status write and the P1-D pointer restore'
     );
     assert.strictEqual(
       storeSource.split('new Set(ids)').length - 1, 2,
       'delete Set usage unchanged'
     );
     assert.ok(!storeSource.includes('ids.includes'));
-    assert.ok(storeSource.includes('INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes) VALUES'),
-      '14-column delete rollback insert preserved (B6 data cannot be lost)');
+    assert.ok(storeSource.includes('INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes, phoneStatus, emailStatus, websiteStatus, businessStatus, companyId) VALUES'),
+      '19-column delete rollback insert preserved (user-owned data and companyId cannot be lost)');
   });
 
   test('19. normalizeLeadRow is idempotent for already-normalised rows', () => {
     const row = {
       id: 'r1', phone: '+66100000001', source: '手动导入', keyword: '', status: 'pending',
       collectedAt: '2026-01-01T00:00:00.000Z', title: '', website: '', email: '', address: '', runSlug: '',
-      // B6 user-owned fields: an already-normalised row carries them too, so
-      // this test still measures idempotency rather than first-run defaults.
-      qualification: 'unqualified', tags: [], notes: ''
+      // User-owned fields: an already-normalised row carries them too, so this
+      // test still measures idempotency rather than first-run defaults.
+      qualification: 'unqualified', tags: [], notes: '',
+      phoneStatus: 'unknown', emailStatus: 'unknown',
+      websiteStatus: 'unknown', businessStatus: 'unknown',
+      // P1-D: a normalised row already carries the derived key and the
+      // nullable pointer, so this still measures idempotency.
+      companyKey: '', companyId: null
     };
     const snapshot = JSON.stringify(row);
     const second = normalizeLeadRow(row);
@@ -426,6 +435,9 @@ function test(name, fn) {
     assert.strictEqual(legacy.row.qualification, 'unqualified', 'B6 default applied to a legacy row');
     assert.deepStrictEqual(legacy.row.tags, [], 'B6 tags default applied to a legacy row');
     assert.strictEqual(legacy.row.notes, '', 'B6 notes default applied to a legacy row');
+    for (const field of ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessStatus']) {
+      assert.strictEqual(legacy.row[field], 'unknown', 'P1-C default applied to a legacy row: ' + field);
+    }
     const bogus = normalizeLeadRow(null);
     assert.strictEqual(bogus.changed, false);
   });

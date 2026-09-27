@@ -670,6 +670,71 @@ textarea {
   text-align: center;
 }
 
+/* Collection Quality Report (P1-G): read-only counts for one run */
+.collect-quality {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-top: 12px;
+}
+.collect-quality[hidden] {
+  display: none;
+}
+.collect-quality-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.collect-quality-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.collect-quality-body .lead-detail-row {
+  border-bottom: none;
+  padding: 3px 0;
+}
+.collect-quality-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Target Builder (P1-F): user-owned prospecting definitions */
+.target-list {
+  margin-top: 12px;
+}
+.target-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.target-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.target-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.target-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.target-checks {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 /* Dashboard (B5): additive layout for the local lead library overview */
 #view-dashboard .view-top {
   flex: none;
@@ -756,4 +821,119 @@ textarea {
 }
 .lead-tag-add input {
   flex: 1;
+}
+
+/* Lead Profile data-quality section (P1-A): read-only derived signals */
+.lead-detail-quality {
+  border-top: 1px solid var(--border);
+  padding: 12px 18px 16px;
+}
+.lead-detail-quality[hidden] {
+  display: none;
+}
+.lead-detail-quality-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.lead-detail-quality-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.lead-detail-badge {
+  font-size: 11px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 1px 7px;
+}
+.lead-detail-quality-body .lead-detail-row {
+  border-bottom: none;
+  padding: 4px 0;
+}
+.lead-detail-source {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.lead-detail-quality-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Duplicate review panel (P1-E, read-only) */
+.dup-review {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-top: 12px;
+}
+.dup-review[hidden] {
+  display: none;
+}
+.dup-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dup-review-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.dup-review-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dup-review-body {
+  margin-top: 8px;
+}
+.dup-review-candidate {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+.dup-review-candidate-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.dup-review-class {
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 1px 7px;
+  color: var(--text-primary);
+}
+.dup-review-reason {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.dup-review-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Lead Profile user-provided status block (P1-C) */
+.lead-user-status {
+  margin-top: 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+.lead-user-status[hidden] {
+  display: none;
+}
+.lead-user-status .form-group {
+  margin-bottom: 8px;
 }

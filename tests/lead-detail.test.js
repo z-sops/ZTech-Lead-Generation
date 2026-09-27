@@ -35,7 +35,7 @@ function test(name, fn) {
   const htmlSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const stylesSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'styles.css'), 'utf8');
 
-  const { AccountStore } = require(accountStorePath);
+  const { AccountStore, normalizeLeadRow } = require(accountStorePath);
 
   const dataDir = path.join(testRoot, 'data');
   fs.mkdirSync(dataDir, { recursive: true });
@@ -44,32 +44,43 @@ function test(name, fn) {
   // must round-trip byte-exact), d2 = every optional field empty (empty
   // runSlug), d3 = NULL source + runSlug (NULL parity across storages).
   // B6 adds the three user-owned fields; d1 carries real values so the
-  // round-trip covers them, d2/d3 carry the contract defaults.
+  // round-trip covers them, d2/d3 carry the contract defaults. P1-C adds the
+  // four user-provided statuses, defaulted to 'unknown'. P1-D adds the derived
+  // companyKey (recomputed on read) and the nullable companyId pointer, which
+  // is never stored by this fixture and therefore reads back as null.
+  const USER_DEFAULTS = { qualification: 'unqualified', tags: [], notes: '' };
+  const STATUS_DEFAULTS = {
+    phoneStatus: 'unknown', emailStatus: 'unknown',
+    websiteStatus: 'unknown', businessStatus: 'unknown'
+  };
   const D1 = {
     id: 'd1', phone: '+66911111111', source: 'B3 Source', keyword: 'b3',
     status: 'pending', collectedAt: '2026-02-01T00:00:00.000Z',
     title: 'Cafe <b>&"Aroma"</b>', website: 'https://b3.example',
     email: 'b3@example.com', address: '3 B3 Rd', runSlug: 'run-b3',
-    qualification: 'qualified', tags: ['vip', 'Wholesale'], notes: 'note <b>one</b>'
+    qualification: 'qualified', tags: ['vip', 'Wholesale'], notes: 'note <b>one</b>',
+    phoneStatus: 'verified', emailStatus: 'risky', websiteStatus: 'live', businessStatus: 'active',
+    companyKey: 'b3.example', companyId: null
   };
   const D2 = {
     id: 'd2', phone: '+66922222222', source: '', keyword: '',
     status: 'pending', collectedAt: '2026-02-02T00:00:00.000Z',
     title: '', website: '', email: '', address: '', runSlug: '',
-    qualification: 'unqualified', tags: [], notes: ''
+    ...USER_DEFAULTS, ...STATUS_DEFAULTS, companyKey: '', companyId: null
   };
   const D3 = {
     id: 'd3', phone: '+66933333333', source: null, keyword: 'cafe',
     status: 'pending', collectedAt: '2026-02-03T00:00:00.000Z',
     title: 'noodle', website: '', email: '', address: '', runSlug: 'run-9',
-    qualification: 'unqualified', tags: [], notes: ''
+    ...USER_DEFAULTS, ...STATUS_DEFAULTS, companyKey: '', companyId: null
   };
   const FIXTURE = [D1, D2, D3];
 
-  // B6 tags are stored as a JSON array string in SQL, so the raw insert takes
-  // the encoded form while the JSON store keeps the native array.
+  // B6 tags are stored as a JSON array string in SQL and the P1-C statuses are
+  // plain text, so the raw insert takes the encoded/stored form while the JSON
+  // store keeps the native values.
   const INSERT_SQL =
-    'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+    'INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes, phoneStatus, emailStatus, websiteStatus, businessStatus) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
   async function openStore() {
     const store = new AccountStore();
@@ -97,32 +108,40 @@ function test(name, fn) {
     sqlStore.db.run(INSERT_SQL, [
       row.id, row.phone, row.source, row.keyword, row.status, row.collectedAt,
       row.title, row.website, row.email, row.address, row.runSlug,
-      row.qualification, JSON.stringify(row.tags), row.notes
+      row.qualification, JSON.stringify(row.tags), row.notes,
+      row.phoneStatus, row.emailStatus, row.websiteStatus, row.businessStatus
     ]);
   }
   jsonStore.db = null;
   jsonStore._numbers = JSON.parse(JSON.stringify(FIXTURE));
+  // Production always runs the JSON load through normalizeLeadRow, which is
+  // what derives companyKey and defaults companyId there. Reproduced so the
+  // JSON branch is compared on the same logical rows as SQL.
+  for (const row of jsonStore._numbers) normalizeLeadRow(row);
 
-  test('1. SQL single-lead retrieval returns the complete 14-field record', async () => {
+  test('1. SQL single-lead retrieval returns the complete 20-field record', async () => {
     const result = await sqlStore.queryNumbers({ limit: 1, offset: 0, id: 'd1' });
     assertEnvelope(result, 1, 0);
     assert.strictEqual(result.total, 1, 'exactly one row for a primary-key hit');
-    assert.deepStrictEqual(result.rows, [D1], 'all 14 fields returned byte-exact (HTML metacharacters intact)');
+    assert.deepStrictEqual(result.rows, [D1], 'all 20 fields returned byte-exact (HTML metacharacters intact)');
     const row = result.rows[0];
     for (const field of ['id', 'phone', 'source', 'keyword', 'status', 'collectedAt',
-      'title', 'website', 'email', 'address', 'runSlug', 'qualification', 'tags', 'notes']) {
+      'title', 'website', 'email', 'address', 'runSlug', 'qualification', 'tags', 'notes',
+      'phoneStatus', 'emailStatus', 'websiteStatus', 'businessStatus',
+      'companyKey', 'companyId']) {
       assert.ok(Object.prototype.hasOwnProperty.call(row, field), 'field present: ' + field);
     }
   });
 
-  test('2. JSON single-lead retrieval returns the complete 14-field record', async () => {
+  test('2. JSON single-lead retrieval returns the complete 18-field record', async () => {
     const result = await jsonStore.queryNumbers({ limit: 1, offset: 0, id: 'd2' });
     assertEnvelope(result, 1, 0);
     assert.strictEqual(result.total, 1);
-    assert.deepStrictEqual(result.rows, [D2], 'all 14 fields returned byte-exact from JSON storage');
+    assert.deepStrictEqual(result.rows, [D2], 'all 18 fields returned byte-exact from JSON storage');
     const row = result.rows[0];
     for (const field of ['id', 'phone', 'source', 'keyword', 'status', 'collectedAt',
-      'title', 'website', 'email', 'address', 'runSlug']) {
+      'title', 'website', 'email', 'address', 'runSlug', 'qualification', 'tags', 'notes',
+      'phoneStatus', 'emailStatus', 'websiteStatus', 'businessStatus']) {
       assert.ok(Object.prototype.hasOwnProperty.call(row, field), 'field present: ' + field);
     }
   });
@@ -174,7 +193,7 @@ function test(name, fn) {
     assert.strictEqual(listSql.total, 3, 'list queries unaffected by the id predicate');
   });
 
-  test('6. main: id validated with existing conventions; 19 channels unchanged', () => {
+  test('6. main: id validated with existing conventions; 24 channels, still no detail channel', () => {
     assert.ok(mainSource.includes('if (p.id !== undefined && p.id !== null)'), 'optional id extracted');
     assert.ok(mainSource.includes("assertOptionalString(p.id, 'id', 100)"), 'string + max-100 via existing guard');
     assert.ok(mainSource.includes("Invalid params: id (non-empty required)"), 'empty id rejected');
@@ -185,7 +204,9 @@ function test(name, fn) {
     );
     assert.ok(mainSource.includes('accountStore.queryNumbers(validateNumbersQuery(query))'), 'handler path unchanged');
     const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((m) => m[1]);
-    assert.strictEqual(channels.length, 19, 'exactly 19 IPC channels remain (no detail channel added)');
+    // P1-E declared lock update: channel count 20 -> 21. The addition is the
+    // read-only duplicate review; still no single-lead detail channel.
+    assert.strictEqual(channels.length, 26, 'exactly 26 IPC channels (P1-G added the two read-only report channels)');
     assert.ok(!channels.includes('collector:get-number'), 'no single-lead channel introduced');
   });
 
@@ -234,8 +255,8 @@ function test(name, fn) {
     assert.ok(!qBlock.includes('UPDATE numbers'), 'query path updates nothing');
     assert.ok(!qBlock.includes('DELETE FROM'), 'query path deletes nothing');
     assert.strictEqual(
-      storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1, 3,
-      'JSON write call sites: add, delete and the B6 user-field write'
+      storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1, 5,
+      'JSON write call sites: add, delete, the B6 user-field write, the P1-C status write and the P1-D pointer restore'
     );
     assert.strictEqual(storeSource.split('new Set(ids)').length - 1, 2, 'delete Set usage unchanged');
     // B4 justification: the local job ledger intentionally introduces the
@@ -245,7 +266,7 @@ function test(name, fn) {
     // 2 -> 4 (CREATE INDEX) and 1 -> 2 (CREATE TABLE). Kept as exact
     // equality (never >=) so any further DDL must still be declared here.
     assert.strictEqual(storeSource.split('CREATE INDEX').length - 1, 4, 'B4 adds exactly two job indexes');
-    assert.strictEqual(storeSource.split('CREATE TABLE').length - 1, 2, 'B4 adds exactly one job table');
+    assert.strictEqual(storeSource.split('CREATE TABLE').length - 1, 3, 'B4 adds one job table, P1-F one target table');
   });
 
   const detailStart = rendererSource.indexOf('// === Lead Detail overlay (B3) ===');
@@ -332,23 +353,24 @@ function test(name, fn) {
     assert.ok(rendererSource.includes("sort: 'collectedAt', label: '采集Time'"), 'B2 sort map unchanged');
   });
 
-  test('16. detail view writes only the B6 user-owned fields; destructive/global APIs stay unreachable', () => {
-    // B6.3 lock update: the Lead Profile is no longer display-only - it owns
-    // exactly one narrow write, the user-owned qualification/tags/notes update
-    // through collector:update-lead. Every previously banned API must still be
-    // unreachable from the detail flow; nothing else may be added.
+  test('16. detail view writes only user-owned lead fields; destructive/global APIs stay unreachable', () => {
+    // P1-C lock update: the Lead Profile may write exactly two things, both
+    // user-owned and both narrow: the B6 fields (qualification/tags/notes) and
+    // the P1-C user-provided statuses. Every previously banned API must still
+    // be unreachable from the detail flow.
     for (const banned of ['addNumbers(', 'deleteNumbers(', 'exportNumbers(', 'saveDB(', 'storageStatus(']) {
       assert.ok(!detailRegion.includes(banned), 'detail region must not call: ' + banned);
     }
     assert.ok(!detailRegion.includes('appAPI.settings'), 'detail touches no settings');
     assert.ok(!detailRegion.includes('collection.submit'), 'detail triggers no collection');
     assert.ok(detailRegion.includes('leadDetailTemplate(lead)'), 'display-only rendering path');
-    assert.ok(detailRegion.includes('appAPI.collector.updateLead'), 'the single permitted write');
     const calls = [...new Set([...detailRegion.matchAll(/appAPI\.collector\.(\w+)/g)].map(m => m[1]))].sort();
-    assert.deepStrictEqual(calls, ['getNumbers', 'updateLead'],
-      'the Lead Profile may only read via getNumbers and write via updateLead');
-    assert.strictEqual(detailRegion.split('appAPI.collector.updateLead').length - 1, 1,
+    assert.deepStrictEqual(calls, ['getNumbers', 'updateLead', 'updateLeadQuality'],
+      'the Lead Profile may only read via getNumbers and write user-owned fields');
+    assert.strictEqual(detailRegion.split('appAPI.collector.updateLead(').length - 1, 1,
       'exactly one updateLead call site');
+    assert.strictEqual(detailRegion.split('appAPI.collector.updateLeadQuality(').length - 1, 1,
+      'exactly one updateLeadQuality call site');
   });
 
   test('17. overlay markup and styles present; CSP/frame surface untouched', () => {

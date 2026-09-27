@@ -148,10 +148,15 @@ function test(name, fn) {
     assert.ok(store.db, 'SQL mode required for schema assertions');
 
     const info = store.db.exec('PRAGMA table_info(jobs)');
-    assert.ok(info.length === 1 && info[0].values.length === 9, 'jobs table has exactly 9 columns');
+    // P1-G declared lock update: 9 -> 13 columns. The B4 contract keeps its nine
+    // in order; P1-G appends the three save counters and the nullable target
+    // pointer.
+    assert.ok(info.length === 1 && info[0].values.length === 13, 'jobs table has exactly 13 columns');
     const cols = info[0].values.map(r => r[1]);
     assert.deepStrictEqual(cols, ['id', 'runSlug', 'providerId', 'query', 'startedAt',
-      'completedAt', 'status', 'resultCount', 'error'], 'column set fixed by the B4 contract');
+      'completedAt', 'status', 'resultCount', 'error',
+      'submittedCount', 'addedCount', 'duplicateCount', 'targetId'],
+      'the nine B4 columns in order, then the four P1-G columns');
 
     const idx = store.db.exec('PRAGMA index_list(jobs)');
     assert.ok(idx.length === 1 && idx[0].values.length >= 1, 'index metadata present');
@@ -168,7 +173,7 @@ function test(name, fn) {
     assert.ok(!fks.length || !fks[0].values.length, 'no foreign key between jobs and numbers');
 
     const numInfo = store.db.exec('PRAGMA table_info(numbers)');
-    assert.strictEqual(numInfo[0].values.length, 14, 'numbers schema carries the 11 B1 columns plus the 3 B6 user-owned columns');
+    assert.strictEqual(numInfo[0].values.length, 19, 'numbers schema carries the 11 B1 columns, the 3 B6, the 4 P1-C and the 1 P1-D column');
   });
 
   test('2. idempotent initialization: reopen keeps jobs; a legacy numbers-only database gains them', async () => {
@@ -206,8 +211,8 @@ function test(name, fn) {
     const migrated = await openStore();
     assert.ok(migrated.db, 'SQL mode on the legacy database');
     const jobInfo = migrated.db.exec('PRAGMA table_info(jobs)');
-    assert.ok(jobInfo.length === 1 && jobInfo[0].values.length === 9,
-      'jobs table added to a pre-B4 database');
+    assert.ok(jobInfo.length === 1 && jobInfo[0].values.length === 13,
+      'jobs table added to a pre-B4 database, with the P1-G columns');
     const legacyRows = await migrated.getCollectedNumbers();
     assert.strictEqual(legacyRows.length, 1, 'legacy lead untouched by the jobs migration');
     assert.strictEqual(legacyRows[0].id, 'legacy-1');
@@ -286,8 +291,13 @@ function test(name, fn) {
       completedAt: '',
       status: 'running',
       resultCount: null,
-      error: ''
-    }, 'inserted job matches the approved B4 record exactly');
+      error: '',
+      // P1-G: a job that recorded no save reads as zero counters and no target.
+      submittedCount: 0,
+      addedCount: 0,
+      duplicateCount: 0,
+      targetId: null
+    }, 'inserted job matches the approved B4 record plus the safe P1-G defaults');
   });
 
   test('5. invalid runSlug rejection: nothing reaches either storage', async () => {
@@ -890,12 +900,12 @@ function test(name, fn) {
   });
 
   test('33. ledger internals stay unexposed; reads use only the declared B5 channel', () => {
-    // B6.2 declared lock update: channel count 18 -> 19. The addition is
-    // collector:update-lead, the B6 user-owned lead write; it is unrelated to
+    // P1-E declared lock update: channel count 20 -> 21. The addition is
+    // collector:duplicate-review, a read-only lead review; it is unrelated to
     // the B4 ledger, whose internals (queryJobs symbol, write APIs) must still
-    // not reach preload/renderer, and no separate jobs namespace may appear.
+    // not reach preload/renderer, and no jobs namespace may appear.
     const handles = mainSource.match(/ipcMain\.handle\(/g) || [];
-    assert.strictEqual(handles.length, 19, 'exactly 19 IPC channels (B6.2 added collector:update-lead)');
+    assert.strictEqual(handles.length, 26, 'exactly 26 IPC channels (P1-G added the two read-only report channels)');
     assert.ok(mainSource.includes("ipcMain.handle('collector:get-jobs'"), 'B5 jobs read channel registered');
     const ledgerApis = ['queryJobs', 'insertJob', 'updateJobState', 'setJobResultCount'];
     for (const api of ledgerApis) {
@@ -929,10 +939,10 @@ function test(name, fn) {
     assert.strictEqual(nonTerminal.count, 0, 'non-terminal target refused without a write');
   });
 
-  test('35. declared 19-channel contract intact, byte for byte', () => {
-    // B6.2 declared lock update: the set grows by exactly one audited channel,
-    // collector:update-lead (B6 user-owned lead write); everything else is
-    // byte identical to the B5 contract.
+  test('35. declared 26-channel contract intact, byte for byte', () => {
+    // P1-C declared lock update: the set grows by exactly one audited channel,
+    // collector:update-lead-quality (P1-C user-owned lead status write);
+    // everything else is byte identical to the B6.4.2 contract.
     const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
     const expected = [
       'provider:set-credentials', 'provider:test-connection',
@@ -942,12 +952,16 @@ function test(name, fn) {
       'collector:delete-numbers', 'collector:storage-status',
       'collector:get-jobs',
       'collector:update-lead',
+      'collector:update-lead-quality',
+      'collector:duplicate-review',
+      'targets:list', 'targets:save', 'targets:set-status',
+      'collector:quality-report', 'collector:quality-target-report',
       'logs:export', 'logs:dir', 'logs:report',
       'proxy:detect'
     ];
-    assert.strictEqual(channels.length, 19, 'exactly 19 channels');
+    assert.strictEqual(channels.length, 26, 'exactly 26 channels');
     assert.deepStrictEqual(channels.slice().sort(), expected.slice().sort(),
-      'the channel set is the B5 set plus collector:update-lead only');
+      'the channel set is the P1-E set plus the three P1-F target channels only');
     for (const ch of expected) {
       const occurrences = mainSource.split(`ipcMain.handle('${ch}'`).length - 1;
       assert.strictEqual(occurrences, 1, 'channel registered exactly once: ' + ch);

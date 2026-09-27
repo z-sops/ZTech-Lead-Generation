@@ -353,8 +353,8 @@ function test(name, fn) {
     const qBlock = storeSource.slice(qStart, qEnd);
     assert.ok(!qBlock.includes('logger.'), 'query path performs no logging (banned-token safety)');
     assert.ok(!qBlock.includes('saveDB('), 'query path never persists');
-    assert.ok(storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1 === 3,
-      'JSON write call sites: add, delete and the B6 user-field write');
+    assert.ok(storeSource.split("writeJsonAtomic(path.join(DATA_DIR, 'numbers.json')").length - 1 === 5,
+      'JSON write call sites: add, delete, the B6 write, the P1-C status write and the P1-D pointer restore');
     assert.ok(storeSource.split('new Set(ids)').length - 1 === 2, 'delete Set usage unchanged');
     assert.ok(!storeSource.includes('ids.includes'));
     assert.ok(!storeSource.toLowerCase().includes('country'), 'country not implemented');

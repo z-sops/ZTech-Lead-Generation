@@ -30,6 +30,10 @@
           <span class="nav-icon">📋</span>
           <span class="nav-label">Lead Management</span>
         </button>
+        <button class="nav-item" data-view="targets">
+          <span class="nav-icon">🎯</span>
+          <span class="nav-label">Targets</span>
+        </button>
         <button class="nav-item" data-view="dashboard">
           <span class="nav-icon">📈</span>
           <span class="nav-label">Dashboard</span>
@@ -179,6 +183,21 @@
                 </thead>
                 <tbody id="collect-result-body"></tbody>
               </table>
+              <!-- P1-G: Collection Quality. Read-only, and every number is
+                   derived from data already stored on this device: the job's own
+                   save counters and the leads of this run. It is not a score, a
+                   rank or a probability. -->
+              <div class="collect-quality" id="collect-quality" hidden>
+                <div class="collect-quality-header">
+                  <span class="collect-quality-title">Collection Quality</span>
+                  <span class="lead-detail-badge">From stored data</span>
+                </div>
+                <div class="collect-quality-body" id="collect-quality-body"></div>
+                <div class="collect-quality-body" id="collect-quality-target-body"></div>
+                <p class="lead-detail-quality-note">
+                  Counts come from this run's saved leads and its own save counters. Nothing here is externally verified.
+                </p>
+              </div>
             </div>
           </div>
         </section>
@@ -235,6 +254,56 @@
                 <option value="qualified">Qualified</option>
               </select>
             </div>
+            <!-- P1-B: derived data-quality filters. Values are computed from
+                 stored lead data on demand; nothing is persisted. -->
+            <div class="form-item">
+              <label>Phone Quality</label>
+              <select id="number-filter-phone-quality">
+                <option value="all">All</option>
+                <option value="valid">Valid</option>
+                <option value="invalid">Invalid</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </div>
+            <div class="form-item">
+              <label>Email Quality</label>
+              <select id="number-filter-email-quality">
+                <option value="all">All</option>
+                <option value="valid">Valid</option>
+                <option value="invalid">Invalid</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </div>
+            <div class="form-item">
+              <label>Website Quality</label>
+              <select id="number-filter-website-quality">
+                <option value="all">All</option>
+                <option value="valid">Valid</option>
+                <option value="invalid">Invalid</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </div>
+            <div class="form-item">
+              <label>Business Quality</label>
+              <select id="number-filter-business-quality">
+                <option value="all">All</option>
+                <option value="active">Active</option>
+                <option value="closed">Closed</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </div>
+            <div class="form-item">
+              <label>Completeness</label>
+              <select id="number-filter-completeness">
+                <option value="all">All</option>
+                <option value="5">5 of 5</option>
+                <option value="4">4 of 5</option>
+                <option value="3">3 of 5</option>
+                <option value="2">2 of 5</option>
+                <option value="1">1 of 5</option>
+                <option value="0">0 of 5</option>
+              </select>
+            </div>
             <div class="form-actions">
               <button class="btn btn-sm" id="btn-import-numbers">Import Leads</button>
               <button class="btn btn-sm" id="btn-export-csv">Export CSV</button>
@@ -258,6 +327,32 @@
               <tbody id="numbers-table-body"></tbody>
             </table>
             <div class="pagination" id="numbers-pagination"></div>
+          </div>
+          <!-- P1-E: duplicate REVIEW. Read-only: the panel only displays the
+               deterministic classification the main process derived. There is
+               no merge action, no survivor choice and no write of any kind. -->
+          <div class="dup-review" id="dup-review" hidden>
+            <div class="dup-review-header">
+              <span class="dup-review-title">Duplicate review</span>
+              <span class="lead-detail-badge">Read-only</span>
+            </div>
+            <div class="dup-review-controls">
+              <label for="dup-review-rule">Rule</label>
+              <select id="dup-review-rule">
+                <option value="all">All rules</option>
+                <option value="canonicalPhone">Same phone (EXACT)</option>
+                <option value="website-host">Same website host (LIKELY)</option>
+                <option value="email">Same email (LIKELY)</option>
+                <option value="title+address">Same title + address (POSSIBLE)</option>
+              </select>
+              <button type="button" class="btn btn-sm" id="btn-dup-review-open">Review</button>
+              <button type="button" class="btn btn-sm btn-secondary" id="btn-dup-review-close">Close</button>
+            </div>
+            <div class="dup-review-body" id="dup-review-body"></div>
+            <div class="pagination" id="dup-review-pagination"></div>
+            <p class="lead-detail-quality-note">
+              Candidates share one exact key with the lead. Missing data never matches. Nothing is combined here.
+            </p>
           </div>
           <!-- Lead Detail overlay (B3): 11 field slots are rendered by leadDetailTemplate -->
           <div class="lead-detail-overlay" id="lead-detail-overlay" hidden>
@@ -294,7 +389,153 @@
                   <button type="button" class="btn btn-sm" id="btn-save-lead-detail">Save</button>
                 </div>
               </div>
+              <!-- P1-A: read-only data-quality signals derived on this device.
+                   No value here is persisted, and none of it is a third-party
+                   verification claim. -->
+              <div class="lead-detail-quality" id="lead-detail-quality" hidden>
+                <div class="lead-detail-quality-header">
+                  <span class="lead-detail-quality-title">Data Quality</span>
+                  <span class="lead-detail-badge">Derived locally</span>
+                </div>
+                <div class="lead-detail-quality-body" id="lead-detail-quality-body"></div>
+                <!-- P1-C: user-provided statuses. A user assertion about this
+                     lead, never a third-party verification. -->
+                <div class="lead-user-status" id="lead-user-status" hidden>
+                  <div class="lead-detail-quality-header">
+                    <span class="lead-detail-quality-title">Your status</span>
+                    <span class="lead-detail-badge">User-provided</span>
+                  </div>
+                  <div class="form-group">
+                    <label for="lead-status-phone">Phone</label>
+                    <select id="lead-status-phone" data-status-field="phoneStatus">
+                      <option value="unknown">Unknown</option>
+                      <option value="verified">Verified</option>
+                      <option value="unverified">Unverified</option>
+                      <option value="invalid">Invalid</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="lead-status-email">Email</label>
+                    <select id="lead-status-email" data-status-field="emailStatus">
+                      <option value="unknown">Unknown</option>
+                      <option value="verified">Verified</option>
+                      <option value="unverified">Unverified</option>
+                      <option value="risky">Risky</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="lead-status-website">Website</label>
+                    <select id="lead-status-website" data-status-field="websiteStatus">
+                      <option value="unknown">Unknown</option>
+                      <option value="live">Live</option>
+                      <option value="dead">Dead</option>
+                      <option value="redirect">Redirect</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="lead-status-business">Business</label>
+                    <select id="lead-status-business" data-status-field="businessStatus">
+                      <option value="unknown">Unknown</option>
+                      <option value="active">Active</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                  </div>
+                  <div class="form-actions">
+                    <button type="button" class="btn btn-sm" id="btn-save-lead-status">Save status</button>
+                  </div>
+                  <p class="lead-detail-quality-note">
+                    Your status is a note you make about this lead. It is not checked against any external service.
+                  </p>
+                </div>
+                <p class="lead-detail-quality-note">
+                  Signals are computed on this device from the stored lead data. They are not third-party verification.
+                </p>
+              </div>
+              <!-- P1-D: the company foundation, read-only. companyKey is a
+                   deterministic grouping key derived on read (website host,
+                   else title + address); companyId is a nullable system pointer.
+                   No company entity, no merge action, no company search. -->
+              <div class="lead-detail-company" id="lead-detail-company" hidden>
+                <div class="lead-detail-quality-header">
+                  <span class="lead-detail-quality-title">Company</span>
+                  <span class="lead-detail-badge">Derived locally</span>
+                </div>
+                <div class="lead-detail-quality-body" id="lead-detail-company-body"></div>
+                <p class="lead-detail-quality-note">
+                  Leads sharing a company key belong to the same website host. Nothing is merged or verified here.
+                </p>
+              </div>
             </div>
+          </div>
+        </section>
+
+        <!-- P1-F Target Builder: user-owned prospecting definitions. Required and
+             optional fields are PROSPECTING CRITERIA, not save gates: no lead is
+             ever rejected from storage because one of them is missing. "Use for
+             collection" only pre-fills existing collector inputs. -->
+        <section class="view" id="view-targets">
+          <div class="view-top">
+            <div class="form-actions">
+              <button class="btn btn-primary" id="btn-target-new">New Target</button>
+              <button class="btn btn-secondary" id="btn-target-cancel" hidden>Cancel</button>
+            </div>
+            <div id="target-editor" hidden>
+              <div class="form-item">
+                <label for="target-name">Name</label>
+                <input type="text" id="target-name" maxlength="120" placeholder="Target name">
+              </div>
+              <div class="form-item">
+                <label for="target-industry">Industry</label>
+                <input type="text" id="target-industry" maxlength="120" placeholder="e.g. HVAC">
+              </div>
+              <div class="form-item">
+                <label for="target-business-types">Business Types</label>
+                <input type="text" id="target-business-types" placeholder="Comma separated, e.g. Plumber, HVAC Contractor">
+              </div>
+              <div class="form-item">
+                <label for="target-locations">Locations</label>
+                <input type="text" id="target-locations" placeholder="Comma separated, e.g. Bangkok, Thailand">
+              </div>
+              <div class="form-item">
+                <label>Required fields</label>
+                <div class="target-checks" id="target-required-fields">
+                  <label class="switch-label"><input type="checkbox" value="phone"> phone</label>
+                  <label class="switch-label"><input type="checkbox" value="title"> title</label>
+                  <label class="switch-label"><input type="checkbox" value="website"> website</label>
+                  <label class="switch-label"><input type="checkbox" value="email"> email</label>
+                  <label class="switch-label"><input type="checkbox" value="address"> address</label>
+                </div>
+              </div>
+              <div class="form-item">
+                <label>Optional fields</label>
+                <div class="target-checks" id="target-optional-fields">
+                  <label class="switch-label"><input type="checkbox" value="phone"> phone</label>
+                  <label class="switch-label"><input type="checkbox" value="title"> title</label>
+                  <label class="switch-label"><input type="checkbox" value="website"> website</label>
+                  <label class="switch-label"><input type="checkbox" value="email"> email</label>
+                  <label class="switch-label"><input type="checkbox" value="address"> address</label>
+                </div>
+              </div>
+              <div class="form-item">
+                <label for="target-exclusions">Exclusions</label>
+                <input type="text" id="target-exclusions" placeholder="Comma separated terms matched against title/address, or 'closed'">
+              </div>
+              <div class="form-item">
+                <label for="target-status">Status</label>
+                <select id="target-status">
+                  <option value="active">Active</option>
+                  <option value="archived">Archived</option>
+                </select>
+              </div>
+              <p class="lead-detail-quality-note" id="target-editor-note">
+                Required fields are prospecting criteria only. A lead is never rejected from storage because one is missing.
+              </p>
+              <div class="form-actions">
+                <button class="btn btn-primary" id="btn-target-save">Save Target</button>
+              </div>
+              <div class="status-bar" id="target-status-bar" style="display:none;"></div>
+            </div>
+            <div class="target-list" id="target-list"></div>
           </div>
         </section>
 

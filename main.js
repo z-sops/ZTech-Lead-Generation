@@ -225,6 +225,40 @@ function validateLeadUpdatePayload(payload) {
   return { id: payload.id, qualification: payload.qualification, tags, notes: payload.notes };
 }
 
+// Validates one collector:update-lead-quality payload and returns the
+// normalised { id, ...statuses } to store. A USER ASSERTION about a lead: the
+// wording is deliberate, because the app must never present one of these as a
+// third-party verification. A partial update is allowed, but at least one
+// recognised status field must be present, and any other key is refused.
+function validateLeadQualityPayload(payload) {
+  assertPlainObject(payload, 'lead quality update');
+  if (typeof payload.id !== 'string' || !payload.id || payload.id.length > 100) {
+    throw invalidParams('Invalid params: id (non-empty required)');
+  }
+  const supported = new Set(Object.keys(LEAD_USER_STATUS_VALUES));
+  for (const key of Object.keys(payload)) {
+    if (key === 'id') continue;
+    if (!supported.has(key)) {
+      throw invalidParams(`Invalid params: ${key} (unsupported field)`);
+    }
+  }
+  const out = { id: payload.id };
+  let provided = 0;
+  for (const [field, allowed] of Object.entries(LEAD_USER_STATUS_VALUES)) {
+    const value = payload[field];
+    if (value === undefined || value === null) continue;
+    if (!allowed.includes(value)) {
+      throw invalidParams(`Invalid params: ${field} (${allowed.join('|')} required)`);
+    }
+    out[field] = value;
+    provided++;
+  }
+  if (provided === 0) {
+    throw invalidParams('Invalid params: no lead status field supplied');
+  }
+  return out;
+}
+
 function validateHistoryPaging(payload) {
   const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
   const limit = p.limit === undefined ? 20 : p.limit;
@@ -238,8 +272,223 @@ function validateHistoryPaging(payload) {
   return { limit, offset };
 }
 
+// P1-E duplicate review: the rule vocabulary is an explicit allowlist, exactly
+// like the B2 sort identifiers and the P1-C quality filters. A value outside it
+// is a validation error, never a silently ignored or interpolated term, and it
+// is never used to build SQL.
+const DUPLICATE_REVIEW_RULES = ['all', 'canonicalPhone', 'website-host', 'email', 'title+address'];
+
+// Validates the read-only duplicate-review payload. It can only choose which
+// deterministic rule to review and how much of it to page through: there is no
+// id, no write target and no field that could carry a value to store. Bounds are
+// the shared validateHistoryPaging contract.
+function validateDuplicateReviewPayload(payload) {
+  const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+  const { limit, offset } = validateHistoryPaging(p);
+  const rule = p.rule === undefined || p.rule === null ? 'all' : p.rule;
+  if (typeof rule !== 'string' || !DUPLICATE_REVIEW_RULES.includes(rule)) {
+    throw invalidParams('Invalid params: rule');
+  }
+  return { rule, limit, offset };
+}
+
+// P1-G Collection Quality Report. Run-scoped and read-only: the payload can
+// only name a run and page through the result, so nothing here can select which
+// leads to read or write anything. The runSlug is gated by the same RFC 3986
+// pattern the collection submit path uses.
+const QUALITY_REPORT_RUN_SLUG_PATTERN = /^[A-Za-z0-9._~-]{1,200}$/;
+
+function validateQualityReportPayload(payload, activeProviderId) {
+  const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+  const { limit, offset } = validateHistoryPaging(p);
+  if (typeof p.runSlug !== 'string' || !QUALITY_REPORT_RUN_SLUG_PATTERN.test(p.runSlug)) {
+    throw invalidParams('Invalid params: runSlug');
+  }
+  return { runSlug: p.runSlug, providerId: activeProviderId, limit, offset };
+}
+
+// P1-G: the run context of a local save. Only a run identifier and the target
+// the user applied; both are optional, and an unknown target id is refused
+// rather than recorded. Nothing here can carry a value into a lead.
+//
+// The provider identity is NOT taken from the renderer: it is resolved from the
+// registered provider (the same convention settings:save uses), and a renderer
+// that supplies one must name the same registered provider or the payload is
+// refused. The counters and the report are therefore keyed by the existing
+// (providerId, runSlug) job identity.
+function validateSaveContext(context, activeProviderId) {
+  const out = { runSlug: '', targetId: null, providerId: activeProviderId };
+  if (context === undefined || context === null) return out;
+  if (typeof context !== 'object' || Array.isArray(context)) {
+    throw invalidParams('Invalid params: save context');
+  }
+  if (context.runSlug !== undefined && context.runSlug !== null && context.runSlug !== '') {
+    assertOptionalString(context.runSlug, 'runSlug', 200);
+    if (!QUALITY_REPORT_RUN_SLUG_PATTERN.test(context.runSlug)) {
+      throw invalidParams('Invalid params: runSlug');
+    }
+    out.runSlug = context.runSlug;
+  }
+  if (context.targetId !== undefined && context.targetId !== null && context.targetId !== '') {
+    assertOptionalString(context.targetId, 'targetId', 100);
+    out.targetId = context.targetId;
+  }
+  // An optional providerId is accepted only when it names the registered
+  // provider this session is actually using; anything else is refused rather
+  // than resolved, so the renderer can never redirect a run's counters.
+  if (context.providerId !== undefined && context.providerId !== null && context.providerId !== '') {
+    assertOptionalString(context.providerId, 'providerId', 100);
+    if (context.providerId !== activeProviderId) {
+      throw invalidParams('Invalid params: providerId');
+    }
+  }
+  return out;
+}
+
+// The registered collection provider, resolved exactly as the settings and
+// collection handlers resolve it. An unresolvable registry is reported as an
+// empty id: the save itself must still succeed.
+function resolveActiveProviderId() {
+  try {
+    const adapter = providerManager.resolveCollectionProvider();
+    return adapter && typeof adapter.providerId === 'string' ? adapter.providerId : '';
+  } catch {
+    return '';
+  }
+}
+
+// P1-G: the report reads exactly one run of one provider. The target report
+// needs no paging, so it validates the run identifier alone.
+function validateQualityReportRunSlug(payload, activeProviderId) {
+  const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+  if (typeof p.runSlug !== 'string' || !QUALITY_REPORT_RUN_SLUG_PATTERN.test(p.runSlug)) {
+    throw invalidParams('Invalid params: runSlug');
+  }
+  return { runSlug: p.runSlug, providerId: activeProviderId };
+}
+
+// P1-F Target builder. Targets are user-owned prospecting DEFINITIONS, not
+// lead data: none of these three channels can read or write a lead, and none of
+// them is reachable from a collection or import payload. The field and status
+// vocabularies are explicit allowlists, so an unknown value is a validation
+// error and never an interpolated term.
+const TARGET_STATUS_VALUES = ['active', 'archived'];
+// Only lead fields the current model actually has. Nothing is invented.
+const TARGET_FIELD_ALLOWLIST = ['phone', 'title', 'website', 'email', 'address'];
+const MAX_TARGET_NAME_LENGTH = 120;
+const MAX_TARGET_INDUSTRY_LENGTH = 120;
+const MAX_TARGET_TERM_LENGTH = 50;
+const MAX_TARGET_TERMS = 20;
+const TARGET_LIST_FIELDS = ['businessTypes', 'locations', 'exclusions'];
+
+function validateTargetText(value, field, maxLength, { required = false } = {}) {
+  if (value === undefined || value === null) {
+    if (required) throw invalidParams('Invalid target: ' + field);
+    return '';
+  }
+  if (typeof value !== 'string') throw invalidParams('Invalid target: ' + field);
+  const trimmed = value.trim();
+  if (required && !trimmed) throw invalidParams('Invalid target: ' + field);
+  if (trimmed.length > maxLength) throw invalidParams('Invalid target: ' + field);
+  return trimmed;
+}
+
+// A CSV-style list: an array of strings or one comma/newline-separated string.
+// The store normalises and caps it; here only the shape is checked, so a valid
+// list is never rejected for formatting the user is allowed to use.
+function assertTargetList(value, field) {
+  if (value === undefined || value === null) return;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry !== 'string') throw invalidParams('Invalid target: ' + field);
+    }
+    return;
+  }
+  if (typeof value !== 'string') throw invalidParams('Invalid target: ' + field);
+}
+
+// A criterion set: a subset of the allowlist, in the user's order, without
+// duplicates. Anything outside the allowlist is refused, never dropped.
+function validateTargetFieldList(value, field) {
+  if (value === undefined || value === null) return [];
+  const raw = Array.isArray(value) ? value : [value];
+  const out = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string') throw invalidParams('Invalid target: ' + field);
+    const name = entry.trim();
+    if (!name) continue;
+    if (!TARGET_FIELD_ALLOWLIST.includes(name)) {
+      throw invalidParams('Invalid target: ' + field + ': unknown lead field ' + name);
+    }
+    if (!out.includes(name)) out.push(name);
+  }
+  if (out.length > TARGET_FIELD_ALLOWLIST.length) throw invalidParams('Invalid target: ' + field);
+  return out;
+}
+
+// Validates a target create/update payload. createdAt/updatedAt are system-owned
+// and are never read from input; id is accepted only to select an existing row,
+// never to forge one. Unknown keys are ignored (validateSettingsPayload
+// convention).
+function validateTargetPayload(payload) {
+  assertPlainObject(payload, 'target');
+  const out = {};
+  if (payload.id !== undefined && payload.id !== null) {
+    assertOptionalString(payload.id, 'id', 100);
+    if (!payload.id) throw invalidParams('Invalid target: id (non-empty required)');
+    out.id = payload.id;
+  }
+  out.name = validateTargetText(payload.name, 'name', MAX_TARGET_NAME_LENGTH, { required: true });
+  out.industry = validateTargetText(payload.industry, 'industry', MAX_TARGET_INDUSTRY_LENGTH);
+  for (const field of TARGET_LIST_FIELDS) assertTargetList(payload[field], field);
+  out.requiredFields = validateTargetFieldList(payload.requiredFields, 'requiredFields');
+  out.optionalFields = validateTargetFieldList(payload.optionalFields, 'optionalFields');
+  for (const name of out.requiredFields) {
+    if (out.optionalFields.includes(name)) {
+      throw invalidParams('Invalid target: field is both required and optional: ' + name);
+    }
+  }
+  if (payload.status !== undefined && payload.status !== null) {
+    if (!TARGET_STATUS_VALUES.includes(payload.status)) throw invalidParams('Invalid target: status');
+    out.status = payload.status;
+  }
+  return out;
+}
+
+function validateTargetStatusPayload(payload) {
+  assertPlainObject(payload, 'target status');
+  assertOptionalString(payload.id, 'id', 100);
+  if (!payload.id) throw invalidParams('Invalid target status: id (non-empty required)');
+  if (!TARGET_STATUS_VALUES.includes(payload.status)) throw invalidParams('Invalid target status: status');
+  return { id: payload.id, status: payload.status };
+}
+
 // B2 query layer: the only sort identifiers ever handed to the store.
 const NUMBERS_QUERY_SORT_FIELDS = ['collectedAt', 'title', 'phone', 'source', 'keyword'];
+
+// P1-C user-owned lead status vocabularies. These are user assertions, not a
+// provider capability: the values mirror the store contract exactly.
+const LEAD_USER_STATUS_VALUES = {
+  phoneStatus: ['unknown', 'verified', 'unverified', 'invalid'],
+  emailStatus: ['unknown', 'verified', 'unverified', 'risky'],
+  websiteStatus: ['unknown', 'live', 'dead', 'redirect'],
+  businessStatus: ['unknown', 'active', 'closed']
+};
+
+// B6/P1-C query layer: derived data-quality filters. These are computed from
+// stored column values in the store, so they are allowlisted per filter rather
+// than accepted as free strings: an unknown value is a validation error, never
+// a silently ignored or interpolated term.
+const LEAD_QUALITY_QUERY_FILTERS = {
+  phoneQuality: ['valid', 'invalid', 'unknown'],
+  emailQuality: ['valid', 'invalid', 'unknown'],
+  websiteQuality: ['valid', 'invalid', 'unknown'],
+  // Only 'unknown' is derivable today; active/closed are accepted so the
+  // vocabulary is stable once a user-provided value exists.
+  businessQuality: ['active', 'closed', 'unknown'],
+  // Completeness is a count of the five lead fields, reported as "N of 5".
+  completeness: ['0', '1', '2', '3', '4', '5']
+};
 
 // Validates the optional collector:get-numbers query payload. Paging bounds
 // are reused verbatim from validateHistoryPaging; unknown keys are ignored
@@ -265,6 +514,14 @@ function validateNumbersQuery(payload) {
       const value = p.filters[key];
       if (value === undefined || value === null) continue;
       assertOptionalString(value, `filters.${key}`, MAX_KEY_LENGTH);
+      filters[key] = value;
+    }
+    for (const [key, allowed] of Object.entries(LEAD_QUALITY_QUERY_FILTERS)) {
+      const value = p.filters[key];
+      if (value === undefined || value === null) continue;
+      if (typeof value !== 'string' || !allowed.includes(value)) {
+        throw invalidParams(`Invalid params: filters.${key}`);
+      }
       filters[key] = value;
     }
     out.filters = filters;
@@ -772,11 +1029,70 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('collector:add-numbers', (_, numbers) => {
+  // The local collection save. The optional second argument carries the run
+  // context of THIS save (the run it came from, and the target the user
+  // applied). It never reaches the provider: the numbers payload and the
+  // provider request shape are unchanged.
+  ipcMain.handle('collector:add-numbers', (_, numbers, context) => {
+    // The provider identity comes from the registry, never from the renderer.
+    const activeProviderId = resolveActiveProviderId();
+    let payload;
+    let saveContext;
     try {
-      return accountStore.addNumbers(validateNumbersPayload(numbers));
+      payload = validateNumbersPayload(numbers);
+      saveContext = validateSaveContext(context, activeProviderId);
     } catch (err) {
+      // Validation happens BEFORE the save, so a refused context can never
+      // leave a half-recorded run behind.
       if (err.invalidParams) rejectLog('collector:add-numbers', err.message);
+      throw err;
+    }
+    const result = accountStore.addNumbers(payload);
+    // P1-G: the report counters are the ones this save really produced - the
+    // submitted count and addNumbers' own added/duplicates - added to what the
+    // run already recorded. Recorded only here, after a successful save, and
+    // never from a provider response.
+    if (saveContext.runSlug && saveContext.providerId) {
+      try {
+        accountStore.recordJobSaveMetrics({
+          providerId: saveContext.providerId,
+          runSlug: saveContext.runSlug,
+          submittedCount: payload.length,
+          addedCount: result.added,
+          duplicateCount: result.duplicates,
+          targetId: saveContext.targetId
+        });
+      } catch (err) {
+        // A report-counter failure must never lose the saved leads.
+        logger.error('collector', 'failed to record job save metrics', { error: err.message });
+      }
+    }
+    return result;
+  });
+
+  // P1-G: the read-only Collection Quality Report for one run of the
+  // registered provider. It derives counts from what is already stored and
+  // writes nothing.
+  ipcMain.handle('collector:quality-report', (_, query) => {
+    try {
+      return accountStore.collectionQualityReport(
+        validateQualityReportPayload(query, resolveActiveProviderId())
+      );
+    } catch (err) {
+      if (err.invalidParams) rejectLog('collector:quality-report', err.message);
+      throw err;
+    }
+  });
+
+  // P1-G: the attached target's required-field completeness for one run. Null
+  // when no target is attached - never an invented compliance metric.
+  ipcMain.handle('collector:quality-target-report', (_, query) => {
+    try {
+      return accountStore.collectionQualityTargetReport(
+        validateQualityReportRunSlug(query, resolveActiveProviderId())
+      );
+    } catch (err) {
+      if (err.invalidParams) rejectLog('collector:quality-target-report', err.message);
       throw err;
     }
   });
@@ -815,7 +1131,7 @@ function registerIpcHandlers() {
     }
   });
 
-  // B6.2: the single write path for the user-owned lead fields. Validation is
+  // P1.3: the single write path for the user-owned lead fields. Validation is
   // authoritative here; the store re-checks defensively. Responses follow the
   // B4 job-state precedent ({success, updated} plus a reason when nothing was
   // written). Nothing in this handler logs tags or notes content.
@@ -824,6 +1140,57 @@ function registerIpcHandlers() {
       return accountStore.setLeadUserFields(validateLeadUpdatePayload(payload));
     } catch (err) {
       if (err.invalidParams) rejectLog('collector:update-lead', err.message);
+      throw err;
+    }
+  });
+
+  // P1-C: user-provided data-quality statuses for one lead. Deliberately
+  // separate from collector:update-lead so a status assertion can never touch
+  // qualification/tags/notes and vice versa.
+  ipcMain.handle('collector:update-lead-quality', (_, payload) => {
+    try {
+      return accountStore.setLeadUserStatuses(validateLeadQualityPayload(payload));
+    } catch (err) {
+      if (err.invalidParams) rejectLog('collector:update-lead-quality', err.message);
+      throw err;
+    }
+  });
+
+  // P1-E: read-only duplicate review. The handler forwards a validated
+  // {rule, limit, offset} to the store and returns the classification envelope
+  // unchanged. It deliberately has no sibling write handler in this batch: no
+  // combination of records, no survivor selection, no data movement.
+  ipcMain.handle('collector:duplicate-review', (_, query) => {
+    try {
+      return accountStore.reviewDuplicates(validateDuplicateReviewPayload(query));
+    } catch (err) {
+      if (err.invalidParams) rejectLog('collector:duplicate-review', err.message);
+      throw err;
+    }
+  });
+
+  // P1-F Target builder. listTargets is a read; saveTarget creates or updates a
+  // user-owned definition and setTargetStatus archives or activates one.
+  // None of the three can reach a lead row, and none is called by a collection
+  // or import path.
+  ipcMain.handle('targets:list', () => {
+    return accountStore.listTargets();
+  });
+
+  ipcMain.handle('targets:save', (_, payload) => {
+    try {
+      return accountStore.saveTarget(validateTargetPayload(payload));
+    } catch (err) {
+      if (err.invalidParams) rejectLog('targets:save', err.message);
+      throw err;
+    }
+  });
+
+  ipcMain.handle('targets:set-status', (_, payload) => {
+    try {
+      return accountStore.setTargetStatus(validateTargetStatusPayload(payload));
+    } catch (err) {
+      if (err.invalidParams) rejectLog('targets:set-status', err.message);
       throw err;
     }
   });

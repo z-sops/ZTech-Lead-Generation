@@ -26,12 +26,28 @@ contextBridge.exposeInMainWorld('appAPI', {
   // 采集结果
   collector: {
     getNumbers: (query) => ipcRenderer.invoke('collector:get-numbers', query),
-    addNumbers: (numbers) => ipcRenderer.invoke('collector:add-numbers', numbers),
+    addNumbers: (numbers, context) => ipcRenderer.invoke('collector:add-numbers', numbers, context),
     exportNumbers: (format) => ipcRenderer.invoke('collector:export-numbers', format),
     deleteNumbers: (ids) => ipcRenderer.invoke('collector:delete-numbers', ids),
     storageStatus: () => ipcRenderer.invoke('collector:storage-status'),
     getJobs: (query) => ipcRenderer.invoke('collector:get-jobs', query),
-    updateLead: (payload) => ipcRenderer.invoke('collector:update-lead', payload)
+    updateLead: (payload) => ipcRenderer.invoke('collector:update-lead', payload),
+    updateLeadQuality: (payload) => ipcRenderer.invoke('collector:update-lead-quality', payload),
+    // P1-E: read-only duplicate review. The only P1-E method, and it can only
+    // pass a review rule and paging bounds to the main process.
+    duplicateReview: (query) => ipcRenderer.invoke('collector:duplicate-review', query),
+    // P1-G: the read-only Collection Quality Report for one run, and the
+    // attached target's required-field completeness. Neither can write.
+    qualityReport: (query) => ipcRenderer.invoke('collector:quality-report', query),
+    qualityTargetReport: (query) => ipcRenderer.invoke('collector:quality-target-report', query)
+  },
+
+  // P1-F 目标定义 (targets): user-owned prospecting definitions, provider-
+  // independent. These three methods cannot read or write a lead.
+  targets: {
+    list: () => ipcRenderer.invoke('targets:list'),
+    save: (payload) => ipcRenderer.invoke('targets:save', payload),
+    setStatus: (payload) => ipcRenderer.invoke('targets:set-status', payload)
   },
 
   // 日志
