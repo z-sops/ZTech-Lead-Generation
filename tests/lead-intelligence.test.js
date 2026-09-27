@@ -19,8 +19,24 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// A2: the vendored module's test files are discovered from disk rather than listed
+// by hand, so a newly vendored batch cannot be silently left out of the count.
 const TEST_DIR = path.join(__dirname, 'lead-intelligence');
-const MODULE_TESTS = ['core.test.js', 'evidence.test.js'];
+
+function discoverModuleTests() {
+  if (!fs.existsSync(TEST_DIR)) {
+    throw new Error(`lead-intelligence: test directory is missing: ${TEST_DIR}`);
+  }
+  const files = fs.readdirSync(TEST_DIR)
+    .filter((n) => n.endsWith('.test.js'))
+    .sort();
+  if (files.length === 0) {
+    throw new Error(`lead-intelligence: no *.test.js files found in ${TEST_DIR}`);
+  }
+  return files;
+}
+
+const MODULE_TESTS = discoverModuleTests();
 
 /**
  * Parse node:test's summary counters. Returns null when they cannot be found.

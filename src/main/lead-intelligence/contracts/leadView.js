@@ -13,7 +13,7 @@ const { pick } = require('../core/objects');
  */
 const DEFAULT_LEAD_FIELD_MAP = Object.freeze({
   id: ['id', 'lead_id', 'leadId', '_id'],
-  name: ['name', 'business_name', 'businessName', 'company', 'company_name', 'title'],
+  name: ['name', 'business_name', 'businessName', 'company', 'company_name', 'title'], // ZTech `numbers`: title
   phone: ['phone', 'phone_number', 'phoneNumber', 'formatted_phone_number', 'international_phone_number'],
   email: ['email', 'emails.0', 'contact_email'],
   website: ['website', 'website_url', 'websiteUrl', 'url', 'site'],
@@ -22,7 +22,7 @@ const DEFAULT_LEAD_FIELD_MAP = Object.freeze({
   country: ['country', 'location.country', 'country_code'],
   industry: ['industry', 'category', 'main_category'],
   business_type: ['business_type', 'businessType', 'type', 'types.0'],
-  qualification_status: ['qualification.status', 'qualification_status', 'qualificationStatus'],
+  qualification_status: ['qualification.status', 'qualification_status', 'qualificationStatus', 'qualification'],
   data_quality: ['quality.level', 'data_quality', 'dataQuality', 'quality'],
 });
 
