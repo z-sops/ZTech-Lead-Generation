@@ -16,7 +16,9 @@ const viewTitles = {
   collector: 'Collection',
   history: 'Collection History',
   targets: 'Targets',
-  settings: 'Settings'
+  settings: 'Settings',
+  searches: 'Saved Searches',
+  segments: 'Segments'
 };
 
 const viewContexts = {
@@ -25,7 +27,9 @@ const viewContexts = {
   collector: 'Discovery',
   history: 'Discovery',
   targets: 'Setup',
-  settings: 'Setup'
+  settings: 'Setup',
+  searches: 'Lists',
+  segments: 'Lists'
 };
 
 // A nav target must be a real, existing view. Anything else is refused rather
@@ -1336,6 +1340,10 @@ function numbersQueryPayload() {
     if (value !== 'all') filters[key] = value;
   }
   if (Object.keys(filters).length) query.filters = filters;
+  // F6: a segment opened in Leads scopes the query to its members. The id is
+  // kept on the scope bar element, and the store resolves it server-side.
+  const scopeSegmentId = document.getElementById('leads-scope').dataset.segmentId;
+  if (scopeSegmentId) query.segmentId = scopeSegmentId;
   if (numbersSort) {
     query.sort = numbersSort;
     query.order = numbersOrder;
@@ -1926,6 +1934,9 @@ function renderLeadsRange(total, shown) {
 async function renderNumbers() {
   const tbody = document.getElementById('numbers-table-body');
   const seq = ++numbersLoadSeq;
+  // F6: the scope bar reflects the list this view came from, and whether the
+  // live filters still match it.
+  renderLeadsScope();
   // Loading state first, so a slow query is never a blank table.
   tbody.replaceChildren(leadsSkeletonRows(8));
   try {
@@ -4335,6 +4346,8 @@ navItems.forEach(item => {
   item.addEventListener('click', () => {
     const viewId = item.dataset.view;
     if (viewId === 'numbers') {
+      // F6: the All Leads route is the whole library, never a list scope.
+      clearLeadsListContext();
       loadNumbers();
       checkStorageStatus();
     }
@@ -4342,8 +4355,806 @@ navItems.forEach(item => {
     if (viewId === 'history') loadHistory();
     if (viewId === 'dashboard') loadDashboard();
     if (viewId === 'targets') loadTargets();
+    if (viewId === 'searches') loadSavedSearches();
+    if (viewId === 'segments') loadSegments();
   });
 });
+
+// === F6 Lists: saved searches and segments ===
+// Saved Searches and Segments are user-owned definitions stored by the main
+// process (window.appAPI.lists). They are never a second Leads
+// implementation: running a saved search sets the EXISTING Leads controls and
+// sort state, and opening a segment adds its id to the EXISTING Leads query
+// (numbersQueryPayload), so search, filters, sort, paging, selection and the
+// F5 drawer behave exactly as they do for the whole library. Every count shown
+// here is returned by the main process from stored data. All text is set with
+// textContent; no stored value is ever parsed as markup.
+const LIST_SORT_LABELS = {
+  collectedAt: 'Collected', title: 'Lead', phone: 'Phone', source: 'Source', keyword: 'Keywords'
+};
+const LIST_NAME_MAX = 120;
+let savedSearchRows = [];
+let segmentRows = [];
+let savedSearchLoadSeq = 0;
+let segmentLoadSeq = 0;
+// { mode: 'create' | 'edit', id, definition }
+let savedSearchDialogState = null;
+// { mode: 'create' | 'edit', id, type }
+let segmentDialogState = null;
+// { ids } of the Leads selection the add-to-segment dialog acts on.
+let addToSegmentState = null;
+// The list the Leads view was opened from:
+// { kind: 'search', id, name, definition } | { kind: 'segment', id, name, type }
+let leadsListContext = null;
+let segmentPreviewTimer = null;
+let segmentPreviewSeq = 0;
+
+function listsEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function listsButton(label, className, onClick, ariaLabel) {
+  const btn = listsEl('button', className || 'btn btn-sm btn-secondary', label);
+  btn.type = 'button';
+  if (ariaLabel) btn.setAttribute('aria-label', ariaLabel);
+  btn.addEventListener('click', safeAsync(onClick));
+  return btn;
+}
+
+function formatListTime(value) {
+  if (typeof value !== 'string' || !value) return '—';
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? '—' : date.toLocaleString('en-GB');
+}
+
+// The live Leads query state, in the stored definition shape. Filters come from
+// the real controls (activeLeadsFilters), so only supported values exist.
+function currentLeadsDefinition() {
+  const filters = {};
+  for (const filter of activeLeadsFilters()) filters[filter.key] = filter.value;
+  return {
+    search: document.getElementById('number-search').value.trim(),
+    filters,
+    sort: numbersSort || '',
+    order: numbersSort && numbersOrder === 'desc' ? 'desc' : 'asc'
+  };
+}
+
+function definitionsEqual(a, b, withSort) {
+  const left = a || {};
+  const right = b || {};
+  if ((left.search || '') !== (right.search || '')) return false;
+  const lf = left.filters || {};
+  const rf = right.filters || {};
+  const keys = new Set(Object.keys(lf).concat(Object.keys(rf)));
+  for (const key of keys) if ((lf[key] || '') !== (rf[key] || '')) return false;
+  if (!withSort) return true;
+  if ((left.sort || '') !== (right.sort || '')) return false;
+  return !left.sort || (left.order || 'asc') === (right.order || 'asc');
+}
+
+// A readable summary of a stored definition. Filter labels come from the real
+// Leads <select> options, so a summary never names a value the UI lacks.
+function definitionParts(definition) {
+  const def = definition || {};
+  const filters = def.filters || {};
+  const parts = [];
+  if (def.search) parts.push(`Text contains "${def.search}"`);
+  for (const d of LEADS_FILTER_DEFS) {
+    if (filters[d.key]) parts.push(`${d.label}: ${filterValueLabel(d.control, filters[d.key])}`);
+  }
+  if (filters.source) parts.push(`Source is "${filters.source}"`);
+  if (filters.keyword) parts.push(`Keyword is "${filters.keyword}"`);
+  return parts;
+}
+
+function definitionSummary(definition) {
+  const parts = definitionParts(definition);
+  return parts.length ? parts.join(' · ') : 'All leads (no filters)';
+}
+
+function sortSummary(definition) {
+  const def = definition || {};
+  if (!def.sort) return 'Default (newest first)';
+  return `${LIST_SORT_LABELS[def.sort] || def.sort} ${def.order === 'desc' ? 'descending' : 'ascending'}`;
+}
+
+function copyName(name) {
+  const suffix = ' (copy)';
+  return (String(name || '').slice(0, LIST_NAME_MAX - suffix.length) + suffix).trim();
+}
+
+function listEmptyRow(tbody, colSpan, title, body, action) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = colSpan;
+  const box = listsEl('div', 'leads-state');
+  box.dataset.state = 'empty';
+  box.append(listsEl('div', 'leads-state-title', title), listsEl('div', 'leads-state-body', body));
+  if (action) {
+    const actions = listsEl('div', 'leads-state-actions');
+    actions.appendChild(action);
+    box.appendChild(actions);
+  }
+  td.appendChild(box);
+  tr.appendChild(td);
+  tbody.replaceChildren(tr);
+}
+
+function listErrorMessage(err, fallback) {
+  return (err && err.message) || fallback;
+}
+
+// --- Leads integration -------------------------------------------------------
+
+// Sets the existing Leads controls and sort state from a stored definition.
+// A stored value the current control cannot represent is reported, never
+// silently widened into "all".
+function applyDefinitionToLeads(definition) {
+  const def = definition || {};
+  const filters = def.filters || {};
+  const unsupported = [];
+  document.getElementById('number-search').value = def.search || '';
+  for (const d of LEADS_FILTER_DEFS) {
+    const el = document.getElementById(d.control);
+    if (!el) continue;
+    const wanted = filters[d.key];
+    if (!wanted) {
+      el.value = 'all';
+      continue;
+    }
+    if ([...el.options].some((option) => option.value === wanted)) el.value = wanted;
+    else {
+      el.value = 'all';
+      unsupported.push(d.label);
+    }
+  }
+  numbersSort = def.sort && NUMBERS_SORTABLE_KEYS.indexOf(def.sort) !== -1 ? def.sort : '';
+  numbersOrder = numbersSort && def.order === 'desc' ? 'desc' : 'asc';
+  return unsupported;
+}
+
+function openLeadsWithContext(context) {
+  leadsListContext = context;
+  document.getElementById('leads-scope').dataset.segmentId = context && context.kind === 'segment' ? context.id : '';
+  syncFilterTriggers();
+  renderLeadsChips();
+  activateView('numbers');
+  loadNumbers();
+  checkStorageStatus();
+}
+
+function clearLeadsListContext() {
+  leadsListContext = null;
+  const scope = document.getElementById('leads-scope');
+  scope.dataset.segmentId = '';
+  renderLeadsScope();
+}
+
+function renderLeadsScope() {
+  const bar = document.getElementById('leads-scope');
+  const removeBtn = document.getElementById('btn-remove-from-segment');
+  const context = leadsListContext;
+  if (removeBtn) removeBtn.hidden = !(context && context.kind === 'segment' && context.type === 'static');
+  bar.replaceChildren();
+  if (!context) {
+    bar.hidden = true;
+    return;
+  }
+  bar.dataset.kind = context.kind;
+  const label = listsEl('span', 'leads-scope-label', context.kind === 'segment' ? 'Segment' : 'Saved search');
+  const name = listsEl('span', 'leads-scope-name', context.name);
+  bar.append(label, name);
+  if (context.kind === 'segment') {
+    bar.appendChild(listsEl('span', 'list-type-badge', context.type === 'dynamic' ? 'Dynamic' : 'Static'))
+      .dataset.type = context.type;
+    bar.appendChild(listsEl('span', 'leads-scope-note',
+      context.type === 'dynamic'
+        ? 'Showing leads that match the segment rules now. Filters narrow it further.'
+        : 'Showing the segment members. Filters narrow it further.'));
+    bar.appendChild(listsButton('Leave segment', 'btn btn-sm btn-secondary', () => {
+      clearLeadsListContext();
+      loadNumbers();
+    }));
+  } else {
+    const matches = definitionsEqual(context.definition, currentLeadsDefinition(), true);
+    bar.appendChild(listsEl('span', matches ? 'leads-scope-note' : 'leads-scope-note leads-scope-changed',
+      matches ? 'Filters match the saved definition.' : 'Filters changed since this search was run.'));
+    if (!matches) {
+      bar.appendChild(listsButton('Update saved search', 'btn btn-sm', () => updateSavedSearchFromLeads(context)));
+    }
+    bar.appendChild(listsButton('Close', 'btn btn-sm btn-secondary', () => clearLeadsListContext(),
+      'Stop tracking this saved search'));
+  }
+  bar.hidden = false;
+}
+
+async function updateSavedSearchFromLeads(context) {
+  const definition = currentLeadsDefinition();
+  const result = await window.appAPI.lists.saveSavedSearch({ id: context.id, query: definition });
+  if (result && result.success === false) {
+    toast(result.error || 'Saved search not updated', 'error');
+    return;
+  }
+  leadsListContext = { ...context, definition };
+  renderLeadsScope();
+  toast('Saved search updated');
+}
+
+// --- Saved Searches view -----------------------------------------------------
+
+async function loadSavedSearches() {
+  const seq = ++savedSearchLoadSeq;
+  const tbody = document.getElementById('saved-search-body');
+  try {
+    const result = await window.appAPI.lists.listSavedSearches();
+    if (seq !== savedSearchLoadSeq) return;
+    savedSearchRows = result && Array.isArray(result.rows) ? result.rows : [];
+    renderSavedSearches();
+  } catch (err) {
+    if (seq !== savedSearchLoadSeq) return;
+    const msg = listErrorMessage(err, 'Saved searches could not be loaded');
+    listEmptyRow(tbody, 5, 'Could not load saved searches', msg);
+    document.getElementById('saved-search-count').textContent = '';
+    reportError(msg, { handler: 'loadSavedSearches' });
+  }
+}
+
+function renderSavedSearches() {
+  const tbody = document.getElementById('saved-search-body');
+  const term = document.getElementById('saved-search-filter').value.trim().toLowerCase();
+  const rows = term
+    ? savedSearchRows.filter((row) => `${row.name} ${row.description}`.toLowerCase().includes(term))
+    : savedSearchRows;
+  const count = document.getElementById('saved-search-count');
+  const total = savedSearchRows.length;
+  count.textContent = term
+    ? `${rows.length} of ${total} saved searches`
+    : `${total} saved ${total === 1 ? 'search' : 'searches'}`;
+  if (!total) {
+    listEmptyRow(tbody, 5, 'No saved searches yet',
+      'Filter or sort the Leads view, then choose Save search. New saved search here saves the current Leads filters.',
+      listsButton('Go to Leads', 'btn btn-sm', () => { clearLeadsListContext(); activateView('numbers'); loadNumbers(); }));
+    return;
+  }
+  if (!rows.length) {
+    listEmptyRow(tbody, 5, 'No saved searches match', 'Change or clear the search above.');
+    return;
+  }
+  const live = currentLeadsDefinition();
+  const frag = document.createDocumentFragment();
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.dataset.savedSearchId = row.id;
+    const nameCell = listsEl('td', 'lists-cell-name');
+    nameCell.appendChild(listsEl('div', 'lists-name', row.name));
+    if (row.description) nameCell.appendChild(listsEl('div', 'lists-description', row.description));
+    if (!row.definitionError && definitionsEqual(row.query, live, true)) {
+      nameCell.appendChild(listsEl('span', 'lists-live', 'Matches current Leads filters'));
+    }
+    const defCell = listsEl('td', 'lists-cell-definition');
+    if (row.definitionError) {
+      defCell.appendChild(listsEl('span', 'lists-warning', `Stored definition cannot run: ${row.definitionError}`));
+    } else {
+      defCell.textContent = definitionSummary(row.query);
+    }
+    const actions = listsEl('td', 'lists-cell-actions');
+    const run = listsButton('Run', 'btn btn-sm', () => runSavedSearch(row), `Run saved search ${row.name}`);
+    run.disabled = Boolean(row.definitionError);
+    actions.append(
+      run,
+      listsButton('Edit', 'btn btn-sm btn-secondary', () => openSavedSearchDialog('edit', row), `Edit saved search ${row.name}`),
+      listsButton('Duplicate', 'btn btn-sm btn-secondary', () => duplicateSavedSearch(row), `Duplicate saved search ${row.name}`),
+      listsButton('Delete', 'btn btn-sm btn-secondary lists-danger', () => deleteSavedSearch(row), `Delete saved search ${row.name}`)
+    );
+    tr.append(nameCell, defCell, listsEl('td', 'lists-cell-muted', sortSummary(row.query)),
+      listsEl('td', 'lists-cell-muted', formatListTime(row.updatedAt)), actions);
+    frag.appendChild(tr);
+  }
+  tbody.replaceChildren(frag);
+}
+
+function runSavedSearch(row) {
+  const unsupported = applyDefinitionToLeads(row.query);
+  if (unsupported.length) toast(`Not applied (value not offered by Leads): ${unsupported.join(', ')}`, 'error');
+  openLeadsWithContext({ kind: 'search', id: row.id, name: row.name, definition: row.query });
+}
+
+async function duplicateSavedSearch(row) {
+  const result = await window.appAPI.lists.saveSavedSearch({
+    name: copyName(row.name), description: row.description, query: row.query
+  });
+  if (result && result.success === false) {
+    toast(result.error || 'Saved search not duplicated', 'error');
+    return;
+  }
+  toast('Saved search duplicated');
+  await loadSavedSearches();
+}
+
+async function deleteSavedSearch(row) {
+  if (!window.confirm(`Delete the saved search "${row.name}"? No leads are deleted.`)) return;
+  const result = await window.appAPI.lists.deleteSavedSearch({ id: row.id });
+  if (result && result.success === false) {
+    toast(result.error || 'Saved search not deleted', 'error');
+    return;
+  }
+  if (leadsListContext && leadsListContext.kind === 'search' && leadsListContext.id === row.id) clearLeadsListContext();
+  toast(result && result.deleted === false ? 'That saved search no longer exists' : 'Saved search deleted');
+  await loadSavedSearches();
+}
+
+function renderDefinitionBlock(container, definition) {
+  container.replaceChildren();
+  const parts = definitionParts(definition);
+  const list = listsEl('ul', 'lists-definition-list');
+  for (const part of parts.length ? parts : ['All leads (no filters)']) list.appendChild(listsEl('li', null, part));
+  list.appendChild(listsEl('li', 'lists-definition-sort', `Sort: ${sortSummary(definition)}`));
+  container.appendChild(list);
+}
+
+function openSavedSearchDialog(mode, row) {
+  const dialog = document.getElementById('saved-search-dialog');
+  const editing = mode === 'edit' && row;
+  const definition = editing ? row.query : currentLeadsDefinition();
+  savedSearchDialogState = { mode: editing ? 'edit' : 'create', id: editing ? row.id : null, definition };
+  document.getElementById('saved-search-dialog-title').textContent = editing ? 'Edit saved search' : 'Save search';
+  document.getElementById('saved-search-name').value = editing ? row.name : '';
+  document.getElementById('saved-search-description').value = editing ? row.description : '';
+  document.getElementById('saved-search-replace').checked = false;
+  document.getElementById('saved-search-replace-row').hidden = !editing;
+  document.getElementById('saved-search-error').textContent = '';
+  renderDefinitionBlock(document.getElementById('saved-search-definition'), definition);
+  dialog.showModal();
+  document.getElementById('saved-search-name').focus();
+}
+
+async function submitSavedSearchDialog() {
+  const state = savedSearchDialogState;
+  if (!state) return;
+  const error = document.getElementById('saved-search-error');
+  const name = document.getElementById('saved-search-name').value.trim();
+  if (!name) {
+    error.textContent = 'Enter a name.';
+    return;
+  }
+  const payload = { name, description: document.getElementById('saved-search-description').value.trim() };
+  if (state.mode === 'edit') {
+    payload.id = state.id;
+    if (document.getElementById('saved-search-replace').checked) payload.query = currentLeadsDefinition();
+  } else {
+    payload.query = state.definition;
+  }
+  let result;
+  try {
+    result = await window.appAPI.lists.saveSavedSearch(payload);
+  } catch (err) {
+    error.textContent = listErrorMessage(err, 'The saved search could not be saved.');
+    return;
+  }
+  if (result && result.success === false) {
+    error.textContent = result.error || 'The saved search could not be saved.';
+    return;
+  }
+  document.getElementById('saved-search-dialog').close();
+  savedSearchDialogState = null;
+  toast(state.mode === 'edit' ? 'Saved search updated' : 'Search saved');
+  if (leadsListContext && leadsListContext.kind === 'search' && leadsListContext.id === state.id) {
+    leadsListContext = { ...leadsListContext, name, definition: payload.query || leadsListContext.definition };
+    renderLeadsScope();
+  }
+  await loadSavedSearches();
+}
+
+// --- Segments view -----------------------------------------------------------
+
+async function loadSegments() {
+  const seq = ++segmentLoadSeq;
+  const tbody = document.getElementById('segment-body');
+  try {
+    const result = await window.appAPI.lists.listSegments();
+    if (seq !== segmentLoadSeq) return;
+    segmentRows = result && Array.isArray(result.rows) ? result.rows : [];
+    renderSegments();
+  } catch (err) {
+    if (seq !== segmentLoadSeq) return;
+    const msg = listErrorMessage(err, 'Segments could not be loaded');
+    listEmptyRow(tbody, 6, 'Could not load segments', msg);
+    document.getElementById('segment-count').textContent = '';
+    reportError(msg, { handler: 'loadSegments' });
+  }
+}
+
+function segmentMembersCell(row) {
+  const cell = listsEl('td', 'lists-cell-members');
+  if (row.type === 'dynamic') {
+    cell.appendChild(listsEl('span', 'lists-count-value', `${row.memberCount} matching now`));
+    return cell;
+  }
+  cell.appendChild(listsEl('span', 'lists-count-value',
+    `${row.availableCount} ${row.availableCount === 1 ? 'lead' : 'leads'}`));
+  const unavailable = Array.isArray(row.unavailableIds) ? row.unavailableIds : [];
+  if (unavailable.length) {
+    const note = listsEl('div', 'lists-warning',
+      `${unavailable.length} unavailable (lead deleted)`);
+    note.title = unavailable.join(', ');
+    cell.appendChild(note);
+    cell.appendChild(listsButton('Remove unavailable', 'btn btn-sm btn-secondary lists-inline-btn',
+      () => removeUnavailableMembers(row), `Remove ${unavailable.length} unavailable members from ${row.name}`));
+  }
+  return cell;
+}
+
+function renderSegments() {
+  const tbody = document.getElementById('segment-body');
+  const term = document.getElementById('segment-filter').value.trim().toLowerCase();
+  const rows = term
+    ? segmentRows.filter((row) => `${row.name} ${row.description}`.toLowerCase().includes(term))
+    : segmentRows;
+  const total = segmentRows.length;
+  document.getElementById('segment-count').textContent = term
+    ? `${rows.length} of ${total} segments`
+    : `${total} ${total === 1 ? 'segment' : 'segments'}`;
+  if (!total) {
+    listEmptyRow(tbody, 6, 'No segments yet',
+      'Create a dynamic segment from rules, or select leads in the Leads view and choose Add to segment.',
+      listsButton('New segment', 'btn btn-sm', () => openSegmentDialog('create')));
+    return;
+  }
+  if (!rows.length) {
+    listEmptyRow(tbody, 6, 'No segments match', 'Change or clear the search above.');
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.dataset.segmentId = row.id;
+    const nameCell = listsEl('td', 'lists-cell-name');
+    nameCell.appendChild(listsEl('div', 'lists-name', row.name));
+    if (row.description) nameCell.appendChild(listsEl('div', 'lists-description', row.description));
+    const typeCell = listsEl('td', 'lists-cell-type');
+    const badge = listsEl('span', 'list-type-badge', row.type === 'dynamic' ? 'Dynamic' : 'Static');
+    badge.dataset.type = row.type;
+    typeCell.appendChild(badge);
+    const defCell = listsEl('td', 'lists-cell-definition');
+    if (row.definitionError) {
+      defCell.appendChild(listsEl('span', 'lists-warning', `Stored rules cannot run: ${row.definitionError}`));
+    } else {
+      defCell.textContent = row.type === 'dynamic'
+        ? definitionSummary(row.rules)
+        : 'Explicit members. Add leads from a Leads selection.';
+    }
+    const actions = listsEl('td', 'lists-cell-actions');
+    actions.append(
+      listsButton('Open in Leads', 'btn btn-sm', () => openSegmentInLeads(row), `Open segment ${row.name} in Leads`),
+      listsButton('Edit', 'btn btn-sm btn-secondary', () => openSegmentDialog('edit', row), `Edit segment ${row.name}`)
+    );
+    if (row.type === 'static' && row.memberIds.length) {
+      actions.appendChild(listsButton('Export IDs', 'btn btn-sm btn-secondary', () => exportSegmentIds(row),
+        `Export the member ids of ${row.name}`));
+    }
+    actions.appendChild(listsButton('Delete', 'btn btn-sm btn-secondary lists-danger', () => deleteSegment(row),
+      `Delete segment ${row.name}`));
+    tr.append(nameCell, typeCell, segmentMembersCell(row), defCell,
+      listsEl('td', 'lists-cell-muted', formatListTime(row.updatedAt)), actions);
+    frag.appendChild(tr);
+  }
+  tbody.replaceChildren(frag);
+}
+
+// Opening a segment starts from the whole segment: the Leads search and
+// filters are cleared (sort is kept) and the segment id scopes the query.
+function openSegmentInLeads(row) {
+  applyDefinitionToLeads({ search: '', filters: {}, sort: numbersSort, order: numbersOrder });
+  openLeadsWithContext({ kind: 'segment', id: row.id, name: row.name, type: row.type });
+}
+
+async function removeUnavailableMembers(row) {
+  const ids = Array.isArray(row.unavailableIds) ? row.unavailableIds.slice() : [];
+  if (!ids.length) return;
+  if (!window.confirm(`Remove ${ids.length} unavailable member id(s) from "${row.name}"? Their leads were deleted.`)) return;
+  const result = await window.appAPI.lists.updateSegmentMembers({ id: row.id, remove: ids });
+  if (result && result.success === false) {
+    toast(result.error || 'Members not removed', 'error');
+    return;
+  }
+  toast(`Removed ${result && Number.isInteger(result.removed) ? result.removed : ids.length} unavailable members`);
+  await loadSegments();
+}
+
+// Same local download mechanism as the existing CSV export: a Blob built in the
+// renderer, no file path and no IPC.
+function exportSegmentIds(row) {
+  const blob = new Blob([row.memberIds.join('\n') + '\n'], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `segment-${row.id}-member-ids.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function deleteSegment(row) {
+  if (!window.confirm(`Delete the segment "${row.name}"? No leads are deleted.`)) return;
+  const result = await window.appAPI.lists.deleteSegment({ id: row.id });
+  if (result && result.success === false) {
+    toast(result.error || 'Segment not deleted', 'error');
+    return;
+  }
+  if (leadsListContext && leadsListContext.kind === 'segment' && leadsListContext.id === row.id) clearLeadsListContext();
+  toast(result && result.deleted === false ? 'That segment no longer exists' : 'Segment deleted');
+  await loadSegments();
+}
+
+// Rule selects take their options from the real Leads <select> elements, so a
+// rule can only offer a value the Leads query accepts.
+function initSegmentRuleSelects() {
+  for (const select of document.querySelectorAll('#segment-rules select[data-source]')) {
+    const source = document.getElementById(select.dataset.source);
+    if (!source) continue;
+    select.replaceChildren(...[...source.options].map((option) => {
+      const copy = document.createElement('option');
+      copy.value = option.value;
+      copy.textContent = option.value === 'all' ? 'Any' : option.textContent;
+      return copy;
+    }));
+  }
+}
+
+function readSegmentRules() {
+  const filters = {};
+  for (const select of document.querySelectorAll('#segment-rules select[data-rule]')) {
+    if (select.value && select.value !== 'all') filters[select.dataset.rule] = select.value;
+  }
+  const source = document.getElementById('segment-rule-source').value.trim();
+  const keyword = document.getElementById('segment-rule-keyword').value.trim();
+  if (source) filters.source = source;
+  if (keyword) filters.keyword = keyword;
+  return { search: document.getElementById('segment-rule-search').value.trim(), filters };
+}
+
+function writeSegmentRules(rules) {
+  const def = rules || {};
+  const filters = def.filters || {};
+  document.getElementById('segment-rule-search').value = def.search || '';
+  for (const select of document.querySelectorAll('#segment-rules select[data-rule]')) {
+    const wanted = filters[select.dataset.rule];
+    select.value = wanted && [...select.options].some((o) => o.value === wanted) ? wanted : 'all';
+  }
+  document.getElementById('segment-rule-source').value = filters.source || '';
+  document.getElementById('segment-rule-keyword').value = filters.keyword || '';
+}
+
+function selectedSegmentType() {
+  return document.getElementById('segment-type-dynamic').checked ? 'dynamic' : 'static';
+}
+
+function syncSegmentDialogType() {
+  const dynamic = selectedSegmentType() === 'dynamic';
+  document.getElementById('segment-rules').hidden = !dynamic;
+  if (dynamic) scheduleSegmentPreview();
+}
+
+// The preview count is a real query: the rules are sent through the existing
+// collector.getNumbers contract, which evaluates exactly the same filters.
+function scheduleSegmentPreview() {
+  clearTimeout(segmentPreviewTimer);
+  const preview = document.getElementById('segment-rule-preview');
+  preview.textContent = 'Counting...';
+  segmentPreviewTimer = setTimeout(safeAsync(async () => {
+    const seq = ++segmentPreviewSeq;
+    const rules = readSegmentRules();
+    const query = { limit: 1, offset: 0 };
+    if (rules.search) query.search = rules.search;
+    if (Object.keys(rules.filters).length) query.filters = rules.filters;
+    try {
+      const result = await window.appAPI.collector.getNumbers(query);
+      if (seq !== segmentPreviewSeq) return;
+      const total = result && Number.isInteger(result.total) ? result.total : 0;
+      preview.textContent = `Matches ${total} ${total === 1 ? 'lead' : 'leads'} now`;
+    } catch (err) {
+      if (seq !== segmentPreviewSeq) return;
+      preview.textContent = listErrorMessage(err, 'Count unavailable');
+    }
+  }), NUMBERS_SEARCH_DEBOUNCE_MS);
+}
+
+function openSegmentDialog(mode, row) {
+  const editing = mode === 'edit' && row;
+  segmentDialogState = { mode: editing ? 'edit' : 'create', id: editing ? row.id : null, type: editing ? row.type : null };
+  document.getElementById('segment-dialog-title').textContent = editing ? 'Edit segment' : 'New segment';
+  document.getElementById('segment-name').value = editing ? row.name : '';
+  document.getElementById('segment-description').value = editing ? row.description : '';
+  document.getElementById('segment-type-static').checked = !editing || row.type === 'static';
+  document.getElementById('segment-type-dynamic').checked = Boolean(editing && row.type === 'dynamic');
+  // The type is fixed once a segment exists: members and rules are different data.
+  for (const id of ['segment-type-static', 'segment-type-dynamic']) document.getElementById(id).disabled = Boolean(editing);
+  writeSegmentRules(editing && row.type === 'dynamic' ? row.rules : null);
+  document.getElementById('segment-error').textContent = '';
+  document.getElementById('segment-rule-preview').textContent = '';
+  syncSegmentDialogType();
+  document.getElementById('segment-dialog').showModal();
+  document.getElementById('segment-name').focus();
+}
+
+async function submitSegmentDialog() {
+  const state = segmentDialogState;
+  if (!state) return;
+  const error = document.getElementById('segment-error');
+  const name = document.getElementById('segment-name').value.trim();
+  if (!name) {
+    error.textContent = 'Enter a name.';
+    return;
+  }
+  const type = state.mode === 'edit' ? state.type : selectedSegmentType();
+  const payload = { name, description: document.getElementById('segment-description').value.trim() };
+  if (state.mode === 'edit') payload.id = state.id;
+  else payload.type = type;
+  if (type === 'dynamic') payload.rules = readSegmentRules();
+  let result;
+  try {
+    result = await window.appAPI.lists.saveSegment(payload);
+  } catch (err) {
+    error.textContent = listErrorMessage(err, 'The segment could not be saved.');
+    return;
+  }
+  if (result && result.success === false) {
+    error.textContent = result.error || 'The segment could not be saved.';
+    return;
+  }
+  document.getElementById('segment-dialog').close();
+  segmentDialogState = null;
+  toast(state.mode === 'edit' ? 'Segment updated' : 'Segment created');
+  if (leadsListContext && leadsListContext.kind === 'segment' && leadsListContext.id === state.id) {
+    leadsListContext = { ...leadsListContext, name };
+  }
+  await loadSegments();
+}
+
+// --- Leads selection -> static segment ---------------------------------------
+
+async function openAddToSegmentDialog() {
+  const ids = selectedLeadIds();
+  if (!ids.length) return;
+  addToSegmentState = { ids };
+  const select = document.getElementById('add-to-segment-select');
+  const error = document.getElementById('add-to-segment-error');
+  error.textContent = '';
+  document.getElementById('add-to-segment-name').value = '';
+  document.getElementById('add-to-segment-summary').textContent =
+    `${ids.length} selected ${ids.length === 1 ? 'lead' : 'leads'} will be added. Leads already in the segment are skipped.`;
+  let statics = [];
+  try {
+    const result = await window.appAPI.lists.listSegments();
+    statics = (result && Array.isArray(result.rows) ? result.rows : []).filter((row) => row.type === 'static');
+  } catch (err) {
+    error.textContent = listErrorMessage(err, 'Segments could not be loaded.');
+  }
+  select.replaceChildren(...statics.map((row) => {
+    const option = document.createElement('option');
+    option.value = row.id;
+    option.textContent = `${row.name} (${row.availableCount} ${row.availableCount === 1 ? 'lead' : 'leads'})`;
+    return option;
+  }));
+  const hasStatic = statics.length > 0;
+  select.disabled = !hasStatic;
+  document.getElementById('add-to-segment-existing').disabled = !hasStatic;
+  document.getElementById('add-to-segment-existing').checked = hasStatic;
+  document.getElementById('add-to-segment-new').checked = !hasStatic;
+  document.getElementById('add-to-segment-dialog').showModal();
+  (hasStatic ? select : document.getElementById('add-to-segment-name')).focus();
+}
+
+async function submitAddToSegmentDialog() {
+  const state = addToSegmentState;
+  if (!state) return;
+  const error = document.getElementById('add-to-segment-error');
+  const toNew = document.getElementById('add-to-segment-new').checked;
+  let result;
+  let label;
+  try {
+    if (toNew) {
+      const name = document.getElementById('add-to-segment-name').value.trim();
+      if (!name) {
+        error.textContent = 'Enter a name for the new segment.';
+        return;
+      }
+      label = name;
+      result = await window.appAPI.lists.saveSegment({ name, type: 'static', memberIds: state.ids });
+    } else {
+      const select = document.getElementById('add-to-segment-select');
+      if (!select.value) {
+        error.textContent = 'Choose a segment.';
+        return;
+      }
+      label = select.options[select.selectedIndex].textContent;
+      result = await window.appAPI.lists.updateSegmentMembers({ id: select.value, add: state.ids });
+    }
+  } catch (err) {
+    error.textContent = listErrorMessage(err, 'The leads could not be added.');
+    return;
+  }
+  if (result && result.success === false) {
+    error.textContent = result.error || 'The leads could not be added.';
+    return;
+  }
+  document.getElementById('add-to-segment-dialog').close();
+  addToSegmentState = null;
+  const added = toNew ? state.ids.length : (result && Number.isInteger(result.added) ? result.added : 0);
+  toast(toNew ? `Created "${label}" with ${added} leads` : `Added ${added} ${added === 1 ? 'lead' : 'leads'}`);
+  clearLeadsSelection();
+  if (leadsListContext && leadsListContext.kind === 'segment') renderNumbers();
+}
+
+async function removeSelectionFromSegment() {
+  const context = leadsListContext;
+  const ids = selectedLeadIds();
+  if (!context || context.kind !== 'segment' || context.type !== 'static' || !ids.length) return;
+  if (!window.confirm(`Remove ${ids.length} selected ${ids.length === 1 ? 'lead' : 'leads'} from "${context.name}"? The leads are not deleted.`)) return;
+  const result = await window.appAPI.lists.updateSegmentMembers({ id: context.id, remove: ids });
+  if (result && result.success === false) {
+    toast(result.error || 'Leads not removed', 'error');
+    return;
+  }
+  toast(`Removed ${result && Number.isInteger(result.removed) ? result.removed : 0} leads from the segment`);
+  renderNumbers();
+}
+
+// --- wiring ------------------------------------------------------------------
+
+// Escape closes a list dialog and is consumed there, so it never also closes
+// the F5 drawer underneath (which ignores an Escape already handled). Enter in
+// a single-line field submits, as a form would; the app has no <form> element,
+// so nothing can ever navigate or post.
+const LIST_DIALOG_SUBMITS = {
+  'saved-search-dialog': submitSavedSearchDialog,
+  'segment-dialog': submitSegmentDialog,
+  'add-to-segment-dialog': submitAddToSegmentDialog
+};
+for (const [id, submit] of Object.entries(LIST_DIALOG_SUBMITS)) {
+  const dialog = document.getElementById(id);
+  dialog.addEventListener('keydown', safeAsync(async (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      dialog.close();
+      return;
+    }
+    if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && e.target.type === 'text') {
+      e.preventDefault();
+      await submit();
+    }
+  }));
+}
+document.getElementById('btn-save-search').addEventListener('click', () => openSavedSearchDialog('create'));
+document.getElementById('btn-new-saved-search').addEventListener('click', () => openSavedSearchDialog('create'));
+document.getElementById('btn-saved-search-cancel').addEventListener('click', () => document.getElementById('saved-search-dialog').close());
+document.getElementById('btn-saved-search-submit').addEventListener('click', safeAsync(submitSavedSearchDialog));
+document.getElementById('saved-search-filter').addEventListener('input', () => renderSavedSearches());
+document.getElementById('btn-new-segment').addEventListener('click', () => openSegmentDialog('create'));
+document.getElementById('btn-segment-cancel').addEventListener('click', () => document.getElementById('segment-dialog').close());
+document.getElementById('btn-segment-submit').addEventListener('click', safeAsync(submitSegmentDialog));
+for (const id of ['segment-type-static', 'segment-type-dynamic']) {
+  document.getElementById(id).addEventListener('change', syncSegmentDialogType);
+}
+document.getElementById('segment-rules').addEventListener('input', scheduleSegmentPreview);
+document.getElementById('segment-rules').addEventListener('change', scheduleSegmentPreview);
+document.getElementById('btn-segment-use-leads').addEventListener('click', () => {
+  const live = currentLeadsDefinition();
+  writeSegmentRules({ search: live.search, filters: live.filters });
+  scheduleSegmentPreview();
+});
+document.getElementById('segment-filter').addEventListener('input', () => renderSegments());
+document.getElementById('btn-add-to-segment').addEventListener('click', safeAsync(openAddToSegmentDialog));
+document.getElementById('btn-remove-from-segment').addEventListener('click', safeAsync(removeSelectionFromSegment));
+document.getElementById('btn-add-to-segment-cancel').addEventListener('click', () => document.getElementById('add-to-segment-dialog').close());
+document.getElementById('btn-add-to-segment-submit').addEventListener('click', safeAsync(submitAddToSegmentDialog));
+document.getElementById('add-to-segment-name').addEventListener('input', () => {
+  document.getElementById('add-to-segment-new').checked = true;
+});
+initSegmentRuleSelects();
 
 // 初始化补充
 loadNumbers();

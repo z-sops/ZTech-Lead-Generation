@@ -1958,6 +1958,403 @@ textarea {
 }
 
 /* ==========================================================================
+   ZTech Frontend 2.0 - F6: Lists (Saved Searches, Segments).
+
+   Two dense table workspaces and three native <dialog> forms, on the F1
+   tokens and the existing .data-table / .leads-state patterns. No new
+   surface colour; the dialog is the only layered element.
+   ========================================================================== */
+.lists-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-5) var(--space-6);
+}
+
+.lists-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.lists-heading {
+  min-width: 0;
+  max-width: 640px;
+}
+
+.lists-title {
+  margin: 0;
+  font-size: var(--font-16);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.lists-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lists-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lists-actions input[type="search"] {
+  width: 240px;
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-13);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.lists-count {
+  font-size: var(--font-12);
+  color: var(--text-3);
+}
+
+.lists-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.lists-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-13);
+}
+
+.lists-table th {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lists-table td {
+  padding: var(--space-3) var(--space-4);
+  vertical-align: top;
+  color: var(--text-1);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lists-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.lists-col-name {
+  width: 24%;
+}
+
+.lists-col-type,
+.lists-col-sort,
+.lists-col-updated {
+  white-space: nowrap;
+}
+
+.lists-col-members {
+  width: 14%;
+}
+
+.lists-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.lists-description {
+  margin-top: var(--space-1);
+  font-size: var(--font-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lists-cell-definition {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lists-cell-muted {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.lists-cell-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.lists-cell-actions .btn + .btn {
+  margin-left: var(--space-2);
+}
+
+.lists-live {
+  display: inline-block;
+  margin-top: var(--space-2);
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  color: var(--accent-f2);
+  background: var(--accent-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lists-warning {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--font-12);
+  color: var(--warn);
+}
+
+.lists-count-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.lists-inline-btn {
+  margin-top: var(--space-2);
+}
+
+.lists-danger {
+  color: var(--danger-f2);
+}
+
+.list-type-badge {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.list-type-badge[data-type="dynamic"] {
+  color: var(--info);
+  background: var(--info-bg);
+}
+
+/* Leads scope bar: which list the Leads view was opened from. */
+.leads-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-12);
+  background: var(--accent-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.leads-scope[hidden] {
+  display: none;
+}
+
+.leads-scope-label {
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.leads-scope-name {
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.leads-scope-note {
+  flex: 1 1 200px;
+  color: var(--text-2);
+}
+
+.leads-scope-changed {
+  color: var(--warn);
+}
+
+/* Native dialogs. */
+.lists-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.lists-dialog::backdrop {
+  background: rgba(22, 24, 29, 0.28);
+}
+
+.lists-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.lists-dialog-title {
+  margin: 0;
+  font-size: var(--font-14);
+  font-weight: 600;
+}
+
+.lists-dialog .form-group {
+  flex: none;
+}
+
+.lists-dialog input[type="text"],
+.lists-dialog textarea,
+.lists-dialog select {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.lists-dialog-block {
+  padding: var(--space-3);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lists-dialog-label {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.lists-definition-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-12);
+  line-height: 1.6;
+}
+
+.lists-definition-sort {
+  color: var(--text-2);
+}
+
+.lists-check,
+.lists-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.lists-type,
+.lists-rules {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lists-type legend,
+.lists-rules legend {
+  padding: 0 var(--space-2);
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.lists-rules[hidden] {
+  display: none;
+}
+
+.lists-rules-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.lists-rules-wide {
+  grid-column: 1 / -1;
+}
+
+.lists-rules-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.lists-preview {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lists-hint {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lists-indent {
+  margin: var(--space-2) 0 0 var(--space-6);
+}
+
+.lists-dialog-error {
+  margin: 0;
+  font-size: var(--font-12);
+  color: var(--danger-f2);
+}
+
+.lists-dialog-error:empty {
+  display: none;
+}
+
+.lists-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+@media (max-width: 1100px) {
+  .lists-workspace {
+    padding: var(--space-4);
+  }
+
+  .lists-col-name {
+    width: auto;
+  }
+
+  .lists-rules-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ==========================================================================
    ZTech Frontend 2.0 - F3: Leads workspace.
 
    A dense prospecting table, not a card grid. Everything here is built from

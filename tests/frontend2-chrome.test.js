@@ -23,7 +23,8 @@ function test(name, fn) {
   tests.push([name, fn]);
 }
 
-const EXISTING_VIEWS = ['collector', 'history', 'numbers', 'targets', 'dashboard', 'settings'];
+// F6 declared update: Saved Searches and Segments became real views.
+const EXISTING_VIEWS = ['collector', 'history', 'numbers', 'targets', 'dashboard', 'settings', 'searches', 'segments'];
 
 function sidebarHtml() {
   const s = htmlSource.indexOf('<nav class="sidebar-nav"');
@@ -60,7 +61,8 @@ test('2. no route points at a view that does not exist', () => {
   for (const m of nav.matchAll(/data-view="([a-z]+)"/g)) {
     assert.ok(htmlSource.includes(`id="view-${m[1]}"`), 'no dangling route: ' + m[1]);
   }
-  assert.ok(!/data-view="[^"]*(list|segment|research|intel|outreach|campaign|analytic)[^"]*"/i.test(nav),
+  // F6 implemented the Lists routes, so list/segment left this set.
+  assert.ok(!/data-view="[^"]*(research|intel|outreach|campaign|analytic)[^"]*"/i.test(nav),
     'no route invented for an unimplemented workspace');
 });
 
@@ -272,7 +274,7 @@ test('19. no IPC, channel, or dependency was added', () => {
   assert.strictEqual((htmlSource.match(/ipcRenderer\.invoke\(/g) || []).length, 0,
     'no invoke was added to the document');
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 32, 'the preload surface is unchanged at 32 channels');
+    .split('ipcRenderer.invoke').length - 1, 39, 'the preload surface is 32 channels plus the seven F6 Lists methods');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {
@@ -315,7 +317,8 @@ test('22. the shell kept the existing view sections untouched', () => {
   }
   assert.ok(htmlSource.includes('class="view-container"'), 'the view container is preserved');
   assert.ok(htmlSource.includes('id="storage-warning"'), 'the storage warning is preserved');
-  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 6, 'still six view sections');
+  // F6 declared update: the two Lists views were added; the six are untouched.
+  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 8, 'six view sections plus the two F6 Lists views');
   assert.ok(/<section class="view active" id="view-collector"/.test(htmlSource), 'collector still starts active');
 });
 

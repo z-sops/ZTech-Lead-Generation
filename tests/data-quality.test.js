@@ -283,7 +283,8 @@ test('14. nothing is persisted: no store access, no writes, no new column', () =
   assert.strictEqual(rendererSource.split('appAPI.collector.updateLeadQuality').length - 1, 1,
     'the renderer writes statuses through exactly one preload call');
   const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
-  assert.strictEqual(channels.length, 26, 'exactly 26 IPC channels (P1-E, P1-F and the two P1-G report channels)');
+  // F6 declared lock update: 26 -> 33, the seven sender-checked Lists channels.
+  assert.strictEqual(channels.length, 33, 'exactly 33 IPC channels (P1-E, P1-F, P1-G and F6)');
 });
 
 test('15. B6 fields, Lead Library columns and the pipeline stages are untouched', () => {
@@ -629,7 +630,8 @@ test('25. the Lead Library UI merges quality filters and resets the page', () =>
   assert.ok(!/phoneQuality|emailQuality|websiteQuality|businessQuality|completeness/.test(exportFn),
     'export is unchanged by P1-B');
   const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
-  assert.strictEqual(channels.length, 26, '26 IPC channels (P1-C, P1-E, P1-F and the two P1-G report channels)');
+  // F6 declared lock update: 26 -> 33, the seven sender-checked Lists channels.
+  assert.strictEqual(channels.length, 33, '33 IPC channels (P1-C, P1-E, P1-F, P1-G and F6)');
   assert.strictEqual(preloadSource.split('getNumbers:').length - 1, 1, 'preload query exposure unchanged');
 });
 

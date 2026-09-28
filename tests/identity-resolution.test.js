@@ -732,7 +732,8 @@ function test(name, fn) {
     assert.ok(!/unsafe-eval/.test(csp[0]), 'no script-src relaxation');
     // No new table, column or index: the review reads what already exists.
     // (P1-F adds the unrelated `targets` table, so the count is three.)
-    assert.strictEqual((storeSource.match(/CREATE TABLE/g) || []).length, 3, 'three tables: numbers, jobs, targets');
+    // F6 declared lock update: +2 additive list tables (saved_searches, segments).
+    assert.strictEqual((storeSource.match(/CREATE TABLE/g) || []).length, 5, 'five tables: numbers, jobs, targets, saved_searches, segments');
     assert.strictEqual((storeSource.match(/CREATE INDEX/g) || []).length, 4, 'still exactly four indexes');
     assert.ok(!/CREATE INDEX[^;]*targets/.test(storeSource), 'no index is added for the review');
     assert.ok(!/dupClass|dupReason|duplicate/i.test(between(storeSource, 'CREATE TABLE IF NOT EXISTS numbers (', ')')),

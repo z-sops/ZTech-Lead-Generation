@@ -373,8 +373,9 @@ function test(name, fn) {
     const tables = tableNames(store.db).sort();
     // P1-F declared lock update: the P1-F `targets` table joins the two
     // pre-existing ones. No company table and no contact table exist.
-    assert.deepStrictEqual(tables, ['jobs', 'numbers', 'targets'],
-      'exactly the two pre-existing tables plus the unrelated targets table');
+    // F6 declared lock update: the two additive list tables join them.
+    assert.deepStrictEqual(tables, ['jobs', 'numbers', 'saved_searches', 'segments', 'targets'],
+      'the pre-existing tables plus the unrelated targets and list tables');
     assert.ok(!/\bcompanies\b/i.test(storeSource), 'the store never mentions a companies table');
     assert.ok(!/\bcontacts?\b/i.test(storeSource), 'the store never mentions a contact entity');
     const createBlock = between(storeSource, 'CREATE TABLE IF NOT EXISTS numbers (', ')');

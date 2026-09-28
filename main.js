@@ -1,6 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
-const { AccountStore } = require('./src/main/accountStore');
+const { AccountStore, normalizeListQuery } = require('./src/main/accountStore');
 const { logger } = require('./src/main/logger');
 const { ProviderManager } = require('./src/main/providers/providerManager');
 const { CoreClawAdapter } = require('./src/main/providers/coreclawAdapter');
@@ -16,6 +16,8 @@ let accountStore = null;
 let researchService = null;
 let researchClosing = false;
 let researchTrustedSender = null;
+// F6: the same trusted-sender rule, applied to the Lists channels.
+let listsTrustedSender = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -523,6 +525,13 @@ function validateNumbersQuery(payload) {
     if (!p.id) throw invalidParams('Invalid params: id (non-empty required)');
     out.id = p.id;
   }
+  // F6: optional segment scope (additive). Omitted keeps every existing query
+  // exactly as before; the store resolves the id to its current membership.
+  if (p.segmentId !== undefined && p.segmentId !== null) {
+    assertOptionalString(p.segmentId, 'segmentId', 100);
+    if (!p.segmentId) throw invalidParams('Invalid params: segmentId (non-empty required)');
+    out.segmentId = p.segmentId;
+  }
   if (p.filters !== undefined && p.filters !== null) {
     assertPlainObject(p.filters, 'filters');
     const filters = {};
@@ -556,6 +565,90 @@ function validateNumbersQuery(payload) {
     }
   }
   return out;
+}
+
+// === F6 Lists: saved searches and segments ===
+// Shape validation at the IPC boundary. Query / rule VOCABULARY is checked by
+// the store's normalizeListQuery (the single definition of what a list may
+// store), called here too so a bad definition is refused before the store.
+const MAX_LIST_NAME_LENGTH = 120;
+const MAX_LIST_DESCRIPTION_LENGTH = 500;
+const MAX_SEGMENT_MEMBER_IDS = 10000;
+
+function validateListId(value, name) {
+  assertOptionalString(value, name, 100);
+  if (!value) throw invalidParams(`Invalid params: ${name} (non-empty required)`);
+  return value;
+}
+
+function validateListText(payload, out, field, maxLength, required) {
+  if (payload[field] === undefined) {
+    if (required) throw invalidParams(`Invalid params: ${field} (required)`);
+    return;
+  }
+  assertOptionalString(payload[field], field, maxLength);
+  if (required && !(typeof payload[field] === 'string' && payload[field].trim())) {
+    throw invalidParams(`Invalid params: ${field} (non-empty required)`);
+  }
+  out[field] = payload[field];
+}
+
+function validateListDefinition(value, options) {
+  const result = normalizeListQuery(value, options);
+  if (!result.ok) throw invalidParams('Invalid params: ' + result.error);
+  return result.value;
+}
+
+function validateIdArray(value, name) {
+  if (!Array.isArray(value)) throw invalidParams(`Invalid params: ${name} (array required)`);
+  if (value.length > MAX_SEGMENT_MEMBER_IDS) throw invalidParams(`Invalid params: ${name} (max ${MAX_SEGMENT_MEMBER_IDS})`);
+  value.forEach((id, i) => validateListId(id, `${name}[${i}]`));
+  return value.slice();
+}
+
+function validateSavedSearchPayload(payload) {
+  assertPlainObject(payload, 'saved search');
+  const out = {};
+  const isUpdate = payload.id !== undefined && payload.id !== null;
+  if (isUpdate) out.id = validateListId(payload.id, 'id');
+  validateListText(payload, out, 'name', MAX_LIST_NAME_LENGTH, !isUpdate);
+  validateListText(payload, out, 'description', MAX_LIST_DESCRIPTION_LENGTH, false);
+  if (payload.query !== undefined) out.query = validateListDefinition(payload.query, { allowSort: true, label: 'query' });
+  return out;
+}
+
+function validateSegmentPayload(payload) {
+  assertPlainObject(payload, 'segment');
+  const out = {};
+  const isUpdate = payload.id !== undefined && payload.id !== null;
+  if (isUpdate) out.id = validateListId(payload.id, 'id');
+  validateListText(payload, out, 'name', MAX_LIST_NAME_LENGTH, !isUpdate);
+  validateListText(payload, out, 'description', MAX_LIST_DESCRIPTION_LENGTH, false);
+  if (payload.type !== undefined && payload.type !== null) {
+    if (payload.type !== 'static' && payload.type !== 'dynamic') throw invalidParams('Invalid params: type');
+    out.type = payload.type;
+  } else if (!isUpdate) {
+    throw invalidParams('Invalid params: type (required)');
+  }
+  if (payload.memberIds !== undefined && payload.memberIds !== null) out.memberIds = validateIdArray(payload.memberIds, 'memberIds');
+  if (payload.rules !== undefined && payload.rules !== null) {
+    out.rules = validateListDefinition(payload.rules, { allowTextRules: true, label: 'rules' });
+  }
+  return out;
+}
+
+function validateSegmentMembersPayload(payload) {
+  assertPlainObject(payload, 'segment members');
+  const out = { id: validateListId(payload.id, 'id') };
+  if (payload.add !== undefined && payload.add !== null) out.add = validateIdArray(payload.add, 'add');
+  if (payload.remove !== undefined && payload.remove !== null) out.remove = validateIdArray(payload.remove, 'remove');
+  if (!out.add && !out.remove) throw invalidParams('Invalid params: add or remove (required)');
+  return out;
+}
+
+function validateListDeletePayload(payload, name) {
+  assertPlainObject(payload, name);
+  return { id: validateListId(payload.id, 'id') };
 }
 
 // === B4 local collection-job ledger hooks ===
@@ -1360,6 +1453,56 @@ function registerIpcHandlers() {
       throw err;
     }
   });
+
+  // F6 Lists. Seven channels for user-owned list definitions. Every handler
+  // runs the trusted-sender check first (the same rule as the research
+  // channels), validates its payload, and returns the store's structured
+  // envelope. None of them can write a lead row.
+  function isListsSender(event) {
+    if (!listsTrustedSender) {
+      listsTrustedSender = createTrustedSender(() => mainWindow, {
+        isDev,
+        port: Number(process.env.VITE_PORT) || undefined,
+        indexPath: path.join(__dirname, 'index.html'),
+        onReject: (reason) => logger.warn('ipc', `lists rejected: ${reason}`)
+      });
+    }
+    try {
+      return listsTrustedSender(event) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  function listsHandler(channel, handler) {
+    return async (event, payload) => {
+      if (!isListsSender(event)) {
+        rejectLog(channel, 'untrusted sender');
+        throw new Error('Untrusted sender.');
+      }
+      try {
+        return await handler(payload);
+      } catch (err) {
+        if (err.invalidParams) rejectLog(channel, err.message);
+        throw err;
+      }
+    };
+  }
+
+  ipcMain.handle('saved-searches:list', listsHandler('saved-searches:list',
+    () => accountStore.listSavedSearches()));
+  ipcMain.handle('saved-searches:save', listsHandler('saved-searches:save',
+    (payload) => accountStore.saveSavedSearch(validateSavedSearchPayload(payload))));
+  ipcMain.handle('saved-searches:delete', listsHandler('saved-searches:delete',
+    (payload) => accountStore.deleteSavedSearch(validateListDeletePayload(payload, 'saved search'))));
+  ipcMain.handle('segments:list', listsHandler('segments:list',
+    () => accountStore.listSegments()));
+  ipcMain.handle('segments:save', listsHandler('segments:save',
+    (payload) => accountStore.saveSegment(validateSegmentPayload(payload))));
+  ipcMain.handle('segments:members', listsHandler('segments:members',
+    (payload) => accountStore.updateSegmentMembers(validateSegmentMembersPayload(payload))));
+  ipcMain.handle('segments:delete', listsHandler('segments:delete',
+    (payload) => accountStore.deleteSegment(validateListDeletePayload(payload, 'segment'))));
 
   ipcMain.handle('logs:export', () => {
     return logger.exportLogs();

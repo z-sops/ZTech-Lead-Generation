@@ -702,8 +702,9 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // registered exactly once.
     // A4 declared lock update: 26 -> 33, the seven additions being the
     // prospect-research channels, all sender-checked and none user-owned writes.
-    assert.strictEqual(channels.length, 33, 'exactly 33 channels');
-    assert.strictEqual(new Set(channels).size, 33, 'no duplicate channel names');
+    // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
+    assert.strictEqual(channels.length, 40, 'exactly 40 channels');
+    assert.strictEqual(new Set(channels).size, 40, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1245,8 +1246,9 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
   });
 
   test('49. B6.4.2 adds no channel, table column, tag filter, metric or export change', () => {
-    assert.strictEqual(mainChannels().length, 26,
-      '26 IPC channels: B6.4.2 added none, P1-E/P1-F/P1-G added six');
+    // F6 declared lock update: 26 -> 33, the seven sender-checked Lists channels.
+    assert.strictEqual(mainChannels().length, 33,
+      '33 IPC channels: B6.4.2 added none, P1-E/P1-F/P1-G added six, F6 seven');
     assert.ok(!mainSource.includes('ipcMain.handle(\'collector:filter'), 'no filter-specific channel');
     const table = between(htmlSource, 'id="view-numbers"', 'id="view-dashboard"');
     for (const column of ['<th>Qualification</th>', '<th>Tags</th>', '<th>Notes</th>']) {
@@ -1399,7 +1401,8 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     assert.ok(exportFn.includes('return JSON.stringify(numbers, null, 2);'), 'JSON export unchanged');
     assert.ok(!/JSON\.stringify\((n|row)\.(tags|notes)\)/.test(exportFn), 'tags are never stringified for JSON');
     // IPC: the filter still rides collector:get-numbers.
-    assert.strictEqual(allChannels().length, 33, 'exactly 33 channels (A4 added the seven prospect-research channels)');
+    // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
+    assert.strictEqual(allChannels().length, 40, 'exactly 40 channels (A4 research channels, F6 Lists channels)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

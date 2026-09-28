@@ -205,6 +205,286 @@ function validateLeadUserFields(payload) {
   };
 }
 
+// === F6 Lists: saved searches and segments ===
+// A Saved Search stores a Leads QUERY DEFINITION (search, filters, sort) and no
+// members: it is re-evaluated through queryNumbers every time it runs. A
+// Segment is either STATIC (an explicit list of lead ids) or DYNAMIC (a rule
+// definition evaluated through the same query layer). Both are user-owned
+// definitions, like a P1-F Target: no lead method reads them, and creating,
+// editing or deleting one can never add, change or remove a lead. A static
+// segment keeps the id of a lead that was later deleted and reports it as
+// unavailable - it is never silently replaced or dropped.
+const LIST_NAME_MAX = 120;
+const LIST_DESCRIPTION_MAX = 500;
+const LIST_SEARCH_MAX = 200;
+const LIST_FILTER_TEXT_MAX = 200;
+const LIST_ID_MAX = 100;
+const SEGMENT_MEMBER_MAX = 10000;
+const SEGMENT_TYPES = ['static', 'dynamic'];
+// The filters a saved search or a dynamic rule may store: exactly the ones the
+// Leads query layer evaluates today (the two stored columns the Leads workspace
+// exposes and the five derived quality filters). Research / ICP are not lead
+// query fields and are rejected, never approximated.
+const LIST_FILTER_VALUES = {
+  status: ['pending', 'sent', 'success', 'failed'],
+  qualification: ['unqualified', 'qualified'],
+  phoneQuality: ['valid', 'invalid', 'unknown'],
+  emailQuality: ['valid', 'invalid', 'unknown'],
+  websiteQuality: ['valid', 'invalid', 'unknown'],
+  businessQuality: ['active', 'closed', 'unknown'],
+  completeness: ['0', '1', '2', '3', '4', '5']
+};
+// Dynamic rules may also use the two exact-match stored-column filters the
+// query layer already supports (QUERY_FILTER_FIELDS) but the Leads toolbar does
+// not expose.
+const SEGMENT_TEXT_RULES = ['source', 'keyword'];
+
+function isPlainRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function listText(value, max, field, required) {
+  const raw = value === undefined || value === null ? '' : value;
+  if (typeof raw !== 'string') return { ok: false, error: field + ' (string required)' };
+  const text = raw.trim();
+  if (required && !text) return { ok: false, error: field + ' (required)' };
+  if (text.length > max) return { ok: false, error: `${field} (max ${max} chars)` };
+  return { ok: true, value: text };
+}
+
+// The one validator for a saved-search query and a dynamic-segment rule set.
+// Unknown keys, unknown filters and values outside the vocabulary are refused
+// with a reason rather than dropped, so nothing is stored that cannot run.
+function normalizeListQuery(value, options) {
+  const opts = options || {};
+  const label = opts.label || 'query';
+  const source = value === undefined || value === null ? {} : value;
+  if (!isPlainRecord(source)) return { ok: false, error: label + ' (object required)' };
+  const allowedKeys = opts.allowSort ? ['search', 'filters', 'sort', 'order'] : ['search', 'filters'];
+  for (const key of Object.keys(source)) {
+    if (!allowedKeys.includes(key)) return { ok: false, error: `${label}.${key} (unsupported)` };
+  }
+  const search = listText(source.search, LIST_SEARCH_MAX, label + '.search', false);
+  if (!search.ok) return search;
+  const rawFilters = source.filters === undefined || source.filters === null ? {} : source.filters;
+  if (!isPlainRecord(rawFilters)) return { ok: false, error: label + '.filters (object required)' };
+  const filters = {};
+  for (const key of Object.keys(rawFilters)) {
+    const entry = rawFilters[key];
+    if (entry === undefined || entry === null) continue;
+    if (Object.prototype.hasOwnProperty.call(LIST_FILTER_VALUES, key)) {
+      if (typeof entry !== 'string' || !LIST_FILTER_VALUES[key].includes(entry)) {
+        return { ok: false, error: `${label}.filters.${key} (unsupported value)` };
+      }
+      filters[key] = entry;
+    } else if (opts.allowTextRules && SEGMENT_TEXT_RULES.includes(key)) {
+      const text = listText(entry, LIST_FILTER_TEXT_MAX, `${label}.filters.${key}`, false);
+      if (!text.ok) return text;
+      if (text.value) filters[key] = text.value;
+    } else {
+      return { ok: false, error: `${label}.filters.${key} (unsupported filter)` };
+    }
+  }
+  const out = { search: search.value, filters };
+  if (opts.allowSort) {
+    const sort = source.sort === undefined || source.sort === null ? '' : source.sort;
+    if (sort !== '' && !(typeof sort === 'string' && Object.prototype.hasOwnProperty.call(QUERY_SORT_COLUMNS, sort))) {
+      return { ok: false, error: label + '.sort (unsupported)' };
+    }
+    const order = source.order === undefined || source.order === null ? 'asc' : source.order;
+    if (order !== 'asc' && order !== 'desc') return { ok: false, error: label + '.order (unsupported)' };
+    out.sort = sort;
+    out.order = sort ? order : 'asc';
+  }
+  return { ok: true, value: out };
+}
+
+// A stored definition expressed in the normalized shape queryNumbers uses
+// internally, so it is evaluated by the SAME search / filter / quality code.
+function listQueryToNormalized(definition) {
+  const def = isPlainRecord(definition) ? definition : {};
+  const filters = {};
+  const qualityFilters = {};
+  for (const [key, entry] of Object.entries(isPlainRecord(def.filters) ? def.filters : {})) {
+    if (LEAD_QUALITY_FILTER_FIELDS.includes(key)) qualityFilters[key] = entry;
+    else if (QUERY_FILTER_FIELDS.includes(key)) filters[key] = entry;
+  }
+  return {
+    limit: 20, offset: 0, search: typeof def.search === 'string' ? def.search : '',
+    filters, qualityFilters, sort: '', order: 'asc'
+  };
+}
+
+function normalizeMemberIds(value, field) {
+  if (!Array.isArray(value)) return { ok: false, error: field + ' (array required)' };
+  if (value.length > SEGMENT_MEMBER_MAX) return { ok: false, error: `${field} (max ${SEGMENT_MEMBER_MAX})` };
+  const seen = new Set();
+  const out = [];
+  for (const id of value) {
+    if (typeof id !== 'string' || !id || id.length > LIST_ID_MAX) return { ok: false, error: field + ' (invalid id)' };
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return { ok: true, value: out };
+}
+
+// A list-table row as a plain object (rowToObject adds lead-only fields).
+function plainRow(columns, values) {
+  const out = {};
+  for (let i = 0; i < columns.length; i++) out[columns[i]] = values[i];
+  return out;
+}
+
+function parseStoredJson(value, fallback) {
+  if (typeof value !== 'string') return value === undefined || value === null ? fallback : value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function listTimes(existing) {
+  const now = new Date().toISOString();
+  return {
+    createdAt: existing && typeof existing.createdAt === 'string' && existing.createdAt ? existing.createdAt : now,
+    updatedAt: now
+  };
+}
+
+// Create when `existing` is null, update otherwise. On an update every omitted
+// field keeps its stored value, so a rename can never rewrite the definition.
+function validateSavedSearchRecord(payload, existing) {
+  if (!isPlainRecord(payload)) return { ok: false, error: 'object required' };
+  const name = listText(payload.name === undefined && existing ? existing.name : payload.name, LIST_NAME_MAX, 'name', true);
+  if (!name.ok) return name;
+  const description = listText(payload.description === undefined && existing ? existing.description : payload.description,
+    LIST_DESCRIPTION_MAX, 'description', false);
+  if (!description.ok) return description;
+  const query = payload.query === undefined && existing
+    ? { ok: true, value: existing.query }
+    : normalizeListQuery(payload.query, { allowSort: true, label: 'query' });
+  if (!query.ok) return query;
+  return {
+    ok: true,
+    value: {
+      id: existing ? existing.id : randomUUID(),
+      name: name.value,
+      description: description.value,
+      query: query.value,
+      ...listTimes(existing)
+    }
+  };
+}
+
+function normalizeSavedSearchRow(row) {
+  if (!isPlainRecord(row) || typeof row.id !== 'string' || !row.id) return null;
+  const parsed = normalizeListQuery(parseStoredJson(row.query, {}), { allowSort: true, label: 'query' });
+  const out = {
+    id: row.id,
+    name: typeof row.name === 'string' ? row.name : '',
+    description: typeof row.description === 'string' ? row.description : '',
+    query: parsed.ok ? parsed.value : { search: '', filters: {}, sort: '', order: 'asc' },
+    createdAt: typeof row.createdAt === 'string' ? row.createdAt : '',
+    updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : ''
+  };
+  // A stored definition that no longer validates is reported, never run as
+  // "all leads" without saying so.
+  if (!parsed.ok) out.definitionError = parsed.error;
+  return out;
+}
+
+function validateSegmentRecord(payload, existing) {
+  if (!isPlainRecord(payload)) return { ok: false, error: 'object required' };
+  let type = existing ? existing.type : payload.type;
+  if (existing && payload.type !== undefined && payload.type !== null && payload.type !== existing.type) {
+    return { ok: false, error: 'type (cannot change after creation)' };
+  }
+  if (!SEGMENT_TYPES.includes(type)) return { ok: false, error: 'type (static or dynamic)' };
+  const name = listText(payload.name === undefined && existing ? existing.name : payload.name, LIST_NAME_MAX, 'name', true);
+  if (!name.ok) return name;
+  const description = listText(payload.description === undefined && existing ? existing.description : payload.description,
+    LIST_DESCRIPTION_MAX, 'description', false);
+  if (!description.ok) return description;
+  let memberIds = [];
+  let rules = null;
+  if (type === 'static') {
+    if (payload.rules !== undefined && payload.rules !== null) return { ok: false, error: 'rules (a static segment has no rules)' };
+    if (existing) {
+      if (payload.memberIds !== undefined) return { ok: false, error: 'memberIds (change members through the members update)' };
+      memberIds = existing.memberIds;
+    } else if (payload.memberIds !== undefined && payload.memberIds !== null) {
+      const ids = normalizeMemberIds(payload.memberIds, 'memberIds');
+      if (!ids.ok) return ids;
+      memberIds = ids.value;
+    }
+  } else {
+    if (payload.memberIds !== undefined && payload.memberIds !== null) {
+      return { ok: false, error: 'memberIds (a dynamic segment has no explicit members)' };
+    }
+    const parsed = payload.rules === undefined && existing
+      ? { ok: true, value: existing.rules }
+      : normalizeListQuery(payload.rules, { allowTextRules: true, label: 'rules' });
+    if (!parsed.ok) return parsed;
+    rules = parsed.value;
+  }
+  return {
+    ok: true,
+    value: {
+      id: existing ? existing.id : randomUUID(),
+      name: name.value,
+      description: description.value,
+      type,
+      memberIds,
+      rules,
+      ...listTimes(existing)
+    }
+  };
+}
+
+function normalizeSegmentRow(row) {
+  if (!isPlainRecord(row) || typeof row.id !== 'string' || !row.id) return null;
+  const type = SEGMENT_TYPES.includes(row.type) ? row.type : 'static';
+  const out = {
+    id: row.id,
+    name: typeof row.name === 'string' ? row.name : '',
+    description: typeof row.description === 'string' ? row.description : '',
+    type,
+    memberIds: [],
+    rules: null,
+    createdAt: typeof row.createdAt === 'string' ? row.createdAt : '',
+    updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : ''
+  };
+  if (type === 'static') {
+    const ids = parseStoredJson(row.memberIds, []);
+    out.memberIds = Array.isArray(ids) ? ids.filter(id => typeof id === 'string' && id) : [];
+  } else {
+    const parsed = normalizeListQuery(parseStoredJson(row.rules, {}), { allowTextRules: true, label: 'rules' });
+    out.rules = parsed.ok ? parsed.value : { search: '', filters: {} };
+    if (!parsed.ok) out.definitionError = parsed.error;
+  }
+  return out;
+}
+
+// Storage layout of the two list kinds. JSON fallback rows are the logical
+// shape; SQL rows carry the query / members / rules as JSON text, like tags.
+const LIST_KINDS = {
+  savedSearch: {
+    table: 'saved_searches', cache: '_savedSearches', file: 'savedSearches.json', label: 'saved search',
+    normalize: normalizeSavedSearchRow,
+    columns: ['id', 'name', 'description', 'query', 'createdAt', 'updatedAt'],
+    encode: row => [row.id, row.name, row.description, JSON.stringify(row.query), row.createdAt, row.updatedAt]
+  },
+  segment: {
+    table: 'segments', cache: '_segments', file: 'segments.json', label: 'segment',
+    normalize: normalizeSegmentRow,
+    columns: ['id', 'name', 'description', 'type', 'memberIds', 'rules', 'createdAt', 'updatedAt'],
+    encode: row => [row.id, row.name, row.description, row.type, JSON.stringify(row.memberIds || []),
+      JSON.stringify(row.rules || null), row.createdAt, row.updatedAt]
+  }
+};
+
 // === P1-B derived data-quality filters ===
 // These signals are DERIVED from stored columns, never persisted: a phone
 // cannot be indexed by a quality value that only exists at read time. The
@@ -1229,6 +1509,30 @@ class AccountStore {
         updatedAt TEXT,
         status TEXT DEFAULT '${TARGET_DEFAULT_STATUS}'
       )`);
+
+      // F6 Lists. Two additive, user-owned definition tables. The "IF
+      // NOT EXISTS" create is the migration: an existing database gains the empty
+      // tables on its next open and no existing row or column is touched. No
+      // foreign key to numbers by design: a static segment keeps the id of a
+      // deleted lead and reports it as unavailable.
+      this.db.run(`CREATE TABLE IF NOT EXISTS saved_searches (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        description TEXT,
+        query TEXT,
+        createdAt TEXT,
+        updatedAt TEXT
+      )`);
+      this.db.run(`CREATE TABLE IF NOT EXISTS segments (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        description TEXT,
+        type TEXT,
+        memberIds TEXT,
+        rules TEXT,
+        createdAt TEXT,
+        updatedAt TEXT
+      )`);
     } catch (err) {
       this.db = null;
       logger.error('accountStore', 'database init failed, falling back to JSON storage', { error: err.message });
@@ -1426,6 +1730,22 @@ class AccountStore {
         logger.error('accountStore', 'failed to read targets.json', { error: err.message });
       }
     }
+    // F6: saved searches and segments load with the same tolerance.
+    for (const kind of Object.values(LIST_KINDS)) {
+      this[kind.cache] = [];
+      const file = path.join(DATA_DIR, kind.file);
+      if (!fs.existsSync(file)) continue;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        if (Array.isArray(parsed)) {
+          this[kind.cache] = parsed.map(row => kind.normalize(row)).filter(Boolean);
+        } else {
+          logger.warn('accountStore', kind.file + ' is not an array, ignoring');
+        }
+      } catch (err) {
+        logger.error('accountStore', 'failed to read ' + kind.file, { error: err.message });
+      }
+    }
     this._numbers = [];
     const nf = path.join(DATA_DIR, 'numbers.json');
     if (!fs.existsSync(nf)) return;
@@ -1505,6 +1825,17 @@ class AccountStore {
       }
       normalized.id = q.id;
     }
+    // F6 segment scope: an optional segment id. The segment's membership is
+    // intersected with the normal search / filters / sort / paging, which are
+    // applied by the unchanged branch functions. Malformed input short-circuits
+    // to an empty envelope, exactly like the id lookup above.
+    if (q.segmentId !== undefined && q.segmentId !== null) {
+      const valid = typeof q.segmentId === 'string' && q.segmentId.length > 0 && q.segmentId.length <= LIST_ID_MAX;
+      if (!valid) {
+        return { rows: [], total: 0, limit: normalized.limit, offset: normalized.offset };
+      }
+      return this._queryNumbersInSegment(normalized, q.segmentId);
+    }
     if (Object.keys(normalized.qualityFilters).length) {
       return this._queryNumbersWithQuality(normalized);
     }
@@ -1524,6 +1855,32 @@ class AccountStore {
       ? (await this._queryNumbersSql(scan)).rows
       : (await this._queryNumbersJson(scan)).rows;
     const matched = candidates.filter(row => leadMatchesQualityFilters(row, normalized.qualityFilters));
+    return {
+      rows: matched.slice(normalized.offset, normalized.offset + normalized.limit),
+      total: matched.length,
+      limit: normalized.limit,
+      offset: normalized.offset
+    };
+  }
+
+  // F6: every row matching a normalized query, in its sort order, with the
+  // derived quality filters applied. Uses the existing branch functions with
+  // paging lifted, as _queryNumbersWithQuality does. Read-only.
+  async _allMatchingRows(normalized) {
+    const scan = { ...normalized, limit: LEAD_QUALITY_SCAN_LIMIT, offset: 0 };
+    const rows = this.db
+      ? (await this._queryNumbersSql(scan)).rows
+      : (await this._queryNumbersJson(scan)).rows;
+    const quality = isPlainRecord(normalized.qualityFilters) ? normalized.qualityFilters : {};
+    return Object.keys(quality).length ? rows.filter(row => leadMatchesQualityFilters(row, quality)) : rows;
+  }
+
+  async _queryNumbersInSegment(normalized, segmentId) {
+    const empty = { rows: [], total: 0, limit: normalized.limit, offset: normalized.offset };
+    const segment = this._findListRecord('segment', segmentId);
+    if (!segment) return empty;
+    const members = await this._segmentMemberIds(segment);
+    const matched = (await this._allMatchingRows(normalized)).filter(row => members.has(row.id));
     return {
       rows: matched.slice(normalized.offset, normalized.offset + normalized.limit),
       total: matched.length,
@@ -2583,6 +2940,233 @@ class AccountStore {
     return { success: true, id: row.id, created: !!created, updated: !created };
   }
 
+  // === F6 Lists: saved searches and segments ===
+  // Definitions only. Nothing below writes a lead row, and the only lead reads
+  // are the query layer's own (membership evaluation) and an id scan (to report
+  // unavailable static members). Creation order is the read order on both
+  // storage branches, so the two agree.
+
+  async listSavedSearches() {
+    await this.ready;
+    const rows = this._listRecordRows('savedSearch');
+    return { rows, total: rows.length };
+  }
+
+  // Create when no id is supplied, update when one is. An unknown id is refused
+  // rather than turned into a new record.
+  async saveSavedSearch(payload) {
+    await this.ready;
+    const existing = this._listRecordForUpdate('savedSearch', payload);
+    if (existing === undefined) return { success: false, error: 'Saved search not found' };
+    const validated = validateSavedSearchRecord(payload, existing);
+    if (!validated.ok) return { success: false, error: 'Invalid saved search: ' + validated.error };
+    this._writeListRecord('savedSearch', validated.value, !existing);
+    return { success: true, id: validated.value.id, created: !existing, updated: Boolean(existing) };
+  }
+
+  async deleteSavedSearch(payload) {
+    await this.ready;
+    return this._deleteListRecord('savedSearch', isPlainRecord(payload) ? payload.id : null);
+  }
+
+  // Each segment is returned with counts evaluated NOW from stored leads:
+  // a static segment reports how many of its ids still exist and which do not;
+  // a dynamic segment reports how many leads its rules match.
+  async listSegments() {
+    await this.ready;
+    const segments = this._listRecordRows('segment');
+    const leadIds = this._allLeadIds();
+    const rows = [];
+    for (const segment of segments) rows.push({ ...segment, ...(await this._evaluateSegment(segment, leadIds)) });
+    return { rows, total: rows.length };
+  }
+
+  async saveSegment(payload) {
+    await this.ready;
+    const existing = this._listRecordForUpdate('segment', payload);
+    if (existing === undefined) return { success: false, error: 'Segment not found' };
+    const validated = validateSegmentRecord(payload, existing);
+    if (!validated.ok) return { success: false, error: 'Invalid segment: ' + validated.error };
+    if (!existing && validated.value.type === 'static' && validated.value.memberIds.length) {
+      const leadIds = this._allLeadIds();
+      const unknown = validated.value.memberIds.filter(id => !leadIds.has(id));
+      if (unknown.length) {
+        return { success: false, error: `Invalid segment: ${unknown.length} member id(s) are not stored leads` };
+      }
+    }
+    this._writeListRecord('segment', validated.value, !existing);
+    return { success: true, id: validated.value.id, created: !existing, updated: Boolean(existing) };
+  }
+
+  // Static members only. An added id must be a stored lead; a removed id may
+  // be any stored member, so an unavailable (deleted) member can be removed by
+  // an explicit user action and is never dropped silently.
+  async updateSegmentMembers(payload) {
+    await this.ready;
+    if (!isPlainRecord(payload)) return { success: false, error: 'Invalid segment members (object required)' };
+    const segment = this._findListRecord('segment', payload.id);
+    if (!segment) return { success: false, error: 'Segment not found' };
+    if (segment.type !== 'static') return { success: false, error: 'Only a static segment has explicit members' };
+    const add = payload.add === undefined || payload.add === null ? { ok: true, value: [] } : normalizeMemberIds(payload.add, 'add');
+    if (!add.ok) return { success: false, error: 'Invalid segment members: ' + add.error };
+    const remove = payload.remove === undefined || payload.remove === null ? { ok: true, value: [] } : normalizeMemberIds(payload.remove, 'remove');
+    if (!remove.ok) return { success: false, error: 'Invalid segment members: ' + remove.error };
+    const leadIds = this._allLeadIds();
+    const unknown = add.value.filter(id => !leadIds.has(id));
+    if (unknown.length) {
+      return { success: false, error: `Invalid segment members: ${unknown.length} id(s) are not stored leads` };
+    }
+    const removeSet = new Set(remove.value);
+    const kept = segment.memberIds.filter(id => !removeSet.has(id));
+    const removed = segment.memberIds.length - kept.length;
+    const keptSet = new Set(kept);
+    let added = 0;
+    for (const id of add.value) {
+      if (keptSet.has(id)) continue;
+      keptSet.add(id);
+      kept.push(id);
+      added++;
+    }
+    if (kept.length > SEGMENT_MEMBER_MAX) {
+      return { success: false, error: `Invalid segment members: a segment holds at most ${SEGMENT_MEMBER_MAX} leads` };
+    }
+    if (!added && !removed) {
+      return { success: true, updated: false, reason: 'unchanged', added: 0, removed: 0, memberCount: kept.length };
+    }
+    this._writeListRecord('segment', { ...segment, memberIds: kept, ...listTimes(segment) }, false);
+    return { success: true, updated: true, added, removed, memberCount: kept.length };
+  }
+
+  async deleteSegment(payload) {
+    await this.ready;
+    return this._deleteListRecord('segment', isPlainRecord(payload) ? payload.id : null);
+  }
+
+  async _segmentMemberIds(segment) {
+    if (segment.type === 'static') return new Set(segment.memberIds);
+    const rows = await this._allMatchingRows(listQueryToNormalized(segment.rules));
+    return new Set(rows.map(row => row.id));
+  }
+
+  async _evaluateSegment(segment, leadIds) {
+    if (segment.type === 'static') {
+      const unavailableIds = segment.memberIds.filter(id => !leadIds.has(id));
+      return {
+        memberCount: segment.memberIds.length,
+        availableCount: segment.memberIds.length - unavailableIds.length,
+        unavailableIds
+      };
+    }
+    const members = await this._segmentMemberIds(segment);
+    return { memberCount: members.size, availableCount: members.size, unavailableIds: [] };
+  }
+
+  _allLeadIds() {
+    if (!this.db) return new Set((this._numbers || []).map(row => row && row.id).filter(Boolean));
+    const scan = this.db.exec('SELECT id FROM numbers');
+    return new Set(scan.length ? scan[0].values.map(values => values[0]) : []);
+  }
+
+  _listRecordRows(kind) {
+    const k = LIST_KINDS[kind];
+    if (!this.db) return (this[k.cache] || []).map(row => k.normalize(row)).filter(Boolean);
+    const scan = this.db.exec(`SELECT * FROM ${k.table} ORDER BY rowid ASC`);
+    if (!scan.length) return [];
+    return scan[0].values.map(values => k.normalize(plainRow(scan[0].columns, values))).filter(Boolean);
+  }
+
+  _findListRecord(kind, id) {
+    if (typeof id !== 'string' || !id || id.length > LIST_ID_MAX) return null;
+    return this._listRecordRows(kind).find(row => row.id === id) || null;
+  }
+
+  // null = create (no id supplied); undefined = an id was supplied but is not
+  // stored; otherwise the stored record being updated.
+  _listRecordForUpdate(kind, payload) {
+    if (!isPlainRecord(payload) || payload.id === undefined || payload.id === null) return null;
+    return this._findListRecord(kind, payload.id) || undefined;
+  }
+
+  _writeListRecord(kind, row, created) {
+    const k = LIST_KINDS[kind];
+    if (!this.db) {
+      const rows = this[k.cache] || (this[k.cache] = []);
+      const index = rows.findIndex(entry => entry && entry.id === row.id);
+      const backup = index === -1 ? null : rows[index];
+      const copy = JSON.parse(JSON.stringify(row));
+      if (index === -1) rows.push(copy);
+      else rows[index] = copy;
+      try {
+        writeJsonAtomic(path.join(DATA_DIR, k.file), JSON.stringify(rows, null, 2));
+      } catch (err) {
+        if (index === -1) rows.pop();
+        else rows[index] = backup;
+        logger.error('accountStore', 'failed to write ' + k.file, { error: err.message });
+        throw err;
+      }
+    } else {
+      const previous = created ? null : this._findListRecord(kind, row.id);
+      const insert = `INSERT INTO ${k.table} (${k.columns.join(', ')}) VALUES (${k.columns.map(() => '?').join(', ')})`;
+      const update = `UPDATE ${k.table} SET ${k.columns.slice(1).map(c => c + ' = ?').join(', ')} WHERE id = ?`;
+      const updateParams = (r) => { const p = k.encode(r); return p.slice(1).concat([p[0]]); };
+      if (created) this.db.run(insert, k.encode(row));
+      else this.db.run(update, updateParams(row));
+      try {
+        this.saveDB();
+      } catch (err) {
+        try {
+          if (created) this.db.run(`DELETE FROM ${k.table} WHERE id = ?`, [row.id]);
+          else if (previous) this.db.run(update, updateParams(previous));
+        } catch (revertErr) {
+          logger.error('accountStore', k.label + ' restore after failed persistence incomplete', { error: revertErr.message });
+        }
+        throw err;
+      }
+    }
+    // Identifiers only: never names, descriptions, search text or member ids.
+    logger.info('lists', `${k.label} ${created ? 'created' : 'updated'}`, { id: row.id, storage: this.db ? 'sql' : 'json' });
+  }
+
+  _deleteListRecord(kind, id) {
+    const k = LIST_KINDS[kind];
+    if (typeof id !== 'string' || !id || id.length > LIST_ID_MAX) {
+      return { success: false, error: `Invalid ${k.label} delete: id` };
+    }
+    const existing = this._findListRecord(kind, id);
+    if (!existing) return { success: true, deleted: false, reason: 'not-found' };
+    if (!this.db) {
+      const rows = this[k.cache] || [];
+      const backup = rows.slice();
+      this[k.cache] = rows.filter(entry => !entry || entry.id !== id);
+      try {
+        writeJsonAtomic(path.join(DATA_DIR, k.file), JSON.stringify(this[k.cache], null, 2));
+      } catch (err) {
+        this[k.cache] = backup;
+        logger.error('accountStore', 'failed to write ' + k.file, { error: err.message });
+        throw err;
+      }
+    } else {
+      const scan = this.db.exec(`SELECT * FROM ${k.table} WHERE id = ?`, [id]);
+      const raw = scan.length ? plainRow(scan[0].columns, scan[0].values[0]) : null;
+      this.db.run(`DELETE FROM ${k.table} WHERE id = ?`, [id]);
+      try {
+        this.saveDB();
+      } catch (err) {
+        try {
+          if (raw) {
+            this.db.run(`INSERT INTO ${k.table} (${k.columns.join(', ')}) VALUES (${k.columns.map(() => '?').join(', ')})`,
+              k.columns.map(c => raw[c]));
+          }
+        } catch (revertErr) {
+          logger.error('accountStore', k.label + ' restore after failed persistence incomplete', { error: revertErr.message });
+        }
+        throw err;
+      }
+    }
+    logger.info('lists', `${k.label} deleted`, { id, storage: this.db ? 'sql' : 'json' });
+    return { success: true, deleted: true, id };
+  }
+
   // === P1-G Collection Quality Report ===
   // One writer for the save counters, and one read-only report. Nothing here can
   // reach a lead row: the counters live on the job, and the report only reads.
@@ -2872,4 +3456,8 @@ class AccountStore {
 
 }
 
-module.exports = { AccountStore, migrateSchema, migrateJobSchema, normalizeLeadRow, evaluateTargetExclusions };
+module.exports = {
+  AccountStore, migrateSchema, migrateJobSchema, normalizeLeadRow, evaluateTargetExclusions,
+  // F6: the one list-definition validator, shared with main's IPC validation.
+  normalizeListQuery, LIST_FILTER_VALUES, SEGMENT_TEXT_RULES
+};

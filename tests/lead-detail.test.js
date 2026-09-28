@@ -206,7 +206,8 @@ function test(name, fn) {
     const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((m) => m[1]);
     // P1-E declared lock update: channel count 20 -> 21. The addition is the
     // read-only duplicate review; still no single-lead detail channel.
-    assert.strictEqual(channels.length, 26, 'exactly 26 IPC channels (P1-G added the two read-only report channels)');
+    // F6 declared lock update: 26 -> 33, the seven sender-checked Lists channels.
+    assert.strictEqual(channels.length, 33, 'exactly 33 IPC channels (P1-G report channels, F6 Lists channels)');
     assert.ok(!channels.includes('collector:get-number'), 'no single-lead channel introduced');
   });
 
@@ -266,7 +267,8 @@ function test(name, fn) {
     // 2 -> 4 (CREATE INDEX) and 1 -> 2 (CREATE TABLE). Kept as exact
     // equality (never >=) so any further DDL must still be declared here.
     assert.strictEqual(storeSource.split('CREATE INDEX').length - 1, 4, 'B4 adds exactly two job indexes');
-    assert.strictEqual(storeSource.split('CREATE TABLE').length - 1, 3, 'B4 adds one job table, P1-F one target table');
+    // F6 declared lock update: +2 additive list tables (saved_searches, segments).
+    assert.strictEqual(storeSource.split('CREATE TABLE').length - 1, 5, 'B4 one job table, P1-F one target table, F6 two list tables');
   });
 
   const detailStart = rendererSource.indexOf('// === Lead Detail overlay (B3) ===');

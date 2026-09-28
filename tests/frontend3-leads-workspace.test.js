@@ -485,7 +485,9 @@ test('17. selection can be cleared, and the bar reports the real count', () => {
 test('18. the selection bar exposes only real bulk actions', () => {
   const bar = between(htmlSource, 'id="leads-selection"', 'id="numbers-pagination"');
   const ids = [...bar.matchAll(/id="(btn-[^"]+)"/g)].map((m) => m[1]);
-  assert.deepStrictEqual(ids, ['btn-delete-selected', 'btn-clear-selection'],
+  // F6 declared update: the two segment actions use the real segments:members /
+  // segments:save channels (asserted in the F6 tests).
+  assert.deepStrictEqual(ids, ['btn-add-to-segment', 'btn-remove-from-segment', 'btn-delete-selected', 'btn-clear-selection'],
     'delete (a real channel) and a local clear, nothing else');
   // Delete really is the existing contract.
   const del = between(rendererSource, "document.getElementById('btn-delete-selected').addEventListener", '\n});');
@@ -723,8 +725,9 @@ test('27. focus states are visible and the density token still drives the rows',
 // --- 13. security and scope --------------------------------------------------
 
 test('28. no new IPC channel, no dependency change, no network call', () => {
-  assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 26, 'still 26 IPC channels');
-  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 32, 'still 32 preload invocations');
+  // F6 declared lock update: +7 Lists channels and their seven preload methods.
+  assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 33, '33 IPC channels');
+  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 39, '39 preload invocations');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
     'production dependencies unchanged');

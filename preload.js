@@ -62,6 +62,17 @@ contextBridge.exposeInMainWorld('appAPI', {
     save: (payload) => ipcRenderer.invoke('targets:save', payload),
     setStatus: (payload) => ipcRenderer.invoke('targets:set-status', payload)
   },
+  // F6 Lists: saved searches (query definitions) and segments (static member
+  // lists or dynamic rules). User-owned definitions; none can write a lead.
+  lists: {
+    listSavedSearches: () => ipcRenderer.invoke('saved-searches:list'),
+    saveSavedSearch: (payload) => ipcRenderer.invoke('saved-searches:save', payload),
+    deleteSavedSearch: (payload) => ipcRenderer.invoke('saved-searches:delete', payload),
+    listSegments: () => ipcRenderer.invoke('segments:list'),
+    saveSegment: (payload) => ipcRenderer.invoke('segments:save', payload),
+    updateSegmentMembers: (payload) => ipcRenderer.invoke('segments:members', payload),
+    deleteSegment: (payload) => ipcRenderer.invoke('segments:delete', payload)
+  },
 
   // 日志
   logs: {

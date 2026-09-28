@@ -163,7 +163,8 @@ function test(name, fn) {
     // No new index and no new table: the run lookup uses the existing
     // (providerId, runSlug) identity and a bounded scan.
     assert.strictEqual((storeSource.match(/CREATE INDEX/g) || []).length, 4, 'still exactly four indexes');
-    assert.strictEqual((storeSource.match(/CREATE TABLE/g) || []).length, 3, 'still exactly three tables');
+    // F6 declared lock update: +2 additive list tables (saved_searches, segments).
+    assert.strictEqual((storeSource.match(/CREATE TABLE/g) || []).length, 5, 'exactly five tables');
   });
 
   test('2. a legacy jobs table migrates additively and stays readable', async () => {
@@ -395,7 +396,8 @@ function test(name, fn) {
     // The report created no company record and no column.
     const tables = store.db.exec("SELECT name FROM sqlite_master WHERE type = 'table'")
       .flatMap(r => r.values.map(v => v[0]));
-    assert.deepStrictEqual(tables.sort(), ['jobs', 'numbers', 'targets'], 'no new table');
+    // F6 declared lock update: +2 additive list tables (saved_searches, segments).
+    assert.deepStrictEqual(tables.sort(), ['jobs', 'numbers', 'saved_searches', 'segments', 'targets'], 'no P1-G table');
     const numbers = store.db.exec('PRAGMA table_info(numbers)')[0].values.map(r => r[1]);
     assert.ok(!numbers.includes('companyGroup'), 'no grouping column is stored');
   });

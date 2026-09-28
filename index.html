@@ -80,19 +80,18 @@
 
         <div class="nav-group">
           <div class="nav-group-label">Lists</div>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <!-- Lists: Saved Searches and Segments are live routes. -->
+          <button class="nav-item" data-view="searches" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M3 2.5h7l3 3v8H3z"></path><line x1="5.5" y1="8" x2="10.5" y2="8"></line>
             </svg>
             <span class="nav-label">Saved Searches</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <button class="nav-item" data-view="segments" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M8 2.5 14 6l-6 3.5L2 6z"></path><line x1="2" y1="10" x2="14" y2="10"></line>
             </svg>
             <span class="nav-label">Segments</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
         </div>
 
@@ -756,10 +755,15 @@
               </div>
 
               <div class="leads-toolbar">
+                <button class="btn btn-sm" id="btn-save-search" type="button">Save search</button>
                 <button class="btn btn-sm" id="btn-import-numbers">Import Leads</button>
                 <button class="btn btn-sm" id="btn-export-csv">Export CSV</button>
               </div>
             </div>
+
+            <!-- F6: the list this view was opened from (a saved search or a
+                 segment). Empty and hidden for the plain library. -->
+            <div class="leads-scope" id="leads-scope" role="status" aria-live="polite" hidden></div>
 
             <!-- 2. active filter chips -->
             <div class="leads-chips" id="leads-chips" role="status" aria-live="polite" hidden></div>
@@ -820,6 +824,8 @@
             <div class="leads-selection" id="leads-selection" role="region" aria-label="Selected leads" hidden>
               <span class="leads-selection-count" id="leads-selection-count">0 selected</span>
               <div class="leads-selection-actions">
+                <button class="btn btn-sm" id="btn-add-to-segment" type="button">Add to segment</button>
+                <button class="btn btn-sm" id="btn-remove-from-segment" type="button" hidden>Remove from segment</button>
                 <button class="btn btn-sm btn-danger" id="btn-delete-selected">Delete Selected</button>
                 <button class="btn btn-sm btn-secondary" id="btn-clear-selection">Clear selection</button>
               </div>
@@ -1064,6 +1070,76 @@
           </div>
         </section>
 
+        <!-- F6 Lists: Saved Searches. A saved search stores a supported Leads
+             query definition (search, filters, sort) and no leads; running it
+             re-evaluates it against the current library in the Leads view. -->
+        <section class="view" id="view-searches">
+          <div class="lists-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Saved Searches</h2>
+                <p class="lists-subtitle">Saved Leads filters. Running one re-evaluates it against the current lead library; no leads are stored in it.</p>
+              </div>
+              <div class="lists-actions">
+                <label class="visually-hidden" for="saved-search-filter">Search saved searches</label>
+                <input type="search" id="saved-search-filter" autocomplete="off" placeholder="Search saved searches">
+                <button class="btn btn-sm btn-primary" id="btn-new-saved-search" type="button">New saved search</button>
+              </div>
+            </div>
+            <div class="lists-count" id="saved-search-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table" id="saved-search-table">
+                <caption class="visually-hidden">Saved searches with their stored definition.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Name</th>
+                    <th scope="col">Definition</th>
+                    <th scope="col" class="lists-col-sort">Sort</th>
+                    <th scope="col" class="lists-col-updated">Updated</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="saved-search-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- F6 Lists: Segments. Static segments store explicit lead ids;
+             dynamic segments store rules evaluated by the Leads query layer. -->
+        <section class="view" id="view-segments">
+          <div class="lists-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Segments</h2>
+                <p class="lists-subtitle">Static segments hold the leads you add to them. Dynamic segments hold rules and match the current lead library.</p>
+              </div>
+              <div class="lists-actions">
+                <label class="visually-hidden" for="segment-filter">Search segments</label>
+                <input type="search" id="segment-filter" autocomplete="off" placeholder="Search segments">
+                <button class="btn btn-sm btn-primary" id="btn-new-segment" type="button">New segment</button>
+              </div>
+            </div>
+            <div class="lists-count" id="segment-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table" id="segment-table">
+                <caption class="visually-hidden">Segments with their type and current member count.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Name</th>
+                    <th scope="col" class="lists-col-type">Type</th>
+                    <th scope="col" class="lists-col-members">Members</th>
+                    <th scope="col">Definition</th>
+                    <th scope="col" class="lists-col-updated">Updated</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="segment-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
         <!-- P1-F Target Builder: user-owned prospecting definitions. Required and
              optional fields are PROSPECTING CRITERIA, not save gates: no lead is
              ever rejected from storage because one of them is missing. "Use for
@@ -1264,6 +1340,111 @@
       </div>
     </main>
   </div>
+
+  <!-- F6 Lists dialogs. Native <dialog> elements: focus is contained while
+       open and Escape closes them. Every value is set with textContent. -->
+  <dialog class="lists-dialog" id="saved-search-dialog" aria-labelledby="saved-search-dialog-title">
+    <div class="lists-dialog-form" id="saved-search-form">
+      <h2 class="lists-dialog-title" id="saved-search-dialog-title">Save search</h2>
+      <div class="form-group">
+        <label for="saved-search-name">Name</label>
+        <input type="text" id="saved-search-name" maxlength="120" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="saved-search-description">Description (optional)</label>
+        <textarea id="saved-search-description" rows="2" maxlength="500"></textarea>
+      </div>
+      <div class="lists-dialog-block">
+        <div class="lists-dialog-label">Definition</div>
+        <div class="lists-definition" id="saved-search-definition"></div>
+        <label class="lists-check" id="saved-search-replace-row" hidden>
+          <input type="checkbox" id="saved-search-replace"> Replace with the current Leads filters and sort
+        </label>
+      </div>
+      <p class="lists-dialog-error" id="saved-search-error" role="alert"></p>
+      <div class="lists-dialog-actions">
+        <button type="button" class="btn btn-sm btn-secondary" id="btn-saved-search-cancel">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-saved-search-submit">Save</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="lists-dialog" id="segment-dialog" aria-labelledby="segment-dialog-title">
+    <div class="lists-dialog-form" id="segment-form">
+      <h2 class="lists-dialog-title" id="segment-dialog-title">New segment</h2>
+      <div class="form-group">
+        <label for="segment-name">Name</label>
+        <input type="text" id="segment-name" maxlength="120" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="segment-description">Description (optional)</label>
+        <textarea id="segment-description" rows="2" maxlength="500"></textarea>
+      </div>
+      <fieldset class="lists-type" id="segment-type-group">
+        <legend>Type</legend>
+        <label class="lists-radio"><input type="radio" name="segment-type" id="segment-type-static" value="static" checked>
+          <span><strong>Static</strong> - leads you add explicitly, from a Leads selection</span></label>
+        <label class="lists-radio"><input type="radio" name="segment-type" id="segment-type-dynamic" value="dynamic">
+          <span><strong>Dynamic</strong> - rules that match the current lead library</span></label>
+      </fieldset>
+      <fieldset class="lists-rules" id="segment-rules" hidden>
+        <legend>Rules</legend>
+        <p class="lists-hint">All rules must match. Only fields the Leads query can evaluate are offered.</p>
+        <div class="lists-rules-grid">
+          <div class="form-group lists-rules-wide">
+            <label for="segment-rule-search">Text contains</label>
+            <input type="text" id="segment-rule-search" maxlength="200" autocomplete="off"
+                   placeholder="Phone, title, website, email, address, source or keyword">
+          </div>
+          <div class="form-group"><label for="segment-rule-status">Status</label><select id="segment-rule-status" data-source="number-filter-status" data-rule="status"></select></div>
+          <div class="form-group"><label for="segment-rule-qualification">Qualification</label><select id="segment-rule-qualification" data-source="number-filter-qualification" data-rule="qualification"></select></div>
+          <div class="form-group"><label for="segment-rule-phone">Phone quality</label><select id="segment-rule-phone" data-source="number-filter-phone-quality" data-rule="phoneQuality"></select></div>
+          <div class="form-group"><label for="segment-rule-email">Email quality</label><select id="segment-rule-email" data-source="number-filter-email-quality" data-rule="emailQuality"></select></div>
+          <div class="form-group"><label for="segment-rule-website">Website quality</label><select id="segment-rule-website" data-source="number-filter-website-quality" data-rule="websiteQuality"></select></div>
+          <div class="form-group"><label for="segment-rule-business">Business quality</label><select id="segment-rule-business" data-source="number-filter-business-quality" data-rule="businessQuality"></select></div>
+          <div class="form-group"><label for="segment-rule-completeness">Completeness</label><select id="segment-rule-completeness" data-source="number-filter-completeness" data-rule="completeness"></select></div>
+          <div class="form-group"><label for="segment-rule-source">Source is exactly</label><input type="text" id="segment-rule-source" maxlength="200" autocomplete="off"></div>
+          <div class="form-group"><label for="segment-rule-keyword">Keyword is exactly</label><input type="text" id="segment-rule-keyword" maxlength="200" autocomplete="off"></div>
+        </div>
+        <div class="lists-rules-footer">
+          <button type="button" class="btn btn-sm btn-secondary" id="btn-segment-use-leads">Use current Leads filters</button>
+          <span class="lists-preview" id="segment-rule-preview" role="status" aria-live="polite"></span>
+        </div>
+      </fieldset>
+      <p class="lists-dialog-error" id="segment-error" role="alert"></p>
+      <div class="lists-dialog-actions">
+        <button type="button" class="btn btn-sm btn-secondary" id="btn-segment-cancel">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-segment-submit">Save</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="lists-dialog" id="add-to-segment-dialog" aria-labelledby="add-to-segment-title">
+    <div class="lists-dialog-form" id="add-to-segment-form">
+      <h2 class="lists-dialog-title" id="add-to-segment-title">Add to segment</h2>
+      <p class="lists-hint" id="add-to-segment-summary"></p>
+      <fieldset class="lists-type">
+        <legend>Static segment</legend>
+        <label class="lists-radio"><input type="radio" name="add-to-segment-mode" id="add-to-segment-existing" value="existing" checked>
+          <span>Existing static segment</span></label>
+        <div class="form-group lists-indent">
+          <label class="visually-hidden" for="add-to-segment-select">Static segment</label>
+          <select id="add-to-segment-select"></select>
+        </div>
+        <label class="lists-radio"><input type="radio" name="add-to-segment-mode" id="add-to-segment-new" value="new">
+          <span>New static segment</span></label>
+        <div class="form-group lists-indent">
+          <label class="visually-hidden" for="add-to-segment-name">New segment name</label>
+          <input type="text" id="add-to-segment-name" maxlength="120" autocomplete="off" placeholder="Segment name">
+        </div>
+      </fieldset>
+      <p class="lists-dialog-error" id="add-to-segment-error" role="alert"></p>
+      <div class="lists-dialog-actions">
+        <button type="button" class="btn btn-sm btn-secondary" id="btn-add-to-segment-cancel">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-add-to-segment-submit">Add</button>
+      </div>
+    </div>
+  </dialog>
 
   <script type="module" src="./src/renderer/renderer.js"></script>
 </body>
