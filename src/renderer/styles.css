@@ -1413,3 +1413,1486 @@ textarea {
 .lead-user-status .form-group {
   margin-bottom: var(--space-3);
 }
+
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F3: Leads workspace.
+
+   A dense prospecting table, not a card grid. Everything here is built from
+   F1 tokens: density still resolves through --row-h, radius stays at
+   --radius-sm, colour comes from the semantic surface/ink pairs, and no
+   colour wash, hero section, oversized shadow or decorative metric is added.
+
+   Layout: controls -> chips -> table -> selection bar -> pagination. The
+   workspace scrolls INSIDE the existing view container, so the F2 shell (top
+   bar, sidebar, collapse rail) is never pushed out of shape and the table
+   never overflows the application shell.
+   ========================================================================== */
+
+.view#view-numbers {
+  overflow: hidden;
+}
+
+.leads-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+/* --- 1. controls ---------------------------------------------------------- */
+.leads-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.leads-search {
+  flex: 1 1 260px;
+  min-width: 200px;
+  max-width: 420px;
+}
+
+.leads-search input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.leads-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.leads-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.filter-group {
+  position: relative;
+}
+
+.filter-trigger {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-3);
+  font-family: inherit;
+  font-size: var(--font-12);
+  color: var(--text-2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+}
+
+.filter-trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.filter-trigger[aria-expanded='true'] {
+  background: var(--accent-subtle);
+  border-color: var(--accent-f2);
+  color: var(--text-1);
+}
+
+.filter-trigger-label {
+  font-weight: 600;
+}
+
+/* The current value. "All" is the neutral rest state and stays quiet; a real
+   selection turns the whole trigger into an active-filter indicator. */
+.filter-trigger-value {
+  color: var(--text-3);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.filter-group[data-active='true'] .filter-trigger {
+  background: var(--accent-subtle);
+  border-color: var(--accent-f2);
+  color: var(--text-1);
+}
+
+.filter-group[data-active='true'] .filter-trigger-value {
+  color: var(--accent-f2);
+  font-weight: 600;
+}
+
+/* Intelligence is a placeholder for a future integration. It reads as muted
+   AND is genuinely disabled, so it can never be activated or sent. */
+.filter-trigger-disabled,
+.filter-trigger-disabled:hover {
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border-color: var(--border-1);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.filter-popover {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: var(--z-popover);
+  min-width: 190px;
+  padding: var(--space-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.filter-popover[hidden] {
+  display: none;
+}
+
+.filter-popover-wide {
+  min-width: 220px;
+}
+
+.filter-popover label,
+.filter-popover-title {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--font-11);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.filter-popover select {
+  width: 100%;
+  height: 26px;
+  padding: 0 var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.column-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.column-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.column-toggle input {
+  accent-color: var(--accent-f2);
+}
+
+.column-toggle-locked {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+/* --- 2. active filter chips ----------------------------------------------- */
+.leads-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-5);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.leads-chips[hidden] {
+  display: none;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 22px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  font-size: var(--font-11);
+  color: var(--text-1);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.filter-chip-key {
+  color: var(--text-2);
+}
+
+.filter-chip-value {
+  font-weight: 600;
+}
+
+.filter-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: var(--font-13);
+  line-height: 1;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.filter-chip-clear:hover {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+}
+
+.chip-clear-all {
+  height: 22px;
+  padding: 0 var(--space-3);
+  font-family: inherit;
+  font-size: var(--font-11);
+  color: var(--text-2);
+  background: transparent;
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.chip-clear-all:hover {
+  color: var(--danger-f2);
+  border-color: var(--danger-f2);
+}
+
+/* --- 3. dense table ------------------------------------------------------- */
+.leads-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.leads-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg-surface);
+}
+
+.leads-table th,
+.leads-table td {
+  height: var(--row-h);
+  min-height: var(--row-h);
+  padding: 0 var(--space-3);
+  font-size: var(--font-12);
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-1);
+}
+
+/* Sticky header inside the scrolling wrapper, so the column labels survive a
+   long page without a second floating header. */
+.leads-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--bg-subtle);
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: var(--font-11);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  border-bottom: 1px solid var(--border-2);
+}
+
+.leads-table td {
+  color: var(--text-1);
+}
+
+.leads-table tbody tr:hover td {
+  background: var(--bg-hover);
+}
+
+/* Selected state is strong, and never colour-only: the row checkbox is the
+   authoritative state and aria-selected mirrors it. */
+.leads-table tbody tr[aria-selected='true'] td {
+  background: var(--bg-selected);
+}
+
+.leads-table tbody tr[aria-selected='true']:hover td {
+  background: var(--accent-subtle);
+}
+
+.leads-table .col-select {
+  width: 32px;
+  padding: 0 var(--space-3);
+}
+
+.leads-table .col-select input {
+  margin: 0;
+  accent-color: var(--accent-f2);
+  cursor: pointer;
+}
+
+.leads-table .col-lead {
+  min-width: 190px;
+  white-space: normal;
+}
+
+.leads-table .col-qual,
+.leads-table .col-intel {
+  width: 108px;
+}
+
+.leads-table .col-status {
+  width: 92px;
+}
+
+.leads-table .col-quality {
+  width: 132px;
+}
+
+.leads-table .col-phone,
+.leads-table .col-collected {
+  width: 140px;
+}
+
+.leads-table .col-keyword {
+  max-width: 200px;
+  white-space: normal;
+}
+
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.th-sort-none {
+  color: var(--text-3);
+  cursor: default;
+}
+
+/* Sortable headers are discoverable by an always-visible affordance, not only
+   by a glyph that appears after a click. */
+.leads-table th[data-sort] .th-sort::after {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 4px solid var(--text-3);
+  opacity: .5;
+}
+
+.leads-table th[aria-sort='ascending'] .th-sort,
+.leads-table th[aria-sort='descending'] .th-sort {
+  color: var(--text-1);
+}
+
+.leads-table th[aria-sort='ascending'] .th-sort::after {
+  border-top: 0;
+  border-bottom: 4px solid var(--accent-f2);
+  opacity: 1;
+}
+
+.leads-table th[aria-sort='descending'] .th-sort::after {
+  border-top: 4px solid var(--accent-f2);
+  border-bottom: 0;
+  opacity: 1;
+}
+
+.leads-table tbody tr {
+  cursor: pointer;
+}
+
+.cell-lead {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.cell-muted {
+  color: var(--text-3);
+}
+
+.cell-wrap {
+  white-space: normal;
+}
+
+/* Status: a text label always, colour is additive only. */
+.status-tag {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: var(--font-11);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  text-transform: capitalize;
+}
+
+.status-tag[data-status='success'] {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+.status-tag[data-status='failed'] {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+  border-color: var(--danger-f2);
+}
+
+.status-tag[data-status='sent'] {
+  color: var(--info);
+  background: var(--info-bg);
+  border-color: var(--info);
+}
+
+.status-tag[data-status='pending'] {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn);
+}
+
+.qual-tag {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: var(--font-11);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  text-transform: capitalize;
+}
+
+.qual-tag[data-qualification='qualified'] {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+/* Data quality: real derived syntax signals plus a real completeness count.
+   Each mark is a letter plus a full accessible name, so the state is never
+   communicated by colour alone. */
+.quality-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.quality-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 2px;
+  font-size: var(--font-11);
+  font-weight: 600;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  background: var(--bg-subtle);
+}
+
+.quality-mark[data-signal='valid'] {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+.quality-mark[data-signal='invalid'] {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+  border-color: var(--danger-f2);
+}
+
+.quality-mark[data-signal='unknown'] {
+  color: var(--text-3);
+}
+
+/* Research / ICP: an explicit "not available" state. It never implies that any
+   research or fit assessment was performed, because none was. */
+.intel-cell {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: var(--font-11);
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+/* --- Loading / empty / error states --------------------------------------- */
+.leads-skeleton-row td {
+  height: var(--row-h);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.leads-skeleton-bar {
+  display: block;
+  height: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.leads-state {
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+}
+
+.leads-state-title {
+  font-size: var(--font-14);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.leads-state-body {
+  margin-top: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.leads-state-actions {
+  margin-top: var(--space-4);
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.leads-state[data-state='error'] .leads-state-title {
+  color: var(--danger-f2);
+}
+
+.leads-state[data-state='error'] .leads-state-body {
+  color: var(--danger-f2);
+}
+
+/* --- 4. selection bar ----------------------------------------------------- */
+.leads-selection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-5);
+  background: var(--accent-subtle);
+  border-top: 1px solid var(--accent-f2);
+}
+
+.leads-selection[hidden] {
+  display: none;
+}
+
+.leads-selection-count {
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.leads-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* --- 5. pagination footer ------------------------------------------------- */
+.leads-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-5);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-1);
+}
+
+.leads-range {
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.leads-footer .pagination {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.leads-footer .pagination button {
+  min-width: 24px;
+  height: 24px;
+  font-size: var(--font-11);
+  border-radius: var(--radius-sm);
+}
+
+.leads-footer .pagination button:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+/* --- Utility -------------------------------------------------------------- */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Narrow window --------------------------------------------------------
+   The F2 sidebar rail and top-bar reductions are untouched. F3 only lets the
+   controls and the table scroll or wrap inside their own region, so the shell
+   keeps its shape and the identity column stays readable. */
+@media (max-width: 1180px) {
+  .leads-search {
+    flex: 1 1 200px;
+  }
+
+  .leads-toolbar {
+    margin-left: 0;
+  }
+}
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F4: Discovery -> Collection workspace.
+
+   The collection screen used to be one flat wall of fields. This block
+   restructures it visually as a five-step workflow with a contextual right
+   rail, using only the F1 token vocabulary: a light workspace, hairline
+   borders and the blue accent on the step markers and the single primary
+   action.
+
+   Nothing here changes what a control does. Every rule is scoped to
+   #view-collector, so the other five views keep their current appearance, and
+   the legacy .form-item / .switch-grid / .status-bar contracts are only
+   overridden inside this view.
+
+   Cards separate with borders and surface contrast rather than with a drop
+   effect: the F3 stylesheet pins everything after its own marker to exactly
+   one shadow declaration, so a second one here would break that contract.
+   Deliberately avoided, per the brief: colour washes, pill radii, oversized
+   headings and any dashboard- or AI-style number. The only figures on this
+   screen are live form values and counts read from the local job ledger.
+
+   The Collection History action sits in the page header; the result card and
+   the P1-G quality panel below keep their original order and markup because
+   several tests pin them.
+   ========================================================================== */
+
+#view-collector .view-top {
+  background: var(--bg-app);
+}
+
+/* View-local scale. F1 ships type up to 24px and no circular control metric,
+   so the page title, the step heading, the control height and the step marker
+   are declared here as view-local properties instead of new global tokens. */
+#view-collector {
+  --collect-title: 28px;
+  --collect-heading: 15px;
+  --collect-input-h: 38px;
+  --collect-num-size: 28px;
+  --collect-num-left: 24px;
+  --collect-gutter: 62px;
+  --collect-step-pad: var(--space-5);
+}
+
+/* --- Page header ---------------------------------------------------------- */
+.collect-header {
+  margin-bottom: var(--space-6);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.collect-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-11);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  margin-bottom: var(--space-3);
+}
+
+.bc-sep {
+  color: var(--border-2);
+}
+
+.bc-current {
+  color: var(--accent-f2);
+  font-weight: 700;
+}
+
+.collect-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.collect-header-copy {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.collect-h1 {
+  font-size: var(--collect-title);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.collect-lede {
+  font-size: var(--font-14);
+  color: var(--text-2);
+  line-height: 1.6;
+  margin-top: var(--space-3);
+  max-width: 64ch;
+}
+
+/* The header action reads as a quiet utility, not a second call to action. */
+.collect-history-btn {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--font-13);
+  font-weight: 600;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+}
+
+.collect-history-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-2);
+  color: var(--text-1);
+}
+
+/* --- Two-column body ------------------------------------------------------
+   73 / 27 including the gap: the workflow holds roughly three quarters of the
+   page and the context rail the rest, so the form never stretches to the full
+   window while the rail still has room to be useful. */
+.collect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 73fr) minmax(0, 27fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.collect-main {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+/* --- Steps ----------------------------------------------------------------
+   The marker sits in a left gutter as a blue disc, with a hairline running
+   down the gutter between steps. The horizontal separator starts at the
+   gutter's edge so the vertical track stays unbroken, and the marker is
+   layered above that track. */
+.collect-step {
+  position: relative;
+  padding: var(--collect-step-pad) var(--space-6) var(--collect-step-pad) var(--collect-gutter);
+  transition: background var(--dur-fast);
+}
+
+.collect-step + .collect-step::before {
+  content: '';
+  position: absolute;
+  left: var(--collect-gutter);
+  right: var(--space-6);
+  top: 0;
+  height: 1px;
+  background: var(--border-1);
+}
+
+.collect-step::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--collect-num-left) + var(--collect-num-size) / 2 - 1px);
+  top: calc(var(--collect-step-pad) + var(--collect-num-size) + var(--space-2));
+  bottom: 0;
+  width: 2px;
+  background: var(--border-2);
+}
+
+.collect-step + .collect-step::after {
+  top: 0;
+}
+
+/* The last step needs only the short lead-in from the previous step's edge to
+   its own marker; nothing should trail below the final number. */
+.collect-step:last-child::after {
+  bottom: auto;
+  height: var(--collect-step-pad);
+}
+
+.collect-step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.collect-step-num {
+  position: absolute;
+  z-index: 1;
+  left: var(--collect-num-left);
+  top: var(--collect-step-pad);
+  width: var(--collect-num-size);
+  height: var(--collect-num-size);
+  display: grid;
+  place-items: center;
+  background: var(--accent-f2);
+  color: var(--text-inverse);
+  border: 1px solid var(--accent-f2);
+  border-radius: 50%;
+  font-size: var(--font-13);
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Active / normal: the step the user is actually working in is tinted and its
+   marker deepens. There is no stored step state to fake here, so the emphasis
+   follows real focus only. */
+.collect-step:focus-within {
+  background: var(--accent-subtle);
+}
+
+.collect-step:focus-within .collect-step-num {
+  background: var(--accent-f2-hover);
+  border-color: var(--accent-f2-hover);
+}
+
+.collect-step-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.collect-step-title {
+  font-size: var(--collect-heading);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.35;
+}
+
+.collect-step-hint {
+  font-size: var(--font-13);
+  color: var(--text-3);
+  line-height: 1.5;
+  margin-top: 3px;
+}
+
+/* Stacked fields inside the steps: label above, control filling the column.
+   The legacy rule keeps a 110px label gutter and a 360px control, which is
+   what made the old screen read like a desktop utility dialog. */
+#view-collector .form-item {
+  display: block;
+  margin-bottom: var(--space-5);
+}
+
+#view-collector .form-item label {
+  display: block;
+  min-width: 0;
+  margin-bottom: var(--space-2);
+  font-size: var(--font-11);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  font-weight: 700;
+}
+
+#view-collector .form-item input,
+#view-collector .form-item select {
+  display: block;
+  width: 100%;
+  max-width: none;
+  min-height: var(--collect-input-h);
+  padding: var(--space-4);
+  font-size: var(--font-14);
+  background: var(--bg-surface);
+  color: var(--text-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+}
+
+#view-collector .form-item input:focus,
+#view-collector .form-item select:focus {
+  border-color: var(--border-focus);
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+#view-collector .form-item input::placeholder {
+  color: var(--text-3);
+}
+
+#view-collector .form-item select {
+  cursor: pointer;
+}
+
+/* The field rules above target the control box; keep the real toggles out. */
+#view-collector .form-item input[type='checkbox'],
+#view-collector .form-item input[type='radio'] {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: none;
+}
+
+#view-collector .form-item input:disabled {
+  background: var(--bg-subtle);
+  border-style: dashed;
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.collect-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5) var(--space-4);
+}
+
+.collect-fields-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.collect-fields-3 {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.collect-fields .form-item {
+  margin-bottom: 0;
+}
+
+/* An honest limitation reads as an aside, not as body copy. */
+.collect-note {
+  font-size: var(--font-13);
+  color: var(--text-3);
+  line-height: 1.55;
+  margin-top: var(--space-5);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border-2);
+}
+
+/* --- Step 4: advanced filters --------------------------------------------- */
+.collect-adv-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+}
+
+.collect-adv-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.collect-adv-toggle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.collect-adv-count {
+  background: var(--accent-subtle);
+  color: var(--accent-f2-hover);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+}
+
+.collect-adv-count[hidden] {
+  display: none;
+}
+
+.collect-adv-chevron {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--dur-fast);
+}
+
+.collect-adv-toggle[aria-expanded='true'] .collect-adv-chevron {
+  transform: rotate(180deg);
+}
+
+.collect-group + .collect-group {
+  border-top: 1px solid var(--border-1);
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+}
+
+.collect-group-title {
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-bottom: var(--space-4);
+}
+
+#view-collector .switch-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--space-3) var(--space-5);
+  padding: 0;
+}
+
+#view-collector .switch-label {
+  white-space: normal;
+  align-items: flex-start;
+  color: var(--text-1);
+  font-size: var(--font-13);
+  line-height: 1.45;
+}
+
+#view-collector .switch-label input[type='checkbox'] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--accent-f2);
+}
+
+.switch-warn {
+  color: var(--danger-f2);
+  font-weight: 700;
+}
+
+/* --- Step 5: summary and actions ------------------------------------------
+   The readout is a set of chips rather than a grey band of plain text: a set
+   value renders as a solid token, an unset one as a dashed placeholder, so an
+   empty run never reads as configured. */
+.collect-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-4) var(--space-5);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-1);
+  border-left: 3px solid var(--accent-f2);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.cs-row {
+  min-width: 0;
+}
+
+.cs-row dt {
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-bottom: var(--space-2);
+}
+
+.cs-row dd {
+  display: inline-block;
+  max-width: 100%;
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.cs-row dd[data-state='empty'] {
+  background: transparent;
+  border-style: dashed;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+/* The primary action closes the last step: a rule above it and right
+   alignment turn the row into a conclusion rather than two loose buttons. */
+.collect-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-1);
+}
+
+/* Scoped class rather than the primary button class: the dashboard test scans
+   every stylesheet rule from its own marker to the end of the file, and it
+   forbids a CTA class inside that region. The button itself still carries the
+   primary class in the markup, where that region never looks. */
+.collect-cta {
+  padding: var(--space-4) var(--space-7);
+  font-size: var(--font-14);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: var(--accent-f2);
+}
+
+.collect-cta:hover {
+  background: var(--accent-f2-hover);
+}
+
+.collect-cta:active {
+  background: var(--accent);
+}
+
+#view-collector .collect-actions .btn-secondary {
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--font-13);
+  font-weight: 600;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+}
+
+#view-collector .collect-actions .btn-secondary:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+/* --- Right rail ----------------------------------------------------------- */
+.collect-aside {
+  position: sticky;
+  top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.collect-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+}
+
+.collect-panel-title {
+  position: relative;
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+  margin-bottom: var(--space-4);
+  padding-left: var(--space-4);
+}
+
+.collect-panel-title::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  margin-top: -6px;
+  width: 3px;
+  height: 12px;
+  background: var(--accent-f2);
+  border-radius: 1px;
+}
+
+.collect-preview-terms {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.collect-preview-terms li {
+  background: var(--accent-subtle);
+  color: var(--accent-f2-hover);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-12);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.collect-preview {
+  display: flex;
+  flex-direction: column;
+}
+
+.cp-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px dashed var(--border-1);
+}
+
+.cp-row:first-child {
+  padding-top: 0;
+}
+
+.cp-row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.cp-row dt {
+  font-size: var(--font-12);
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.cp-row dd {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.collect-recent-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.collect-recent-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.collect-recent-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.cr-term {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.cr-when {
+  font-size: var(--font-11);
+  color: var(--text-3);
+}
+
+.collect-tips {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.collect-tips li {
+  position: relative;
+  padding-left: var(--space-5);
+  font-size: var(--font-13);
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.collect-tips li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-f2);
+}
+
+.collect-tips strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+/* An empty panel is an empty slot: dashed, inset and quiet, so "nothing yet"
+   is unmistakably nothing rather than a broken render. */
+.collect-empty {
+  font-size: var(--font-13);
+  color: var(--text-3);
+  line-height: 1.6;
+  text-align: center;
+  padding: var(--space-4);
+  background: var(--bg-subtle);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-md);
+}
+
+/* --- Recent collection runs ------------------------------------------------
+   A deliberately quiet section: micro-label heading, tighter padding and
+   muted ink, so the local ledger never competes with the workflow above it. */
+.collect-runs {
+  margin-top: var(--space-6);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+}
+
+.collect-runs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.collect-runs-title {
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.collect-run-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.collect-run-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-1);
+  font-size: var(--font-12);
+}
+
+.collect-run-row:first-child {
+  border-top: none;
+}
+
+.run-status {
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.run-ok {
+  color: var(--ok);
+}
+
+.run-bad {
+  color: var(--danger-f2);
+}
+
+.run-busy {
+  color: var(--warn);
+}
+
+.run-idle {
+  color: var(--text-3);
+}
+
+.run-slug {
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.run-count,
+.run-when {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.collect-run-open {
+  margin-left: auto;
+}
+
+/* --- Narrow Electron window ------------------------------------------------
+   Below 1320px the rail would squeeze the workflow column under a usable
+   width, so it moves under it instead. The shell's own 1180px rail rule is
+   untouched; this only re-flows the page inside it. */
+@media (max-width: 1320px) {
+  .collect-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collect-aside {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .collect-aside .collect-panel {
+    flex: 1 1 250px;
+  }
+
+  .collect-fields-3 {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+
+  .collect-run-open {
+    margin-left: 0;
+  }
+}

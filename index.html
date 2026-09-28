@@ -254,102 +254,271 @@
         <!-- Collection view -->
         <section class="view active" id="view-collector">
           <div class="view-top">
-            <div class="form-item">
-              <label>Keywords</label>
-              <input type="text" id="collect-keywords" placeholder="Comma separated, e.g. HVAC Contractors, Plumber">
-            </div>
-            <div class="form-item">
-              <label>Region</label>
-              <input type="text" id="collect-region" placeholder="e.g. New York, USA">
-            </div>
-            <div class="form-item">
-              <label>Language</label>
-              <select id="collect-lang">
-                <option value="en">English</option>
-                <option value="zh">Chinese</option>
-                <option value="es">Español</option>
-                <option value="fr">Français</option>
-                <option value="de">Deutsch</option>
-                <option value="ar">العربية</option>
-                <option value="pt">Português</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">한국어</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Maximum Quantity</label>
-              <input type="number" id="collect-max" value="20" min="1" max="500">
-            </div>
-            <div class="form-item">
-              <label>Title Matching</label>
-              <select id="collect-title-match">
-                <option value="all">Match All</option>
-                <option value="exact">Exact Match</option>
-                <option value="contains">Contains keywords</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Lowest Rating</label>
-              <select id="collect-min-rating">
-                <option value="all">Any</option>
-                <option value="4.5">4.5+</option>
-                <option value="4.0">4.0+</option>
-                <option value="3.5">3.5+</option>
-                <option value="3.0">3.0+</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Website Filter</label>
-              <select id="collect-website-filter">
-                <option value="all">All</option>
-                <option value="has_website">Has Website</option>
-                <option value="no_website">No Website</option>
-              </select>
+            <!-- F4: page header. The shell already shows Discovery / Collection
+                 in the top bar; this repeats the hierarchy inside the page so
+                 the screen reads as one step of the pipeline, not the product. -->
+            <div class="collect-header">
+              <nav class="collect-breadcrumb" aria-label="Breadcrumb">
+                <span class="bc-item">Discovery</span>
+                <span class="bc-sep" aria-hidden="true">/</span>
+                <span class="bc-item bc-current" aria-current="page">Collection</span>
+              </nav>
+              <div class="collect-header-row">
+                <div class="collect-header-copy">
+                  <h1 class="collect-h1">Collection</h1>
+                  <p class="collect-lede">Find businesses for the prospecting pipeline. Say what you are
+                    looking for and where, then start a run.</p>
+                </div>
+                <button class="btn btn-secondary collect-history-btn" id="btn-collection-history" type="button">Collection History</button>
+              </div>
             </div>
 
-            <div class="form-divider"></div>
-            <div class="switch-grid">
-              <label class="switch-label"><input type="checkbox" id="collect-skip-closed" checked> Skip Permanently Closed</label>
-              <label class="switch-label"><input type="checkbox" id="collect-social" checked> Social Information</label>
-              <label class="switch-label"><input type="checkbox" id="collect-facebook"> Facebook</label>
-              <label class="switch-label"><input type="checkbox" id="collect-instagram"> Instagram</label>
-              <label class="switch-label"><input type="checkbox" id="collect-youtube"> YouTube</label>
-              <label class="switch-label"><input type="checkbox" id="collect-tiktok"> TikTok</label>
-              <label class="switch-label"><input type="checkbox" id="collect-linkedin"> LinkedIn</label>
-              <label class="switch-label"><input type="checkbox" id="collect-place-details"> Detailed Information</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reservation"> Booking Information</label>
-              <label class="switch-label"><input type="checkbox" id="collect-online-order"> Online Ordering</label>
-              <label class="switch-label"><input type="checkbox" id="collect-web-result"> Web Search</label>
-              <label class="switch-label"><input type="checkbox" id="collect-email-verify"> Email Verification</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reviews"> Scrape Reviews</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reviewer-info"> Reviewer Information</label>
-              <label class="switch-label"><input type="checkbox" id="collect-mobile-only"> <span style="color:red;font-weight:bold;">Mobile Numbers Only</span></label>
+            <div class="collect-grid">
+              <div class="collect-main">
+
+                <!-- STEP 1 -->
+                <div class="collect-step">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">1</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">What to find</h2>
+                      <p class="collect-step-hint">One or more business types, separated by commas.</p>
+                    </div>
+                  </div>
+                  <div class="collect-step-body">
+                    <div class="form-item">
+                      <label for="collect-keywords">Keywords</label>
+                      <input type="text" id="collect-keywords" placeholder="Comma separated, e.g. HVAC Contractors, Plumber">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- STEP 2 -->
+                <div class="collect-step">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">2</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">Where to search</h2>
+                      <p class="collect-step-hint">Region is the location the collector sends.</p>
+                    </div>
+                  </div>
+                  <div class="collect-step-body">
+                    <div class="collect-fields">
+                      <div class="form-item">
+                        <label for="collect-region">Region</label>
+                        <input type="text" id="collect-region" placeholder="e.g. New York, USA"
+                               aria-describedby="collect-region-note">
+                      </div>
+                    </div>
+                    <!-- F4: the disabled secondary location field is gone from the
+                         primary workflow. A disabled control still reads as a form
+                         option, so the location scope is stated once, honestly,
+                         instead. -->
+                    <p class="collect-note" id="collect-region-note">Location is currently controlled by the
+                      Region field.</p>
+                  </div>
+                </div>
+
+                <!-- STEP 3 -->
+                <div class="collect-step">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">3</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">Basic options</h2>
+                      <p class="collect-step-hint">Language of the results and how many to collect.</p>
+                    </div>
+                  </div>
+                  <div class="collect-step-body">
+                    <div class="collect-fields collect-fields-2">
+                      <div class="form-item">
+                        <label for="collect-lang">Language</label>
+                        <select id="collect-lang">
+                          <option value="en">English</option>
+                          <option value="zh">Chinese</option>
+                          <option value="es">Español</option>
+                          <option value="fr">Français</option>
+                          <option value="de">Deutsch</option>
+                          <option value="ar">العربية</option>
+                          <option value="pt">Português</option>
+                          <option value="ja">Japanese</option>
+                          <option value="ko">한국어</option>
+                        </select>
+                      </div>
+                      <div class="form-item">
+                        <label for="collect-max">Maximum Quantity</label>
+                        <input type="number" id="collect-max" value="20" min="1" max="500">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- STEP 4 -->
+                <div class="collect-step">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">4</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">Advanced filters</h2>
+                      <p class="collect-step-hint">Optional rules for matching, profiles and reviews.</p>
+                    </div>
+                    <button class="collect-adv-toggle" id="btn-advanced-filters" type="button"
+                            aria-expanded="false" aria-controls="collect-advanced-panel">
+                      <span class="collect-adv-label" id="collect-adv-label">Show filters</span>
+                      <span class="collect-adv-count" id="collect-advanced-count" hidden></span>
+                      <svg class="icon collect-adv-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                        <path d="M4 6l4 4 4-4"></path>
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="collect-step-body collect-adv-panel" id="collect-advanced-panel" hidden>
+
+                    <div class="collect-group">
+                      <h3 class="collect-group-title">Matching</h3>
+                      <div class="collect-fields collect-fields-3">
+                        <div class="form-item">
+                          <label for="collect-title-match">Title Matching</label>
+                          <select id="collect-title-match">
+                            <option value="all">Match All</option>
+                            <option value="exact">Exact Match</option>
+                            <option value="contains">Contains keywords</option>
+                          </select>
+                        </div>
+                        <div class="form-item">
+                          <label for="collect-min-rating">Lowest Rating</label>
+                          <select id="collect-min-rating">
+                            <option value="all">Any</option>
+                            <option value="4.5">4.5+</option>
+                            <option value="4.0">4.0+</option>
+                            <option value="3.5">3.5+</option>
+                            <option value="3.0">3.0+</option>
+                          </select>
+                        </div>
+                        <div class="form-item">
+                          <label for="collect-website-filter">Website Filter</label>
+                          <select id="collect-website-filter">
+                            <option value="all">All</option>
+                            <option value="has_website">Has Website</option>
+                            <option value="no_website">No Website</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="switch-grid">
+                        <label class="switch-label"><input type="checkbox" id="collect-skip-closed" checked> Skip Permanently Closed</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-mobile-only"> <span class="switch-warn">Mobile Numbers Only</span></label>
+                      </div>
+                    </div>
+
+                    <div class="collect-group">
+                      <h3 class="collect-group-title">Business details</h3>
+                      <div class="switch-grid">
+                        <label class="switch-label"><input type="checkbox" id="collect-place-details"> Detailed Information</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-social" checked> Social Information</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-reservation"> Booking Information</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-online-order"> Online Ordering</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-web-result"> Web Search</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-email-verify"> Email Verification</label>
+                      </div>
+                    </div>
+
+                    <div class="collect-group">
+                      <h3 class="collect-group-title">Social networks</h3>
+                      <div class="switch-grid">
+                        <label class="switch-label"><input type="checkbox" id="collect-facebook"> Facebook</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-instagram"> Instagram</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-youtube"> YouTube</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-tiktok"> TikTok</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-linkedin"> LinkedIn</label>
+                      </div>
+                    </div>
+
+                    <div class="collect-group">
+                      <h3 class="collect-group-title">Reviews</h3>
+                      <div class="switch-grid">
+                        <label class="switch-label"><input type="checkbox" id="collect-reviews"> Scrape Reviews</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-reviewer-info"> Reviewer Information</label>
+                      </div>
+                      <div class="collect-fields collect-fields-3">
+                        <div class="form-item">
+                          <label for="collect-max-reviews">Max Reviews per Business</label>
+                          <input type="number" id="collect-max-reviews" value="5" min="1" max="50">
+                        </div>
+                        <div class="form-item">
+                          <label for="collect-review-sort">Review Sort</label>
+                          <select id="collect-review-sort">
+                            <option value="newest">Newest</option>
+                            <option value="highest">Highest Rating</option>
+                            <option value="lowest">Lowest Rating</option>
+                            <option value="most_relevant">Most Relevant</option>
+                          </select>
+                        </div>
+                        <div class="form-item">
+                          <label for="collect-review-keyword">Review Keywords</label>
+                          <input type="text" id="collect-review-keyword" placeholder="Filter reviews containing these keywords">
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
+                <!-- STEP 5 -->
+                <div class="collect-step collect-step-review">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">5</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">Review and collect</h2>
+                      <p class="collect-step-hint">Exactly what will be sent for this run.</p>
+                    </div>
+                  </div>
+                  <div class="collect-step-body">
+                    <dl class="collect-summary" id="collect-summary">
+                      <div class="cs-row"><dt>Keywords</dt><dd id="cs-keywords">Not set</dd></div>
+                      <div class="cs-row"><dt>Location</dt><dd id="cs-location">Not set</dd></div>
+                      <div class="cs-row"><dt>Language</dt><dd id="cs-language">English</dd></div>
+                      <div class="cs-row"><dt>Max</dt><dd id="cs-max">20</dd></div>
+                      <div class="cs-row"><dt>Filters</dt><dd id="cs-filters">0 active</dd></div>
+                    </dl>
+                    <div class="collect-actions">
+                      <button class="btn btn-primary collect-cta" id="btn-start-collect">Start Collection</button>
+                      <button class="btn btn-secondary" id="btn-check-status">Check Status</button>
+                    </div>
+                    <div class="status-bar" id="collect-status" style="display:none;"></div>
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- Right-hand contextual panels -->
+              <aside class="collect-aside" aria-label="Collection context">
+                <section class="collect-panel">
+                  <h2 class="collect-panel-title">Search Preview</h2>
+                  <div class="collect-panel-body" id="collect-search-preview"></div>
+                </section>
+                <section class="collect-panel">
+                  <h2 class="collect-panel-title">Recent Searches</h2>
+                  <div class="collect-panel-body" id="collect-recent-searches"></div>
+                </section>
+                <section class="collect-panel">
+                  <h2 class="collect-panel-title">Tips for better results</h2>
+                  <div class="collect-panel-body">
+                    <ul class="collect-tips">
+                      <li>Pair a trade with a place, for example <strong>plumbers</strong> and <strong>Baku</strong>.</li>
+                      <li>Keep one specific keyword per run so results stay reviewable.</li>
+                      <li>Start with a small quantity until the keyword looks right.</li>
+                      <li>Open advanced filters only when you need a rating or website rule.</li>
+                      <li>Save results to the Lead Library before starting the next run.</li>
+                    </ul>
+                  </div>
+                </section>
+              </aside>
             </div>
 
-            <div class="form-divider"></div>
-            <div class="form-item">
-              <label>Max Reviews per Business</label>
-              <input type="number" id="collect-max-reviews" value="5" min="1" max="50">
+            <!-- Recent Collection Runs: the local job ledger, nothing invented -->
+            <div class="collect-runs">
+              <div class="collect-runs-head">
+                <h2 class="collect-runs-title">Recent Collection Runs</h2>
+              </div>
+              <div class="collect-runs-body" id="collect-recent-runs"></div>
             </div>
-            <div class="form-item">
-              <label>Review Sort</label>
-              <select id="collect-review-sort">
-                <option value="newest">Newest</option>
-                <option value="highest">Highest Rating</option>
-                <option value="lowest">Lowest Rating</option>
-                <option value="most_relevant">Most Relevant</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Review Keywords</label>
-              <input type="text" id="collect-review-keyword" placeholder="Filter reviews containing these keywords">
-            </div>
-
-            <div class="form-actions">
-              <button class="btn btn-primary" id="btn-start-collect">Start Collection</button>
-              <button class="btn btn-secondary" id="btn-check-status">Check Status</button>
-            </div>
-            <div class="status-bar" id="collect-status" style="display:none;"></div>
 
             <div id="collect-result-card" style="display:none; margin-top:16px;">
               <div class="form-divider"></div>
@@ -421,102 +590,246 @@
 
         <!-- Lead Management view -->
         <section class="view" id="view-numbers">
-          <div class="view-top">
-            <div class="form-item">
-              <label>Search</label>
-              <input type="text" id="number-search" placeholder="Search phone, title, website, email, address, source, keyword...">
+          <!-- Frontend 2.0 F3 — Leads workspace.
+               Reuses the F2 shell and the EXISTING lead query contract
+               (collector:get-numbers). Nothing here adds a channel, a query
+               or a second data path.
+
+               Hierarchy: controls -> active filter chips -> dense table ->
+               selection bar -> pagination.
+
+               The filter controls are the SAME <select> elements the pre-F3
+               form used, with the same ids and the same option values, now
+               presented inside compact popovers. The payload builder and every
+               filter-value allowlist are therefore untouched: F3 changes how
+               the filters are presented, never which values are legal. -->
+          <div class="leads-workspace">
+            <!-- 1. search / filter controls -->
+            <div class="leads-controls" id="leads-controls" role="search" aria-label="Lead search and filters">
+              <div class="leads-search">
+                <label class="visually-hidden" for="number-search">Search leads</label>
+                <input type="search" id="number-search" autocomplete="off"
+                       placeholder="Search phone, title, website, email, address, source, keyword">
+              </div>
+
+              <div class="leads-filters" role="group" aria-label="Lead filters">
+                <div class="filter-group" data-filter="status">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-status">
+                    <span class="filter-trigger-label">Status</span>
+                    <span class="filter-trigger-value" data-filter-value-for="status">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-status" hidden>
+                    <label for="number-filter-status">Status</label>
+                    <select id="number-filter-status">
+                      <option value="all">All</option>
+                      <option value="pending">Pending</option>
+                      <option value="sent">Sent</option>
+                      <option value="success">Success</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="qualification">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-qualification">
+                    <span class="filter-trigger-label">Qualification</span>
+                    <span class="filter-trigger-value" data-filter-value-for="qualification">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-qualification" hidden>
+                    <label for="number-filter-qualification">Qualification</label>
+                    <select id="number-filter-qualification">
+                      <option value="all">All</option>
+                      <option value="unqualified">Unqualified</option>
+                      <option value="qualified">Qualified</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- P1-B: derived data-quality filters. Values are computed from
+                     stored lead data on demand; nothing is persisted. -->
+                <div class="filter-group" data-filter="phoneQuality">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-phone">
+                    <span class="filter-trigger-label">Phone</span>
+                    <span class="filter-trigger-value" data-filter-value-for="phoneQuality">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-phone" hidden>
+                    <label for="number-filter-phone-quality">Phone quality</label>
+                    <select id="number-filter-phone-quality">
+                      <option value="all">All</option>
+                      <option value="valid">Valid</option>
+                      <option value="invalid">Invalid</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="emailQuality">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-email">
+                    <span class="filter-trigger-label">Email</span>
+                    <span class="filter-trigger-value" data-filter-value-for="emailQuality">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-email" hidden>
+                    <label for="number-filter-email-quality">Email quality</label>
+                    <select id="number-filter-email-quality">
+                      <option value="all">All</option>
+                      <option value="valid">Valid</option>
+                      <option value="invalid">Invalid</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="websiteQuality">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-website">
+                    <span class="filter-trigger-label">Website</span>
+                    <span class="filter-trigger-value" data-filter-value-for="websiteQuality">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-website" hidden>
+                    <label for="number-filter-website-quality">Website quality</label>
+                    <select id="number-filter-website-quality">
+                      <option value="all">All</option>
+                      <option value="valid">Valid</option>
+                      <option value="invalid">Invalid</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="businessQuality">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-business">
+                    <span class="filter-trigger-label">Business</span>
+                    <span class="filter-trigger-value" data-filter-value-for="businessQuality">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-business" hidden>
+                    <label for="number-filter-business-quality">Business quality</label>
+                    <select id="number-filter-business-quality">
+                      <option value="all">All</option>
+                      <option value="active">Active</option>
+                      <option value="closed">Closed</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="completeness">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-complete">
+                    <span class="filter-trigger-label">Completeness</span>
+                    <span class="filter-trigger-value" data-filter-value-for="completeness">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-complete" hidden>
+                    <label for="number-filter-completeness">Completeness</label>
+                    <select id="number-filter-completeness">
+                      <option value="all">All</option>
+                      <option value="5">5 of 5</option>
+                      <option value="4">4 of 5</option>
+                      <option value="3">3 of 5</option>
+                      <option value="2">2 of 5</option>
+                      <option value="1">1 of 5</option>
+                      <option value="0">0 of 5</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Intelligence (Research / ICP) belongs to the future
+                     intelligence integration. It is shown so the vocabulary is
+                     visible, and it is GENUINELY disabled: the trigger cannot
+                     be activated, nothing is sent, and the lead row carries no
+                     research or ICP value to filter on. -->
+                <div class="filter-group filter-group-intel" data-filter="intelligence">
+                  <button class="filter-trigger filter-trigger-disabled" type="button" disabled
+                          aria-disabled="true" title="Research and ICP filters are not available yet">
+                    <span class="filter-trigger-label">Intelligence</span>
+                    <span class="filter-trigger-value">Not available</span>
+                  </button>
+                </div>
+
+                <div class="filter-group" data-filter="columns">
+                  <button class="filter-trigger" type="button" id="btn-leads-columns"
+                          aria-expanded="false" aria-controls="fg-columns">
+                    <span class="filter-trigger-label">Columns</span>
+                  </button>
+                  <div class="filter-popover filter-popover-wide" id="fg-columns" hidden>
+                    <div class="filter-popover-title" id="leads-columns-label">Visible columns</div>
+                    <div class="column-toggles" role="group" aria-labelledby="leads-columns-label"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="leads-toolbar">
+                <button class="btn btn-sm" id="btn-import-numbers">Import Leads</button>
+                <button class="btn btn-sm" id="btn-export-csv">Export CSV</button>
+              </div>
             </div>
-            <div class="form-item">
-              <label>Status</label>
-              <select id="number-filter-status">
-                <option value="all">All</option>
-                <option value="pending">Pending</option>
-                <option value="sent">Sent</option>
-                <option value="success">Success</option>
-                <option value="failed">Failed</option>
-              </select>
+
+            <!-- 2. active filter chips -->
+            <div class="leads-chips" id="leads-chips" role="status" aria-live="polite" hidden></div>
+
+            <!-- 3. dense lead table -->
+            <div class="leads-table-wrap" id="leads-table-wrap">
+              <table class="data-table leads-table" id="leads-table">
+                <caption class="visually-hidden">Leads. Sorted rows of stored leads with their real stored fields.</caption>
+                <thead>
+                  <tr>
+                    <th class="col-select" scope="col">
+                      <input type="checkbox" id="select-all-numbers" aria-label="Select all leads on this page">
+                    </th>
+                    <th class="col-lead" scope="col" data-sort="title" aria-sort="none">
+                      <button class="th-sort" type="button">Lead</button>
+                    </th>
+                    <th class="col-phone" scope="col" data-sort="phone" aria-sort="none" data-column="phone">
+                      <button class="th-sort" type="button">Phone</button>
+                    </th>
+                    <th class="col-domain" scope="col" data-column="domain">
+                      <button class="th-sort th-sort-none" type="button" disabled>Domain</button>
+                    </th>
+                    <th class="col-email" scope="col" data-column="email">
+                      <button class="th-sort th-sort-none" type="button" disabled>Email</button>
+                    </th>
+                    <th class="col-status" scope="col" data-column="status">
+                      <button class="th-sort th-sort-none" type="button" disabled>Status</button>
+                    </th>
+                    <th class="col-qual" scope="col" data-column="qualification">
+                      <button class="th-sort th-sort-none" type="button" disabled>Qualification</button>
+                    </th>
+                    <th class="col-quality" scope="col" data-column="quality">
+                      <button class="th-sort th-sort-none" type="button" disabled>Data quality</button>
+                    </th>
+                    <th class="col-intel" scope="col" data-column="research">
+                      <button class="th-sort th-sort-none" type="button" disabled>Research</button>
+                    </th>
+                    <th class="col-intel" scope="col" data-column="icp">
+                      <button class="th-sort th-sort-none" type="button" disabled>ICP fit</button>
+                    </th>
+                    <th class="col-source" scope="col" data-sort="source" aria-sort="none" data-column="source">
+                      <button class="th-sort" type="button">Source</button>
+                    </th>
+                    <th class="col-keyword" scope="col" data-sort="keyword" aria-sort="none" data-column="keyword">
+                      <button class="th-sort" type="button">Keywords</button>
+                    </th>
+                    <th class="col-collected" scope="col" data-sort="collectedAt" aria-sort="none" data-column="collected">
+                      <button class="th-sort" type="button">Collected</button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="numbers-table-body"></tbody>
+              </table>
             </div>
-            <div class="form-item">
-              <label>Qualification</label>
-              <select id="number-filter-qualification">
-                <option value="all">All</option>
-                <option value="unqualified">Unqualified</option>
-                <option value="qualified">Qualified</option>
-              </select>
+
+            <!-- 4. selection / bulk bar. Only actions that already have a real
+                 backend contract appear here: deleting selected leads. -->
+            <div class="leads-selection" id="leads-selection" role="region" aria-label="Selected leads" hidden>
+              <span class="leads-selection-count" id="leads-selection-count">0 selected</span>
+              <div class="leads-selection-actions">
+                <button class="btn btn-sm btn-danger" id="btn-delete-selected">Delete Selected</button>
+                <button class="btn btn-sm btn-secondary" id="btn-clear-selection">Clear selection</button>
+              </div>
             </div>
-            <!-- P1-B: derived data-quality filters. Values are computed from
-                 stored lead data on demand; nothing is persisted. -->
-            <div class="form-item">
-              <label>Phone Quality</label>
-              <select id="number-filter-phone-quality">
-                <option value="all">All</option>
-                <option value="valid">Valid</option>
-                <option value="invalid">Invalid</option>
-                <option value="unknown">Unknown</option>
-              </select>
+
+            <!-- 5. pagination -->
+            <div class="leads-footer">
+              <div class="pagination" id="numbers-pagination"></div>
+              <div class="leads-range" id="leads-range"></div>
             </div>
-            <div class="form-item">
-              <label>Email Quality</label>
-              <select id="number-filter-email-quality">
-                <option value="all">All</option>
-                <option value="valid">Valid</option>
-                <option value="invalid">Invalid</option>
-                <option value="unknown">Unknown</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Website Quality</label>
-              <select id="number-filter-website-quality">
-                <option value="all">All</option>
-                <option value="valid">Valid</option>
-                <option value="invalid">Invalid</option>
-                <option value="unknown">Unknown</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Business Quality</label>
-              <select id="number-filter-business-quality">
-                <option value="all">All</option>
-                <option value="active">Active</option>
-                <option value="closed">Closed</option>
-                <option value="unknown">Unknown</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Completeness</label>
-              <select id="number-filter-completeness">
-                <option value="all">All</option>
-                <option value="5">5 of 5</option>
-                <option value="4">4 of 5</option>
-                <option value="3">3 of 5</option>
-                <option value="2">2 of 5</option>
-                <option value="1">1 of 5</option>
-                <option value="0">0 of 5</option>
-              </select>
-            </div>
-            <div class="form-actions">
-              <button class="btn btn-sm" id="btn-import-numbers">Import Leads</button>
-              <button class="btn btn-sm" id="btn-export-csv">Export CSV</button>
-              <button class="btn btn-sm btn-danger" id="btn-delete-selected">Delete Selected</button>
-            </div>
-          </div>
-          <div class="view-bottom">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th><input type="checkbox" id="select-all-numbers"></th>
-                  <th>Phone</th>
-                  <th>Title</th>
-                  <th>Website</th>
-                  <th>Source</th>
-                  <th>Keywords</th>
-                  <th>Status</th>
-                  <th>Collected</th>
-                </tr>
-              </thead>
-              <tbody id="numbers-table-body"></tbody>
-            </table>
-            <div class="pagination" id="numbers-pagination"></div>
           </div>
           <!-- P1-E: duplicate REVIEW. Read-only: the panel only displays the
                deterministic classification the main process derived. There is

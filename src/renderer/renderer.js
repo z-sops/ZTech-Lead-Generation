@@ -734,19 +734,32 @@ async function checkStorageStatus() {
   }
 }
 
-function renderPagination(containerId, totalPages, currentPage, onPageChange) {
+// `bounded` renders Previous/Next as genuinely disabled controls at the edges
+// instead of omitting them. Off by default so the other views keep their exact
+// current markup; the Leads workspace opts in.
+function renderPagination(containerId, totalPages, currentPage, onPageChange, bounded) {
   const container = document.getElementById(containerId);
   if (totalPages <= 1) { container.innerHTML = ''; return; }
+  const prevDisabled = bounded && currentPage <= 1;
+  const nextDisabled = bounded && currentPage >= totalPages;
   let html = '';
-  if (currentPage > 1) html += `<button data-page="${currentPage - 1}">Previous</button>`;
+  if (currentPage > 1 || bounded) {
+    html += `<button type="button" data-page="${currentPage - 1}" aria-label="Previous page"`
+      + (prevDisabled ? ' disabled' : '') + `>Previous</button>`;
+  }
   for (let i = 1; i <= totalPages; i++) {
     if (totalPages > 7 && Math.abs(i - currentPage) > 2 && i !== 1 && i !== totalPages) {
       if (html.slice(-3) !== '...') html += '<span style="color:var(--text-secondary);padding:0 4px;">...</span>';
       continue;
     }
-    html += `<button data-page="${i}" class="${i === currentPage ? 'active' : ''}">${i}</button>`;
+    const isCurrent = i === currentPage;
+    html += `<button type="button" data-page="${i}"${isCurrent ? ' aria-current="page"' : ''}`
+      + ` class="${isCurrent ? 'active' : ''}">${i}</button>`;
   }
-  if (currentPage < totalPages) html += `<button data-page="${currentPage + 1}">Next</button>`;
+  if (currentPage < totalPages || bounded) {
+    html += `<button type="button" data-page="${currentPage + 1}" aria-label="Next page"`
+      + (nextDisabled ? ' disabled' : '') + `>Next</button>`;
+  }
   container.innerHTML = html;
   container.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => onPageChange(parseInt(btn.dataset.page)));
@@ -1182,10 +1195,23 @@ document.getElementById('collect-result-body').addEventListener('change', (e) =>
   if (target && target.classList && target.classList.contains('result-check')) syncResultSelectAll();
 });
 document.getElementById('select-all-numbers').addEventListener('change', (e) => {
-  document.querySelectorAll('.number-check').forEach(cb => { cb.checked = e.target.checked; });
+  const shouldCheck = !!e.target.checked;
+  document.querySelectorAll('.number-check').forEach(cb => { cb.checked = shouldCheck; });
+  syncLeadsSelection();
 });
 
-// === 号码管理 ===
+// === Leads workspace (Frontend 2.0 F3) ===
+
+// Frontend 2.0 F3. The Leads workspace is a presentation layer over the EXISTING
+// B2 lead query contract (collector:get-numbers). This batch does not add a
+// channel, a query contract, a second fetch path or a client-side filter over a
+// full dataset: every row, total, filter and sort here is what the main process
+// already returned.
+//
+// Real contracts this file is bound to (read, not invented):
+//   search fields  phone title website email address source keyword
+//   filters        status qualification + the five derived quality filters
+//   sort keys      collectedAt title phone source keyword
 let numbersPage = 1;
 let numbersSort = '';
 let numbersOrder = 'asc';
@@ -1202,16 +1228,94 @@ const LEAD_QUALITY_FILTER_CONTROLS = [
   ['number-filter-business-quality', 'businessQuality'],
   ['number-filter-completeness', 'completeness']
 ];
-const NUMBERS_SEARCH_DEBOUNCE_MS = 300;
 
-// Sortable columns by th cellIndex (checkbox, Website and Status excluded).
-const NUMBERS_SORTABLE_COLUMNS = [
-  { index: 1, sort: 'phone', label: 'Phone' },
-  { index: 2, sort: 'title', label: 'Title' },
-  { index: 4, sort: 'source', label: 'Source' },
-  { index: 5, sort: 'keyword', label: 'Keywords' },
-  { index: 7, sort: 'collectedAt', label: 'Collected' }
+// F3: typing is debounced so every keystroke does not become a query. The
+// search itself stays server-side.
+const NUMBERS_SEARCH_DEBOUNCE_MS = 250;
+
+// F3 filter metadata. `key` is the exact filters object key the main process
+// allowlists, `label` is the user-facing name used by the trigger and the chip.
+// The allowed VALUES are never restated here: they live in the option lists of
+// the real <select> elements, which the main process validates again, so F3
+// cannot widen the vocabulary.
+const LEADS_FILTER_DEFS = [
+  { key: 'status', control: 'number-filter-status', label: 'Status' },
+  { key: 'qualification', control: 'number-filter-qualification', label: 'Qualification' },
+  { key: 'phoneQuality', control: 'number-filter-phone-quality', label: 'Phone' },
+  { key: 'emailQuality', control: 'number-filter-email-quality', label: 'Email' },
+  { key: 'websiteQuality', control: 'number-filter-website-quality', label: 'Website' },
+  { key: 'businessQuality', control: 'number-filter-business-quality', label: 'Business' },
+  { key: 'completeness', control: 'number-filter-completeness', label: 'Completeness' }
 ];
+
+// Sortable columns. These are EXACTLY the keys the main process accepts
+// (QUERY_SORT_COLUMNS / NUMBERS_QUERY_SORT_FIELDS). A column with no key here
+// is not sortable - the renderer never invents a sort for a column the query
+// contract cannot order by, and never offers one it cannot satisfy.
+const NUMBERS_SORTABLE_KEYS = ['title', 'phone', 'source', 'keyword', 'collectedAt'];
+
+// F3 column model. `column` maps to the data-column attribute on the header
+// cell. The lead/title column is locked: it is the identity of the row and the
+// table would be unusable without it.
+const LEADS_COLUMNS = [
+  { column: 'phone', label: 'Phone', locked: false },
+  { column: 'domain', label: 'Domain', locked: false },
+  { column: 'email', label: 'Email', locked: false },
+  { column: 'status', label: 'Status', locked: false },
+  { column: 'qualification', label: 'Qualification', locked: false },
+  { column: 'quality', label: 'Data quality', locked: false },
+  { column: 'research', label: 'Research', locked: false },
+  { column: 'icp', label: 'ICP fit', locked: false },
+  { column: 'source', label: 'Source', locked: false },
+  { column: 'keyword', label: 'Keywords', locked: false },
+  { column: 'collected', label: 'Collected', locked: false }
+];
+
+// Sensible dense default: the identity plus the columns a prospecting pass
+// actually reads first. Research/ICP start VISIBLE but empty-on-purpose, so the
+// workspace says out loud that they are not available instead of hiding the gap.
+const LEADS_DEFAULT_COLUMNS = [
+  'phone', 'domain', 'status', 'qualification', 'quality', 'research', 'icp', 'collected'
+];
+
+// Renderer-local only. This is a view preference, not lead data, so it never
+// reaches the database and never travels over IPC.
+const LEADS_COLUMNS_STORAGE_KEY = 'ztech.leads.columns';
+let leadsColumns = LEADS_DEFAULT_COLUMNS.slice();
+
+function readStoredLeadsColumns() {
+  let raw = null;
+  try {
+    raw = window.localStorage.getItem(LEADS_COLUMNS_STORAGE_KEY);
+  } catch {
+    return LEADS_DEFAULT_COLUMNS.slice();
+  }
+  if (!raw) return LEADS_DEFAULT_COLUMNS.slice();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return LEADS_DEFAULT_COLUMNS.slice();
+  }
+  if (!Array.isArray(parsed)) return LEADS_DEFAULT_COLUMNS.slice();
+  // Only known columns survive: a stored name that no longer maps to a real
+  // column is dropped rather than rendered as an empty header.
+  const known = LEADS_COLUMNS.map((c) => c.column);
+  const kept = parsed.filter((c) => known.indexOf(c) !== -1);
+  return kept.length ? kept : LEADS_DEFAULT_COLUMNS.slice();
+}
+
+function persistLeadsColumns() {
+  try {
+    window.localStorage.setItem(LEADS_COLUMNS_STORAGE_KEY, JSON.stringify(leadsColumns));
+  } catch {
+    // Preference only. A hardened profile must never break the workspace.
+  }
+}
+
+function isColumnVisible(column) {
+  return leadsColumns.indexOf(column) !== -1;
+}
 
 function numbersQueryPayload() {
   const query = { limit: NUMBERS_PER_PAGE, offset: (numbersPage - 1) * NUMBERS_PER_PAGE };
@@ -1239,19 +1343,592 @@ function numbersQueryPayload() {
   return query;
 }
 
-function updateNumbersSortHeaders() {
-  document.querySelectorAll('#view-numbers .data-table thead th').forEach((th) => {
-    const col = NUMBERS_SORTABLE_COLUMNS.find((c) => c.index === th.cellIndex);
-    if (!col) return;
-    th.textContent = numbersSort === col.sort
-      ? col.label + (numbersOrder === 'asc' ? ' ▲' : ' ▼')
-      : col.label;
+// --- F3: filter chips -------------------------------------------------------
+
+// The current selection of one filter group, or '' when it is at the neutral
+// "All" value. A neutral filter is never shown as an active chip.
+function currentFilterValue(control) {
+  const el = document.getElementById(control);
+  const value = el ? el.value : 'all';
+  return value === 'all' ? '' : value;
+}
+
+function activeLeadsFilters() {
+  const active = [];
+  for (const def of LEADS_FILTER_DEFS) {
+    const value = currentFilterValue(def.control);
+    if (value) active.push({ key: def.key, label: def.label, control: def.control, value });
+  }
+  return active;
+}
+
+// The label shown on a chip and on its trigger. Taken from the real <option>
+// text, so a chip can never invent a word the control does not offer.
+function filterValueLabel(control, value) {
+  const el = document.getElementById(control);
+  if (!el || !el.options) return value;
+  for (const option of el.options) {
+    if (option.value === value) return option.textContent.trim() || value;
+  }
+  return value;
+}
+
+function syncFilterTriggers() {
+  for (const def of LEADS_FILTER_DEFS) {
+    const group = document.querySelector(`.filter-group[data-filter="${def.key}"]`);
+    if (!group) continue;
+    const value = currentFilterValue(def.control);
+    group.setAttribute('data-active', value ? 'true' : 'false');
+    const slot = group.querySelector(`[data-filter-value-for="${def.key}"]`);
+    if (slot) slot.textContent = value ? filterValueLabel(def.control, value) : 'All';
+  }
+}
+
+function renderLeadsChips() {
+  const bar = document.getElementById('leads-chips');
+  if (!bar) return;
+  const active = activeLeadsFilters();
+  // Built with DOM APIs, not innerHTML: filter values come from the DOM and
+  // are inserted as text.
+  bar.replaceChildren();
+  if (!active.length) {
+    bar.hidden = true;
+    return;
+  }
+  for (const filter of active) {
+    const chip = document.createElement('span');
+    chip.className = 'filter-chip';
+    const key = document.createElement('span');
+    key.className = 'filter-chip-key';
+    key.textContent = filter.label + ':';
+    const value = document.createElement('span');
+    value.className = 'filter-chip-value';
+    value.textContent = filterValueLabel(filter.control, filter.value);
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'filter-chip-clear';
+    clear.textContent = '×';
+    clear.setAttribute('aria-label', `Clear ${filter.label} filter`);
+    clear.addEventListener('click', () => {
+      document.getElementById(filter.control).value = 'all';
+      applyLeadsFilterChange();
+    });
+    chip.append(key, value, clear);
+    bar.appendChild(chip);
+  }
+  const clearAll = document.createElement('button');
+  clearAll.type = 'button';
+  clearAll.className = 'chip-clear-all';
+  clearAll.id = 'btn-clear-all-filters';
+  clearAll.textContent = 'Clear all';
+  clearAll.addEventListener('click', clearAllLeadsFilters);
+  bar.appendChild(clearAll);
+  bar.hidden = false;
+}
+
+function clearAllLeadsFilters() {
+  for (const def of LEADS_FILTER_DEFS) {
+    const el = document.getElementById(def.control);
+    if (el) el.value = 'all';
+  }
+  applyLeadsFilterChange();
+}
+
+// A filter change re-queries through the existing flow. Page one, because a
+// narrower result set can leave the current page empty.
+function applyLeadsFilterChange() {
+  numbersPage = 1;
+  syncFilterTriggers();
+  renderLeadsChips();
+  return renderNumbers();
+}
+
+// --- F3: filter popovers ----------------------------------------------------
+
+let openLeadsPopover = null;
+
+function closeLeadsPopover() {
+  if (!openLeadsPopover) return;
+  const group = openLeadsPopover;
+  const trigger = group.querySelector('.filter-trigger');
+  const popover = group.querySelector('.filter-popover');
+  if (popover) popover.hidden = true;
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  openLeadsPopover = null;
+  if (trigger) trigger.focus();
+}
+
+function toggleLeadsPopover(group) {
+  if (openLeadsPopover === group) {
+    closeLeadsPopover();
+    return;
+  }
+  closeLeadsPopover();
+  const trigger = group.querySelector('.filter-trigger');
+  const popover = group.querySelector('.filter-popover');
+  // A disabled trigger (Intelligence) can never own an open popover.
+  if (!trigger || !popover || trigger.disabled) return;
+  popover.hidden = false;
+  trigger.setAttribute('aria-expanded', 'true');
+  openLeadsPopover = group;
+  const first = popover.querySelector('select, input, button');
+  if (first) first.focus();
+}
+
+(function wireLeadsFilterPopovers() {
+  const groups = document.querySelectorAll('#view-numbers .filter-group');
+  groups.forEach((group) => {
+    const trigger = group.querySelector('.filter-trigger');
+    if (!trigger || trigger.disabled) return;
+    trigger.addEventListener('click', () => toggleLeadsPopover(group));
+    trigger.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+        if (openLeadsPopover === group) return;
+        e.preventDefault();
+        toggleLeadsPopover(group);
+      }
+    });
+  });
+  // Escape closes the open popover from anywhere inside it, including the
+  // native select, whose own popup swallows the event otherwise.
+  document.getElementById('view-numbers').addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !openLeadsPopover) return;
+    e.preventDefault();
+    closeLeadsPopover();
+  });
+  document.addEventListener('click', (e) => {
+    if (!openLeadsPopover) return;
+    if (openLeadsPopover.contains(e.target)) return;
+    closeLeadsPopover();
+  });
+})();
+
+// --- F3: column controls ----------------------------------------------------
+
+function renderLeadsColumnToggles() {
+  const host = document.querySelector('#fg-columns .column-toggles');
+  if (!host) return;
+  host.replaceChildren();
+  for (const col of LEADS_COLUMNS) {
+    const id = `leads-col-${col.column}`;
+    const label = document.createElement('label');
+    label.className = 'column-toggle';
+    label.setAttribute('for', id);
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.id = id;
+    input.checked = isColumnVisible(col.column);
+    input.addEventListener('change', () => {
+      if (input.checked) {
+        if (leadsColumns.indexOf(col.column) === -1) leadsColumns.push(col.column);
+      } else {
+        leadsColumns = leadsColumns.filter((c) => c !== col.column);
+      }
+      persistLeadsColumns();
+      applyColumnVisibility();
+    });
+    const text = document.createElement('span');
+    text.textContent = col.label;
+    label.append(input, text);
+    host.appendChild(label);
+  }
+  // The lead column has no toggle: it is not optional, and offering to hide it
+  // would be a control that can produce an unusable table.
+  const locked = document.createElement('div');
+  locked.className = 'column-toggle column-toggle-locked';
+  const lockedBox = document.createElement('input');
+  lockedBox.type = 'checkbox';
+  lockedBox.checked = true;
+  lockedBox.disabled = true;
+  const lockedText = document.createElement('span');
+  lockedText.textContent = 'Lead (always shown)';
+  locked.append(lockedBox, lockedText);
+  host.appendChild(locked);
+}
+
+function applyColumnVisibility() {
+  document.querySelectorAll('#leads-table [data-column]').forEach((cell) => {
+    cell.hidden = !isColumnVisible(cell.dataset.column);
   });
 }
 
-async function renderNumbers() {
+(function initLeadsColumns() {
+  leadsColumns = readStoredLeadsColumns();
+  renderLeadsColumnToggles();
+  applyColumnVisibility();
+  const trigger = document.getElementById('btn-leads-columns');
+  if (trigger) {
+    trigger.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' && openLeadsPopover === null) {
+        e.preventDefault();
+        toggleLeadsPopover(trigger.closest('.filter-group'));
+      }
+    });
+  }
+})();
+
+// --- F3: sorting -----------------------------------------------------------
+
+// aria-sort is the accessible contract; the caret is a visual affordance on top
+// of it, never the only signal.
+function updateNumbersSortHeaders() {
+  document.querySelectorAll('#leads-table thead th[data-sort]').forEach((th) => {
+    const key = th.dataset.sort;
+    const isActive = numbersSort === key;
+    th.setAttribute('aria-sort', isActive
+      ? (numbersOrder === 'asc' ? 'ascending' : 'descending')
+      : 'none');
+  });
+}
+
+// Third click returns to the store's own default ordering (no sort key at all),
+// which is the existing `ORDER BY rowid DESC` behaviour.
+function cycleNumbersSort(key) {
+  if (numbersSort !== key) {
+    numbersSort = key;
+    numbersOrder = 'asc';
+    return;
+  }
+  if (numbersOrder === 'asc') {
+    numbersOrder = 'desc';
+    return;
+  }
+  numbersSort = '';
+  numbersOrder = 'asc';
+}
+
+// --- F3: selection ---------------------------------------------------------
+
+function selectedLeadIds() {
+  return [...document.querySelectorAll('#numbers-table-body .number-check:checked')]
+    .map((cb) => cb.dataset.id)
+    .filter((id) => typeof id === 'string' && id);
+}
+
+function syncLeadsSelection() {
+  const bar = document.getElementById('leads-selection');
+  const count = document.getElementById('leads-selection-count');
+  if (!bar || !count) return;
+  const ids = selectedLeadIds();
+  count.textContent = ids.length === 1 ? '1 lead selected' : `${ids.length} leads selected`;
+  bar.hidden = ids.length === 0;
+  // #numbers-table-body IS the tbody, so the row selector must not nest it.
+  document.querySelectorAll('#numbers-table-body tr[data-lead-id]').forEach((tr) => {
+    const cb = tr.querySelector('.number-check');
+    tr.setAttribute('aria-selected', cb && cb.checked ? 'true' : 'false');
+  });
+  const selectAll = document.getElementById('select-all-numbers');
+  if (selectAll) {
+    const boxes = [...document.querySelectorAll('#numbers-table-body .number-check')];
+    const checked = boxes.filter((cb) => cb.checked).length;
+    // A real tri-state header checkbox, so "some selected" is not a lie.
+    selectAll.checked = boxes.length > 0 && checked === boxes.length;
+    selectAll.indeterminate = checked > 0 && checked < boxes.length;
+  }
+}
+
+function clearLeadsSelection() {
+  document.querySelectorAll('#numbers-table-body .number-check').forEach((cb) => { cb.checked = false; });
+  syncLeadsSelection();
+}
+
+document.getElementById('numbers-table-body').addEventListener('change', (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains('number-check')) {
+    syncLeadsSelection();
+  }
+});
+
+const btnClearSelection = document.getElementById('btn-clear-selection');
+if (btnClearSelection) btnClearSelection.addEventListener('click', clearLeadsSelection);
+
+// --- F3: row rendering -----------------------------------------------------
+
+const LEADS_DASH = '—';
+
+// Real derived signals only. The lead row carries no research, ICP, score or
+// footprint value, so those cells report that plainly instead of guessing.
+function leadsQualityCell(lead) {
+  const signals = leadQualitySignals(lead);
+  const marks = [
+    { key: 'P', title: 'Phone', signal: signals.phone.syntax },
+    { key: 'E', title: 'Email', signal: signals.email.syntax },
+    { key: 'W', title: 'Website', signal: signals.website.syntax }
+  ];
+  const cell = document.createElement('span');
+  cell.className = 'quality-cell';
+  for (const mark of marks) {
+    const badge = document.createElement('span');
+    badge.className = 'quality-mark';
+    badge.dataset.signal = mark.signal;
+    badge.textContent = mark.key;
+    // The accessible name spells the value out, so the signal is never
+    // communicated by colour or by a single letter alone.
+    badge.title = `${mark.title}: ${mark.signal}`;
+    badge.setAttribute('aria-label', `${mark.title} ${mark.signal}`);
+    cell.appendChild(badge);
+  }
+  const count = document.createElement('span');
+  const completeness = signals.completeness;
+  count.textContent = `${completeness.presentCount}/${completeness.total}`;
+  count.title = completeness.missing.length
+    ? `Missing: ${completeness.missing.join(', ')}`
+    : 'All lead fields present';
+  cell.appendChild(count);
+  return cell;
+}
+
+function leadsIntelCell(text, title) {
+  const span = document.createElement('span');
+  span.className = 'intel-cell';
+  span.textContent = text;
+  span.title = title;
+  return span;
+}
+
+function leadsTextCell(value, mutedWhenEmpty) {
+  const td = document.createElement('td');
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) {
+    td.textContent = LEADS_DASH;
+    if (mutedWhenEmpty !== false) td.className = 'cell-muted';
+    return td;
+  }
+  td.textContent = text;
+  return td;
+}
+
+function leadsStatusCell(lead) {
+  const td = document.createElement('td');
+  const status = typeof lead.status === 'string' && lead.status.trim() ? lead.status.trim() : 'pending';
+  const tag = document.createElement('span');
+  tag.className = 'status-tag';
+  tag.dataset.status = status;
+  tag.textContent = status;
+  td.appendChild(tag);
+  return td;
+}
+
+function leadsQualificationCell(lead) {
+  const td = document.createElement('td');
+  // The stored value, or the store's own default when the column is unset.
+  const value = typeof lead.qualification === 'string' && lead.qualification.trim()
+    ? lead.qualification.trim()
+    : 'unqualified';
+  const tag = document.createElement('span');
+  tag.className = 'qual-tag';
+  tag.dataset.qualification = value;
+  tag.textContent = value;
+  td.appendChild(tag);
+  return td;
+}
+
+function leadsDomainCell(lead) {
+  const td = document.createElement('td');
+  const website = typeof lead.website === 'string' ? lead.website.trim() : '';
+  if (!website) {
+    td.textContent = LEADS_DASH;
+    td.className = 'cell-muted';
+    return td;
+  }
+  // The protocol check lives in the existing renderWebsite helper; the domain
+  // column shows the host, and never links to a scheme it would refuse.
+  let host = website;
   try {
-    const seq = ++numbersLoadSeq;
+    host = new URL(website).host;
+  } catch {
+    host = website;
+  }
+  td.textContent = host;
+  td.title = website;
+  return td;
+}
+
+function leadsRow(lead) {
+  const tr = document.createElement('tr');
+  tr.dataset.leadId = lead.id;
+  tr.setAttribute('aria-selected', 'false');
+
+  const selectCell = document.createElement('td');
+  selectCell.className = 'col-select';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'number-check';
+  box.dataset.id = lead.id;
+  box.setAttribute('aria-label', `Select ${lead.title || lead.phone || 'lead'}`);
+  selectCell.appendChild(box);
+  tr.appendChild(selectCell);
+
+  const leadCell = document.createElement('td');
+  leadCell.className = 'col-lead cell-lead';
+  const title = typeof lead.title === 'string' ? lead.title.trim() : '';
+  leadCell.textContent = title || (typeof lead.phone === 'string' ? lead.phone.trim() : '') || LEADS_DASH;
+  if (title) leadCell.title = title;
+  tr.appendChild(leadCell);
+
+  const phoneCell = leadsTextCell(lead.phone);
+  phoneCell.className = phoneCell.textContent === LEADS_DASH ? 'col-phone cell-muted' : 'col-phone';
+  phoneCell.dataset.column = 'phone';
+  tr.appendChild(phoneCell);
+
+  const domainCell = leadsDomainCell(lead);
+  domainCell.className = domainCell.className ? domainCell.className + ' col-domain' : 'col-domain';
+  domainCell.dataset.column = 'domain';
+  tr.appendChild(domainCell);
+
+  const emailCell = leadsTextCell(lead.email);
+  emailCell.className = emailCell.textContent === LEADS_DASH ? 'col-email cell-muted' : 'col-email';
+  emailCell.dataset.column = 'email';
+  tr.appendChild(emailCell);
+
+  const statusCell = leadsStatusCell(lead);
+  statusCell.className += ' col-status';
+  statusCell.dataset.column = 'status';
+  tr.appendChild(statusCell);
+
+  const qualCell = leadsQualificationCell(lead);
+  qualCell.className += ' col-qual';
+  qualCell.dataset.column = 'qualification';
+  tr.appendChild(qualCell);
+
+  const qualityCell = document.createElement('td');
+  qualityCell.className = 'col-quality';
+  qualityCell.dataset.column = 'quality';
+  qualityCell.appendChild(leadsQualityCell(lead));
+  tr.appendChild(qualityCell);
+
+  // Not "pending", not a spinner, not a score: no research has been performed
+  // for this lead, so the honest state is "not available".
+  const researchCell = document.createElement('td');
+  researchCell.className = 'col-intel';
+  researchCell.dataset.column = 'research';
+  researchCell.appendChild(leadsIntelCell('Not available', 'Research is not integrated in this build'));
+  tr.appendChild(researchCell);
+
+  const icpCell = document.createElement('td');
+  icpCell.className = 'col-intel';
+  icpCell.dataset.column = 'icp';
+  icpCell.appendChild(leadsIntelCell('Not available', 'ICP fit is not integrated in this build'));
+  tr.appendChild(icpCell);
+
+  const sourceCell = leadsTextCell(lead.source);
+  sourceCell.className = sourceCell.textContent === LEADS_DASH ? 'col-source cell-muted' : 'col-source';
+  sourceCell.dataset.column = 'source';
+  tr.appendChild(sourceCell);
+
+  const keywordCell = leadsTextCell(lead.keyword);
+  keywordCell.className = keywordCell.textContent === LEADS_DASH
+    ? 'col-keyword cell-muted'
+    : 'col-keyword cell-wrap';
+  keywordCell.dataset.column = 'keyword';
+  tr.appendChild(keywordCell);
+
+  const collectedCell = document.createElement('td');
+  collectedCell.className = 'col-collected';
+  collectedCell.dataset.column = 'collected';
+  collectedCell.textContent = lead.collectedAt ? new Date(lead.collectedAt).toLocaleString('en-GB') : LEADS_DASH;
+  if (collectedCell.textContent === LEADS_DASH) collectedCell.classList.add('cell-muted');
+  tr.appendChild(collectedCell);
+
+  return tr;
+}
+
+// The skeleton mirrors the real header cell-for-cell - same count, same column
+// keys - so the table never reflows when the rows arrive and a hidden column
+// stays hidden while loading.
+const LEADS_COLUMN_ORDER = [
+  { cls: 'col-select', column: null },
+  { cls: 'col-lead', column: null },
+  { cls: 'col-phone', column: 'phone' },
+  { cls: 'col-domain', column: 'domain' },
+  { cls: 'col-email', column: 'email' },
+  { cls: 'col-status', column: 'status' },
+  { cls: 'col-qual', column: 'qualification' },
+  { cls: 'col-quality', column: 'quality' },
+  { cls: 'col-intel', column: 'research' },
+  { cls: 'col-intel', column: 'icp' },
+  { cls: 'col-source', column: 'source' },
+  { cls: 'col-keyword', column: 'keyword' },
+  { cls: 'col-collected', column: 'collected' }
+];
+
+function leadsSkeletonRows(count) {
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < count; i++) {
+    const tr = document.createElement('tr');
+    tr.className = 'leads-skeleton-row';
+    tr.setAttribute('aria-hidden', 'true');
+    for (let c = 0; c < LEADS_COLUMN_ORDER.length; c++) {
+      const spec = LEADS_COLUMN_ORDER[c];
+      const td = document.createElement('td');
+      td.className = spec.cls;
+      if (spec.column) {
+        td.dataset.column = spec.column;
+        td.hidden = !isColumnVisible(spec.column);
+      }
+      const bar = document.createElement('span');
+      bar.className = 'leads-skeleton-bar';
+      // Width varies so the placeholder reads as content, not as a grid.
+      bar.style.width = `${45 + ((i + c) % 5) * 11}%`;
+      td.appendChild(bar);
+      tr.appendChild(td);
+    }
+    frag.appendChild(tr);
+  }
+  return frag;
+}
+
+function renderLeadsState(state, title, body) {
+  const tbody = document.getElementById('numbers-table-body');
+  tbody.replaceChildren();
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  // A full-width state cell is unaffected by column visibility.
+  td.colSpan = LEADS_COLUMN_ORDER.length;
+  const box = document.createElement('div');
+  box.className = 'leads-state';
+  box.dataset.state = state;
+  const heading = document.createElement('div');
+  heading.className = 'leads-state-title';
+  heading.textContent = title;
+  const detail = document.createElement('div');
+  detail.className = 'leads-state-body';
+  detail.textContent = body;
+  box.append(heading, detail);
+  if (state === 'empty-filtered') {
+    const actions = document.createElement('div');
+    actions.className = 'leads-state-actions';
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'btn btn-sm';
+    clear.id = 'btn-clear-filters-empty';
+    clear.textContent = 'Clear filters';
+    clear.addEventListener('click', clearAllLeadsFilters);
+    actions.appendChild(clear);
+    box.appendChild(actions);
+  }
+  td.appendChild(box);
+  tr.appendChild(td);
+  tbody.appendChild(tr);
+}
+
+function renderLeadsRange(total, shown) {
+  const el = document.getElementById('leads-range');
+  if (!el) return;
+  if (!total) {
+    el.textContent = '';
+    return;
+  }
+  const first = (numbersPage - 1) * NUMBERS_PER_PAGE + 1;
+  const last = (numbersPage - 1) * NUMBERS_PER_PAGE + shown;
+  el.textContent = `Showing ${first}–${last} of ${total} leads`;
+}
+
+async function renderNumbers() {
+  const tbody = document.getElementById('numbers-table-body');
+  const seq = ++numbersLoadSeq;
+  // Loading state first, so a slow query is never a blank table.
+  tbody.replaceChildren(leadsSkeletonRows(8));
+  try {
     const result = await window.appAPI.collector.getNumbers(numbersQueryPayload());
     if (seq !== numbersLoadSeq) return;
     const rows = result && Array.isArray(result.rows) ? result.rows : [];
@@ -1262,22 +1939,43 @@ async function renderNumbers() {
       return renderNumbers();
     }
 
-    const tbody = document.getElementById('numbers-table-body');
-    tbody.innerHTML = rows.map(n => `<tr>
-    <td><input type="checkbox" class="number-check" data-id="${escapeHtml(n.id)}"></td>
-    <td>${escapeHtml(n.phone)}</td>
-    <td>${escapeHtml(n.title || '-')}</td>
-    <td>${escapeHtml(n.website || '-')}</td>
-    <td>${escapeHtml(n.source || '-')}</td>
-    <td>${escapeHtml(n.keyword || '-')}</td>
-    <td>${escapeHtml(n.status || 'pending')}</td>
-    <td>${n.collectedAt ? new Date(n.collectedAt).toLocaleString('en-GB') : '-'}</td>
-  </tr>`).join('');
+    const hasFilters = activeLeadsFilters().length > 0
+      || Boolean(document.getElementById('number-search').value.trim());
+    clearLeadsSelection();
+    const selectAll = document.getElementById('select-all-numbers');
+    if (selectAll) { selectAll.checked = false; selectAll.indeterminate = false; }
 
-    renderPagination('numbers-pagination', totalPages, numbersPage, (p) => { numbersPage = p; renderNumbers(); });
+    if (rows.length === 0) {
+      // Two genuinely different situations, reported as two different states.
+      if (total === 0 && !hasFilters) {
+        renderLeadsState('empty', 'No leads yet',
+          'Collect leads or import a CSV to build the library.');
+      } else {
+        renderLeadsState('empty-filtered', 'No leads match these filters',
+          'Adjust the filters or clear them to see the rest of the library.');
+      }
+      renderLeadsRange(0, 0);
+      renderPagination('numbers-pagination', totalPages, numbersPage, (p) => { numbersPage = p; renderNumbers(); }, true);
+      updateNumbersSortHeaders();
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    for (const lead of rows) frag.appendChild(leadsRow(lead));
+    tbody.replaceChildren(frag);
+    applyColumnVisibility();
+
+    renderPagination('numbers-pagination', totalPages, numbersPage, (p) => { numbersPage = p; renderNumbers(); }, true);
+    renderLeadsRange(total, rows.length);
     updateNumbersSortHeaders();
+    syncLeadsSelection();
   } catch (err) {
+    if (seq !== numbersLoadSeq) return;
     const msg = err?.message || String(err);
+    // Surfaced, never swallowed: an inline error state AND the existing toast
+    // and reporter.
+    renderLeadsState('error', 'Could not load leads', msg);
+    renderLeadsRange(0, 0);
     toast(msg, 'error');
     reportError(msg, { handler: 'renderNumbers' });
   }
@@ -1311,14 +2009,10 @@ for (const [id] of LEAD_QUALITY_FILTER_CONTROLS) {
 document.querySelector('#view-numbers .data-table thead').addEventListener('click', safeAsync((e) => {
   const th = e.target.closest('th');
   if (!th) return;
-  const col = NUMBERS_SORTABLE_COLUMNS.find((c) => c.index === th.cellIndex);
-  if (!col) return;
-  if (numbersSort === col.sort) {
-    numbersOrder = numbersOrder === 'asc' ? 'desc' : 'asc';
-  } else {
-    numbersSort = col.sort;
-    numbersOrder = 'asc';
-  }
+  // A non-sortable column is a real disabled control, not a silent no-op.
+  const key = th.dataset.sort;
+  if (!key || NUMBERS_SORTABLE_KEYS.indexOf(key) === -1) return;
+  cycleNumbersSort(key);
   numbersPage = 1;
   renderNumbers();
 }));
@@ -2683,6 +3377,268 @@ document.getElementById('view-dashboard').addEventListener('click', (e) => {
   if (nav) nav.click();
 });
 
+// === F4: Collection workflow (Frontend 2.0) =================================
+// Presentation for the Discovery -> Collection screen only. The submit payload
+// (btn-start-collect), the status polling (btn-check-status), the result
+// rendering and the save/export flows are all untouched: this block reads the
+// very same controls those handlers read and reports what they currently say.
+// No collection parameter, IPC channel or backend path is added here.
+
+// Every optional control that lives under "Advanced filters", together with the
+// value it ships with in index.html. "Filters: N active" is counted from this
+// list alone, so the summary can never claim a filter that is not really set.
+const COLLECT_ADVANCED_CONTROLS = [
+  { id: 'collect-title-match', kind: 'select', def: 'all' },
+  { id: 'collect-min-rating', kind: 'select', def: 'all' },
+  { id: 'collect-website-filter', kind: 'select', def: 'all' },
+  { id: 'collect-skip-closed', kind: 'check', def: true },
+  { id: 'collect-mobile-only', kind: 'check', def: false },
+  { id: 'collect-place-details', kind: 'check', def: false },
+  { id: 'collect-social', kind: 'check', def: true },
+  { id: 'collect-reservation', kind: 'check', def: false },
+  { id: 'collect-online-order', kind: 'check', def: false },
+  { id: 'collect-web-result', kind: 'check', def: false },
+  { id: 'collect-email-verify', kind: 'check', def: false },
+  { id: 'collect-facebook', kind: 'check', def: false },
+  { id: 'collect-instagram', kind: 'check', def: false },
+  { id: 'collect-youtube', kind: 'check', def: false },
+  { id: 'collect-tiktok', kind: 'check', def: false },
+  { id: 'collect-linkedin', kind: 'check', def: false },
+  { id: 'collect-reviews', kind: 'check', def: false },
+  { id: 'collect-reviewer-info', kind: 'check', def: false },
+  { id: 'collect-max-reviews', kind: 'number', def: 5 },
+  { id: 'collect-review-sort', kind: 'select', def: 'newest' },
+  { id: 'collect-review-keyword', kind: 'text', def: '' }
+];
+
+function collectFieldText(id) {
+  const el = document.getElementById(id);
+  if (!el) return '';
+  return el.value === undefined || el.value === null ? '' : String(el.value);
+}
+
+function setCollectText(id, text, isSet) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  // The summary renders each value as a chip. An unset field is announced as a
+  // hollow, dashed placeholder rather than a value, so an empty run never looks
+  // configured. This only changes presentation; the text is still the value.
+  el.dataset.state = isSet ? 'set' : 'empty';
+}
+
+function collectLanguageLabel() {
+  const el = document.getElementById('collect-lang');
+  if (!el || !el.options) return 'English';
+  const opt = el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+  return opt && opt.text ? opt.text : 'English';
+}
+
+// A control counts as active only when it differs from the value it ships with.
+// An emptied number field reads as its default too, because the submit handler
+// falls back to the same default.
+function countActiveCollectFilters() {
+  let active = 0;
+  for (const spec of COLLECT_ADVANCED_CONTROLS) {
+    const el = document.getElementById(spec.id);
+    if (!el) continue;
+    if (spec.kind === 'check') {
+      if (el.checked !== spec.def) active += 1;
+    } else if (spec.kind === 'number') {
+      const parsed = parseInt(el.value, 10);
+      if (!Number.isNaN(parsed) && parsed !== spec.def) active += 1;
+    } else if (el.value !== spec.def) {
+      active += 1;
+    }
+  }
+  return active;
+}
+
+function collectKeywordsList() {
+  return collectFieldText('collect-keywords').split(',').map((k) => k.trim()).filter(Boolean);
+}
+
+// Step 5 readout + the header count badge. Every value comes straight from the
+// control it names; nothing here is estimated, derived or invented.
+function updateCollectSummary() {
+  const keywords = collectFieldText('collect-keywords').trim();
+  const location = collectFieldText('collect-region').trim();
+  const max = collectFieldText('collect-max').trim();
+  const active = countActiveCollectFilters();
+
+  setCollectText('cs-keywords', keywords || 'Not set', keywords.length > 0);
+  setCollectText('cs-location', location || 'Not set', location.length > 0);
+  setCollectText('cs-language', collectLanguageLabel(), true);
+  setCollectText('cs-max', max || '20', max.length > 0);
+  setCollectText('cs-filters', active === 1 ? '1 active' : `${active} active`, true);
+
+  const badge = document.getElementById('collect-advanced-count');
+  if (badge) {
+    badge.hidden = active === 0;
+    badge.textContent = active === 1 ? '1 active' : `${active} active`;
+  }
+
+  renderCollectPreview();
+}
+
+// The right-hand Search Preview: same controls, terms listed individually, and
+// an honest empty state until there is something to preview.
+function renderCollectPreview() {
+  const box = document.getElementById('collect-search-preview');
+  if (!box) return;
+  const terms = collectKeywordsList();
+  if (!terms.length) {
+    box.innerHTML = '<p class="collect-empty">Enter keywords to preview your search.</p>';
+    return;
+  }
+  const rows = [
+    ['Region', collectFieldText('collect-region').trim() || 'Any region'],
+    ['Language', collectLanguageLabel()],
+    ['Limit', collectFieldText('collect-max').trim() || '20'],
+    ['Filters', countActiveCollectFilters() === 1 ? '1 active' : `${countActiveCollectFilters()} active`]
+  ];
+  box.innerHTML =
+    '<ul class="collect-preview-terms">' +
+    terms.map((t) => `<li>${escapeHtml(t)}</li>`).join('') +
+    '</ul>' +
+    '<dl class="collect-preview">' +
+    rows.map(([label, value]) =>
+      `<div class="cp-row"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('') +
+    '</dl>';
+}
+
+(function wireCollectSummary() {
+  const ids = ['collect-keywords', 'collect-region', 'collect-lang', 'collect-max']
+    .concat(COLLECT_ADVANCED_CONTROLS.map((spec) => spec.id));
+  const refresh = () => updateCollectSummary();
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener('input', refresh);
+    el.addEventListener('change', refresh);
+  }
+  updateCollectSummary();
+})();
+
+// Step 4 collapses by default so the fifteen secondary options do not read as a
+// wall of checkboxes. The controls stay in the DOM the whole time, which is why
+// the submit payload is unaffected by the panel being closed.
+(function wireCollectAdvancedFilters() {
+  const toggle = document.getElementById('btn-advanced-filters');
+  const panel = document.getElementById('collect-advanced-panel');
+  const label = document.getElementById('collect-adv-label');
+  if (!toggle || !panel || !label) return;
+  toggle.addEventListener('click', () => {
+    const open = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+    panel.hidden = open;
+    label.textContent = open ? 'Show filters' : 'Hide filters';
+  });
+})();
+
+// The page-header action reuses the existing sidebar route, so the history view
+// keeps its own lazy load and pagination behaviour.
+document.getElementById('btn-collection-history').addEventListener('click', () => {
+  const nav = document.querySelector('.nav-item[data-view="history"]');
+  if (nav) nav.click();
+});
+
+// --- Recent searches and recent runs -----------------------------------------
+// Both panels read the local job ledger through the existing read-only
+// collector:get-jobs channel: the same rows the Dashboard uses. A job stores
+// the submitted keywords as its query, which is the only search data this app
+// has ever kept, so that is exactly what Recent Searches shows. No location is
+// claimed there, because location is not stored. An empty ledger renders an
+// honest empty state rather than placeholder entries.
+const COLLECT_RECENT_LIMIT = 5;
+
+function collectEmpty(containerId, text) {
+  const box = document.getElementById(containerId);
+  if (box) box.innerHTML = `<p class="collect-empty">${escapeHtml(text)}</p>`;
+}
+
+function renderCollectRecentSearches(rows) {
+  const box = document.getElementById('collect-recent-searches');
+  if (!box) return;
+  const seen = new Set();
+  const found = [];
+  for (const row of rows) {
+    const job = row && typeof row === 'object' ? row : {};
+    const query = typeof job.query === 'string' ? job.query.trim() : '';
+    if (!query || seen.has(query)) continue;
+    seen.add(query);
+    found.push({ query, when: formatJobTime(job.startedAt) });
+    if (found.length >= COLLECT_RECENT_LIMIT) break;
+  }
+  if (!found.length) {
+    box.innerHTML = '<p class="collect-empty">No recent searches yet.</p>';
+    return;
+  }
+  box.innerHTML = '<ul class="collect-recent-list">' + found.map((item) =>
+    `<li class="collect-recent-item"><span class="cr-term">${escapeHtml(item.query)}</span>` +
+    `<span class="cr-when">${escapeHtml(item.when)}</span></li>`).join('') + '</ul>';
+}
+
+function renderCollectRecentRuns(rows) {
+  const box = document.getElementById('collect-recent-runs');
+  if (!box) return;
+  if (!rows.length) {
+    box.innerHTML = '<p class="collect-empty">No collection runs yet.</p>';
+    return;
+  }
+  box.innerHTML = '<ul class="collect-run-list">' + rows.map((row) => {
+    const job = row && typeof row === 'object' ? row : {};
+    const status = typeof job.status === 'string' ? job.status : '';
+    const statusText = status === 'succeeded' ? 'Succeeded'
+      : status === 'failed' ? 'Failed'
+        : status === 'running' ? 'Running' : (status || 'Unknown');
+    const tone = status === 'succeeded' ? 'ok'
+      : status === 'failed' ? 'bad'
+        : status === 'running' ? 'busy' : 'idle';
+    const slug = typeof job.runSlug === 'string' ? job.runSlug : '';
+    const count = typeof job.resultCount === 'number' ? job.resultCount : null;
+    const countHtml = count === null ? ''
+      : `<span class="run-count">${escapeHtml(String(count))} ${count === 1 ? 'result' : 'results'}</span>`;
+    const action = slug
+      ? `<button class="btn btn-sm collect-run-open" type="button" data-slug="${escapeHtml(slug)}">View results</button>`
+      : '';
+    return `<li class="collect-run-row">` +
+      `<span class="run-status run-${tone}">${escapeHtml(statusText)}</span>` +
+      `<span class="run-slug">${escapeHtml(slug || '-')}</span>` +
+      countHtml +
+      `<span class="run-when">${escapeHtml(formatJobTime(job.startedAt))}</span>` +
+      action +
+      `</li>`;
+  }).join('') + '</ul>';
+}
+
+async function loadCollectRecent() {
+  try {
+    const res = await window.appAPI.collector.getJobs({
+      limit: COLLECT_RECENT_LIMIT,
+      offset: 0
+    });
+    const rows = res && Array.isArray(res.rows) ? res.rows : [];
+    renderCollectRecentSearches(rows);
+    renderCollectRecentRuns(rows);
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    collectEmpty('collect-recent-searches', 'Recent searches are unavailable right now.');
+    collectEmpty('collect-recent-runs', 'Recent runs are unavailable right now.');
+    reportError(msg, { handler: 'loadCollectRecent' });
+  }
+}
+
+// Opening a run reuses the existing history run-result flow, including its API
+// key check and its error handling.
+document.getElementById('collect-recent-runs').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-slug]');
+  if (!btn) return;
+  window.viewRunResult(btn.dataset.slug);
+});
+
+loadCollectRecent();
+
 // === 视图切换时加载数据 ===
 navItems.forEach(item => {
   item.addEventListener('click', () => {
@@ -2691,6 +3647,7 @@ navItems.forEach(item => {
       loadNumbers();
       checkStorageStatus();
     }
+    if (viewId === 'collector') loadCollectRecent();
     if (viewId === 'history') loadHistory();
     if (viewId === 'dashboard') loadDashboard();
     if (viewId === 'targets') loadTargets();

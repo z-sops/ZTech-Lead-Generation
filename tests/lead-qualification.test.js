@@ -1218,9 +1218,12 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     const options = [...select.matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)].map(m => [m[1], m[2]]);
     assert.deepStrictEqual(options, [['all', 'All'], ['unqualified', 'Unqualified'], ['qualified', 'Qualified']],
       'exactly the three approved options with English labels');
-    assert.ok(htmlSource.includes('<label>Qualification</label>'), 'English label');
-    assert.ok(/id="number-filter-qualification"/.test(htmlSource) && htmlSource.includes('class="form-item"'),
-      'reuses the existing form-item markup');
+    // F3 moved the filter controls into compact popovers, so the label carries
+    // an explicit `for` instead of relying on a wrapping form-item. The
+    // contract - an accessible English label bound to the control - is
+    // unchanged, and is now asserted in the form F3 actually ships.
+    assert.ok(htmlSource.includes('<label for="number-filter-qualification">Qualification</label>'),
+      'English label bound to the qualification filter');
     const payload = between(rendererSource, 'function numbersQueryPayload()', 'function updateNumbersSortHeaders()');
     assert.ok(payload.includes('const filters = {};'), 'a single filters object is built');
     assert.ok(payload.includes("filters.status = filterStatus"), 'status filter preserved');

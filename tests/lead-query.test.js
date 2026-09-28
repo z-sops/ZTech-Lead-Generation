@@ -12,6 +12,15 @@ function test(name, fn) {
   tests.push([name, fn]);
 }
 
+// Slices a region between two markers, so an assertion can be scoped to one
+// declaration instead of the whole file.
+function between(source, start, end) {
+  const from = source.indexOf(start);
+  const to = source.indexOf(end, from + start.length);
+  assert.ok(from !== -1 && to !== -1, 'slice markers found: ' + start);
+  return source.slice(from, to);
+}
+
 (async () => {
   const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ztech-b2-query-'));
 
@@ -331,15 +340,36 @@ function test(name, fn) {
     );
     assert.ok(rendererSource.includes('numbersSearchTimer = setTimeout'), 'search input is debounced');
     assert.ok(!rendererSource.includes('allNumbers'), 'full-array client cache removed');
-    assert.ok(rendererSource.includes("sort: 'collectedAt', label: 'Collected'"), 'sort map covers collectedAt');
-    assert.ok(rendererSource.includes("sort: 'title', label: 'Title'"), 'sort map covers title');
-    assert.ok(rendererSource.includes("sort: 'phone', label: 'Phone'"), 'sort map covers phone');
-    assert.ok(rendererSource.includes("sort: 'source', label: 'Source'"), 'sort map covers source');
-    assert.ok(rendererSource.includes("sort: 'keyword', label: 'Keywords'"), 'sort map covers keyword');
-    assert.ok(rendererSource.includes('${escapeHtml(n.title || \'-\')}'), 'title cell template unchanged');
-    assert.ok(rendererSource.includes('${escapeHtml(n.website || \'-\')}'), 'website cell template unchanged');
-    assert.ok(htmlSource.includes('<th>Title</th>'), 'title header literal unchanged');
-    assert.ok(htmlSource.includes('<th>Website</th>'), 'website header literal unchanged');
+    // F3 replaced the label-carrying cellIndex sort map with an explicit key
+    // list plus data-sort on the header cells. The CONTRACT is unchanged: the
+    // renderer must offer exactly the five sort keys the main process
+    // allowlists, and not a sixth. The assertion is restated against the new
+    // structure rather than dropped.
+    const sortKeys = between(rendererSource, 'const NUMBERS_SORTABLE_KEYS = [', '];');
+    const offered = [...sortKeys.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+    assert.deepStrictEqual(offered, ['collectedAt', 'keyword', 'phone', 'source', 'title'],
+      'exactly the five allowlisted sort keys are offered, and no invented one');
+    for (const key of offered) {
+      assert.ok(new RegExp(`data-sort="${key}"`).test(htmlSource),
+        'every offered sort key is a real sortable header: ' + key);
+    }
+    // F3 builds rows with DOM APIs instead of an innerHTML template, so the
+    // old interpolation literals are gone. The contract they protected is that
+    // title and website are still rendered from the real lead fields.
+    assert.ok(/leadsRow\(lead\)/.test(rendererSource), 'rows are built by the shared row builder');
+    const rowBuilder = between(rendererSource, 'function leadsRow(lead) {', 'function leadsSkeletonRows(');
+    assert.ok(/lead\.title/.test(rowBuilder), 'the lead cell reads the real title field');
+    assert.ok(/leadsDomainCell\(lead\)/.test(rowBuilder), 'the domain cell is built from the lead');
+    assert.ok(/lead\.website/.test(between(rendererSource, 'function leadsDomainCell(lead) {', 'function leadsRow(lead) {')),
+      'the domain cell reads the real website field');
+    assert.ok(/leadsQualityCell\(lead\)/.test(rowBuilder), 'the quality cell is built from the lead');
+    assert.ok(/leadQualitySignals\(lead\)/.test(
+      between(rendererSource, 'function leadsQualityCell(lead) {', 'function leadsIntelCell(')),
+    'data quality is derived by the existing renderer signal helper, not invented');
+    // Title and website stay reachable as headers through the F3 column set.
+    assert.ok(/label: 'Domain'/.test(rendererSource) && /data-column="domain"/.test(htmlSource),
+      'the website field is exposed as the Domain column');
+    assert.ok(/<th class="col-lead"[^>]*data-sort="title"/.test(htmlSource), 'the title column is sortable');
     assert.ok(htmlSource.includes('Search phone, title, website, email, address, source, keyword'), 'placeholder reflects the 7-field search');
   });
 

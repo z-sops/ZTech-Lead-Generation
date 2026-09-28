@@ -379,10 +379,24 @@ function test(name, fn) {
   });
 
   test('16. numbers table UI exposes title and website columns', () => {
-    assert.ok(htmlSource.includes('<th>Title</th>'), 'title column header present');
-    assert.ok(htmlSource.includes('<th>Website</th>'), 'website column header present');
-    assert.ok(rendererSource.includes('${escapeHtml(n.title || \'-\')}'), 'title cell rendered');
-    assert.ok(rendererSource.includes('${escapeHtml(n.website || \'-\')}'), 'website cell rendered');
+    // F3 rebuilt the table with DOM APIs and renamed the website column to
+    // "Domain" (it renders the host). The contract is unchanged: the lead's
+    // title and its website remain visible in the table. The assertion is
+    // restated against the F3 structure rather than dropped.
+    assert.ok(/<th class="col-lead"[^>]*data-sort="title"/.test(htmlSource)
+      && /<button class="th-sort" type="button">Lead<\/button>/.test(htmlSource),
+    'title column header present and sortable');
+    assert.ok(/<th class="col-domain" scope="col" data-column="domain">/.test(htmlSource)
+      && /data-column="domain"/.test(htmlSource),
+    'website column header present as the Domain column');
+    const rowStart = rendererSource.indexOf('function leadsRow(lead) {');
+    const rowEnd = rendererSource.indexOf('function leadsSkeletonRows(');
+    assert.ok(rowStart > -1 && rowEnd > rowStart, 'the F3 row builder is located');
+    const rowBuilder = rendererSource.slice(rowStart, rowEnd);
+    assert.ok(/lead\.title/.test(rowBuilder), 'title cell rendered from the lead');
+    const domainStart = rendererSource.indexOf('function leadsDomainCell(lead) {');
+    assert.ok(domainStart > -1 && /lead\.website/.test(rendererSource.slice(domainStart, rowStart)),
+      'website cell rendered from the lead');
   });
 
   test('17. main process validates the new fields with the existing string guard', () => {

@@ -352,7 +352,10 @@ function test(name, fn) {
     assert.ok(!closeRegion.includes('renderNumbers('), 'close performs no page re-render');
     assert.ok(closeRegion.includes('detailLoadSeq += 1'), 'close invalidates any in-flight detail fetch');
     assert.ok(rendererSource.includes('offset: (numbersPage - 1) * NUMBERS_PER_PAGE'), 'B2 pagination math unchanged');
-    assert.ok(rendererSource.includes("sort: 'collectedAt', label: 'Collected'"), 'B2 sort map unchanged');
+    // F3 restated the sort map as an explicit key list; the contract the
+    // original assertion protected is that collectedAt remains sortable.
+    assert.ok(/const NUMBERS_SORTABLE_KEYS = \[[^\]]*'collectedAt'/.test(rendererSource),
+      'B2 sort map still covers collectedAt');
   });
 
   test('16. detail view writes only user-owned lead fields; destructive/global APIs stay unreachable', () => {
@@ -391,12 +394,21 @@ function test(name, fn) {
   test('18. B2 contract spot-check: query payload, cell templates, allowlist intact', () => {
     assert.ok(rendererSource.includes('window.appAPI.collector.getNumbers(numbersQueryPayload())'), 'page query flow intact');
     assert.ok(rendererSource.includes('if (seq !== numbersLoadSeq) return;'), 'page stale-guard intact');
-    assert.ok(rendererSource.includes('${escapeHtml(n.title || \'-\')}'), 'title cell template unchanged');
-    assert.ok(rendererSource.includes('${escapeHtml(n.website || \'-\')}'), 'website cell template unchanged');
-    assert.ok(rendererSource.includes('let currentResultsRunSlug = null'), 'runSlug save-path state untouched');
+    // F3 replaced the innerHTML row template with DOM construction, so the old
+    // interpolation literals no longer exist. What the assertion actually
+    // protected - that the page still renders the lead's real title and website
+    // fields through the shared row builder - is asserted directly.
+    const rowStart = rendererSource.indexOf('function leadsRow(lead) {');
+    const rowEnd = rendererSource.indexOf('function leadsSkeletonRows(');
+    const rowBuilder = rendererSource.slice(rowStart, rowEnd);
+    assert.ok(/lead\.title/.test(rowBuilder), 'title cell still built from the real lead field');
+    assert.ok(/leadsDomainCell\(lead\)/.test(rowBuilder), 'website cell still built from the real lead field');
+    assert.ok(rendererSource.includes("'unqualified'"), 'the store default qualification is still used');
+    assert.ok(/let currentResultsRunSlug = null/.test(rendererSource), 'runSlug save-path state untouched');
     assert.ok(rendererSource.split('currentResultsRunSlug = null').length - 1 === 2, 'runSlug clear sites unchanged');
     assert.ok(mainSource.includes("const NUMBERS_QUERY_SORT_FIELDS = ['collectedAt', 'title', 'phone', 'source', 'keyword'];"), 'sort allowlist unchanged');
-    assert.ok(htmlSource.includes('<th>Title</th>') && htmlSource.includes('<th>Website</th>'), 'table headers unchanged');
+    assert.ok(/data-sort="title"/.test(htmlSource) && /data-column="domain"/.test(htmlSource),
+      'the title and website fields stay exposed as columns');
     assert.ok(htmlSource.includes('Search phone, title, website, email, address, source, keyword'), 'search placeholder unchanged');
     assert.ok(!storeSource.toLowerCase().includes('country') && !storeSource.toLowerCase().includes('city'), 'no country/city fields');
   });
