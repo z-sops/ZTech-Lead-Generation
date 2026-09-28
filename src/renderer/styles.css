@@ -3246,6 +3246,318 @@ textarea {
 }
 
 /* ==========================================================================
+   ZTech Frontend 2.0 - F10: Targets workspace.
+
+   A dense table of reusable ICP definitions with a side editor, on the F6
+   workspace pattern and the F1 tokens: hairline borders, small radii, no
+   surface washes and no drop effects. The editor sits beside the table on a
+   wide window and above it on a narrow one.
+   ========================================================================== */
+#view-targets .targets-workspace {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-app);
+}
+
+.targets-workspace .lists-actions input[type="search"] {
+  width: 280px;
+}
+
+.targets-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.targets-feedback[hidden] {
+  display: none;
+}
+
+.targets-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.targets-layout:has(.targets-editor:not([hidden])) {
+  grid-template-columns: minmax(0, 1fr) 380px;
+}
+
+.targets-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.targets-table .lists-col-updated {
+  width: 150px;
+}
+
+.targets-table .lists-col-actions {
+  width: 1%;
+}
+
+.targets-row[aria-current="true"] td {
+  background: var(--bg-selected);
+}
+
+.targets-name {
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.targets-criteria {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--font-12);
+  line-height: 1.6;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.targets-muted {
+  font-size: var(--font-12);
+  color: var(--text-3);
+}
+
+.targets-cell-updated {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.targets-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 200px;
+}
+
+.targets-status {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.targets-status[data-status="active"] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.targets-state {
+  padding: var(--space-7) var(--space-5);
+  text-align: center;
+}
+
+.targets-state-title {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.targets-state-text {
+  max-width: 460px;
+  margin: var(--space-2) auto 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.targets-state .btn {
+  margin-top: var(--space-4);
+}
+
+.targets-editor {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.targets-editor[hidden] {
+  display: none;
+}
+
+.targets-editor-head {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.targets-editor-title {
+  margin: 0;
+  font-size: var(--font-14);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.targets-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+}
+
+.targets-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.targets-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.targets-field > label,
+.targets-fieldset > legend {
+  padding: 0;
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.targets-field input[type="text"],
+.targets-field select {
+  width: 100%;
+  min-width: 0;
+  border-color: var(--border-2);
+}
+
+.targets-hint,
+.targets-note {
+  margin: 0;
+  font-size: var(--font-11);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.targets-hint-error {
+  color: var(--danger-f2);
+  font-weight: 600;
+}
+
+.targets-note {
+  padding-left: var(--space-3);
+  color: var(--text-3);
+  border-left: 2px solid var(--border-2);
+}
+
+.targets-note-warn {
+  color: var(--warn);
+  border-left-color: var(--warn);
+}
+
+.targets-editor .target-checks {
+  gap: var(--space-2) var(--space-4);
+}
+
+.targets-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.targets-check:has(input:disabled) {
+  color: var(--text-3);
+}
+
+.targets-errors {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-12);
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.targets-errors[hidden] {
+  display: none;
+}
+
+.targets-errors ul {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.targets-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-1);
+}
+
+/* The legacy grey button hover hides its label; scoped here as in F4 and F9. */
+#view-targets .btn-secondary {
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+}
+
+#view-targets .btn-secondary:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+/* --- Narrow window ----------------------------------------------------------- */
+/* The editor stacks above the table below 1280px: beside a 380px editor the
+   table is too narrow for its actions and criteria. */
+@media (max-width: 1280px) {
+  .targets-layout:has(.targets-editor:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .targets-editor {
+    position: static;
+    order: -1;
+  }
+}
+
+@media (max-width: 1100px) {
+  .targets-workspace .lists-actions,
+  .targets-workspace .lists-actions input[type="search"] {
+    width: 100%;
+  }
+
+  .targets-workspace .lists-actions input[type="search"] {
+    flex: 1 1 200px;
+  }
+
+  .targets-table .lists-col-updated {
+    width: auto;
+  }
+}
+
+/* ==========================================================================
    ZTech Frontend 2.0 - F3: Leads workspace.
 
    A dense prospecting table, not a card grid. Everything here is built from

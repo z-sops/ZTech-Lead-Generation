@@ -3782,75 +3782,267 @@ document.getElementById('btn-dup-review-open').addEventListener('click', safeAsy
 document.getElementById('btn-dup-review-close').addEventListener('click', () => closeDuplicateReview());
 
 // === P1-F Target Builder (user-owned definitions) ===
-// Targets are what the user is looking for, not lead data. This section reads
-// and writes target definitions only: it never calls a lead write path, never
-// reads or writes a lead, and contains no analytics, no scoring and no
-// classification. Required/optional fields are prospecting criteria only - a
-// lead is never rejected from storage because one is missing.
+// F10 Targets workspace. Targets are what the user is looking for, not lead
+// data. This section reads and writes target definitions only, through the three
+// existing channels (targets:list / targets:save / targets:set-status): it never
+// calls a lead write path, never reads or writes a lead, and contains no
+// analytics, no match counts and no classification. Required/optional fields are
+// prospecting criteria only - a lead is never rejected from storage because one
+// is missing. The main process stays the authority on every rule; the checks
+// here only mirror them so a mistake reads as a sentence, not an IPC string.
 const TARGET_FIELD_CHOICES = ['phone', 'title', 'website', 'email', 'address'];
 const TARGET_STATUS_CHOICES = ['active', 'archived'];
+const TARGET_FIELD_LABELS = { phone: 'Phone', title: 'Business name', website: 'Website', email: 'Email', address: 'Address' };
+// The same limits the main process and the store enforce.
+const TARGET_LIMITS = { name: 120, industry: 120, terms: 20, termLength: 50 };
+const TARGET_LIST_LABELS = { businessTypes: 'Business types', locations: 'Locations', exclusions: 'Exclusions' };
+// Requiring address makes the ICP contract refuse the definition in this build,
+// so it is not offered as a NEW required field. A stored Target that already
+// requires it can still clear it.
+const TARGET_REQUIRED_UNAVAILABLE = ['address'];
 // The ONLY collector inputs "Use for collection" may touch. Both already exist
 // in the collector form: no provider parameter, request shape or capability is
 // created, renamed or extended by a target.
 const TARGET_COLLECTOR_PARAM_MAP = { businessTypes: 'collect-keywords', locations: 'collect-region' };
 let targetsLoadSeq = 0;
 let targetEditingId = null;
+// The stored required fields of the Target being edited (address stays clearable).
+let targetEditingRequired = [];
+// null until the first read: an unloaded list is never shown as an empty one.
+let targetRows = null;
+let targetLoadError = null;
 
 function targetTermsText(value) {
   return Array.isArray(value) ? value.join(', ') : '';
 }
 
-function targetFieldsText(value) {
-  return Array.isArray(value) && value.length ? value.join(', ') : '—';
+// The store's own list rule: commas and newlines separate, entries are trimmed,
+// empties dropped, duplicates removed case-insensitively keeping the first, and
+// the user's order kept.
+function targetParseTerms(text) {
+  const out = [];
+  for (const entry of String(text === undefined || text === null ? '' : text).split(/[,\n]/)) {
+    const term = entry.trim();
+    if (!term) continue;
+    if (out.some((existing) => existing.toLowerCase() === term.toLowerCase())) continue;
+    out.push(term);
+  }
+  return out;
 }
 
-function targetCard(target) {
+function targetClip(text, max) {
+  return text.length > max ? text.slice(0, max - 1) + '\u2026' : text;
+}
+
+// Mirrors validateTargetPayload + the store limits. Returns human-readable
+// messages; it never relaxes a rule, and the server still decides.
+function targetValidateDraft(draft) {
+  const d = draft && typeof draft === 'object' ? draft : {};
+  const errors = [];
+  const name = typeof d.name === 'string' ? d.name.trim() : '';
+  if (!name) errors.push({ field: 'name', message: 'Name is required.' });
+  else if (name.length > TARGET_LIMITS.name) errors.push({ field: 'name', message: `Name is ${name.length} characters; the limit is ${TARGET_LIMITS.name}.` });
+  const industry = typeof d.industry === 'string' ? d.industry.trim() : '';
+  if (industry.length > TARGET_LIMITS.industry) errors.push({ field: 'industry', message: `Industry is ${industry.length} characters; the limit is ${TARGET_LIMITS.industry}.` });
+  for (const field of Object.keys(TARGET_LIST_LABELS)) {
+    const terms = targetParseTerms(d[field]);
+    const label = TARGET_LIST_LABELS[field];
+    if (terms.length > TARGET_LIMITS.terms) {
+      errors.push({ field, message: `${label}: ${terms.length} terms entered; the limit is ${TARGET_LIMITS.terms}.` });
+    }
+    const long = terms.find((term) => term.length > TARGET_LIMITS.termLength);
+    if (long) {
+      errors.push({ field, message: `${label}: "${targetClip(long, 24)}" is ${long.length} characters; the limit is ${TARGET_LIMITS.termLength} per term.` });
+    }
+  }
+  const required = Array.isArray(d.requiredFields) ? d.requiredFields : [];
+  const optional = Array.isArray(d.optionalFields) ? d.optionalFields : [];
+  for (const field of required) {
+    if (optional.includes(field)) errors.push({ field: 'requiredFields', message: `${TARGET_FIELD_LABELS[field] || field} cannot be both required and optional.` });
+  }
+  const previous = Array.isArray(d.previousRequiredFields) ? d.previousRequiredFields : [];
+  for (const field of TARGET_REQUIRED_UNAVAILABLE) {
+    if (required.includes(field) && !previous.includes(field)) {
+      errors.push({ field: 'requiredFields', message: `${TARGET_FIELD_LABELS[field]} is unavailable as a required ICP field in this build.` });
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+// A save or status error, from the store envelope or a rejected IPC call, as a
+// sentence. The Electron wrapper text is never shown.
+function targetErrorMessage(err) {
+  const raw = typeof err === 'string' ? err : (err && typeof err.message === 'string' ? err.message : '');
+  const text = raw.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^(Error:\s*)+/, '').trim();
+  const field = (text.match(/^Invalid target(?: status| update)?: ?(\w+)/) || [])[1] || '';
+  if (/both required and optional/.test(text)) return 'A field cannot be both required and optional.';
+  if (/unknown lead field/.test(text)) return 'A required or optional field is not a lead field.';
+  if (field === 'name') return `Name is required and must be at most ${TARGET_LIMITS.name} characters.`;
+  if (field === 'industry') return `Industry must be at most ${TARGET_LIMITS.industry} characters.`;
+  if (TARGET_LIST_LABELS[field]) {
+    return `${TARGET_LIST_LABELS[field]} must have at most ${TARGET_LIMITS.terms} terms of at most ${TARGET_LIMITS.termLength} characters each.`;
+  }
+  if (field === 'status') return 'Status must be Active or Archived.';
+  if (field === 'id') return 'That Target could not be found. Reload the list and try again.';
+  if (/Untrusted sender/.test(text)) return 'The request was refused.';
+  return 'The Target could not be saved. Check the values and try again.';
+}
+
+// Criteria as short text lines, straight from the stored definition.
+function targetCriteriaSummary(target) {
+  const row = target && typeof target === 'object' ? target : {};
+  const lines = [];
+  const list = (label, value) => {
+    const terms = Array.isArray(value) ? value : [];
+    if (!terms.length) return;
+    const shown = terms.slice(0, 3).join(', ');
+    lines.push(`${label}: ${shown}${terms.length > 3 ? ` +${terms.length - 3} more` : ''}`);
+  };
+  if (typeof row.industry === 'string' && row.industry.trim()) lines.push(`Industry: ${row.industry.trim()}`);
+  list('Business types', row.businessTypes);
+  list('Locations', row.locations);
+  const required = Array.isArray(row.requiredFields) ? row.requiredFields : [];
+  // A stored requirement the ICP contract cannot use (address, from before F10)
+  // is shown as it is stored, and says so.
+  const requiredLabel = (f) => (TARGET_FIELD_LABELS[f] || f) + (TARGET_REQUIRED_UNAVAILABLE.includes(f) ? ' (not usable by ICP)' : '');
+  if (required.length) lines.push(`Requires: ${required.map(requiredLabel).join(', ')}`);
+  const optional = Array.isArray(row.optionalFields) ? row.optionalFields : [];
+  if (optional.length) lines.push(`Optional: ${optional.map((f) => TARGET_FIELD_LABELS[f] || f).join(', ')}`);
+  // Exclusions are recorded only; nothing evaluates them in this build.
+  list('Exclusions (not evaluated)', row.exclusions);
+  return lines;
+}
+
+function targetMatchesSearch(target, query) {
+  const q = typeof query === 'string' ? query.trim().toLowerCase() : '';
+  if (!q) return true;
+  const row = target && typeof target === 'object' ? target : {};
+  const haystack = [row.name, row.industry]
+    .concat(Array.isArray(row.businessTypes) ? row.businessTypes : [])
+    .concat(Array.isArray(row.locations) ? row.locations : [])
+    .filter((value) => typeof value === 'string');
+  return haystack.some((value) => value.toLowerCase().includes(q));
+}
+
+function targetUpdatedText(value) {
+  if (typeof value !== 'string' || !value) return '\u2014';
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+// One table row. Every stored value passes through escapeHtml.
+function targetRowHtml(target) {
   const row = target && typeof target === 'object' ? target : {};
   const id = typeof row.id === 'string' ? row.id : '';
   const status = TARGET_STATUS_CHOICES.includes(row.status) ? row.status : 'active';
   const archived = status === 'archived';
-  return '<div class="target-card" data-id="' + escapeHtml(id) + '">'
-    + '<div class="target-card-head"><span class="target-card-name">' + escapeHtml(row.name || '') + '</span>'
-    + '<span class="lead-detail-badge">' + escapeHtml(status) + '</span></div>'
-    + '<div class="lead-detail-row"><span class="lead-detail-label">Industry</span>'
-    + '<span class="lead-detail-value">' + escapeHtml(row.industry || '—') + '</span></div>'
-    + '<div class="lead-detail-row"><span class="lead-detail-label">Business types</span>'
-    + '<span class="lead-detail-value">' + escapeHtml(targetTermsText(row.businessTypes) || '—') + '</span></div>'
-    + '<div class="lead-detail-row"><span class="lead-detail-label">Locations</span>'
-    + '<span class="lead-detail-value">' + escapeHtml(targetTermsText(row.locations) || '—') + '</span></div>'
-    + '<div class="lead-detail-row"><span class="lead-detail-label">Required</span>'
-    + '<span class="lead-detail-value">' + escapeHtml(targetFieldsText(row.requiredFields)) + '</span></div>'
-    + '<div class="lead-detail-row"><span class="lead-detail-label">Optional</span>'
-    + '<span class="lead-detail-value">' + escapeHtml(targetFieldsText(row.optionalFields)) + '</span></div>'
-    + '<div class="lead-detail-row"><span class="lead-detail-label">Exclusions</span>'
-    + '<span class="lead-detail-value">' + escapeHtml(targetTermsText(row.exclusions) || '—') + '</span></div>'
-    + '<div class="target-card-actions">'
-    + '<button type="button" class="btn btn-sm" data-action="edit">Edit</button>'
-    + '<button type="button" class="btn btn-sm btn-secondary" data-action="toggle-status">'
-    + (archived ? 'Activate' : 'Archive') + '</button>'
+  const lines = targetCriteriaSummary(row);
+  const criteria = lines.length
+    ? '<ul class="targets-criteria">' + lines.map((line) => '<li>' + escapeHtml(line) + '</li>').join('') + '</ul>'
+    : '<span class="targets-muted">No criteria recorded</span>';
+  const editing = targetEditingId && targetEditingId === id ? ' aria-current="true"' : '';
+  return '<tr class="targets-row" data-id="' + escapeHtml(id) + '"' + editing + '>'
+    + '<td class="targets-cell-name"><span class="targets-name">' + escapeHtml(row.name || '') + '</span></td>'
+    + '<td class="targets-cell-criteria">' + criteria + '</td>'
+    + '<td><span class="targets-status" data-status="' + escapeHtml(status) + '">' + (archived ? 'Archived' : 'Active') + '</span></td>'
+    + '<td class="targets-cell-updated">' + escapeHtml(targetUpdatedText(row.updatedAt)) + '</td>'
+    + '<td class="targets-cell-actions"><div class="targets-actions">'
+    + '<button type="button" class="btn btn-sm btn-secondary" data-action="edit">Edit</button>'
+    + '<button type="button" class="btn btn-sm btn-secondary" data-action="toggle-status">' + (archived ? 'Activate' : 'Archive') + '</button>'
     + '<button type="button" class="btn btn-sm btn-secondary" data-action="use">Use for collection</button>'
-    + '</div></div>';
+    + '<button type="button" class="btn btn-sm btn-secondary" data-action="icp">Open in ICP</button>'
+    + '</div></td></tr>';
+}
+
+// A full-width message row with an optional action, built from fixed text only.
+function targetStateRow(title, text, action) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = 5;
+  td.className = 'targets-state';
+  const heading = document.createElement('div');
+  heading.className = 'targets-state-title';
+  heading.textContent = title;
+  td.appendChild(heading);
+  if (text) {
+    const p = document.createElement('div');
+    p.className = 'targets-state-text';
+    p.textContent = text;
+    td.appendChild(p);
+  }
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm btn-secondary';
+    button.id = action.id;
+    button.textContent = action.label;
+    button.addEventListener('click', action.onClick);
+    td.appendChild(button);
+  }
+  tr.appendChild(td);
+  return tr;
+}
+
+function renderTargets() {
+  const list = document.getElementById('target-list');
+  const count = document.getElementById('target-count');
+  if (!list) return;
+  if (targetLoadError) {
+    list.replaceChildren(targetStateRow('Targets unavailable.', targetLoadError,
+      { id: 'btn-target-retry', label: 'Retry', onClick: safeAsync(() => loadTargets()) }));
+    if (count) count.textContent = '';
+    return;
+  }
+  if (targetRows === null) {
+    list.replaceChildren(targetStateRow('Loading targets\u2026'));
+    if (count) count.textContent = '';
+    return;
+  }
+  if (!targetRows.length) {
+    list.replaceChildren(targetStateRow('No Targets yet', 'A Target is a reusable ICP definition: criteria you evaluate leads against in Intelligence, ICP.',
+      { id: 'btn-target-empty-create', label: 'Create your first Target', onClick: () => openTargetEditor(null) }));
+    if (count) count.textContent = '';
+    return;
+  }
+  const query = document.getElementById('target-search').value;
+  const visible = targetRows.filter((row) => targetMatchesSearch(row, query));
+  if (count) {
+    count.textContent = query.trim()
+      ? `${visible.length} of ${targetRows.length} Targets`
+      : `${targetRows.length} ${targetRows.length === 1 ? 'Target' : 'Targets'}`;
+  }
+  if (!visible.length) {
+    list.replaceChildren(targetStateRow('No Targets match your search.'));
+    return;
+  }
+  list.innerHTML = visible.map(targetRowHtml).join('');
 }
 
 async function loadTargets() {
-  const list = document.getElementById('target-list');
   const seq = ++targetsLoadSeq;
-  if (list) list.innerHTML = '<p class="dup-review-empty">Loading...</p>';
+  targetRows = null;
+  targetLoadError = null;
+  renderTargets();
   try {
     const result = await window.appAPI.targets.list();
     if (seq !== targetsLoadSeq) return;
-    const rows = result && Array.isArray(result.rows) ? result.rows : [];
-    if (!list) return;
-    list.innerHTML = rows.length
-      ? rows.map(targetCard).join('')
-      : '<p class="dup-review-empty">No target defined yet.</p>';
+    targetRows = result && Array.isArray(result.rows) ? result.rows : [];
   } catch (err) {
     if (seq !== targetsLoadSeq) return;
-    if (list) list.innerHTML = '<p class="dup-review-empty">Targets unavailable.</p>';
     const msg = err?.message || String(err);
-    toast(msg, 'error');
+    targetLoadError = 'The Target list could not be read. Try again.';
     reportError(msg, { handler: 'loadTargets' });
   }
+  renderTargets();
+}
+
+// The confirmation stays until the user dismisses it or the next action.
+function setTargetFeedback(message) {
+  const box = document.getElementById('target-feedback');
+  const text = document.getElementById('target-feedback-text');
+  if (!box || !text) return;
+  text.textContent = message;
+  box.hidden = !message;
 }
 
 function targetCheckedValues(containerId) {
@@ -3870,13 +4062,58 @@ function setTargetCheckedValues(containerId, values) {
   });
 }
 
+// A field cannot be both required and optional, so ticking one side disables
+// the other; address stays unavailable as a new required field.
+function syncTargetFieldChoices() {
+  const required = targetCheckedValues('target-required-fields');
+  const optional = targetCheckedValues('target-optional-fields');
+  document.querySelectorAll('#target-required-fields input[type="checkbox"]').forEach((box) => {
+    const unavailable = TARGET_REQUIRED_UNAVAILABLE.includes(box.value) && !box.checked;
+    box.disabled = unavailable || optional.includes(box.value);
+  });
+  document.querySelectorAll('#target-optional-fields input[type="checkbox"]').forEach((box) => {
+    box.disabled = required.includes(box.value);
+  });
+}
+
+function updateTargetTermHints() {
+  for (const hint of document.querySelectorAll('#target-editor [data-terms-for]')) {
+    const input = document.getElementById(hint.dataset.termsFor);
+    const terms = targetParseTerms(input ? input.value : '');
+    const long = terms.filter((term) => term.length > TARGET_LIMITS.termLength).length;
+    const over = terms.length > TARGET_LIMITS.terms || long > 0;
+    hint.textContent = `Comma separated. ${terms.length} of ${TARGET_LIMITS.terms} terms, ${TARGET_LIMITS.termLength} characters each`
+      + (long ? `; ${long} too long.` : '.');
+    hint.classList.toggle('targets-hint-error', over);
+  }
+}
+
+function setTargetErrors(messages) {
+  const bar = document.getElementById('target-status-bar');
+  if (!bar) return;
+  const list = Array.isArray(messages) ? messages : [];
+  if (!list.length) {
+    bar.replaceChildren();
+    bar.hidden = true;
+    return;
+  }
+  const ul = document.createElement('ul');
+  for (const message of list) {
+    const li = document.createElement('li');
+    li.textContent = message;
+    ul.appendChild(li);
+  }
+  bar.replaceChildren(ul);
+  bar.hidden = false;
+}
+
 function openTargetEditor(target) {
   const row = target && typeof target === 'object' ? target : {};
   targetEditingId = typeof row.id === 'string' && row.id ? row.id : null;
+  targetEditingRequired = Array.isArray(row.requiredFields) ? row.requiredFields.slice() : [];
   const editor = document.getElementById('target-editor');
   if (editor) editor.hidden = false;
-  const cancel = document.getElementById('btn-target-cancel');
-  if (cancel) cancel.hidden = false;
+  document.getElementById('target-editor-title').textContent = targetEditingId ? 'Edit Target' : 'New Target';
   document.getElementById('target-name').value = row.name || '';
   document.getElementById('target-industry').value = row.industry || '';
   document.getElementById('target-business-types').value = targetTermsText(row.businessTypes);
@@ -3888,24 +4125,20 @@ function openTargetEditor(target) {
   // validation; a new target starts with none.
   setTargetCheckedValues('target-required-fields', row.requiredFields);
   setTargetCheckedValues('target-optional-fields', row.optionalFields);
+  syncTargetFieldChoices();
+  updateTargetTermHints();
+  setTargetErrors([]);
+  renderTargets();
+  document.getElementById('target-name').focus();
 }
 
 function closeTargetEditor() {
   targetEditingId = null;
+  targetEditingRequired = [];
   const editor = document.getElementById('target-editor');
   if (editor) editor.hidden = true;
-  const cancel = document.getElementById('btn-target-cancel');
-  if (cancel) cancel.hidden = true;
-  const bar = document.getElementById('target-status-bar');
-  if (bar) bar.style.display = 'none';
-}
-
-function setTargetStatusBar(message, isError) {
-  const bar = document.getElementById('target-status-bar');
-  if (!bar) return;
-  bar.textContent = message;
-  bar.style.display = 'block';
-  bar.classList.toggle('error', !!isError);
+  setTargetErrors([]);
+  renderTargets();
 }
 
 async function saveTargetFromEditor() {
@@ -3919,36 +4152,43 @@ async function saveTargetFromEditor() {
     optionalFields: targetCheckedValues('target-optional-fields'),
     status: document.getElementById('target-status').value
   };
+  const check = targetValidateDraft({ ...payload, previousRequiredFields: targetEditingRequired });
+  if (!check.ok) {
+    setTargetErrors(check.errors.map((e) => e.message));
+    return;
+  }
   if (targetEditingId) payload.id = targetEditingId;
+  const wasEdit = Boolean(targetEditingId);
   try {
     const res = await window.appAPI.targets.save(payload);
     if (!res || res.success !== true) {
-      setTargetStatusBar((res && res.error) || 'Invalid target', true);
-      toast((res && res.error) || 'Save failed', 'error');
+      setTargetErrors([targetErrorMessage(res && res.error)]);
       return;
     }
-    setTargetStatusBar('Saved', false);
     closeTargetEditor();
+    setTargetFeedback(`${wasEdit ? 'Saved changes to' : 'Saved'} "${payload.name.trim()}".`);
     await loadTargets();
   } catch (err) {
     const msg = err?.message || String(err);
-    setTargetStatusBar(msg, true);
-    toast(msg, 'error');
+    setTargetErrors([targetErrorMessage(msg)]);
     reportError(msg, { handler: 'saveTargetFromEditor' });
   }
 }
 
 async function setTargetArchived(id, status) {
+  const target = (targetRows || []).find((row) => row && row.id === id);
+  const name = target && typeof target.name === 'string' ? target.name : 'Target';
   try {
     const res = await window.appAPI.targets.setStatus({ id, status });
     if (res && res.success === true) {
+      setTargetFeedback(`${status === 'archived' ? 'Archived' : 'Activated'} "${name}".`);
       await loadTargets();
       return;
     }
-    toast((res && res.error) || 'Action failed', 'error');
+    toast(targetErrorMessage(res && res.error), 'error');
   } catch (err) {
     const msg = err?.message || String(err);
-    toast(msg, 'error');
+    toast(targetErrorMessage(msg), 'error');
     reportError(msg, { handler: 'setTargetArchived' });
   }
 }
@@ -4001,12 +4241,20 @@ function useTargetForCollection(target) {
 document.getElementById('btn-target-new').addEventListener('click', () => openTargetEditor(null));
 document.getElementById('btn-target-cancel').addEventListener('click', () => closeTargetEditor());
 document.getElementById('btn-target-save').addEventListener('click', safeAsync(() => saveTargetFromEditor()));
+document.getElementById('btn-target-feedback-dismiss').addEventListener('click', () => setTargetFeedback(''));
+document.getElementById('target-search').addEventListener('input', () => renderTargets());
+for (const id of ['target-business-types', 'target-locations', 'target-exclusions']) {
+  document.getElementById(id).addEventListener('input', () => updateTargetTermHints());
+}
+for (const id of ['target-required-fields', 'target-optional-fields']) {
+  document.getElementById(id).addEventListener('change', () => syncTargetFieldChoices());
+}
 
 document.getElementById('target-list').addEventListener('click', safeAsync(async (e) => {
   const button = e.target.closest('button[data-action]');
   if (!button) return;
-  const card = button.closest('.target-card');
-  const id = card && typeof card.dataset.id === 'string' ? card.dataset.id : '';
+  const row = button.closest('.targets-row');
+  const id = row && typeof row.dataset.id === 'string' ? row.dataset.id : '';
   if (!id) return;
   let targets = [];
   try {
@@ -4014,7 +4262,7 @@ document.getElementById('target-list').addEventListener('click', safeAsync(async
     targets = result && Array.isArray(result.rows) ? result.rows : [];
   } catch (err) {
     const msg = err?.message || String(err);
-    toast(msg, 'error');
+    toast('The Target list could not be read. Try again.', 'error');
     reportError(msg, { handler: 'targetListAction' });
     return;
   }
@@ -4023,11 +4271,14 @@ document.getElementById('target-list').addEventListener('click', safeAsync(async
     toast('That target could not be found', 'error');
     return;
   }
+  setTargetFeedback('');
   if (button.dataset.action === 'edit') openTargetEditor(target);
   else if (button.dataset.action === 'toggle-status') {
     await setTargetArchived(id, target.status === 'archived' ? 'active' : 'archived');
   } else if (button.dataset.action === 'use') {
     useTargetForCollection(target);
+  } else if (button.dataset.action === 'icp') {
+    openIcpForTarget(id);
   }
 }));
 
@@ -4693,9 +4944,21 @@ function renderIcp() {
   tbody.replaceChildren(frag);
 }
 
+// F10: "Open in ICP" from Targets names the Target to preselect. It is used once,
+// by the next populate, and only if that Target is still in the list.
+let icpPendingTargetId = null;
+
+function openIcpForTarget(targetId) {
+  icpPendingTargetId = typeof targetId === 'string' && targetId ? targetId : null;
+  const nav = document.querySelector('.nav-item[data-view="icp"]');
+  if (nav) nav.click();
+}
+
 function populateIcpTargets() {
   const select = document.getElementById('icp-target');
-  const previous = select.value;
+  const pending = icpPendingTargetId;
+  icpPendingTargetId = null;
+  const previous = pending || select.value;
   select.replaceChildren(...icpTargets.map((t) => {
     const option = document.createElement('option');
     option.value = t.id;

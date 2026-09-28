@@ -1346,73 +1346,123 @@
           </div>
         </section>
 
-        <!-- P1-F Target Builder: user-owned prospecting definitions. Required and
-             optional fields are PROSPECTING CRITERIA, not save gates: no lead is
-             ever rejected from storage because one of them is missing. "Use for
-             collection" only pre-fills existing collector inputs. -->
+        <!-- P1-F Target Builder - F10 Targets workspace: user-owned, reusable ICP
+             definitions over the existing targets:list / targets:save /
+             targets:set-status contract. Required and optional fields are
+             PROSPECTING CRITERIA, not save gates: no lead is ever rejected from
+             storage because one of them is missing. "Use for collection" only
+             pre-fills existing collector inputs. There is no delete, no match
+             count and no score. -->
         <section class="view" id="view-targets">
-          <div class="view-top">
-            <div class="form-actions">
-              <button class="btn btn-primary" id="btn-target-new">New Target</button>
-              <button class="btn btn-secondary" id="btn-target-cancel" hidden>Cancel</button>
+          <div class="lists-workspace targets-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Targets</h2>
+                <p class="lists-subtitle">Reusable ICP definitions</p>
+              </div>
+              <div class="lists-actions">
+                <label class="visually-hidden" for="target-search">Search targets</label>
+                <input type="search" id="target-search" autocomplete="off" placeholder="Search name, industry, type or location">
+                <button type="button" class="btn btn-sm btn-primary" id="btn-target-new">New Target</button>
+              </div>
             </div>
-            <div id="target-editor" hidden>
-              <div class="form-item">
-                <label for="target-name">Name</label>
-                <input type="text" id="target-name" maxlength="120" placeholder="Target name">
-              </div>
-              <div class="form-item">
-                <label for="target-industry">Industry</label>
-                <input type="text" id="target-industry" maxlength="120" placeholder="e.g. HVAC">
-              </div>
-              <div class="form-item">
-                <label for="target-business-types">Business Types</label>
-                <input type="text" id="target-business-types" placeholder="Comma separated, e.g. Plumber, HVAC Contractor">
-              </div>
-              <div class="form-item">
-                <label for="target-locations">Locations</label>
-                <input type="text" id="target-locations" placeholder="Comma separated, e.g. Bangkok, Thailand">
-              </div>
-              <div class="form-item">
-                <label>Required fields</label>
-                <div class="target-checks" id="target-required-fields">
-                  <label class="switch-label"><input type="checkbox" value="phone"> phone</label>
-                  <label class="switch-label"><input type="checkbox" value="title"> title</label>
-                  <label class="switch-label"><input type="checkbox" value="website"> website</label>
-                  <label class="switch-label"><input type="checkbox" value="email"> email</label>
-                  <label class="switch-label"><input type="checkbox" value="address"> address</label>
+            <div class="targets-feedback" id="target-feedback" role="status" aria-live="polite" hidden>
+              <span id="target-feedback-text"></span>
+              <button type="button" class="btn btn-sm btn-ghost" id="btn-target-feedback-dismiss" aria-label="Dismiss confirmation">Dismiss</button>
+            </div>
+            <div class="targets-layout">
+              <div class="targets-main">
+                <div class="lists-count" id="target-count" role="status" aria-live="polite"></div>
+                <div class="lists-table-wrap">
+                  <table class="data-table lists-table targets-table" id="target-table">
+                    <caption class="visually-hidden">Saved Targets: name, criteria, status and last update.</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" class="lists-col-name">Name</th>
+                        <th scope="col">Criteria</th>
+                        <th scope="col">Status</th>
+                        <th scope="col" class="lists-col-updated">Updated</th>
+                        <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                      </tr>
+                    </thead>
+                    <tbody id="target-list"></tbody>
+                  </table>
                 </div>
               </div>
-              <div class="form-item">
-                <label>Optional fields</label>
-                <div class="target-checks" id="target-optional-fields">
-                  <label class="switch-label"><input type="checkbox" value="phone"> phone</label>
-                  <label class="switch-label"><input type="checkbox" value="title"> title</label>
-                  <label class="switch-label"><input type="checkbox" value="website"> website</label>
-                  <label class="switch-label"><input type="checkbox" value="email"> email</label>
-                  <label class="switch-label"><input type="checkbox" value="address"> address</label>
+
+              <aside class="targets-editor" id="target-editor" aria-labelledby="target-editor-title" hidden>
+                <div class="targets-editor-head">
+                  <h3 class="targets-editor-title" id="target-editor-title">New Target</h3>
                 </div>
-              </div>
-              <div class="form-item">
-                <label for="target-exclusions">Exclusions</label>
-                <input type="text" id="target-exclusions" placeholder="Comma separated terms matched against title/address, or 'closed'">
-              </div>
-              <div class="form-item">
-                <label for="target-status">Status</label>
-                <select id="target-status">
-                  <option value="active">Active</option>
-                  <option value="archived">Archived</option>
-                </select>
-              </div>
-              <p class="lead-detail-quality-note" id="target-editor-note">
-                Required fields are prospecting criteria only. A lead is never rejected from storage because one is missing.
-              </p>
-              <div class="form-actions">
-                <button class="btn btn-primary" id="btn-target-save">Save Target</button>
-              </div>
-              <div class="status-bar" id="target-status-bar" style="display:none;"></div>
+                <div class="targets-editor-body">
+                  <div class="targets-field">
+                    <label for="target-name">Name</label>
+                    <input type="text" id="target-name" maxlength="120" autocomplete="off" placeholder="e.g. Baku dental clinics" aria-describedby="target-name-hint">
+                    <p class="targets-hint" id="target-name-hint">Required. Up to 120 characters.</p>
+                  </div>
+                  <div class="targets-field">
+                    <label for="target-industry">Industry</label>
+                    <input type="text" id="target-industry" maxlength="120" autocomplete="off" placeholder="e.g. Dental" aria-describedby="target-industry-hint">
+                    <p class="targets-hint" id="target-industry-hint">Up to 120 characters.</p>
+                    <p class="targets-note" data-note="industry">Recorded; ICP reports this as Unknown because leads currently do not carry industry data.</p>
+                  </div>
+                  <div class="targets-field">
+                    <label for="target-business-types">Business types</label>
+                    <input type="text" id="target-business-types" autocomplete="off" placeholder="Comma separated, e.g. Dentist, Dental clinic" aria-describedby="target-business-types-hint">
+                    <p class="targets-hint" id="target-business-types-hint" data-terms-for="target-business-types">Comma separated. Up to 20 terms, 50 characters each.</p>
+                    <p class="targets-note" data-note="businessTypes">Recorded; ICP reports this as Unknown because leads currently do not carry business-type data.</p>
+                  </div>
+                  <div class="targets-field">
+                    <label for="target-locations">Locations</label>
+                    <input type="text" id="target-locations" autocomplete="off" placeholder="Comma separated, e.g. Baku, Azerbaijan" aria-describedby="target-locations-hint">
+                    <p class="targets-hint" id="target-locations-hint" data-terms-for="target-locations">Comma separated. Up to 20 terms, 50 characters each.</p>
+                    <p class="targets-note" data-note="locations">Recorded; ICP reports this as Unknown because leads currently do not carry city/country data.</p>
+                  </div>
+                  <fieldset class="targets-field targets-fieldset">
+                    <legend>Required fields</legend>
+                    <div class="target-checks" id="target-required-fields">
+                      <label class="targets-check"><input type="checkbox" value="phone"> Phone</label>
+                      <label class="targets-check"><input type="checkbox" value="title"> Business name</label>
+                      <label class="targets-check"><input type="checkbox" value="website"> Website</label>
+                      <label class="targets-check"><input type="checkbox" value="email"> Email</label>
+                      <label class="targets-check" id="target-required-address-label"><input type="checkbox" value="address" id="target-required-address" disabled aria-describedby="target-address-note"> Address</label>
+                    </div>
+                    <p class="targets-hint">Evaluated by ICP: a lead missing a required field is Not fit.</p>
+                    <p class="targets-note targets-note-warn" id="target-address-note">Address is unavailable as a required ICP field in this build: ICP evaluation cannot use it.</p>
+                  </fieldset>
+                  <fieldset class="targets-field targets-fieldset">
+                    <legend>Optional fields</legend>
+                    <div class="target-checks" id="target-optional-fields">
+                      <label class="targets-check"><input type="checkbox" value="phone"> Phone</label>
+                      <label class="targets-check"><input type="checkbox" value="title"> Business name</label>
+                      <label class="targets-check"><input type="checkbox" value="website"> Website</label>
+                      <label class="targets-check"><input type="checkbox" value="email"> Email</label>
+                      <label class="targets-check"><input type="checkbox" value="address"> Address</label>
+                    </div>
+                    <p class="targets-note" data-note="optionalFields">Not used by ICP.</p>
+                  </fieldset>
+                  <div class="targets-field">
+                    <label for="target-exclusions">Exclusions</label>
+                    <input type="text" id="target-exclusions" autocomplete="off" placeholder="Comma separated terms" aria-describedby="target-exclusions-hint">
+                    <p class="targets-hint" id="target-exclusions-hint" data-terms-for="target-exclusions">Comma separated. Up to 20 terms, 50 characters each.</p>
+                    <p class="targets-note" data-note="exclusions">Recorded; not evaluated in this build.</p>
+                  </div>
+                  <div class="targets-field">
+                    <label for="target-status">Status</label>
+                    <select id="target-status">
+                      <option value="active">Active</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                  </div>
+                  <p class="targets-hint" id="target-editor-note">Required fields are prospecting criteria only. A lead is never rejected from storage because one is missing.</p>
+                  <div class="targets-errors" id="target-status-bar" role="alert" hidden></div>
+                </div>
+                <div class="targets-editor-actions">
+                  <button type="button" class="btn btn-sm btn-secondary" id="btn-target-cancel">Cancel</button>
+                  <button type="button" class="btn btn-sm btn-primary" id="btn-target-save">Save Target</button>
+                </div>
+              </aside>
             </div>
-            <div class="target-list" id="target-list"></div>
           </div>
         </section>
 
