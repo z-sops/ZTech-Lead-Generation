@@ -91,8 +91,9 @@ function inputTag(src, id) {
 
 test('1. the view section survives as the first active view, with no form', () => {
   // F6 declared update: the two Lists views were added after this section.
-  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 8,
-    'six view sections plus the two F6 Lists views');
+  // F7 declared lock update: the two Research views were added after this section.
+  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 10,
+    'six view sections plus two F6 Lists and two F7 Research views');
   assert.ok(/<section class="view active" id="view-collector">/.test(htmlSource),
     'the opening tag is unchanged and still active first');
   assert.strictEqual((htmlSource.match(/id="view-collector"/g) || []).length, 1,
@@ -325,7 +326,8 @@ test('15. no backend, preload or dependency surface changed', () => {
   // F6 declared lock update: +7 Lists channels and their preload methods.
   assert.strictEqual(channels, 33, '33 main IPC handlers');
   const invokes = (preloadSource.match(/ipcRenderer\.invoke/g) || []).length;
-  assert.strictEqual(invokes, 39, 'the preload surface is 39 channels');
+  // F7 declared lock update: +1 preload method (research.list).
+  assert.strictEqual(invokes, 40, 'the preload surface is 40 channels');
   const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(htmlSource);
   assert.strictEqual(csp[1],
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",

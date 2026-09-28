@@ -946,6 +946,15 @@ async function loadResearchLead(leadRef) {
   };
 }
 
+// F7: every stored lead's identity fields, for the read-only research overview.
+// Only the four fields the overview shows leave this function.
+async function listResearchLeads() {
+  const rows = await accountStore.getCollectedNumbers();
+  return (Array.isArray(rows) ? rows : []).map((lead) => ({
+    id: lead.id, title: lead.title, phone: lead.phone, website: lead.website
+  }));
+}
+
 // A4/A7: the renderer never names a file. Main opens the dialog and passes the path.
 async function pickResearchArtifactFile() {
   try {
@@ -979,6 +988,7 @@ function registerResearchIpcHandlers() {
       keys: researchService.keys,
       isTrustedSender: researchTrustedSender,
       loadLead: loadResearchLead,
+      listLeads: listResearchLeads,
       showOpenDialog: pickResearchArtifactFile,
       logger: { warn: (scope, msg, fields) => logger.warn(scope, msg, fields), error: (scope, msg, fields) => logger.error(scope, msg, fields) }
     });

@@ -2355,6 +2355,155 @@ textarea {
 }
 
 /* ==========================================================================
+   ZTech Frontend 2.0 - F7: Research workspace (Queue, Completed).
+
+   Reuses the F6 .lists-* table workspace. Adds only the research state and
+   evidence badges, the Queue / Completed switch and the control row. Each
+   engine state has its own badge; none is styled as a generic failure.
+   ========================================================================== */
+.research-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.research-tab {
+  padding: var(--space-2) var(--space-5);
+  font: inherit;
+  font-size: var(--font-13);
+  color: var(--text-2);
+  background: var(--bg-surface);
+  border: 0;
+  cursor: pointer;
+}
+
+.research-tab + .research-tab {
+  border-left: 1px solid var(--border-2);
+}
+
+.research-tab[aria-current="page"] {
+  font-weight: 600;
+  color: var(--accent-f2);
+  background: var(--accent-subtle);
+}
+
+.research-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.research-provider {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.research-provider:empty {
+  display: none;
+}
+
+.research-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.research-controls input[type="search"],
+.research-controls select {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.research-controls input[type="search"] {
+  width: 260px;
+  max-width: 100%;
+}
+
+.research-toggle {
+  margin-top: 0;
+  align-items: center;
+}
+
+.research-row {
+  cursor: pointer;
+}
+
+.research-row:hover td {
+  background: var(--bg-hover);
+}
+
+.research-lead-link {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-1);
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.research-lead-link:hover {
+  color: var(--accent-f2);
+  text-decoration: underline;
+}
+
+.research-cell-site {
+  overflow-wrap: anywhere;
+}
+
+.research-badge,
+.research-evidence {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.research-badge[data-state="pending"] {
+  color: var(--info);
+  background: var(--info-bg);
+}
+
+.research-badge[data-state="complete"],
+.research-evidence[data-evidence="complete"] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.research-badge[data-state="partial"],
+.research-badge[data-state="stale"],
+.research-evidence[data-evidence="partial"],
+.research-evidence[data-evidence="stale"] {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.research-badge[data-state="site_unreachable"],
+.research-badge[data-state="failed"] {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+}
+
+.research-badge[data-state="no_website"],
+.research-badge[data-state="no_crawlable_content"],
+.research-badge[data-state="not_checked"] {
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+/* ==========================================================================
    ZTech Frontend 2.0 - F3: Leads workspace.
 
    A dense prospecting table, not a card grid. Everything here is built from

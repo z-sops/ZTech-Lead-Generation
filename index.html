@@ -97,19 +97,19 @@
 
         <div class="nav-group">
           <div class="nav-group-label">Research</div>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <!-- Research: the Queue and Completed workspaces over the existing
+               Round-one research engine are live routes. -->
+          <button class="nav-item" data-view="queue" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <circle cx="8" cy="8" r="5.5"></circle><path d="M8 4.8V8l2.2 1.4"></path>
             </svg>
             <span class="nav-label">Research Queue</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <button class="nav-item" data-view="completed" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M3 8.4 6.2 11.6 13 4.8"></path>
             </svg>
             <span class="nav-label">Completed</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
         </div>
 
@@ -1135,6 +1135,125 @@
                   </tr>
                 </thead>
                 <tbody id="segment-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- F7 Research: Research Queue. Rows are the existing research engine's own
+             per-lead view (prospect-research:list); nothing here is a second
+             research state, queue or scheduler. -->
+        <section class="view" id="view-queue">
+          <div class="lists-workspace research-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Research</h2>
+                <p class="lists-subtitle">Leads whose research has not run, is running, needs another run, or is older than the freshness policy.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Research workspaces">
+                <button type="button" class="research-tab" data-research-tab="queue" aria-current="page">Queue</button>
+                <button type="button" class="research-tab" data-research-tab="completed">Completed</button>
+              </div>
+            </div>
+            <div class="research-provider" id="research-queue-provider" role="status" aria-live="polite"></div>
+            <div class="research-controls" role="search" aria-label="Research Queue search and filters">
+              <label class="visually-hidden" for="research-queue-search">Search research queue</label>
+              <input type="search" id="research-queue-search" autocomplete="off" placeholder="Search lead, phone or website">
+              <label class="visually-hidden" for="research-queue-state">Research state</label>
+              <select id="research-queue-state">
+                <option value="all">All states</option>
+                <option value="not_checked">Not checked</option>
+                <option value="pending">Pending</option>
+                <option value="failed">Failed</option>
+                <option value="site_unreachable">Site unreachable</option>
+                <option value="stale">Stale</option>
+              </select>
+              <label class="visually-hidden" for="research-queue-evidence">Evidence</label>
+              <select id="research-queue-evidence">
+                <option value="all">Any evidence</option>
+                <option value="absent">No evidence</option>
+                <option value="partial">Partial evidence</option>
+                <option value="complete">Complete evidence</option>
+                <option value="stale">Stale evidence</option>
+              </select>
+              <label class="lists-check research-toggle" for="research-queue-nowebsite">
+                <input type="checkbox" id="research-queue-nowebsite"> Show leads without a website
+              </label>
+              <button type="button" class="btn btn-sm btn-secondary" id="research-queue-refresh">Refresh</button>
+            </div>
+            <div class="lists-count" id="research-queue-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table research-table" id="research-queue-table">
+                <caption class="visually-hidden">Research Queue: leads with their research state and evidence.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Lead</th>
+                    <th scope="col">Website</th>
+                    <th scope="col">Research state</th>
+                    <th scope="col">Evidence</th>
+                    <th scope="col" class="lists-col-updated">Updated</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="research-queue-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- F7 Research: Completed. Rows are the existing research engine's own
+             per-lead view (prospect-research:list); nothing here is a second
+             research state, queue or scheduler. -->
+        <section class="view" id="view-completed">
+          <div class="lists-workspace research-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Research</h2>
+                <p class="lists-subtitle">Research that reached a recorded result. Freshness and evidence come from the stored research record.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Research workspaces">
+                <button type="button" class="research-tab" data-research-tab="queue">Queue</button>
+                <button type="button" class="research-tab" data-research-tab="completed" aria-current="page">Completed</button>
+              </div>
+            </div>
+            <div class="research-provider" id="research-completed-provider" role="status" aria-live="polite"></div>
+            <div class="research-controls" role="search" aria-label="Completed search and filters">
+              <label class="visually-hidden" for="research-completed-search">Search completed</label>
+              <input type="search" id="research-completed-search" autocomplete="off" placeholder="Search lead, phone or website">
+              <label class="visually-hidden" for="research-completed-state">Research state</label>
+              <select id="research-completed-state">
+                <option value="all">All states</option>
+                <option value="complete">Complete</option>
+                <option value="partial">Partial</option>
+                <option value="no_crawlable_content">No crawlable content</option>
+                <option value="no_website">Website not available</option>
+              </select>
+              <label class="visually-hidden" for="research-completed-evidence">Evidence</label>
+              <select id="research-completed-evidence">
+                <option value="all">Any evidence</option>
+                <option value="absent">No evidence</option>
+                <option value="partial">Partial evidence</option>
+                <option value="complete">Complete evidence</option>
+                <option value="stale">Stale evidence</option>
+              </select>
+              <button type="button" class="btn btn-sm btn-secondary" id="research-completed-refresh">Refresh</button>
+            </div>
+            <div class="lists-count" id="research-completed-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table research-table" id="research-completed-table">
+                <caption class="visually-hidden">Completed: leads with their research state and evidence.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Lead</th>
+                    <th scope="col">Website</th>
+                    <th scope="col">Research state</th>
+                    <th scope="col">Evidence</th>
+                    <th scope="col">Freshness</th>
+                    <th scope="col" class="lists-col-updated">Updated</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="research-completed-body"></tbody>
               </table>
             </div>
           </div>

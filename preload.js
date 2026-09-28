@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('appAPI', {
   research: {
     request: (leadRef, force) => ipcRenderer.invoke('prospect-research:request', leadRef, force === true),
     get: (leadRef) => ipcRenderer.invoke('prospect-research:get', leadRef),
+    // F7: read-only research overview (no parameters).
+    list: () => ipcRenderer.invoke('prospect-research:list'),
     importArtifact: (leadRef) => ipcRenderer.invoke('prospect-research:import-artifact', leadRef),
     providerHealth: () => ipcRenderer.invoke('prospect-research:provider-health'),
     setApiKey: (key) => ipcRenderer.invoke('prospect-research:set-api-key', key),

@@ -590,7 +590,8 @@ test('20. the CSP is unchanged and no inline script or handler was added', () =>
 test('21. the IPC channel set and dependencies are unchanged', () => {
   // F6 declared lock update: +7 Lists channels (F5 itself added none).
   assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 33, '33 IPC channels');
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 39, '39 preload invocations');
+  // F7 declared lock update: +1 preload method (research.list).
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 40, '40 preload invocations');
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'the F5 block performs no I/O');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);

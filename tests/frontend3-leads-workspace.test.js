@@ -727,7 +727,8 @@ test('27. focus states are visible and the density token still drives the rows',
 test('28. no new IPC channel, no dependency change, no network call', () => {
   // F6 declared lock update: +7 Lists channels and their seven preload methods.
   assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 33, '33 IPC channels');
-  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 39, '39 preload invocations');
+  // F7 declared lock update: +1 preload method (research.list).
+  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 40, '40 preload invocations');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
     'production dependencies unchanged');

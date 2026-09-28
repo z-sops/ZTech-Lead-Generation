@@ -18,7 +18,9 @@ const viewTitles = {
   targets: 'Targets',
   settings: 'Settings',
   searches: 'Saved Searches',
-  segments: 'Segments'
+  segments: 'Segments',
+  queue: 'Research Queue',
+  completed: 'Completed'
 };
 
 const viewContexts = {
@@ -29,7 +31,9 @@ const viewContexts = {
   targets: 'Setup',
   settings: 'Setup',
   searches: 'Lists',
-  segments: 'Lists'
+  segments: 'Lists',
+  queue: 'Research',
+  completed: 'Research'
 };
 
 // A nav target must be a real, existing view. Anything else is refused rather
@@ -4357,8 +4361,328 @@ navItems.forEach(item => {
     if (viewId === 'targets') loadTargets();
     if (viewId === 'searches') loadSavedSearches();
     if (viewId === 'segments') loadSegments();
+    if (viewId === 'queue') loadResearch();
+    if (viewId === 'completed') loadResearch();
   });
 });
+
+// === F7 Research workspace ===
+// The Queue and Completed views are an operational surface over the EXISTING
+// Round-one research engine. Every row is the engine's own per-lead view,
+// read through prospect-research:list (which calls gateway.getResearch for each
+// stored lead), and every action is the existing prospect-research:request.
+// There is no second state machine, queue, scheduler or poller here: the main
+// process scheduler does the work, and these views re-read on open, on
+// Refresh and after an action. States are the engine's nine availability
+// values, shown by their own names - no state is collapsed into "failed" and
+// none is invented. Rows open the existing F5 Lead Detail Drawer.
+const RESEARCH_QUEUE_STATES = ['not_checked', 'pending', 'failed', 'site_unreachable', 'stale'];
+const RESEARCH_COMPLETED_STATES = ['complete', 'partial', 'no_crawlable_content', 'no_website'];
+const RESEARCH_QUEUE_ORDER = { pending: 0, failed: 1, site_unreachable: 2, stale: 3, not_checked: 4 };
+const RESEARCH_STATE_LABELS = {
+  not_checked: 'Not checked',
+  pending: 'Pending',
+  no_website: 'Website not available',
+  site_unreachable: 'Site unreachable',
+  no_crawlable_content: 'No crawlable content',
+  partial: 'Partial',
+  complete: 'Complete',
+  failed: 'Failed',
+  stale: 'Stale'
+};
+const RESEARCH_STATE_NOTES = {
+  not_checked: 'Research has not run for this lead.',
+  pending: 'The research service is working on it.',
+  no_website: 'Website research is unavailable because no website is associated with this lead.',
+  site_unreachable: 'The website could not be reached.',
+  no_crawlable_content: 'The site responded, but nothing readable could be found.',
+  partial: 'Finished with part of the evidence.',
+  complete: 'Finished with every evidence section.',
+  failed: 'Research finished without usable evidence.',
+  stale: 'The stored result is older than the freshness policy allows.'
+};
+const RESEARCH_EVIDENCE_LABELS = { absent: 'No evidence', partial: 'Partial', complete: 'Complete', stale: 'Stale' };
+// null until the first read: an unloaded list is never shown as an empty one.
+let researchRows = null;
+let researchLoadSeq = 0;
+let researchLoadError = null;
+let researchUnresearchable = 0;
+let researchProviderText = '';
+
+function researchState(row) {
+  return row && typeof row.availability === 'string' && row.availability ? row.availability : 'not_checked';
+}
+
+// Derived only from stored fields: no packet = absent; a packet older than the
+// freshness policy = stale; otherwise the packet's own availability.
+function researchEvidenceStatus(row) {
+  if (!row || !row.evidence) return 'absent';
+  if (row.stale === true) return 'stale';
+  return row.evidence.availability === 'complete' ? 'complete' : 'partial';
+}
+
+// An engine state this workspace does not list is kept visible in the Queue
+// under its own name rather than hidden or renamed.
+function researchInQueue(row) {
+  const state = researchState(row);
+  return RESEARCH_QUEUE_STATES.includes(state) || !RESEARCH_COMPLETED_STATES.includes(state);
+}
+
+function researchHost(url) {
+  const text = typeof url === 'string' ? url.trim() : '';
+  if (!text) return '';
+  return qualityWebsiteSignal(text).host || text;
+}
+
+function researchRowsFor(kind, rows) {
+  const source = Array.isArray(rows) ? rows : [];
+  const term = document.getElementById(`research-${kind}-search`).value.trim().toLowerCase();
+  const state = document.getElementById(`research-${kind}-state`).value;
+  const evidence = document.getElementById(`research-${kind}-evidence`).value;
+  const noWebsite = kind === 'queue' && document.getElementById('research-queue-nowebsite').checked;
+  const out = source.filter((row) => {
+    if ((kind === 'queue') !== researchInQueue(row)) return false;
+    if (kind === 'queue' && !noWebsite && researchState(row) === 'not_checked' && !row.leadWebsite) return false;
+    if (state !== 'all' && researchState(row) !== state) return false;
+    if (evidence !== 'all' && researchEvidenceStatus(row) !== evidence) return false;
+    if (term) {
+      const hay = [row.title, row.phone, row.leadWebsite, row.researchedWebsite].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(term)) return false;
+    }
+    return true;
+  });
+  const updated = (row) => (typeof row.updatedAt === 'string' ? row.updatedAt : '');
+  out.sort(kind === 'queue'
+    ? (a, b) => ((RESEARCH_QUEUE_ORDER[researchState(a)] ?? 9) - (RESEARCH_QUEUE_ORDER[researchState(b)] ?? 9))
+      || updated(b).localeCompare(updated(a))
+    : (a, b) => updated(b).localeCompare(updated(a)));
+  return out;
+}
+
+// Leads without a website that have never been researched: counted from the
+// same rows, so the Queue can say how many it is not showing.
+function researchHiddenNoWebsite(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => researchState(row) === 'not_checked' && !row.leadWebsite).length;
+}
+
+function researchStateCell(row) {
+  const state = researchState(row);
+  const cell = listsEl('td', 'research-cell-state');
+  const badge = listsEl('span', 'research-badge', RESEARCH_STATE_LABELS[state] || state);
+  badge.dataset.state = state;
+  cell.appendChild(badge);
+  cell.appendChild(listsEl('div', 'lists-description', RESEARCH_STATE_NOTES[state] || 'Reported by the research engine.'));
+  if (state === 'pending' && row.pendingReason) cell.appendChild(listsEl('div', 'lists-description', `Waiting: ${row.pendingReason}`));
+  if (row.message) cell.appendChild(listsEl('div', 'lists-description', `Reason: ${row.message}`));
+  return cell;
+}
+
+function researchEvidenceCell(row) {
+  const status = researchEvidenceStatus(row);
+  const cell = listsEl('td', 'research-cell-evidence');
+  const badge = listsEl('span', 'research-evidence', RESEARCH_EVIDENCE_LABELS[status]);
+  badge.dataset.evidence = status;
+  cell.appendChild(badge);
+  if (row.evidence) {
+    const e = row.evidence;
+    cell.appendChild(listsEl('div', 'lists-description',
+      `${e.facts} ${e.facts === 1 ? 'fact' : 'facts'} · ${e.findings} ${e.findings === 1 ? 'finding' : 'findings'}`));
+    if (e.provider) cell.appendChild(listsEl('div', 'lists-description', `Source: ${e.provider}`));
+  }
+  return cell;
+}
+
+function researchFreshnessCell(row) {
+  const cell = listsEl('td', 'lists-cell-muted');
+  if (!row.evidence) {
+    cell.textContent = '—';
+    return cell;
+  }
+  cell.appendChild(listsEl('div', null, row.stale ? 'Stale' : 'Within policy'));
+  if (row.evidence.capturedAt) cell.appendChild(listsEl('div', 'lists-description', `Captured ${formatListTime(row.evidence.capturedAt)}`));
+  return cell;
+}
+
+function researchRow(kind, row) {
+  const tr = document.createElement('tr');
+  tr.className = 'research-row';
+  tr.dataset.leadId = row.leadId;
+  const state = researchState(row);
+  const name = row.title || row.phone || 'Untitled lead';
+  const leadCell = listsEl('td', 'lists-cell-name');
+  leadCell.appendChild(listsButton(name, 'research-lead-link', () => openResearchLead(row.leadId), `Open ${name} in the lead drawer`));
+  if (row.title && row.phone) leadCell.appendChild(listsEl('div', 'lists-description', row.phone));
+  const siteCell = listsEl('td', 'research-cell-site');
+  const host = researchHost(row.leadWebsite);
+  if (host) siteCell.appendChild(listsEl('div', null, host));
+  else siteCell.appendChild(listsEl('span', 'lists-cell-muted', 'Website not available'));
+  const researchedHost = researchHost(row.researchedWebsite);
+  if (researchedHost && researchedHost !== host) {
+    siteCell.appendChild(listsEl('div', 'lists-description', `Researched: ${researchedHost}`));
+  }
+  const actions = listsEl('td', 'lists-cell-actions');
+  actions.appendChild(listsButton('Open', 'btn btn-sm btn-secondary', () => openResearchLead(row.leadId), `Open ${name}`));
+  // The existing request action needs a website and is not repeated while a
+  // run is in progress. Without force it reuses a fresh result (engine rule).
+  if (row.leadWebsite && state !== 'pending') {
+    const first = state === 'not_checked';
+    actions.appendChild(listsButton(first ? 'Start research' : 'Run again', 'btn btn-sm',
+      () => runResearch(row, !first), `${first ? 'Start research for' : 'Run research again for'} ${name}`));
+  }
+  const cells = [leadCell, siteCell, researchStateCell(row), researchEvidenceCell(row)];
+  if (kind === 'completed') cells.push(researchFreshnessCell(row));
+  cells.push(listsEl('td', 'lists-cell-muted', formatListTime(row.updatedAt)), actions);
+  tr.append(...cells);
+  tr.addEventListener('click', (e) => {
+    if (e.target.closest('button, a, input, select')) return;
+    safeAsync(() => openResearchLead(row.leadId))();
+  });
+  return tr;
+}
+
+function renderResearch(kind) {
+  const tbody = document.getElementById(`research-${kind}-body`);
+  const count = document.getElementById(`research-${kind}-count`);
+  const colSpan = kind === 'completed' ? 7 : 6;
+  document.getElementById(`research-${kind}-provider`).textContent = researchProviderText;
+  if (researchLoadError) {
+    count.textContent = '';
+    listEmptyRow(tbody, colSpan, 'Research state could not be loaded', researchLoadError);
+    tbody.firstChild.querySelector('.leads-state').dataset.state = 'error';
+    return;
+  }
+  if (researchRows === null) {
+    count.textContent = '';
+    listEmptyRow(tbody, colSpan, 'Loading research state...', 'Reading the stored research record for each lead.');
+    tbody.firstChild.querySelector('.leads-state').dataset.state = 'loading';
+    return;
+  }
+  const inTab = researchRows.filter((row) => (kind === 'queue') === researchInQueue(row));
+  const rows = researchRowsFor(kind, researchRows);
+  const parts = [`${rows.length} of ${inTab.length} ${kind === 'queue' ? 'in the queue' : 'completed'}`];
+  if (kind === 'queue' && !document.getElementById('research-queue-nowebsite').checked) {
+    const hidden = researchHiddenNoWebsite(researchRows);
+    if (hidden) parts.push(`${hidden} not checked without a website hidden`);
+  }
+  if (researchUnresearchable) parts.push(`${researchUnresearchable} leads have an id research cannot use`);
+  count.textContent = parts.join(' · ');
+  if (!rows.length) {
+    const filtered = inTab.length > 0;
+    listEmptyRow(tbody, colSpan,
+      filtered ? 'No rows match these filters' : (kind === 'queue' ? 'No leads currently require research.' : 'No completed research yet.'),
+      filtered ? 'Change or clear the search and filters above.'
+        : (kind === 'queue' ? 'Every lead has a recorded research result, or has no website.'
+          : 'Completed research appears here once the research engine records a result.'));
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const row of rows) frag.appendChild(researchRow(kind, row));
+  tbody.replaceChildren(frag);
+}
+
+function renderResearchViews() {
+  renderResearch('queue');
+  renderResearch('completed');
+}
+
+// The provider line is read through the two existing status channels. It says
+// whether a key is configured, never what the key is.
+async function loadResearchProviderStatus() {
+  const parts = [];
+  try {
+    const key = await window.appAPI.research.keyStatus();
+    parts.push(key && key.configured ? 'Research API key configured' : 'No research API key configured - research runs cannot start until one is set in Settings');
+  } catch (err) {
+    parts.push('Research key status unavailable');
+  }
+  try {
+    const health = await window.appAPI.research.providerHealth();
+    if (health && typeof health.state === 'string') parts.push(`Provider: ${health.state}`);
+  } catch (err) {
+    // The provider line is informational only.
+  }
+  return parts.join(' · ');
+}
+
+function researchListErrorText(err) {
+  const msg = (err && err.message) || String(err);
+  return /No handler registered/i.test(msg)
+    ? 'The research service is not available in this session.'
+    : msg;
+}
+
+async function loadResearch() {
+  const seq = ++researchLoadSeq;
+  researchRows = null;
+  researchLoadError = null;
+  renderResearchViews();
+  try {
+    const [result, provider] = await Promise.all([
+      window.appAPI.research.list(),
+      loadResearchProviderStatus()
+    ]);
+    if (seq !== researchLoadSeq) return;
+    researchRows = result && Array.isArray(result.rows) ? result.rows : [];
+    researchUnresearchable = result && Number.isInteger(result.unresearchable) ? result.unresearchable : 0;
+    researchProviderText = provider;
+  } catch (err) {
+    if (seq !== researchLoadSeq) return;
+    researchLoadError = researchListErrorText(err);
+    reportError(researchLoadError, { handler: 'loadResearch' });
+  }
+  renderResearchViews();
+}
+
+// Opens the EXISTING F5 drawer on its Research tab. No second lead profile.
+async function openResearchLead(leadId) {
+  await openLeadDetail(leadId);
+  selectLeadDrawerTab('research', false);
+}
+
+// The existing request channel: force=false reuses a fresh result, force=true
+// runs again. The main-process service owns the run and its retries.
+async function runResearch(row, force) {
+  let view;
+  try {
+    view = await window.appAPI.research.request(row.leadId, force === true);
+  } catch (err) {
+    toast((err && err.message) || 'Research could not be requested', 'error');
+    return;
+  }
+  const state = view && typeof view.availability === 'string' ? view.availability : 'pending';
+  toast(`Research: ${RESEARCH_STATE_LABELS[state] || state}`);
+  await loadResearch();
+}
+
+// The drawer overlay is the single F5 drawer. It is moved (not copied) to the
+// document body so it can open over the Research views too; its markup, ids
+// and behaviour are unchanged. Leaving a view closes it, so a drawer opened in
+// one workspace never lingers over another.
+(function mountLeadDrawerGlobally() {
+  const overlay = document.getElementById('lead-detail-overlay');
+  if (overlay && overlay.parentNode !== document.body) document.body.appendChild(overlay);
+  navItems.forEach((item) => {
+    item.addEventListener('click', () => {
+      if (!overlay.hidden) closeLeadDetail();
+    });
+  });
+})();
+
+for (const kind of ['queue', 'completed']) {
+  document.getElementById(`research-${kind}-search`).addEventListener('input', () => renderResearch(kind));
+  document.getElementById(`research-${kind}-state`).addEventListener('change', () => renderResearch(kind));
+  document.getElementById(`research-${kind}-evidence`).addEventListener('change', () => renderResearch(kind));
+  document.getElementById(`research-${kind}-refresh`).addEventListener('click', safeAsync(loadResearch));
+}
+document.getElementById('research-queue-nowebsite').addEventListener('change', () => renderResearch('queue'));
+for (const tab of document.querySelectorAll('.research-tab')) {
+  tab.addEventListener('click', safeAsync(async () => {
+    const target = tab.dataset.researchTab;
+    const nav = document.querySelector(`.nav-item[data-view="${target}"]`);
+    if (nav) nav.click();
+  }));
+}
 
 // === F6 Lists: saved searches and segments ===
 // Saved Searches and Segments are user-owned definitions stored by the main

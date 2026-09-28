@@ -703,8 +703,9 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // A4 declared lock update: 26 -> 33, the seven additions being the
     // prospect-research channels, all sender-checked and none user-owned writes.
     // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
-    assert.strictEqual(channels.length, 40, 'exactly 40 channels');
-    assert.strictEqual(new Set(channels).size, 40, 'no duplicate channel names');
+    // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
+    assert.strictEqual(channels.length, 41, 'exactly 41 channels');
+    assert.strictEqual(new Set(channels).size, 41, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1402,7 +1403,8 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     assert.ok(!/JSON\.stringify\((n|row)\.(tags|notes)\)/.test(exportFn), 'tags are never stringified for JSON');
     // IPC: the filter still rides collector:get-numbers.
     // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
-    assert.strictEqual(allChannels().length, 40, 'exactly 40 channels (A4 research channels, F6 Lists channels)');
+    // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
+    assert.strictEqual(allChannels().length, 41, 'exactly 41 channels (A4 + F7 research channels, F6 Lists channels)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

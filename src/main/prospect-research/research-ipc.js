@@ -20,6 +20,8 @@ const LEAD_REF_FORMAT = /^[A-Za-z0-9._:-]{1,128}$/;
 const CHANNELS = {
   request: 'prospect-research:request',
   get: 'prospect-research:get',
+  // F7: read-only overview for the Research workspace (Queue / Completed).
+  list: 'prospect-research:list',
   importArtifact: 'prospect-research:import-artifact',
   providerHealth: 'prospect-research:provider-health',
   setApiKey: 'prospect-research:set-api-key',
@@ -31,6 +33,57 @@ const ALL_CHANNELS = Object.values(CHANNELS);
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function textOrNull(value) {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+// F7: one renderer-safe row per lead. The research fields are the gateway's own
+// view (availability, staleness, phase, reasons, timestamps) exactly as
+// getResearch returns them - nothing is recomputed here. The evidence packet
+// body is NOT copied: only its availability, counts, section states and
+// provenance travel, so no untrusted site text is carried by the list.
+function researchSummary(lead, view) {
+  const v = isPlainObject(view) ? view : {};
+  const packet = isPlainObject(v.packet) ? v.packet : null;
+  const count = (value) => (Array.isArray(value) ? value.length : 0);
+  let evidence = null;
+  if (packet) {
+    const sections = {};
+    if (isPlainObject(packet.sections)) {
+      for (const [name, section] of Object.entries(packet.sections)) {
+        if (isPlainObject(section) && typeof section.state === 'string') sections[name] = section.state;
+      }
+    }
+    const prov = isPlainObject(packet.provenance) ? packet.provenance : {};
+    evidence = {
+      availability: textOrNull(packet.availability),
+      facts: count(packet.facts),
+      findings: count(packet.issues),
+      strengths: count(packet.strengths),
+      notMeasured: count(packet.notMeasured),
+      sections,
+      provider: textOrNull(prov.provider),
+      capturedAt: textOrNull(prov.capturedAt) || textOrNull(prov.finishedAt) || textOrNull(prov.importedAt)
+    };
+  }
+  return {
+    leadId: lead.id,
+    title: textOrNull(lead.title),
+    phone: textOrNull(lead.phone),
+    leadWebsite: textOrNull(typeof lead.website === 'string' ? lead.website.trim() : null),
+    availability: textOrNull(v.availability),
+    phase: textOrNull(v.phase),
+    stale: v.stale === true,
+    researchedWebsite: textOrNull(v.website),
+    requestedAt: textOrNull(v.requestedAt),
+    updatedAt: textOrNull(v.updatedAt),
+    failureReason: textOrNull(v.failureReason),
+    pendingReason: textOrNull(v.pendingReason),
+    message: textOrNull(v.message),
+    evidence
+  };
 }
 
 function leadRefOf(value) {
@@ -45,6 +98,7 @@ function leadRefOf(value) {
  *   keys: any,
  *   isTrustedSender: (event: any) => boolean,
  *   loadLead: (leadRef: string) => Promise<any>,
+ *   listLeads: () => Promise<Array<{ id: string, title?: string, phone?: string, website?: string }>>,
  *   showOpenDialog: () => Promise<string | null>,
  *   logger?: { warn: Function, error: Function }
  * }} deps
@@ -60,6 +114,7 @@ function registerResearchIpc(ipcMain, deps) {
     throw new Error('prospect-research: isTrustedSender is required');
   }
   if (typeof d.loadLead !== 'function') throw new Error('prospect-research: loadLead is required');
+  if (typeof d.listLeads !== 'function') throw new Error('prospect-research: listLeads is required');
   if (typeof d.showOpenDialog !== 'function') {
     throw new Error('prospect-research: showOpenDialog is required');
   }
@@ -94,6 +149,27 @@ function registerResearchIpc(ipcMain, deps) {
   }));
 
   ipcMain.handle(CHANNELS.get, guard(async (leadRef) => d.gateway.getResearch(leadRefOf(leadRef))));
+
+  // F7: read-only. Takes no renderer parameters. Every row comes from the
+  // gateway's getResearch for a stored lead id - no provider call, no write, no
+  // second state machine. A lead whose id is not a valid research reference
+  // cannot be researched at all; it is counted, never given an invented state.
+  ipcMain.handle(CHANNELS.list, guard(async (query) => {
+    if (query !== undefined && query !== null && !isPlainObject(query)) {
+      throw new Error('Invalid research list query.');
+    }
+    const leads = await d.listLeads();
+    const rows = [];
+    let unresearchable = 0;
+    for (const lead of Array.isArray(leads) ? leads : []) {
+      if (!isPlainObject(lead) || typeof lead.id !== 'string' || !LEAD_REF_FORMAT.test(lead.id)) {
+        unresearchable += 1;
+        continue;
+      }
+      rows.push(researchSummary(lead, await d.gateway.getResearch(lead.id)));
+    }
+    return { rows, total: rows.length, unresearchable };
+  }));
 
   ipcMain.handle(CHANNELS.importArtifact, guard(async (leadRef) => {
     const ref = leadRefOf(leadRef);
@@ -134,5 +210,6 @@ module.exports = {
   CHANNELS,
   LEAD_REF_FORMAT,
   leadRefOf,
-  registerResearchIpc
+  registerResearchIpc,
+  researchSummary
 };

@@ -115,7 +115,8 @@ test('7. preload channel set matches main; only documented exception', () => {
     'only provider:set-credentials may remain unexposed (retained provider-neutral handler, out of removal scope)');
   // Every research channel is exposed and every one of them is sender-checked.
   const research = researchChannels();
-  assert.strictEqual(research.length, 7, 'exactly seven research channels are registered');
+  // F7 declared lock update: 7 -> 8, the read-only prospect-research:list channel.
+  assert.strictEqual(research.length, 8, 'exactly eight research channels are registered');
   for (const ch of research) {
     assert.ok(preload.includes(ch), 'research channel exposed to the renderer: ' + ch);
   }

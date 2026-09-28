@@ -235,7 +235,8 @@ test('15. A6 stays deferred: the Lead Agent entry point is unreachable', () => {
   assert.ok(!preloadSource.includes('evidenceForLeadAgent'), 'the renderer cannot reach it');
   assert.ok(!ipcSource.includes('evidenceForLeadAgent'), 'no IPC channel exposes it');
   assert.ok(serviceSource.includes('A6 (deferred until a Lead Agent exists)'), 'the deferral is documented in the composition root');
-  assert.strictEqual(researchChannels().length, 7, 'exactly the seven approved channels exist - no agent channel');
+  // F7 declared lock update: 7 -> 8, the read-only prospect-research:list overview channel (still no agent channel).
+  assert.strictEqual(researchChannels().length, 8, 'exactly the eight approved channels exist - no agent channel');
 });
 
 // --- A4 -------------------------------------------------------------------
@@ -251,10 +252,12 @@ test('16. the seven research channels are registered by ZTech, not the bundle', 
     'prospect-research:get',
     'prospect-research:import-artifact',
     'prospect-research:key-status',
+    // F7 declared lock update: the read-only Research workspace overview.
+    'prospect-research:list',
     'prospect-research:provider-health',
     'prospect-research:request',
     'prospect-research:set-api-key'
-  ], 'the seven approved channel names are registered');
+  ], 'the eight approved channel names are registered');
   for (const ch of names) {
     assert.ok(preloadSource.includes(`'${ch}'`), 'exposed through the preload allow-list: ' + ch);
   }
@@ -263,8 +266,9 @@ test('16. the seven research channels are registered by ZTech, not the bundle', 
 test('17. every research channel is sender-checked and takes no renderer path', () => {
   const handlers = (ipcSource.match(/ipcMain\.handle\(/g) || []).length;
   const guards = (ipcSource.match(/guard\(async/g) || []).length;
-  assert.strictEqual(handlers, 7, 'seven handlers');
-  assert.strictEqual(guards, 7, 'every handler is wrapped in the sender guard');
+  // F7 declared lock update: 7 -> 8 handlers, every one still sender-guarded.
+  assert.strictEqual(handlers, 8, 'eight handlers');
+  assert.strictEqual(guards, 8, 'every handler is wrapped in the sender guard');
   assert.ok(ipcSource.includes("throw new Error('Untrusted sender.')"), 'an untrusted sender is refused');
   assert.ok(ipcSource.includes('opts') || ipcSource.includes('d.isTrustedSender(event) === true'), 'the guard consults the injected check');
   // The import channel must never read a path from the renderer.
