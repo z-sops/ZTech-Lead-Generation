@@ -20,7 +20,10 @@ const viewTitles = {
   searches: 'Saved Searches',
   segments: 'Segments',
   queue: 'Research Queue',
-  completed: 'Completed'
+  completed: 'Completed',
+  icp: 'ICP',
+  signals: 'Signals',
+  opportunities: 'Opportunities'
 };
 
 const viewContexts = {
@@ -33,7 +36,10 @@ const viewContexts = {
   searches: 'Lists',
   segments: 'Lists',
   queue: 'Research',
-  completed: 'Research'
+  completed: 'Research',
+  icp: 'Intelligence',
+  signals: 'Intelligence',
+  opportunities: 'Intelligence'
 };
 
 // A nav target must be a real, existing view. Anything else is refused rather
@@ -1819,7 +1825,7 @@ function leadsRow(lead) {
   const icpCell = document.createElement('td');
   icpCell.className = 'col-intel';
   icpCell.dataset.column = 'icp';
-  icpCell.appendChild(leadsIntelCell('Not available', 'ICP fit is not integrated in this build'));
+  icpCell.appendChild(leadsIntelCell('Not available', 'ICP fit depends on a Target: see Intelligence, ICP'));
   tr.appendChild(icpCell);
 
   const sourceCell = leadsTextCell(lead.source);
@@ -3029,7 +3035,7 @@ function renderLeadDrawerPipeline() {
     ['Lead', 'Stored', 'ok'],
     ['Research', research, researchTone],
     ['Evidence', facts.length ? `${facts.length} fact${facts.length === 1 ? '' : 's'}` : 'None yet', facts.length ? 'ok' : 'idle'],
-    ['ICP', 'Unknown', 'idle'],
+    ['ICP', 'Per Target', 'idle'],
     ['Opportunity', 'Not available yet', 'off'],
     ['Pitch', 'Not available yet', 'off'],
     ['Outreach', 'Not available yet', 'off']
@@ -3232,34 +3238,26 @@ function renderLeadDrawerEvidence() {
 
 // No ICP evaluation reaches the renderer in this build, so the only honest
 // state is UNKNOWN, with the concrete reasons why. No score is ever shown.
+// F8: the ICP tab shows the same evaluation as Intelligence -> ICP: the Lead
+// Intelligence ICP contract, run for this lead against each active Target
+// (loadLeadDrawerIcp, in the F8 block). Until that answers, nothing is decided.
 function renderLeadDrawerIcp(lead) {
   const box = document.getElementById('lead-drawer-icp');
   if (!box) return;
-  const state = leadDrawerEl('div', 'lead-drawer-state-line');
-  const badge = leadDrawerEl('span', 'lead-drawer-state', 'UNKNOWN');
-  badge.dataset.state = 'unknown';
-  state.append(badge, leadDrawerEl('span', 'lead-drawer-muted', 'No ICP fit decision has been made for this lead.'));
-  const reasons = leadDrawerEl('ul', 'lead-drawer-plain-list');
-  for (const reason of [
-    'ICP fit evaluation is not available in the Leads workspace in this build.',
-    'This lead is not linked to a Target.',
-    'The lead record stores no industry, business type, city or country fields, and none are inferred.'
-  ]) reasons.appendChild(leadDrawerEl('li', null, reason));
-  const fields = leadDrawerEl('div', 'lead-drawer-fields');
-  fields.append(
-    leadDrawerField('Keyword (search term)', leadDrawerText(lead.keyword)),
-    leadDrawerField('Address (unparsed)', leadDrawerText(lead.address))
-  );
+  const results = leadDrawerEl('div', 'lead-drawer-icp-results', null);
+  results.id = 'lead-drawer-icp-results';
+  results.appendChild(leadDrawerEl('p', 'lead-drawer-muted', 'Evaluating ICP fit against your active Targets...'));
   box.replaceChildren(
     leadDrawerEl('h3', 'lead-drawer-section-title', 'ICP fit'),
-    state,
-    leadDrawerEl('h4', 'lead-drawer-subhead', 'Why the state is UNKNOWN'),
-    reasons,
-    leadDrawerEl('h4', 'lead-drawer-subhead', 'Stored fields an evaluation could use'),
-    fields,
+    leadDrawerEl('p', 'lead-drawer-muted',
+      'Each active Target is evaluated with the Lead Intelligence ICP contract: fit, not fit or unknown, with the reason for every criterion.'),
+    results,
+    leadDrawerEl('p', 'lead-drawer-muted',
+      'The lead record stores no industry, business type, city or country fields, and none are inferred: criteria on them are unknown.'),
     leadDrawerEl('p', 'lead-drawer-muted',
       'Possible states are FIT, NOT FIT and UNKNOWN. UNKNOWN means not enough data or no evaluation - it is not the same as NOT FIT.')
   );
+  if (typeof loadLeadDrawerIcp === 'function') loadLeadDrawerIcp(lead);
 }
 
 function renderLeadDrawerPitch() {
@@ -4363,8 +4361,348 @@ navItems.forEach(item => {
     if (viewId === 'segments') loadSegments();
     if (viewId === 'queue') loadResearch();
     if (viewId === 'completed') loadResearch();
+    if (viewId === 'icp') loadIcp();
+    if (viewId === 'signals') renderSignalsPanel();
+    if (viewId === 'opportunities') renderOpportunitiesPanel();
   });
 });
+
+// === F8 Intelligence workspace ===
+// Exposes only what the Lead Intelligence contracts can supply in this build.
+// ICP: intelligence:icp runs the contract (targetToIcp + evaluateIcpFit) over a
+// stored Target and stored leads - fit / not_fit / unknown with a reason per
+// criterion, never a score, never an inferred field. Signals: the contract's
+// four signal types need two measured research runs compared through the Lead
+// Intelligence research bridge, which is not connected to this build's
+// research records, so the view says that instead of estimating. Opportunities:
+// there is no opportunity contract to run, so the view points to the real,
+// evidence-backed audit findings. Every value is set with textContent.
+const INTEL_FIT_LABELS = { fit: 'FIT', not_fit: 'NOT FIT', unknown: 'UNKNOWN' };
+// Mirrors SIGNAL_TYPES / UNSUPPORTED_SIGNALS in lead-intelligence/research/signals.js
+// (the F8 tests fail if the two drift apart).
+const INTEL_SIGNAL_TYPES = [
+  ['website_change', 'Website change', 'The website address or its redirect behaviour changed between runs.'],
+  ['technology_change', 'Technology change', 'The detected website platform changed between runs.'],
+  ['content_activity', 'Content activity', 'The number of crawlable HTML pages changed between runs.'],
+  ['digital_visibility_change', 'Digital visibility change', 'A measured visibility value or visibility finding changed between runs.']
+];
+const INTEL_UNSUPPORTED_SIGNALS = [
+  ['hiring_signal', 'Zuni-SEO does not collect job postings or hiring data.'],
+  ['business_expansion', 'No evidence source for new locations or expansion is connected.']
+];
+let icpTargets = null;
+let icpResult = null;
+let icpError = null;
+let icpLoadSeq = 0;
+
+function intelEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function intelFitBadge(status) {
+  const badge = intelEl('span', 'intel-fit', INTEL_FIT_LABELS[status] || String(status || 'UNKNOWN').toUpperCase());
+  badge.dataset.fit = INTEL_FIT_LABELS[status] ? status : 'unknown';
+  return badge;
+}
+
+function intelValueText(value) {
+  if (value === null || value === undefined || value === '') return 'not recorded';
+  if (Array.isArray(value)) return value.join(', ');
+  return String(value);
+}
+
+// One criterion line: outcome, the criterion, and where its value came from.
+function intelCriterionItem(entry, outcome) {
+  const item = intelEl('li', 'intel-criterion');
+  item.dataset.outcome = outcome;
+  const word = { matched: 'Met', unmet: 'Not met', unknown: 'Unknown', excluded: 'Excluded' }[outcome];
+  item.appendChild(intelEl('span', 'intel-criterion-outcome', word));
+  item.appendChild(intelEl('span', 'intel-criterion-label', `${entry.label}${entry.required ? '' : ' (optional)'}`));
+  const detail = outcome === 'unknown'
+    ? entry.explanation
+    : `Value: ${intelValueText(entry.actual)} (expected ${intelValueText(entry.expected)})`;
+  item.appendChild(intelEl('span', 'intel-criterion-detail', detail));
+  const refs = [].concat(entry.factIds || [], entry.findingIds || []);
+  const source = entry.source === 'lead' ? 'lead record' : entry.source;
+  item.appendChild(intelEl('span', 'intel-criterion-source', `Source: ${source}${refs.length ? ' · Evidence: ' + refs.join(', ') : ''}`));
+  return item;
+}
+
+function intelCriteriaList(row) {
+  const list = intelEl('ul', 'intel-criteria');
+  for (const e of row.exclusions || []) list.appendChild(intelCriterionItem(e, 'excluded'));
+  for (const e of row.unmet || []) list.appendChild(intelCriterionItem(e, 'unmet'));
+  for (const e of row.unknown || []) list.appendChild(intelCriterionItem(e, 'unknown'));
+  for (const e of row.matched || []) list.appendChild(intelCriterionItem(e, 'matched'));
+  if (!list.childElementCount) list.appendChild(intelEl('li', 'intel-criterion', 'This Target has no criterion the ICP contract can evaluate.'));
+  return list;
+}
+
+// What the contract could not convert from the Target is reported, never guessed.
+function intelUnmappedNotes(unmapped) {
+  return (Array.isArray(unmapped) ? unmapped : []).map((u) => (u === 'exclusions'
+    ? 'Exclusions are not evaluated by the ICP contract: their meaning cannot be converted without guessing.'
+    : u.startsWith('requiredFields:')
+      ? `Required field "${u.slice('requiredFields:'.length)}" has no ICP criterion.`
+      : `Not converted: ${u}.`));
+}
+
+function intelErrorText(err) {
+  const msg = (err && err.message) || String(err);
+  return /No handler registered/i.test(msg) ? 'ICP evaluation is not available in this session.' : msg;
+}
+
+function icpVisibleRows() {
+  const rows = icpResult && Array.isArray(icpResult.rows) ? icpResult.rows : [];
+  const fit = document.getElementById('icp-fit').value;
+  const term = document.getElementById('icp-search').value.trim().toLowerCase();
+  return rows.filter((row) => {
+    if (fit !== 'all' && row.fitStatus !== fit) return false;
+    if (term && ![row.title, row.phone, row.website].filter(Boolean).join(' ').toLowerCase().includes(term)) return false;
+    return true;
+  });
+}
+
+function renderIcp() {
+  const tbody = document.getElementById('icp-body');
+  const count = document.getElementById('icp-count');
+  const definition = document.getElementById('icp-definition');
+  definition.replaceChildren();
+  if (icpError) {
+    count.textContent = '';
+    listEmptyRow(tbody, 4, 'ICP fit could not be evaluated', icpError);
+    tbody.firstChild.querySelector('.leads-state').dataset.state = 'error';
+    return;
+  }
+  if (icpTargets === null || (icpTargets.length && icpResult === null)) {
+    count.textContent = '';
+    listEmptyRow(tbody, 4, 'Evaluating ICP fit...', 'Running the ICP contract over your stored leads.');
+    tbody.firstChild.querySelector('.leads-state').dataset.state = 'loading';
+    return;
+  }
+  if (!icpTargets.length) {
+    count.textContent = '';
+    listEmptyRow(tbody, 4, 'No Targets yet',
+      'ICP fit is evaluated against a Target. Create one in Targets, then return here.',
+      listsButton('Open Targets', 'btn btn-sm', () => {
+        const nav = document.querySelector('.nav-item[data-view="targets"]');
+        if (nav) nav.click();
+      }));
+    return;
+  }
+  const criteria = icpResult.icp && Array.isArray(icpResult.icp.criteria) ? icpResult.icp.criteria : [];
+  definition.appendChild(intelEl('div', 'intel-definition-title', `Target: ${icpResult.target.name}${icpResult.target.status === 'archived' ? ' (archived)' : ''}`));
+  definition.appendChild(intelEl('div', 'lists-description', criteria.length
+    ? 'Criteria: ' + criteria.map((c) => c.label + (c.required ? '' : ' (optional)')).join(' · ')
+    : 'This Target has no criterion the ICP contract can evaluate, so the contract reports every lead as fit. Add industry, business type, location or required fields to the Target.'));
+  for (const note of intelUnmappedNotes(icpResult.icp && icpResult.icp.unmapped)) definition.appendChild(intelEl('div', 'lists-description', note));
+  definition.appendChild(intelEl('div', 'lists-description', `Evaluated ${formatListTime(icpResult.evaluatedAt)}`));
+  const all = Array.isArray(icpResult.rows) ? icpResult.rows : [];
+  const tally = { fit: 0, not_fit: 0, unknown: 0 };
+  for (const row of all) if (Object.prototype.hasOwnProperty.call(tally, row.fitStatus)) tally[row.fitStatus] += 1;
+  const rows = icpVisibleRows();
+  count.textContent = `${rows.length} of ${all.length} leads · ${tally.fit} fit · ${tally.not_fit} not fit · ${tally.unknown} unknown`;
+  if (!all.length) {
+    listEmptyRow(tbody, 4, 'No leads to evaluate', 'Collect or import leads, then return here.');
+    return;
+  }
+  if (!rows.length) {
+    listEmptyRow(tbody, 4, 'No leads match these filters', 'Change or clear the filters above.');
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.className = 'research-row';
+    tr.dataset.leadId = row.leadId;
+    const name = row.title || row.phone || 'Untitled lead';
+    const leadCell = intelEl('td', 'lists-cell-name');
+    leadCell.appendChild(listsButton(name, 'research-lead-link', () => openIntelLead(row.leadId), `Open ${name} in the lead drawer`));
+    if (row.title && row.phone) leadCell.appendChild(intelEl('div', 'lists-description', row.phone));
+    const fitCell = intelEl('td', 'intel-cell-fit');
+    fitCell.appendChild(intelFitBadge(row.fitStatus));
+    fitCell.appendChild(intelEl('div', 'lists-description', row.reason));
+    const critCell = intelEl('td', 'intel-cell-criteria');
+    critCell.appendChild(intelCriteriaList(row));
+    const actions = intelEl('td', 'lists-cell-actions');
+    actions.appendChild(listsButton('Open', 'btn btn-sm btn-secondary', () => openIntelLead(row.leadId), `Open ${name}`));
+    tr.append(leadCell, fitCell, critCell, actions);
+    tr.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, select')) return;
+      safeAsync(() => openIntelLead(row.leadId))();
+    });
+    frag.appendChild(tr);
+  }
+  tbody.replaceChildren(frag);
+}
+
+function populateIcpTargets() {
+  const select = document.getElementById('icp-target');
+  const previous = select.value;
+  select.replaceChildren(...icpTargets.map((t) => {
+    const option = document.createElement('option');
+    option.value = t.id;
+    option.textContent = t.status === 'archived' ? `${t.name} (archived)` : t.name;
+    return option;
+  }));
+  const active = icpTargets.find((t) => t.status === 'active');
+  select.value = icpTargets.some((t) => t.id === previous) ? previous : (active ? active.id : (icpTargets[0] ? icpTargets[0].id : ''));
+  select.disabled = !icpTargets.length;
+}
+
+async function loadIcpResult() {
+  const seq = ++icpLoadSeq;
+  const targetId = document.getElementById('icp-target').value;
+  icpResult = null;
+  icpError = null;
+  renderIcp();
+  if (!targetId) return;
+  try {
+    const result = await window.appAPI.intelligence.icpFit({ targetId });
+    if (seq !== icpLoadSeq) return;
+    if (result && result.success === false) icpError = result.error || 'ICP fit could not be evaluated.';
+    else icpResult = result;
+  } catch (err) {
+    if (seq !== icpLoadSeq) return;
+    icpError = intelErrorText(err);
+    reportError(icpError, { handler: 'loadIcpResult' });
+  }
+  renderIcp();
+}
+
+async function loadIcp() {
+  const seq = ++icpLoadSeq;
+  icpTargets = null;
+  icpResult = null;
+  icpError = null;
+  renderIcp();
+  try {
+    const result = await window.appAPI.targets.list();
+    if (seq !== icpLoadSeq) return;
+    icpTargets = result && Array.isArray(result.rows) ? result.rows : [];
+  } catch (err) {
+    if (seq !== icpLoadSeq) return;
+    icpError = intelErrorText(err);
+    renderIcp();
+    return;
+  }
+  populateIcpTargets();
+  if (!icpTargets.length) {
+    renderIcp();
+    return;
+  }
+  await loadIcpResult();
+}
+
+// Opens the EXISTING F5 drawer on its ICP tab.
+async function openIntelLead(leadId) {
+  await openLeadDetail(leadId);
+  selectLeadDrawerTab('icp', false);
+}
+
+// The drawer's ICP tab: the same contract, for this one lead, against every
+// active Target. A late answer for another lead is never applied.
+async function loadLeadDrawerIcp(lead) {
+  const box = document.getElementById('lead-drawer-icp-results');
+  if (!box || !lead || typeof lead.id !== 'string') return;
+  const leadId = lead.id;
+  const stillOpen = () => leadDrawerLeadId === leadId;
+  let targets;
+  try {
+    const result = await window.appAPI.targets.list();
+    targets = (result && Array.isArray(result.rows) ? result.rows : []).filter((t) => t.status === 'active');
+  } catch (err) {
+    if (stillOpen()) box.replaceChildren(intelEl('p', 'lead-drawer-empty', `Targets could not be loaded: ${intelErrorText(err)}`));
+    return;
+  }
+  if (!stillOpen()) return;
+  if (!targets.length) {
+    box.replaceChildren(
+      intelEl('p', 'lead-drawer-empty', 'No active Target. ICP fit is evaluated against a Target, so no fit decision exists for this lead.'),
+      intelEl('p', 'lead-drawer-muted', 'Create or activate a Target in Targets.')
+    );
+    return;
+  }
+  const blocks = [];
+  for (const target of targets) {
+    const block = intelEl('div', 'intel-drawer-target');
+    block.appendChild(intelEl('div', 'intel-definition-title', target.name));
+    try {
+      const result = await window.appAPI.intelligence.icpFit({ targetId: target.id, leadId });
+      const row = result && result.success !== false && Array.isArray(result.rows) ? result.rows[0] : null;
+      if (!row) {
+        block.appendChild(intelEl('p', 'lead-drawer-muted', (result && result.error) || 'No ICP result for this lead.'));
+      } else {
+        const line = intelEl('div', 'lead-drawer-state-line');
+        line.append(intelFitBadge(row.fitStatus), intelEl('span', 'lead-drawer-muted', row.reason));
+        block.append(line, intelCriteriaList(row));
+        for (const note of intelUnmappedNotes(result.icp && result.icp.unmapped)) block.appendChild(intelEl('p', 'lead-drawer-muted', note));
+      }
+    } catch (err) {
+      block.appendChild(intelEl('p', 'lead-drawer-muted', intelErrorText(err)));
+    }
+    blocks.push(block);
+  }
+  if (stillOpen()) box.replaceChildren(...blocks);
+}
+
+function intelSwitchTab(target) {
+  const nav = document.querySelector(`.nav-item[data-view="${target}"]`);
+  if (nav) nav.click();
+}
+
+function renderSignalsPanel() {
+  const panel = document.getElementById('signals-panel');
+  const supported = intelEl('ul', 'intel-list');
+  for (const [type, label, text] of INTEL_SIGNAL_TYPES) {
+    const item = intelEl('li', null);
+    item.dataset.signal = type;
+    item.append(intelEl('strong', null, label), intelEl('span', 'lists-description', ` - ${text}`));
+    supported.appendChild(item);
+  }
+  const unsupported = intelEl('ul', 'intel-list');
+  for (const [type, reason] of INTEL_UNSUPPORTED_SIGNALS) {
+    const item = intelEl('li', null);
+    item.dataset.signal = type;
+    item.append(intelEl('strong', null, type.replace(/_/g, ' ')), intelEl('span', 'lists-description', ` - ${reason}`));
+    unsupported.appendChild(item);
+  }
+  panel.replaceChildren(
+    intelEl('div', 'intel-state', 'Unavailable in this build'),
+    intelEl('h3', 'intel-panel-title', 'No signals can be shown yet'),
+    intelEl('p', 'lists-description',
+      'A signal is a change between two measured research runs of the same lead, found by Lead Intelligence change detection. That comparison reads research through the Lead Intelligence research bridge, which is not connected to this build\'s research records, so no signal can be derived from your data. Nothing is estimated in its place.'),
+    intelEl('h4', 'intel-panel-subtitle', 'Signal types the Lead Intelligence contract supports'),
+    supported,
+    intelEl('h4', 'intel-panel-subtitle', 'Not supported by the contract'),
+    unsupported
+  );
+}
+
+function renderOpportunitiesPanel() {
+  const panel = document.getElementById('opportunities-panel');
+  panel.replaceChildren(
+    intelEl('div', 'intel-state', 'Unavailable in this build'),
+    intelEl('h3', 'intel-panel-title', 'No opportunities are listed'),
+    intelEl('p', 'lists-description',
+      'Lead Intelligence has no opportunity contract that this build can run, so no opportunity is listed and none is estimated.'),
+    intelEl('h4', 'intel-panel-subtitle', 'What exists today'),
+    intelEl('p', 'lists-description',
+      'Evidence-backed audit findings from website research. Each finding cites the evidence IDs it is based on. Open a lead\'s drawer and choose Evidence, or see Research, Completed.'),
+    listsButton('Open Research, Completed', 'btn btn-sm', () => intelSwitchTab('completed'))
+  );
+}
+
+document.getElementById('icp-target').addEventListener('change', safeAsync(loadIcpResult));
+document.getElementById('icp-fit').addEventListener('change', () => renderIcp());
+document.getElementById('icp-search').addEventListener('input', () => renderIcp());
+document.getElementById('icp-refresh').addEventListener('click', safeAsync(loadIcp));
+for (const tab of document.querySelectorAll('.intel-tab')) {
+  tab.addEventListener('click', () => intelSwitchTab(tab.dataset.intelTab));
+}
 
 // === F7 Research workspace ===
 // The Queue and Completed views are an operational surface over the EXISTING

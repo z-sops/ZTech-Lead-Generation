@@ -95,7 +95,9 @@ test('6. all 21 live main IPC channels present exactly once', () => {
     'proxy:detect',
     // F6 declared lock update: +7 sender-checked Lists channels.
     'saved-searches:list', 'saved-searches:save', 'saved-searches:delete',
-    'segments:list', 'segments:save', 'segments:members', 'segments:delete'
+    'segments:list', 'segments:save', 'segments:members', 'segments:delete',
+    // F8 declared lock update: +1 read-only ICP channel.
+    'intelligence:icp'
   ];
   const actual = mainChannels(mainSource);
   assert.deepStrictEqual(actual.slice().sort(), expected.slice().sort(), 'main channel set changed');

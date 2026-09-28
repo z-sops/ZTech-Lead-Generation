@@ -51,7 +51,9 @@ const expectedChannels = [
   // and segments: list / save / delete, plus segments:members). None can write
   // a lead row.
   'saved-searches:list', 'saved-searches:save', 'saved-searches:delete',
-  'segments:list', 'segments:save', 'segments:members', 'segments:delete'
+  'segments:list', 'segments:save', 'segments:members', 'segments:delete',
+  // F8 declared lock update: +1 read-only ICP channel.
+  'intelligence:icp'
 ];
 
 let passed = 0;
@@ -145,8 +147,8 @@ test('9. single IPC read channel with validated passthrough', () => {
   // channels (read, save, archive/activate). The B5 dashboard read contract
   // asserted below is unchanged.
   assert.deepStrictEqual(handlers.slice().sort(), expectedChannels.slice().sort(),
-    'channel set is the declared 33-channel contract');
-  assert.strictEqual(handlers.length, 33, 'exactly 33 channels (F6 added seven)');
+    'channel set is the declared 34-channel contract');
+  assert.strictEqual(handlers.length, 34, 'exactly 34 channels (F6 added seven, F8 one)');
   const handler = between(mainSource, "ipcMain.handle('collector:get-jobs'", '});');
   assert.ok(handler.includes('validateHistoryPaging(query)'), 'paging validated');
   assert.ok(handler.includes('accountStore.queryJobs'), 'queryJobs passthrough');

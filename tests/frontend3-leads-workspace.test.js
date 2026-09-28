@@ -645,7 +645,9 @@ test('25. every displayed value is real, derived, or explicitly unavailable', ()
   // Research and ICP are honest about being absent.
   assert.ok(f3.includes("leadsIntelCell('Not available'"), 'research/ICP report not available');
   assert.ok(/Research is not integrated in this build/.test(f3), 'and say why');
-  assert.ok(/ICP fit is not integrated in this build/.test(f3), 'for both columns');
+  // F8 declared update: ICP fit now exists per Target (Intelligence, ICP), so the
+  // column still shows no single value and says where the evaluation lives.
+  assert.ok(/ICP fit depends on a Target: see Intelligence, ICP/.test(f3), 'for both columns');
   // Scores would have to come from a data source, so any scoring vocabulary in
   // the executable F3 code is a fabrication risk. Comments are excluded.
   const f3Code = f3.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -726,9 +728,10 @@ test('27. focus states are visible and the density token still drives the rows',
 
 test('28. no new IPC channel, no dependency change, no network call', () => {
   // F6 declared lock update: +7 Lists channels and their seven preload methods.
-  assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 33, '33 IPC channels');
+  // F8 declared lock update: +1 intelligence:icp.
+  assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 34, '34 IPC channels');
   // F7 declared lock update: +1 preload method (research.list).
-  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 40, '40 preload invocations');
+  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 41, '41 preload invocations');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
     'production dependencies unchanged');

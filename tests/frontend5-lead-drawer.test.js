@@ -516,18 +516,18 @@ test('15. evidence is shown with provenance when it exists, and honestly absent 
   assert.ok(text.includes('older than the freshness policy'), 'staleness is stated');
 });
 
-test('16. ICP is UNKNOWN with its reasons, and never a score', () => {
+// F8 declared update: the ICP tab now shows the real per-Target evaluation
+// (loaded by the F8 block through intelligence:icp). Until it answers, the tab
+// decides nothing: no FIT / NOT FIT / UNKNOWN verdict and no score is rendered here.
+test('16. ICP decides nothing on its own and never shows a score', () => {
   const env = makeEnv();
   openLead(env, FULL);
   const text = allText(env, 'lead-drawer-icp');
-  assert.ok(text.includes('UNKNOWN') && text.includes('No ICP fit decision has been made for this lead.'));
-  assert.ok(text.includes('This lead is not linked to a Target.'));
+  assert.ok(text.includes('Evaluating ICP fit against your active Targets...'), 'waits for the contract');
   assert.ok(text.includes('stores no industry, business type, city or country fields'), 'explains the missing inputs');
-  assert.ok(text.includes('Keyword (search term)cafe bangkok'), 'only stored fields are listed');
   assert.ok(!/\bFIT\b/.test(text.slice(0, text.indexOf('Possible states are'))), 'no FIT / NOT FIT decision is asserted');
   assert.ok(!/\d+\s*%|\bscore\b/i.test(text), 'no numeric score');
-  openLead(env, EMPTY);
-  assert.ok(allText(env, 'lead-drawer-icp').includes('Keyword (search term)Not available'), 'no inferred keyword');
+  assert.ok(f5.includes("if (typeof loadLeadDrawerIcp === 'function') loadLeadDrawerIcp(lead);"), 'hands off to the F8 loader');
 });
 
 test('17. Pitch reports that pitch generation is not available, with no send action', () => {
@@ -570,7 +570,7 @@ test('19. no fake metrics, scores or sample data', () => {
   const env = makeEnv();
   openLead(env, FULL);
   const steps = env.el('lead-drawer-pipeline').children.map((c) => c.textContent);
-  assert.deepStrictEqual(steps, ['LeadStored', 'ResearchLoading', 'EvidenceNone yet', 'ICPUnknown',
+  assert.deepStrictEqual(steps, ['LeadStored', 'ResearchLoading', 'EvidenceNone yet', 'ICPPer Target',
     'OpportunityNot available yet', 'PitchNot available yet', 'OutreachNot available yet'],
   'the progression states only what is real');
   env.api.renderLeadDrawerResearch({ leadRef: 'L1', availability: 'complete', packet: PACKET });
@@ -589,9 +589,10 @@ test('20. the CSP is unchanged and no inline script or handler was added', () =>
 
 test('21. the IPC channel set and dependencies are unchanged', () => {
   // F6 declared lock update: +7 Lists channels (F5 itself added none).
-  assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 33, '33 IPC channels');
+  // F8 declared lock update: +1 intelligence:icp.
+  assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 34, '34 IPC channels');
   // F7 declared lock update: +1 preload method (research.list).
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 40, '40 preload invocations');
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 41, '41 preload invocations');
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'the F5 block performs no I/O');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);

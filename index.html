@@ -115,26 +115,25 @@
 
         <div class="nav-group">
           <div class="nav-group-label">Intelligence</div>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <!-- Intelligence: ICP evaluates stored targets; Signals and Opportunities
+               state honestly what the Lead Intelligence contracts can supply. -->
+          <button class="nav-item" data-view="opportunities" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M9 2.5 3.5 9H7l-1 4.5L12.5 7H9z"></path>
             </svg>
             <span class="nav-label">Opportunities</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <button class="nav-item" data-view="icp" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <circle cx="8" cy="8" r="5.5"></circle><circle cx="8" cy="8" r="2.2"></circle>
             </svg>
             <span class="nav-label">ICP</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <button class="nav-item" data-view="signals" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <polyline points="2,11 5.5,7 8,9.5 11,4 14,6.5"></polyline>
             </svg>
             <span class="nav-label">Signals</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
         </div>
 
@@ -1256,6 +1255,94 @@
                 <tbody id="research-completed-body"></tbody>
               </table>
             </div>
+          </div>
+        </section>
+
+        <!-- F8 Intelligence: ICP. Rows come from intelligence:icp, which runs the
+             Lead Intelligence ICP contract (targetToIcp + evaluateIcpFit) over a
+             stored Target and the stored leads. fit / not_fit / unknown only. -->
+        <section class="view" id="view-icp">
+          <div class="lists-workspace intel-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Intelligence</h2>
+                <p class="lists-subtitle">ICP fit of each lead against one of your Targets: fit, not fit or unknown, with the reason for every criterion. There is no score.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Intelligence workspaces">
+                <button type="button" class="research-tab intel-tab" data-intel-tab="icp" aria-current="page">ICP</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="signals">Signals</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="opportunities">Opportunities</button>
+              </div>
+            </div>
+            <div class="research-controls" role="search" aria-label="ICP fit filters">
+              <label class="visually-hidden" for="icp-target">Target</label>
+              <select id="icp-target"></select>
+              <label class="visually-hidden" for="icp-fit">Fit</label>
+              <select id="icp-fit">
+                <option value="all">Any fit</option>
+                <option value="fit">Fit</option>
+                <option value="not_fit">Not fit</option>
+                <option value="unknown">Unknown</option>
+              </select>
+              <label class="visually-hidden" for="icp-search">Search leads</label>
+              <input type="search" id="icp-search" autocomplete="off" placeholder="Search lead, phone or website">
+              <button type="button" class="btn btn-sm btn-secondary" id="icp-refresh">Refresh</button>
+            </div>
+            <div class="intel-definition" id="icp-definition" role="status" aria-live="polite"></div>
+            <div class="lists-count" id="icp-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table intel-table" id="icp-table">
+                <caption class="visually-hidden">ICP fit of each lead against the selected Target.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Lead</th>
+                    <th scope="col">Fit</th>
+                    <th scope="col">Criteria</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="icp-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- F8 Intelligence: Signals. The Lead Intelligence contract defines four
+             signal types derived from two measured research runs; none can be
+             derived from this build's research data (see the panel text). -->
+        <section class="view" id="view-signals">
+          <div class="lists-workspace intel-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Intelligence</h2>
+                <p class="lists-subtitle">Signals are changes observed between two measured research runs of the same lead.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Intelligence workspaces">
+                <button type="button" class="research-tab intel-tab" data-intel-tab="icp">ICP</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="signals" aria-current="page">Signals</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="opportunities">Opportunities</button>
+              </div>
+            </div>
+            <div class="intel-panel" id="signals-panel"></div>
+          </div>
+        </section>
+
+        <!-- F8 Intelligence: Opportunities. No opportunity contract exists in this
+             build; the panel says so and points to the real audit findings. -->
+        <section class="view" id="view-opportunities">
+          <div class="lists-workspace intel-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Intelligence</h2>
+                <p class="lists-subtitle">Opportunities must be backed by research evidence.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Intelligence workspaces">
+                <button type="button" class="research-tab intel-tab" data-intel-tab="icp">ICP</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="signals">Signals</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="opportunities" aria-current="page">Opportunities</button>
+              </div>
+            </div>
+            <div class="intel-panel" id="opportunities-panel"></div>
           </div>
         </section>
 

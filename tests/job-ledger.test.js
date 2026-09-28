@@ -906,7 +906,8 @@ function test(name, fn) {
     // not reach preload/renderer, and no jobs namespace may appear.
     const handles = mainSource.match(/ipcMain\.handle\(/g) || [];
     // F6 declared lock update: 26 -> 33, the seven sender-checked Lists channels.
-    assert.strictEqual(handles.length, 33, 'exactly 33 IPC channels (P1-G report channels, F6 Lists channels)');
+    // F8 declared lock update: 33 -> 34, intelligence:icp.
+    assert.strictEqual(handles.length, 34, 'exactly 34 IPC channels (P1-G report, F6 Lists and F8 ICP channels)');
     assert.ok(mainSource.includes("ipcMain.handle('collector:get-jobs'"), 'B5 jobs read channel registered');
     const ledgerApis = ['queryJobs', 'insertJob', 'updateJobState', 'setJobResultCount'];
     for (const api of ledgerApis) {
@@ -961,9 +962,11 @@ function test(name, fn) {
       'proxy:detect',
       // F6 declared lock update: +7 sender-checked Lists channels.
       'saved-searches:list', 'saved-searches:save', 'saved-searches:delete',
-      'segments:list', 'segments:save', 'segments:members', 'segments:delete'
+      'segments:list', 'segments:save', 'segments:members', 'segments:delete',
+      // F8 declared lock update: +1 read-only ICP channel.
+      'intelligence:icp'
     ];
-    assert.strictEqual(channels.length, 33, 'exactly 33 channels');
+    assert.strictEqual(channels.length, 34, 'exactly 34 channels');
     assert.deepStrictEqual(channels.slice().sort(), expected.slice().sort(),
       'the channel set is the P1-E set plus the three P1-F target channels only');
     for (const ch of expected) {

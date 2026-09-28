@@ -590,7 +590,8 @@ function test(name, fn) {
     assert.ok(/<button class="nav-item" data-view="segments" type="button">/.test(lists));
     assert.ok(!/Soon|nav-item-soon|disabled/.test(lists), 'no Soon treatment on the two Lists items');
     // F7 declared lock update: the two Research items went live in F7.
-    assert.strictEqual((htmlSource.match(/class="nav-item nav-item-soon"/g) || []).length, 9, 'the other nine Soon items remain');
+    // F8 declared lock update: the three Intelligence items went live in F8.
+    assert.strictEqual((htmlSource.match(/class="nav-item nav-item-soon"/g) || []).length, 6, 'the other six Soon items remain');
     for (const id of ['view-searches', 'view-segments']) assert.ok(htmlSource.includes(`<section class="view" id="${id}">`));
     assert.ok(rendererSource.includes("if (viewId === 'searches') loadSavedSearches();"));
     assert.ok(rendererSource.includes("if (viewId === 'segments') loadSegments();"));

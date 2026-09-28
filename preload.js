@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld('appAPI', {
     updateSegmentMembers: (payload) => ipcRenderer.invoke('segments:members', payload),
     deleteSegment: (payload) => ipcRenderer.invoke('segments:delete', payload)
   },
+  // F8 Intelligence: read-only ICP fit (Lead Intelligence contract).
+  intelligence: {
+    icpFit: (payload) => ipcRenderer.invoke('intelligence:icp', payload)
+  },
 
   // 日志
   logs: {

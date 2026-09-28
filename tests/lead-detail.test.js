@@ -207,7 +207,8 @@ function test(name, fn) {
     // P1-E declared lock update: channel count 20 -> 21. The addition is the
     // read-only duplicate review; still no single-lead detail channel.
     // F6 declared lock update: 26 -> 33, the seven sender-checked Lists channels.
-    assert.strictEqual(channels.length, 33, 'exactly 33 IPC channels (P1-G report channels, F6 Lists channels)');
+    // F8 declared lock update: 33 -> 34, intelligence:icp.
+    assert.strictEqual(channels.length, 34, 'exactly 34 IPC channels (P1-G report, F6 Lists and F8 ICP channels)');
     assert.ok(!channels.includes('collector:get-number'), 'no single-lead channel introduced');
   });
 

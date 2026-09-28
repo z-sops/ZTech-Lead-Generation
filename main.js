@@ -9,6 +9,9 @@ const credentialVault = require('./src/main/credentialVault');
 const prospectResearch = require('./src/main/prospect-research/research-service');
 const { registerResearchIpc, ALL_CHANNELS: RESEARCH_CHANNELS } = require('./src/main/prospect-research/research-ipc');
 const { createTrustedSender } = require('./src/main/prospect-research/trusted-sender');
+// F8: the Lead Intelligence ICP contract (pure, deterministic; no LI runtime).
+const { targetToIcp, evaluateIcpFit } = require('./src/main/lead-intelligence/icp/icpFit');
+const { toLeadView } = require('./src/main/lead-intelligence/contracts/leadView');
 
 let mainWindow = null;
 let providerManager = null;
@@ -649,6 +652,83 @@ function validateSegmentMembersPayload(payload) {
 function validateListDeletePayload(payload, name) {
   assertPlainObject(payload, name);
   return { id: validateListId(payload.id, 'id') };
+}
+
+// === F8 Intelligence: ICP fit ===
+// Read-only. Evaluates stored leads against one stored Target with the Lead
+// Intelligence ICP contract exactly as shipped: targetToIcp converts the Target
+// (unconvertible settings are reported in `unmapped`, never guessed),
+// toLeadView reads the lead record, evaluateIcpFit returns fit / not_fit /
+// unknown with per-criterion explanations. No score, no inference, no write,
+// no research call, no Lead Intelligence runtime or schema.
+function validateIcpPayload(payload) {
+  assertPlainObject(payload, 'icp');
+  const out = { targetId: validateListId(payload.targetId, 'targetId') };
+  if (payload.leadId !== undefined && payload.leadId !== null) out.leadId = validateListId(payload.leadId, 'leadId');
+  return out;
+}
+
+function icpCriterionView(entry) {
+  return {
+    id: entry.criterion_id,
+    label: entry.label,
+    field: entry.field,
+    required: entry.required !== false,
+    expected: entry.expected === undefined ? null : entry.expected,
+    actual: entry.actual === undefined ? null : entry.actual,
+    source: entry.source,
+    factIds: Array.isArray(entry.fact_ids) ? entry.fact_ids.slice() : [],
+    findingIds: Array.isArray(entry.finding_ids) ? entry.finding_ids.slice() : [],
+    exclusion: entry.exclusion === true,
+    explanation: entry.explanation
+  };
+}
+
+async function evaluateIcpForTarget({ targetId, leadId }) {
+  const targets = await accountStore.listTargets();
+  const target = (targets && Array.isArray(targets.rows) ? targets.rows : []).find((row) => row.id === targetId);
+  if (!target) return { success: false, error: 'Target not found' };
+  const icp = targetToIcp(target);
+  let leads;
+  if (leadId) {
+    const found = await accountStore.queryNumbers({ limit: 1, offset: 0, id: leadId });
+    leads = found && Array.isArray(found.rows) ? found.rows : [];
+  } else {
+    leads = await accountStore.getCollectedNumbers();
+  }
+  const now = new Date();
+  const rows = [];
+  for (const lead of Array.isArray(leads) ? leads : []) {
+    let fit;
+    try {
+      fit = evaluateIcpFit({ view: toLeadView(lead), icp, now });
+    } catch (err) {
+      continue; // a row the contract cannot read is skipped, never given a status
+    }
+    rows.push({
+      leadId: lead.id,
+      title: typeof lead.title === 'string' ? lead.title : '',
+      phone: typeof lead.phone === 'string' ? lead.phone : '',
+      website: typeof lead.website === 'string' ? lead.website : '',
+      fitStatus: fit.fitStatus,
+      reason: fit.reason,
+      matched: fit.matchedCriteria.map(icpCriterionView),
+      unmet: fit.unmetCriteria.map(icpCriterionView),
+      unknown: fit.unknownCriteria.map(icpCriterionView),
+      exclusions: fit.exclusions.map(icpCriterionView)
+    });
+  }
+  return {
+    success: true,
+    target: { id: target.id, name: target.name, status: target.status },
+    icp: {
+      criteria: icp.criteria.map((c) => ({ id: c.id, label: c.label, field: c.field, required: c.required !== false })),
+      unmapped: Array.isArray(icp.unmapped) ? icp.unmapped.slice() : []
+    },
+    evaluatedAt: now.toISOString(),
+    rows,
+    total: rows.length
+  };
 }
 
 // === B4 local collection-job ledger hooks ===
@@ -1513,6 +1593,11 @@ function registerIpcHandlers() {
     (payload) => accountStore.updateSegmentMembers(validateSegmentMembersPayload(payload))));
   ipcMain.handle('segments:delete', listsHandler('segments:delete',
     (payload) => accountStore.deleteSegment(validateListDeletePayload(payload, 'segment'))));
+
+  // F8 Intelligence: read-only ICP fit through the Lead Intelligence contract,
+  // behind the same trusted-sender guard as the Lists channels.
+  ipcMain.handle('intelligence:icp', listsHandler('intelligence:icp',
+    (payload) => evaluateIcpForTarget(validateIcpPayload(payload))));
 
   ipcMain.handle('logs:export', () => {
     return logger.exportLogs();

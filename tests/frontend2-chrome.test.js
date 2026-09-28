@@ -25,7 +25,9 @@ function test(name, fn) {
 
 // F6 declared update: Saved Searches and Segments became real views.
 // F7 declared update: Research Queue and Completed became real views.
-const EXISTING_VIEWS = ['collector', 'history', 'numbers', 'targets', 'dashboard', 'settings', 'searches', 'segments', 'queue', 'completed'];
+// F8 declared update: ICP, Signals and Opportunities became real views.
+const EXISTING_VIEWS = ['collector', 'history', 'numbers', 'targets', 'dashboard', 'settings', 'searches', 'segments', 'queue', 'completed',
+  'icp', 'signals', 'opportunities'];
 
 function sidebarHtml() {
   const s = htmlSource.indexOf('<nav class="sidebar-nav"');
@@ -84,7 +86,8 @@ test('4. unimplemented destinations are disabled, not fake', () => {
   const nav = sidebarHtml();
   const soon = [...nav.matchAll(/<button class="nav-item nav-item-soon"[^>]*>/g)].map((m) => m[0]);
   // F7 declared update: two Research items went live, nine remain disabled.
-  assert.ok(soon.length >= 9, 'the unimplemented destinations are present but disabled: ' + soon.length);
+  // F8 declared update: the three Intelligence items went live, six remain disabled.
+  assert.ok(soon.length >= 6, 'the unimplemented destinations are present but disabled: ' + soon.length);
   for (const tag of soon) {
     assert.ok(tag.includes('disabled'), 'native disabled present');
     assert.ok(tag.includes('aria-disabled="true"'), 'aria-disabled present');
@@ -276,7 +279,7 @@ test('19. no IPC, channel, or dependency was added', () => {
   assert.strictEqual((htmlSource.match(/ipcRenderer\.invoke\(/g) || []).length, 0,
     'no invoke was added to the document');
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 40, 'the preload surface is 32 channels plus seven F6 Lists methods and the F7 research list');
+    .split('ipcRenderer.invoke').length - 1, 41, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list and the F8 ICP read');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {
@@ -321,7 +324,8 @@ test('22. the shell kept the existing view sections untouched', () => {
   assert.ok(htmlSource.includes('id="storage-warning"'), 'the storage warning is preserved');
   // F6 declared update: the two Lists views were added; the six are untouched.
   // F7 declared lock update: the two Research views join them.
-  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 10, 'six view sections plus two F6 Lists and two F7 Research views');
+  // F8 declared lock update: the three Intelligence views join them.
+  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 13, 'six view sections plus two F6 Lists, two F7 Research and three F8 Intelligence views');
   assert.ok(/<section class="view active" id="view-collector"/.test(htmlSource), 'collector still starts active');
 });
 

@@ -284,7 +284,8 @@ test('14. nothing is persisted: no store access, no writes, no new column', () =
     'the renderer writes statuses through exactly one preload call');
   const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
   // F6 declared lock update: 26 -> 33, the seven sender-checked Lists channels.
-  assert.strictEqual(channels.length, 33, 'exactly 33 IPC channels (P1-E, P1-F, P1-G and F6)');
+  // F8 declared lock update: 33 -> 34, intelligence:icp.
+  assert.strictEqual(channels.length, 34, 'exactly 34 IPC channels (P1-E, P1-F, P1-G, F6 and F8)');
 });
 
 test('15. B6 fields, Lead Library columns and the pipeline stages are untouched', () => {
@@ -631,7 +632,8 @@ test('25. the Lead Library UI merges quality filters and resets the page', () =>
     'export is unchanged by P1-B');
   const channels = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map(m => m[1]);
   // F6 declared lock update: 26 -> 33, the seven sender-checked Lists channels.
-  assert.strictEqual(channels.length, 33, '33 IPC channels (P1-C, P1-E, P1-F, P1-G and F6)');
+  // F8 declared lock update: 33 -> 34, intelligence:icp.
+  assert.strictEqual(channels.length, 34, '34 IPC channels (P1-C, P1-E, P1-F, P1-G, F6 and F8)');
   assert.strictEqual(preloadSource.split('getNumbers:').length - 1, 1, 'preload query exposure unchanged');
 });
 
