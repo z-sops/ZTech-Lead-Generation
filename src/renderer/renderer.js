@@ -889,6 +889,7 @@ async function loadSettings() {
     document.getElementById('btn-clear-taskkey').disabled = !settings.hasTaskKey;
     proxyInput.value = settings.proxyUrl || '';
     applyResearchSettingsToForm(settings.research);
+    renderSettingsKeyStates(settings);
   } catch (err) {
     const msg = err?.message || String(err);
     toast(msg, 'error');
@@ -959,6 +960,7 @@ async function saveResearchKey() {
     const result = await window.appAPI.research.setApiKey(key);
     input.value = '';
     if (status) status.textContent = researchKeyStatusText(true);
+    setSettingsKeyState('researchkey', true);
     if (result && result.provider) {
       const el = document.getElementById('settings-research-health');
       if (el) el.textContent = researchHealthText({ state: result.provider });
@@ -974,6 +976,7 @@ async function clearResearchKey() {
   try {
     await window.appAPI.research.clearApiKey();
     if (status) status.textContent = researchKeyStatusText(false);
+    setSettingsKeyState('researchkey', false);
   } catch (err) {
     toast((err && err.message) || 'The key could not be cleared.', 'error');
   }
@@ -1134,6 +1137,62 @@ document.getElementById('btn-clear-taskkey').addEventListener('click', safeAsync
     toast(feedback.message, feedback.type);
     if (result && result.success === true) loadSettings();
   }));
+
+// === F9 Settings workspace ===
+// Presentation only. The controls above keep their ids, handlers and payloads;
+// this block shows, from the booleans settings:load already returns, whether
+// each key is stored, and reads the storage engine through the existing status
+// channel. It never receives, holds or writes a key value.
+function settingsKeyStateText(stored) {
+  return stored === true ? 'Stored' : 'Not stored';
+}
+
+// kind: apikey | taskkey | researchkey. Updates the badge beside the field and
+// the Security summary together.
+function setSettingsKeyState(kind, stored) {
+  for (const id of [`settings-state-${kind}`, `settings-security-${kind}`]) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.textContent = settingsKeyStateText(stored);
+    el.dataset.state = stored === true ? 'stored' : 'missing';
+  }
+}
+
+function renderSettingsKeyStates(settings) {
+  const s = (settings && typeof settings === 'object') ? settings : {};
+  const research = (s.research && typeof s.research === 'object') ? s.research : {};
+  setSettingsKeyState('apikey', s.hasApiKey === true);
+  setSettingsKeyState('taskkey', s.hasTaskKey === true);
+  setSettingsKeyState('researchkey', research.hasApiKey === true);
+  const proxy = document.getElementById('settings-security-proxy');
+  if (proxy) {
+    const set = typeof s.proxyUrl === 'string' && s.proxyUrl !== '';
+    proxy.textContent = set ? 'Set' : 'Not set';
+    proxy.dataset.state = set ? 'stored' : 'missing';
+  }
+}
+
+async function loadSettingsWorkspace() {
+  await loadSettings();
+  refreshResearchHealth();
+  const engine = document.getElementById('settings-storage-engine');
+  try {
+    const storage = await window.appAPI.collector.storageStatus();
+    const facts = homeStorageFacts(storage);
+    if (engine) engine.textContent = `${facts.engine} · ${facts.integrity}`;
+  } catch (err) {
+    if (engine) engine.textContent = 'Unavailable';
+  }
+}
+
+document.getElementById('btn-research-health').addEventListener('click', safeAsync(refreshResearchHealth));
+
+for (const jump of document.querySelectorAll('[data-settings-jump]')) {
+  jump.addEventListener('click', () => {
+    const group = document.getElementById(`settings-group-${jump.dataset.settingsJump}`);
+    if (group) group.scrollIntoView({ block: 'start' });
+  });
+}
 
 // === 保存采集结果到号码库 ===
 document.getElementById('btn-save-numbers').addEventListener('click', safeAsync(async () => {
@@ -3987,10 +4046,89 @@ function formatJobTime(value) {
   return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('en-GB');
 }
 
+// --- F9 Home helpers ---------------------------------------------------------
+// Pure text for the Home workspace. Each one reads a stored value and says what
+// it is; none estimates, trends or fills in a missing figure.
+function homeStorageFacts(storage) {
+  if (!storage || typeof storage !== 'object') {
+    return { engine: 'Unavailable', integrity: 'Unavailable', healthy: false };
+  }
+  const engine = storage.mode === 'sql' ? 'SQLite database' : 'JSON storage (the database could not be opened)';
+  let integrity = 'No problems reported';
+  if (storage.quarantine) integrity = 'A damaged database file was set aside';
+  else if (storage.reason === 'corrupt-open') integrity = 'The database file could not be read';
+  if (storage.dataMayBeIncomplete) integrity = 'Data may be incomplete';
+  return { engine, integrity, healthy: storage.mode === 'sql' && integrity === 'No problems reported' };
+}
+
+function homeLeadsMeta(total) {
+  return total === 0 ? 'No leads yet. Start a collection to build the library.' : 'In the local library';
+}
+
+// rows is the newest-first ledger page, so rows[0] is the latest run.
+function homeLastRunText(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 'No runs recorded yet';
+  const first = rows[0] && typeof rows[0] === 'object' ? rows[0] : {};
+  if (typeof first.startedAt !== 'string' || !first.startedAt) return 'Start time not recorded';
+  return 'Last started ' + formatJobTime(first.startedAt);
+}
+
+// A settled list read: the number of rows (optionally matching keep), or
+// Unavailable when the read failed. Never a guess.
+function homeCountText(settled, keep) {
+  if (!settled || settled.status !== 'fulfilled') return 'Unavailable';
+  const value = settled.value;
+  if (!value || !Array.isArray(value.rows)) return 'Unavailable';
+  const rows = typeof keep === 'function' ? value.rows.filter((row) => row && keep(row)) : value.rows;
+  return String(rows.length);
+}
+
+function homeSetText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+// The three existing list reads behind the Workspace panel. Each fails alone.
+async function loadHomeWorkspace(seq) {
+  const [searches, segments, targets] = await Promise.allSettled([
+    window.appAPI.lists.listSavedSearches(),
+    window.appAPI.lists.listSegments(),
+    window.appAPI.targets.list()
+  ]);
+  if (seq !== dashboardLoadSeq) return;
+  homeSetText('home-saved-searches', homeCountText(searches));
+  homeSetText('home-segments', homeCountText(segments));
+  homeSetText('home-targets', homeCountText(targets, (row) => row.status === 'active'));
+}
+
+// Built with DOM nodes: a fixed message and a route to Collection.
+function homeEmptyRuns(tbody) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = 7;
+  td.className = 'home-empty';
+  const title = document.createElement('div');
+  title.className = 'home-empty-title';
+  title.textContent = 'No collection runs yet';
+  const text = document.createElement('div');
+  text.className = 'home-empty-text';
+  text.textContent = 'Runs are recorded here once a collection starts.';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn btn-sm btn-secondary';
+  button.dataset.gotoView = 'collector';
+  button.textContent = 'Open Collection';
+  td.append(title, text, button);
+  tr.appendChild(td);
+  tbody.replaceChildren(tr);
+}
+
 async function loadDashboard(page = 1) {
+  const view = document.getElementById('view-dashboard');
   try {
     const targetPage = page < 1 ? 1 : page;
     const seq = ++dashboardLoadSeq;
+    if (view) view.setAttribute('aria-busy', 'true');
 
     const leads = await window.appAPI.collector.getNumbers({ limit: 1, offset: 0 });
     if (seq !== dashboardLoadSeq) return;
@@ -4006,6 +4144,7 @@ async function loadDashboard(page = 1) {
 
     document.getElementById('dashboard-total-leads').textContent = String(totalLeads);
     document.getElementById('dashboard-total-runs').textContent = String(totalJobs);
+    homeSetText('home-leads-meta', homeLeadsMeta(totalLeads));
 
     const storageState = storage && typeof storage === 'object' ? storage : {};
     const storageProblems = [];
@@ -4013,8 +4152,13 @@ async function loadDashboard(page = 1) {
     if (storageState.quarantine) storageProblems.push('Quarantine: ' + storageState.quarantine);
     else if (storageState.reason === 'corrupt-open') storageProblems.push('Unreadable database');
     if (storageState.dataMayBeIncomplete) storageProblems.push('Data may be incomplete');
-    document.getElementById('dashboard-storage-state').textContent =
-      storageProblems.length ? storageProblems.join('; ') : 'OK';
+    const storageStat = document.getElementById('dashboard-storage-state');
+    storageStat.textContent = storageProblems.length ? storageProblems.join('; ') : 'OK';
+    storageStat.dataset.health = storageProblems.length ? 'problem' : 'ok';
+    const facts = homeStorageFacts(storage);
+    homeSetText('home-storage-meta', facts.engine);
+    homeSetText('home-storage-engine', facts.engine);
+    homeSetText('home-storage-integrity', facts.integrity);
 
     // Job status counts: client-side over the bounded ledger page, using only
     // the approved vocabulary (running | succeeded | failed). Recomputed on
@@ -4033,6 +4177,8 @@ async function loadDashboard(page = 1) {
         failed: counts.failed,
         windowed: totalJobs > rows.length
       };
+      homeSetText('home-runs-meta', homeLastRunText(rows));
+      loadHomeWorkspace(seq).catch((err) => reportError(err?.message || String(err), { handler: 'loadHomeWorkspace' }));
     }
     document.getElementById('dashboard-runs-running').textContent = String(dashboardCounts.running);
     document.getElementById('dashboard-runs-succeeded').textContent = String(dashboardCounts.succeeded);
@@ -4045,27 +4191,33 @@ async function loadDashboard(page = 1) {
 
     dashboardJobsPage = targetPage;
     const tbody = document.getElementById('dashboard-jobs-body');
-    tbody.innerHTML = rows.map(job => {
-      const ledgerRow = job && typeof job === 'object' ? job : {};
-      const statusClass = ledgerRow.status === 'succeeded' ? 'color:var(--accent)' : ledgerRow.status === 'failed' ? 'color:var(--danger)' : ledgerRow.status === 'running' ? 'color:var(--warning)' : '';
-      const statusText = ledgerRow.status === 'succeeded' ? 'Succeeded' : ledgerRow.status === 'failed' ? 'Failed' : ledgerRow.status === 'running' ? 'Running' : (ledgerRow.status || '-');
-      return `<tr>
-        <td>${escapeHtml(ledgerRow.runSlug || '-')}</td>
-        <td>${escapeHtml(ledgerRow.providerId || '-')}</td>
-        <td style="${statusClass}">${escapeHtml(statusText)}</td>
-        <td>${escapeHtml(formatJobTime(ledgerRow.startedAt))}</td>
-        <td>${escapeHtml(formatJobTime(ledgerRow.completedAt))}</td>
-        <td>${escapeHtml(ledgerRow.resultCount === null || ledgerRow.resultCount === undefined ? '-' : String(ledgerRow.resultCount))}</td>
-        <td>${escapeHtml(ledgerRow.error || '-')}</td>
-      </tr>`;
-    }).join('');
+    if (rows.length === 0) {
+      homeEmptyRuns(tbody);
+    } else {
+      tbody.innerHTML = rows.map(job => {
+        const ledgerRow = job && typeof job === 'object' ? job : {};
+        const statusKey = ['running', 'succeeded', 'failed'].includes(ledgerRow.status) ? ledgerRow.status : 'other';
+        const statusText = ledgerRow.status === 'succeeded' ? 'Succeeded' : ledgerRow.status === 'failed' ? 'Failed' : ledgerRow.status === 'running' ? 'Running' : (ledgerRow.status || '-');
+        return `<tr>
+          <td class="home-run-slug">${escapeHtml(ledgerRow.runSlug || '-')}</td>
+          <td>${escapeHtml(ledgerRow.providerId || '-')}</td>
+          <td><span class="home-run-status" data-status="${statusKey}">${escapeHtml(statusText)}</span></td>
+          <td class="home-run-time">${escapeHtml(formatJobTime(ledgerRow.startedAt))}</td>
+          <td class="home-run-time">${escapeHtml(formatJobTime(ledgerRow.completedAt))}</td>
+          <td class="home-run-num">${escapeHtml(ledgerRow.resultCount === null || ledgerRow.resultCount === undefined ? '-' : String(ledgerRow.resultCount))}</td>
+          <td class="home-run-error">${escapeHtml(ledgerRow.error || '-')}</td>
+        </tr>`;
+      }).join('');
+    }
 
     const totalPages = Math.ceil(totalJobs / DASHBOARD_JOBS_PAGE_SIZE) || 1;
     renderPagination('dashboard-jobs-pagination', totalPages, dashboardJobsPage, (p) => {
       dashboardJobsPage = p;
       loadDashboard(p);
     });
+    if (view) view.removeAttribute('aria-busy');
   } catch (err) {
+    if (view) view.removeAttribute('aria-busy');
     const msg = err?.message || String(err);
     toast(msg, 'error');
     reportError(msg, { handler: 'loadDashboard' });
@@ -4080,6 +4232,7 @@ document.getElementById('view-dashboard').addEventListener('click', (e) => {
   const nav = document.querySelector(`.nav-item[data-view="${gotoBtn.dataset.gotoView}"]`);
   if (nav) nav.click();
 });
+document.getElementById('home-refresh').addEventListener('click', safeAsync(() => loadDashboard(1)));
 
 // === F4: Collection workflow (Frontend 2.0) =================================
 // Presentation for the Discovery -> Collection screen only. The submit payload
@@ -4356,6 +4509,7 @@ navItems.forEach(item => {
     if (viewId === 'collector') loadCollectRecent();
     if (viewId === 'history') loadHistory();
     if (viewId === 'dashboard') loadDashboard();
+    if (viewId === 'settings') loadSettingsWorkspace();
     if (viewId === 'targets') loadTargets();
     if (viewId === 'searches') loadSavedSearches();
     if (viewId === 'segments') loadSegments();

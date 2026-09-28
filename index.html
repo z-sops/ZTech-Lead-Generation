@@ -1416,132 +1416,279 @@
           </div>
         </section>
 
-        <!-- Dashboard view (B5): local lead library + job ledger + storage health -->
+        <!-- Dashboard view (B5) - F9 Home: an operational overview of the local
+             lead library, the collection-job ledger and storage health. Every
+             figure is read from existing local records when the view opens and
+             is shown as stored; nothing is derived beyond a count. -->
         <section class="view" id="view-dashboard">
-          <div class="view-top">
-            <div class="form-actions">
-              <button class="btn btn-sm" data-goto-view="collector">Keyword Collection</button>
-              <button class="btn btn-sm" data-goto-view="history">Collection History</button>
-              <button class="btn btn-sm" data-goto-view="numbers">Lead Management</button>
+          <div class="view-top home-top">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Home</h2>
+                <p class="lists-subtitle">Lead library, collection runs and storage on this device. Every figure is read from local records when this page opens.</p>
+              </div>
+              <div class="lists-actions">
+                <button type="button" class="btn btn-sm btn-secondary" data-goto-view="collector">New collection</button>
+                <button type="button" class="btn btn-sm btn-secondary" id="home-refresh">Refresh</button>
+              </div>
             </div>
-            <div class="dashboard-stats">
-              <div class="card dashboard-card">
-                <div class="card-body">
-                  <div class="dashboard-stat-label">Total Leads</div>
-                  <div class="dashboard-stat-value" id="dashboard-total-leads">-</div>
-                </div>
+            <div class="dashboard-stats home-kpis" role="group" aria-label="Library and run totals">
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Total Leads</div>
+                <div class="dashboard-stat-value" id="dashboard-total-leads">-</div>
+                <div class="home-kpi-meta" id="home-leads-meta"></div>
               </div>
-              <div class="card dashboard-card">
-                <div class="card-body">
-                  <div class="dashboard-stat-label">Storage Health</div>
-                  <div class="dashboard-stat-value" id="dashboard-storage-state">-</div>
-                </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Storage Health</div>
+                <div class="dashboard-stat-value home-kpi-text" id="dashboard-storage-state">-</div>
+                <div class="home-kpi-meta" id="home-storage-meta"></div>
               </div>
-              <div class="card dashboard-card">
-                <div class="card-body">
-                  <div class="dashboard-stat-label">Total Runs</div>
-                  <div class="dashboard-stat-value" id="dashboard-total-runs">-</div>
-                </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Total Runs</div>
+                <div class="dashboard-stat-value" id="dashboard-total-runs">-</div>
+                <div class="home-kpi-meta" id="home-runs-meta"></div>
               </div>
-              <div class="card dashboard-card">
-                <div class="card-body">
-                  <div class="dashboard-stat-label">Running</div>
-                  <div class="dashboard-stat-value" id="dashboard-runs-running">-</div>
-                </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Running</div>
+                <div class="dashboard-stat-value" id="dashboard-runs-running">-</div>
               </div>
-              <div class="card dashboard-card">
-                <div class="card-body">
-                  <div class="dashboard-stat-label">Succeeded</div>
-                  <div class="dashboard-stat-value" id="dashboard-runs-succeeded">-</div>
-                </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Succeeded</div>
+                <div class="dashboard-stat-value" id="dashboard-runs-succeeded">-</div>
               </div>
-              <div class="card dashboard-card">
-                <div class="card-body">
-                  <div class="dashboard-stat-label">Failed</div>
-                  <div class="dashboard-stat-value" id="dashboard-runs-failed">-</div>
-                </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Failed</div>
+                <div class="dashboard-stat-value" id="dashboard-runs-failed">-</div>
               </div>
             </div>
             <div class="dashboard-note" id="dashboard-counts-window" hidden></div>
           </div>
-          <div class="view-bottom">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Run Slug</th>
-                  <th>Provider</th>
-                  <th>Status</th>
-                  <th>Started</th>
-                  <th>Completed</th>
-                  <th>Results</th>
-                  <th>Error</th>
-                </tr>
-              </thead>
-              <tbody id="dashboard-jobs-body"></tbody>
-            </table>
-            <div class="pagination" id="dashboard-jobs-pagination"></div>
+          <div class="view-bottom home-bottom">
+            <div class="home-grid">
+              <section class="home-panel home-runs" aria-labelledby="home-runs-title">
+                <div class="home-panel-head">
+                  <h3 class="home-panel-title" id="home-runs-title">Recent runs</h3>
+                  <button type="button" class="btn btn-sm btn-ghost" data-goto-view="history">Collection History</button>
+                </div>
+                <div class="lists-table-wrap home-runs-wrap">
+                  <table class="data-table lists-table home-runs-table">
+                    <caption class="visually-hidden">Collection runs recorded in the local job ledger, newest first.</caption>
+                    <thead>
+                      <tr>
+                        <th>Run Slug</th>
+                        <th>Provider</th>
+                        <th>Status</th>
+                        <th>Started</th>
+                        <th>Completed</th>
+                        <th>Results</th>
+                        <th>Error</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dashboard-jobs-body"></tbody>
+                  </table>
+                </div>
+                <div class="pagination" id="dashboard-jobs-pagination"></div>
+              </section>
+              <div class="home-side">
+                <section class="home-panel" aria-labelledby="home-actions-title">
+                  <h3 class="home-panel-title" id="home-actions-title">Go to</h3>
+                  <div class="home-actions">
+                    <button type="button" class="home-action" data-goto-view="collector"><span class="home-action-label">Collection</span><span class="home-action-hint">Start a keyword collection run</span></button>
+                    <button type="button" class="home-action" data-goto-view="history"><span class="home-action-label">Collection History</span><span class="home-action-hint">Every run and its saved results</span></button>
+                    <button type="button" class="home-action" data-goto-view="numbers"><span class="home-action-label">All Leads</span><span class="home-action-hint">Browse, filter and export the library</span></button>
+                    <button type="button" class="home-action" data-goto-view="queue"><span class="home-action-label">Research Queue</span><span class="home-action-hint">Leads waiting for website research</span></button>
+                    <button type="button" class="home-action" data-goto-view="completed"><span class="home-action-label">Completed Research</span><span class="home-action-hint">Finished website research</span></button>
+                    <button type="button" class="home-action" data-goto-view="searches"><span class="home-action-label">Saved Searches</span><span class="home-action-hint">Re-run saved Leads filters</span></button>
+                    <button type="button" class="home-action" data-goto-view="segments"><span class="home-action-label">Segments</span><span class="home-action-hint">Static and dynamic lead lists</span></button>
+                    <button type="button" class="home-action" data-goto-view="icp"><span class="home-action-label">ICP</span><span class="home-action-hint">Fit of each lead against a Target</span></button>
+                  </div>
+                </section>
+                <section class="home-panel" aria-labelledby="home-workspace-title">
+                  <h3 class="home-panel-title" id="home-workspace-title">Workspace</h3>
+                  <dl class="home-facts">
+                    <div class="home-fact"><dt>Saved searches</dt><dd id="home-saved-searches">-</dd></div>
+                    <div class="home-fact"><dt>Segments</dt><dd id="home-segments">-</dd></div>
+                    <div class="home-fact"><dt>Active targets</dt><dd id="home-targets">-</dd></div>
+                  </dl>
+                </section>
+                <section class="home-panel" aria-labelledby="home-storage-title">
+                  <h3 class="home-panel-title" id="home-storage-title">Storage</h3>
+                  <dl class="home-facts">
+                    <div class="home-fact"><dt>Engine</dt><dd id="home-storage-engine">-</dd></div>
+                    <div class="home-fact"><dt>Integrity</dt><dd id="home-storage-integrity">-</dd></div>
+                  </dl>
+                </section>
+              </div>
+            </div>
           </div>
         </section>
 
-        <!-- Settings view -->
+        <!-- Settings view - F9: grouped settings workspace. Every control is an
+             existing one with its original id and handler: settings:load /
+             settings:save, the provider connection test, proxy detection, the
+             write-only Zuni-SEO key channels and log export. Keys are never
+             loaded back into this form; only whether one is stored is shown. -->
         <section class="view" id="view-settings">
-          <div class="view-top">
-            <div class="form-item">
-              <label>API Key</label>
-              <div class="input-with-btn">
-                <input type="password" id="settings-apikey" placeholder="Enter API key">
-                <button class="btn btn-secondary btn-sm" id="btn-test-apikey">Test Connection</button>
-                <button class="btn btn-secondary btn-sm" id="btn-clear-apikey" disabled>Clear</button>
+          <div class="view-top settings-top">
+            <div class="settings-workspace">
+              <div class="lists-header settings-header">
+                <div class="lists-heading">
+                  <h2 class="lists-title">Settings</h2>
+                  <p class="lists-subtitle">Collection credentials, website research, network and application. Keys are encrypted on this device and never shown again after you save them.</p>
+                </div>
+              </div>
+              <nav class="settings-index" aria-label="Settings sections">
+                <button type="button" class="settings-index-item" data-settings-jump="collection">Collection provider</button>
+                <button type="button" class="settings-index-item" data-settings-jump="research">Website research</button>
+                <button type="button" class="settings-index-item" data-settings-jump="network">Network</button>
+                <button type="button" class="settings-index-item" data-settings-jump="security">Security</button>
+                <button type="button" class="settings-index-item" data-settings-jump="application">Application</button>
+              </nav>
+              <div class="settings-groups">
+                <section class="settings-group" id="settings-group-collection" aria-labelledby="settings-title-collection">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-collection">Collection provider</h3>
+                    <p class="settings-group-desc">Credentials for the active collection provider. Leave a field empty to keep the stored key. Test Connection with an empty field tests the stored key.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-apikey">API Key</label>
+                      <span class="settings-key-state" id="settings-state-apikey" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="settings-apikey" placeholder="Enter API key" autocomplete="off">
+                        <button class="btn btn-secondary btn-sm" id="btn-test-apikey">Test Connection</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-clear-apikey" disabled>Clear</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-task-key">Task Flow Key</label>
+                      <span class="settings-key-state" id="settings-state-taskkey" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="settings-task-key" placeholder="e.g. 01KWA7xxxx" autocomplete="off">
+                        <button class="btn btn-secondary btn-sm" id="btn-test-taskkey">Test Connection</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-clear-taskkey" disabled>Clear</button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Zuni-SEO website research. The base URL and transport are the
+                     only editable research settings; timeouts, retry, breaker,
+                     freshness and the scheduler tick stay code defaults. The key
+                     is write-only: it is never loaded back into this form. -->
+                <section class="settings-group" id="settings-group-research" aria-labelledby="settings-title-research">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-research">Website research</h3>
+                    <p class="settings-group-desc">The Zuni-SEO endpoint used by the Research workspace. Timeouts, retries and freshness keep their built-in values.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-research-baseurl">Zuni-SEO Base URL</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="text" id="settings-research-baseurl" placeholder="https://api.your-zunitech-domain">
+                        <label class="visually-hidden" for="settings-research-transport">Transport</label>
+                        <select id="settings-research-transport">
+                          <option value="mcp">MCP</option>
+                          <option value="rest">REST</option>
+                        </select>
+                      </div>
+                      <p class="form-hint" id="settings-research-hint">HTTPS required, except localhost for development.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-research-key">Zuni-SEO API Key</label>
+                      <span class="settings-key-state" id="settings-state-researchkey" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="settings-research-key" placeholder="zsk_..." autocomplete="off">
+                        <button class="btn btn-secondary btn-sm" id="btn-research-clear-key" disabled>Clear</button>
+                      </div>
+                      <p class="form-hint" id="settings-research-key-status">No key stored.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Research Provider</span>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="settings-research-health" role="status" aria-live="polite">Not checked yet.</p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-research-health">Check status</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-network" aria-labelledby="settings-title-network">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-network">Network</h3>
+                    <p class="settings-group-desc">Applied to the app's network session when you save. The proxy URL is stored encrypted.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-proxy-url">Network Proxy</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="text" id="settings-proxy-url" placeholder="e.g. http://127.0.0.1:7890">
+                        <button class="btn btn-secondary btn-sm" id="btn-detect-proxy">Auto Detect</button>
+                      </div>
+                      <p class="form-hint">Leave empty to connect directly. Auto Detect fills in the system proxy; it takes effect when you save.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-security" aria-labelledby="settings-title-security">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-security">Security</h3>
+                    <p class="settings-group-desc">Keys are write-only. This window only learns whether a key is stored, never its value. If this system cannot encrypt, saving fails instead of writing a key in plain text.</p>
+                  </div>
+                  <dl class="settings-facts">
+                    <div class="settings-fact"><dt>Collection API key</dt><dd><span class="settings-key-state" id="settings-security-apikey" data-state="unknown">Checking</span></dd></div>
+                    <div class="settings-fact"><dt>Task Flow key</dt><dd><span class="settings-key-state" id="settings-security-taskkey" data-state="unknown">Checking</span></dd></div>
+                    <div class="settings-fact"><dt>Zuni-SEO API key</dt><dd><span class="settings-key-state" id="settings-security-researchkey" data-state="unknown">Checking</span></dd></div>
+                    <div class="settings-fact"><dt>Network proxy</dt><dd><span class="settings-key-state" id="settings-security-proxy" data-state="unknown">Checking</span></dd></div>
+                  </dl>
+                </section>
+
+                <section class="settings-group" id="settings-group-application" aria-labelledby="settings-title-application">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-application">Application</h3>
+                    <p class="settings-group-desc">Local storage and diagnostics.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Lead storage</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="settings-value" id="settings-storage-engine">-</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Logs</span>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint">Export the application log for troubleshooting.</p>
+                      <button class="btn btn-secondary btn-sm" id="btn-export-logs">Export Logs</button>
+                    </div>
+                  </div>
+                </section>
               </div>
             </div>
-            <div class="form-item">
-              <label>Task Flow Key</label>
-              <div class="input-with-btn">
-                <input type="password" id="settings-task-key" placeholder="e.g. 01KWA7xxxx">
-                <button class="btn btn-secondary btn-sm" id="btn-test-taskkey">Test Connection</button>
-                <button class="btn btn-secondary btn-sm" id="btn-clear-taskkey" disabled>Clear</button>
-              </div>
-            </div>
-            <div class="form-item">
-              <label>Network Proxy</label>
-              <div class="input-with-btn">
-                <input type="text" id="settings-proxy-url" placeholder="e.g. http://127.0.0.1:7890, or leave empty to auto-detect">
-                <button class="btn btn-secondary btn-sm" id="btn-detect-proxy">Auto Detect</button>
-              </div>
-            </div>
-            <!-- Zuni-SEO website research. The base URL is the only editable
-                 research setting; timeouts, retry, breaker, freshness and the
-                 scheduler tick stay code defaults. The key is write-only: it is
-                 never loaded back into this form. -->
-            <div class="form-item">
-              <label>Zuni-SEO Base URL</label>
-              <div class="input-with-btn">
-                <input type="text" id="settings-research-baseurl" placeholder="https://api.your-zunitech-domain">
-                <select id="settings-research-transport">
-                  <option value="mcp">MCP</option>
-                  <option value="rest">REST</option>
-                </select>
-              </div>
-              <p class="form-hint" id="settings-research-hint">HTTPS required, except localhost for development.</p>
-            </div>
-            <div class="form-item">
-              <label>Zuni-SEO API Key</label>
-              <div class="input-with-btn">
-                <input type="password" id="settings-research-key" placeholder="zsk_..." autocomplete="off">
-                <button class="btn btn-secondary btn-sm" id="btn-research-clear-key" disabled>Clear</button>
-              </div>
-              <p class="form-hint" id="settings-research-key-status">No key stored.</p>
-            </div>
-            <div class="form-item">
-              <label>Research Provider</label>
-              <p class="form-hint" id="settings-research-health">Not checked yet.</p>
-            </div>
-            <div class="form-actions">
+            <div class="settings-footer">
+              <p class="settings-footer-note">Save applies the collection keys, the proxy, the research endpoint and a new research key.</p>
               <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
-              <button class="btn btn-secondary" id="btn-export-logs">Export Logs</button>
             </div>
           </div>
-          <div class="view-bottom"></div>
         </section>
       </div>
     </main>

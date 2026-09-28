@@ -1052,6 +1052,30 @@ async function pickResearchArtifactFile() {
   }
 }
 
+// The research IPC handlers are registered once, but A8 replaces the service
+// when the base URL changes. They are therefore handed views that resolve the
+// CURRENT service on every call, never the instance that existed when they were
+// registered. While a replacement is in progress there is no current service,
+// and the call is refused rather than sent to the closing one.
+function currentResearchService() {
+  if (!researchService) throw new Error('The research service is not available right now. Try again.');
+  return researchService;
+}
+
+const currentResearchGateway = {
+  get providerHealth() { return currentResearchService().gateway.providerHealth; },
+  requestResearch: (request) => currentResearchService().gateway.requestResearch(request),
+  getResearch: (leadRef) => currentResearchService().gateway.getResearch(leadRef),
+  importArtifact: (leadRef, filePath) => currentResearchService().gateway.importArtifact(leadRef, filePath),
+  credentialsChanged: () => currentResearchService().gateway.credentialsChanged()
+};
+
+const currentResearchKeys = {
+  setApiKey: (key) => currentResearchService().keys.setApiKey(key),
+  clearApiKey: () => currentResearchService().keys.clearApiKey(),
+  hasApiKey: () => currentResearchService().keys.hasApiKey()
+};
+
 function registerResearchIpcHandlers() {
   if (!researchService) return;
   if (!researchTrustedSender) {
@@ -1064,8 +1088,8 @@ function registerResearchIpcHandlers() {
   }
   try {
     registerResearchIpc(ipcMain, {
-      gateway: researchService.gateway,
-      keys: researchService.keys,
+      gateway: currentResearchGateway,
+      keys: currentResearchKeys,
       isTrustedSender: researchTrustedSender,
       loadLead: loadResearchLead,
       listLeads: listResearchLeads,
