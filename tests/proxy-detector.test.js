@@ -130,11 +130,11 @@ function test(name, fn) {
   test('12. Renderer reports the three distinct detection states', () => {
     const detectRegion = region(rendererSrc, "getElementById('btn-detect-proxy')", "getElementById('btn-export-logs')");
     assert.ok(detectRegion.includes('result.whatsappReachable === false'), 'state: proxy found, WhatsApp failed');
-    assert.ok(detectRegion.includes('已检测到代理，但 WhatsApp 连通性测试未通过: '), 'distinct WhatsApp-failed toast');
+    assert.ok(detectRegion.includes('Proxy detected, but the WhatsApp connectivity check failed: '), 'distinct WhatsApp-failed toast');
     assert.ok(detectRegion.includes('result.whatsappReachable === true'), 'state: proxy found, WhatsApp passed');
-    assert.ok(detectRegion.includes('检测到代理，WhatsApp 连通性测试通过: '), 'distinct WhatsApp-passed toast');
-    assert.ok(detectRegion.includes('未检测到可用代理'), 'state: no system proxy detected (unchanged)');
-    assert.ok(detectRegion.includes('检测到代理: '), 'original detected-text retained for WhatsApp-not-tested (SOCKS5)');
+    assert.ok(detectRegion.includes('Proxy detected, WhatsApp connectivity check passed: '), 'distinct WhatsApp-passed toast');
+    assert.ok(detectRegion.includes('No usable proxy detected'), 'state: no system proxy detected (unchanged)');
+    assert.ok(detectRegion.includes('Proxy detected: '), 'original detected-text retained for WhatsApp-not-tested (SOCKS5)');
     assert.ok(detectRegion.includes("getElementById('settings-proxy-url').value = result.proxyUrl"), 'detected proxy still fills the settings field');
   });
 

@@ -170,8 +170,8 @@ test('J+K. Save and Export use the same canonical helper', () => {
   assert.ok(!exportBlock.includes('__collectResults'), 'Export must not fall back to __collectResults');
   assert.ok(!source.includes('__filteredResults ||'), 'old fallback pattern must be gone');
 
-  assert.ok(saveBlock.includes("showStatus('请先勾选要保存的结果', true)"), 'Save must show a zero-selection message');
-  assert.ok(exportBlock.includes("showStatus('请先勾选要导出的结果', true)"), 'Export must show a zero-selection message');
+  assert.ok(saveBlock.includes("showStatus('Select at least one result to save', true)"), 'Save must show a zero-selection message');
+  assert.ok(exportBlock.includes("showStatus('Select at least one result to export', true)"), 'Export must show a zero-selection message');
 });
 
 test('selection is read from the currently rendered result set only', () => {

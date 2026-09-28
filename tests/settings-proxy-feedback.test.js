@@ -54,30 +54,30 @@ const settingsSaveFeedback = new Function(
 
 test('1. proxyApplied=true → unchanged success toast', () => {
   const fb = settingsSaveFeedback({ success: true, proxyApplied: true });
-  assert.strictEqual(fb.message, '设置已保存');
+  assert.strictEqual(fb.message, 'Settings saved');
   assert.strictEqual(fb.type, 'success');
 });
 
 test('2. proxyApplied=false → distinguishes saved vs proxy not applied', () => {
   const fb = settingsSaveFeedback({ success: true, proxyApplied: false });
   assert.strictEqual(fb.type, 'info');
-  assert.notStrictEqual(fb.message, '设置已保存');
-  assert.ok(fb.message.includes('设置已保存'), 'must still report settings persisted');
-  assert.ok(fb.message.includes('代理设置未能生效'), 'must not claim proxy is active');
-  assert.ok(!fb.message.includes('已生效'), 'must not claim proxy took effect');
+  assert.notStrictEqual(fb.message, 'Settings saved');
+  assert.ok(fb.message.includes('Settings saved'), 'must still report settings persisted');
+  assert.ok(fb.message.includes('the proxy could not be applied'), 'must not claim proxy is active');
+  assert.ok(!fb.message.includes('proxy is active'), 'must not claim proxy took effect');
 });
 
 test('3. proxy save failure (envelope success:false) → controlled error toast', () => {
   const fb = settingsSaveFeedback({ success: false, error: 'some internal detail' });
   assert.strictEqual(fb.type, 'error');
-  assert.strictEqual(fb.message, '保存设置失败，请检查设置内容');
+  assert.strictEqual(fb.message, 'Could not save settings. Check the values and try again');
   assert.ok(!fb.message.includes('some internal detail'), 'internal error must not be surfaced');
 });
 
 test('4. invalid proxy (exception path) → controlled error toast, no raw strings', () => {
   const fb = settingsSaveFeedback(null);
   assert.strictEqual(fb.type, 'error');
-  assert.strictEqual(fb.message, '保存设置失败，请检查设置内容');
+  assert.strictEqual(fb.message, 'Could not save settings. Check the values and try again');
   assert.ok(!fb.message.includes('Error invoking remote method'), 'raw IPC exception must not be shown');
   assert.ok(!fb.message.includes('Invalid params'), 'raw validation internals must not be shown');
 });
@@ -100,7 +100,7 @@ test('6. main process still returns proxyApplied (regression)', () => {
 test('7. proxy clear/direct path preserved', () => {
   assert.ok(mainSource.includes("await session.defaultSession.setProxy(proxyRules ? { proxyRules } : { mode: 'direct' });"), 'direct mode preserved');
   const fb = settingsSaveFeedback({ success: true, proxyApplied: true });
-  assert.strictEqual(fb.message, '设置已保存');
+  assert.strictEqual(fb.message, 'Settings saved');
 });
 
 console.log('');

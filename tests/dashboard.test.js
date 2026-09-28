@@ -67,7 +67,12 @@ test('1. dashboard nav item and view section exist exactly once', () => {
 });
 
 test('2. dashboard title registered and lazy-loaded with the other views', () => {
-  assert.ok(/dashboard:\s*'仪表盘'/.test(rendererSource), 'viewTitles.dashboard present');
+  // Frontend 2.0 F2 renamed this view's title from the Chinese '仪表盘' to the
+  // English 'Home' (locked decision: English-only UI chrome), and gave it the
+  // workspace group 'Workspace'. The assertion is updated, not weakened: the key
+  // must still exist, still be registered, and the lazy load must be unchanged.
+  assert.ok(/dashboard:\s*'Home'/.test(rendererSource), 'viewTitles.dashboard present');
+  assert.ok(/dashboard:\s*'Workspace'/.test(rendererSource), 'viewContexts.dashboard present');
   assert.ok(navBlock.includes("if (viewId === 'dashboard') loadDashboard();"),
     'nav click lazily calls loadDashboard');
   assert.ok(rendererSource.indexOf(dashMarker) !== -1, 'dashboard code block present');

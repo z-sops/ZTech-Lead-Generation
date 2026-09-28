@@ -283,10 +283,12 @@ function test(name, fn) {
       assert.ok(templateRegion.includes(`escapeHtml(lead.${field}`), 'escaped: ' + field);
     }
     assert.ok(templateRegion.includes('new Date(lead.collectedAt)'), 'collectedAt read from the lead');
-    assert.ok(templateRegion.includes("escapeHtml(collected.toLocaleString('zh-CN'))"), 'collectedAt escaped after formatting');
+    // Frontend 2.0 locked decision 2: locale-independent English formatting.
+    // The escaping requirement is unchanged - only the locale argument moved.
+    assert.ok(templateRegion.includes("escapeHtml(collected.toLocaleString('en-GB'))"), 'collectedAt escaped after formatting');
     assert.ok(templateRegion.includes('renderWebsite(websiteRaw)'), 'website routed through the secure helper');
     assert.ok(!templateRegion.includes('<a href='), 'template builds no raw hrefs itself');
-    for (const label of ['ID', 'Phone', 'Source', 'Keywords', 'Status', '采集Time', 'Title', 'Website', 'Email', 'Address', 'Run Slug']) {
+    for (const label of ['ID', 'Phone', 'Source', 'Keywords', 'Status', 'Collected', 'Title', 'Website', 'Email', 'Address', 'Run Slug']) {
       assert.ok(templateRegion.includes(`row('${label}'`), 'detail slot present: ' + label);
     }
     assert.ok(detailRegion.includes("body.innerHTML = leadDetailTemplate(lead)"), 'rendered via the escaped template');
@@ -350,7 +352,7 @@ function test(name, fn) {
     assert.ok(!closeRegion.includes('renderNumbers('), 'close performs no page re-render');
     assert.ok(closeRegion.includes('detailLoadSeq += 1'), 'close invalidates any in-flight detail fetch');
     assert.ok(rendererSource.includes('offset: (numbersPage - 1) * NUMBERS_PER_PAGE'), 'B2 pagination math unchanged');
-    assert.ok(rendererSource.includes("sort: 'collectedAt', label: '采集Time'"), 'B2 sort map unchanged');
+    assert.ok(rendererSource.includes("sort: 'collectedAt', label: 'Collected'"), 'B2 sort map unchanged');
   });
 
   test('16. detail view writes only user-owned lead fields; destructive/global APIs stay unreachable', () => {
@@ -395,7 +397,7 @@ function test(name, fn) {
     assert.ok(rendererSource.split('currentResultsRunSlug = null').length - 1 === 2, 'runSlug clear sites unchanged');
     assert.ok(mainSource.includes("const NUMBERS_QUERY_SORT_FIELDS = ['collectedAt', 'title', 'phone', 'source', 'keyword'];"), 'sort allowlist unchanged');
     assert.ok(htmlSource.includes('<th>Title</th>') && htmlSource.includes('<th>Website</th>'), 'table headers unchanged');
-    assert.ok(htmlSource.includes('搜索Phone/Title/Website/Email/Address/Source/Keyword'), 'search placeholder unchanged');
+    assert.ok(htmlSource.includes('Search phone, title, website, email, address, source, keyword'), 'search placeholder unchanged');
     assert.ok(!storeSource.toLowerCase().includes('country') && !storeSource.toLowerCase().includes('city'), 'no country/city fields');
   });
 

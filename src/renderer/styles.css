@@ -4,6 +4,19 @@
   box-sizing: border-box;
 }
 
+/* ==========================================================================
+   ZTech Frontend 2.0 — F1: design tokens + density foundation.
+
+   The 12 legacy tokens below (--bg-primary … --sidebar-width) are PRESERVED
+   unchanged: existing selectors, existing behaviour and existing tests all
+   depend on them. Everything after this block is additive. F1 introduces the
+   token vocabulary that later frontend batches will build on; it does not
+   redesign any screen.
+
+   Naming: legacy tokens stay as they are. New tokens are the approved
+   Frontend 2.0 vocabulary and never alias the legacy ones, so a later batch
+   can migrate a selector without changing what it looks like today.
+   ========================================================================== */
 :root {
   --bg-primary: #e9eaec;
   --bg-secondary: #dfe0e2;
@@ -18,6 +31,172 @@
   --warning: #d4903a;
   --success: #4aad4a;
   --sidebar-width: 220px;
+
+  /* --- Spacing: 4px base scale ----------------------------------------- */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --space-7: 24px;
+  --space-8: 32px;
+
+  /* --- Radius: small by design; nothing pill-shaped --------------------- */
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+
+  /* --- Shadows: exactly two. Cards use borders, not shadows. ----------- */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .06);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, .10);
+
+  /* --- Typography: system stack only (no remote fonts; CSP grants none) - */
+  --font-11: 11px;
+  --font-12: 12px;
+  --font-13: 13px;
+  --font-14: 14px;
+  --font-16: 16px;
+  --font-20: 20px;
+  --font-24: 24px;
+
+  /* --- Density ---------------------------------------------------------- */
+  --row-h-compact: 32px;
+  --row-h-comfortable: 40px;
+
+  /* --- Z-index scale -----------------------------------------------------
+     The approved scale (1/10/100/200/300) is the vocabulary for NEW layers.
+     It is NOT applied to the existing overlay/toast pair, which sit at
+     hardcoded 9000/9999 today: the Lead Profile overlay (z-index 9000) must
+     stay under toasts, and lowering the toast to 300 would put every toast
+     behind the open Lead Profile. --z-overlay / --z-toast-legacy preserve that
+     relationship until the drawer batch re-bases both on the new scale. */
+  --z-table: 1;
+  --z-sticky: 10;
+  --z-popover: 100;
+  --z-drawer: 200;
+  --z-toast: 300;
+  --z-overlay: 9000;
+  --z-toast-legacy: 9999;
+
+  /* --- Motion: opacity/transform only ----------------------------------- */
+  --dur-fast: 90ms;
+  --dur-base: 140ms;
+
+  /* --- Layout metrics --------------------------------------------------- */
+  --sidebar-w: 216px;
+  --sidebar-w-collapsed: 48px;
+  --drawer-w: 720px;
+
+  /* --- Semantic surfaces ------------------------------------------------- */
+  --bg-app: #f6f7f8;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f0f1f3;
+  --bg-hover: #eceef0;
+  --bg-selected: #e8f0fb;
+
+  /* --- Semantic text ----------------------------------------------------- */
+  --text-1: #16181d;
+  --text-2: #5b6270;
+  --text-3: #8b929f;
+  --text-inverse: #ffffff;
+
+  /* --- Semantic borders -------------------------------------------------- */
+  --border-1: #e3e5e8;
+  --border-2: #cfd3d9;
+  --border-focus: #3b6fd4;
+
+  /* --- Accent ------------------------------------------------------------
+     Named -f2 because --accent / --accent-hover already exist with different
+     values and are used by the current UI. F1 must not change what the app
+     looks like today, so the approved Frontend 2.0 values are added under
+     non-colliding names. A later batch can adopt them selector by selector
+     and retire the legacy pair. */
+  --accent-f2: #2f6fdb;
+  --accent-f2-hover: #2559b4;
+  --accent-subtle: #eaf1fd;
+
+  /* --- Status ------------------------------------------------------------
+     --danger is named -f2 for the same reason as --accent above: the legacy
+     --danger (#d94444) is already in use by .btn-danger and .status-bar. */
+  --ok: #1a7f4b;
+  --ok-bg: #e7f5ed;
+  --warn: #8a5a00;
+  --warn-bg: #fdf3e0;
+  --danger-f2: #b42318;
+  --danger-f2-bg: #fdecea;
+  --info: #175cd3;
+  --info-bg: #eaf1fd;
+  --neutral: #5b6270;
+  --neutral-bg: #f0f1f3;
+
+  /* --- Untrusted third-party text ---------------------------------------- */
+  --untrusted-bg: #fff8e6;
+  --untrusted-border: #e0b64c;
+}
+
+/* ==========================================================================
+   F1 density mechanism (renderer-local, no IPC, no persistence beyond
+   localStorage).
+
+   The mechanism only: applying the data attribute, reading the stored
+   preference and exposing the row-height variable. No visible control is
+   added here - the Compact/Comfortable toggle in the top bar belongs to a
+   later frontend batch. Until then the default (compact) applies, so this is
+   visually a no-op on first run.
+
+   Density is expressed as one custom property so a single rule switches it:
+   the value is read by table rows in the rule below.
+   ========================================================================== */
+:root,
+:root[data-density='compact'] {
+  --row-h: var(--row-h-compact);
+}
+
+:root[data-density='comfortable'] {
+  --row-h: var(--row-h-comfortable);
+}
+
+/* Row height applied to the real data tables. Padding on th/td is unchanged
+   so the existing table layout and its tests are untouched; the variable only
+   sets a minimum height on the cells. */
+.data-table th,
+.data-table td {
+  min-height: var(--row-h);
+  height: var(--row-h);
+}
+
+.data-table td {
+  vertical-align: middle;
+}
+
+/* Columns holding numbers/ids/timestamps align digit-for-digit. */
+.data-table td,
+.data-table th {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keyboard focus is always visible. Kept to opacity/colour only. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* Motion is opt-out. F1 introduces almost no animation, but the toast already
+   animates and this honours the OS preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 body {
@@ -34,70 +213,9 @@ body {
   height: 100vh;
 }
 
-/* 左侧边栏 */
-.sidebar {
-  width: var(--sidebar-width);
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-}
-
-.sidebar-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.brand {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.version {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.sidebar-nav {
-  padding: 8px;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  text-align: left;
-  transition: all 0.15s;
-}
-
-.nav-item:hover {
-  background: rgba(74, 144, 217, 0.08);
-  color: var(--text-primary);
-}
-
-.nav-item.active {
-  background: rgba(74, 144, 217, 0.15);
-  color: var(--accent);
-}
-
-.nav-icon {
-  font-size: 16px;
-  width: 20px;
-  text-align: center;
-}
+/* 左侧边栏 / 顶部栏 / 导航样式 — moved to the Frontend 2.0 F2 block further down
+   this file. The F2 block is the single source of truth for the workspace
+   chrome; keeping a second copy here would let the two drift. */
 
 /* 右侧主区域 */
 .main-content {
@@ -105,38 +223,6 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-.top-bar {
-  display: flex;
-  align-items: center;
-  padding: 12px 24px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  gap: 24px;
-}
-
-.top-bar-title {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.top-bar-stats {
-  display: flex;
-  gap: 16px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.top-bar-stats strong {
-  color: var(--accent);
-}
-
-.top-bar-time {
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-family: monospace;
 }
 
 /* 视图容器 */
@@ -232,16 +318,16 @@ body {
   gap: 8px;
 }
 
-/* 表单 - 上下布局（每行一个字段） */
+/* 表单 - 上下布局（每行一个字段） — F1: spacing/type to tokens */
 .form-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
 .form-item label {
-  font-size: 13px;
+  font-size: var(--font-13);
   color: var(--text-secondary);
   font-weight: 500;
   min-width: 110px;
@@ -263,7 +349,7 @@ body {
 .input-with-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   flex: 1;
   max-width: 360px;
 }
@@ -274,7 +360,7 @@ body {
 
 .form-divider {
   border-top: 1px solid var(--border);
-  margin: 10px 0;
+  margin: var(--space-3) 0;
 }
 
 /* 开关并排网格 */
@@ -288,8 +374,8 @@ body {
 .switch-label {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--space-2);
+  font-size: var(--font-12);
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
@@ -302,18 +388,18 @@ body {
   cursor: pointer;
 }
 
-/* 表单 - 横排（兼容旧的） */
+/* 表单 - 横排（兼容旧的） — F1: spacing/type to tokens */
 .form-row {
   display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
   align-items: flex-end;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   flex: 1;
 }
 
@@ -322,20 +408,22 @@ body {
 }
 
 .form-group label {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
   font-weight: 500;
 }
 
+/* Form controls — F1: radius/padding/type/motion to tokens. Background and
+   border colours are unchanged, so no control changes appearance. */
 input, select, textarea {
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-13);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--dur-fast);
 }
 
 input:focus, select:focus, textarea:focus {
@@ -349,24 +437,25 @@ textarea {
 
 .form-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
-/* 按钮 */
+/* 按钮 — F1: padding/radius/type/motion moved to tokens. Colours deliberately
+   still reference the legacy accent/danger pair so nothing changes visually. */
 .btn {
-  padding: 8px 16px;
+  padding: var(--space-3) var(--space-5);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-13);
   font-weight: 500;
-  transition: all 0.15s;
+  transition: background-color var(--dur-fast), color var(--dur-fast);
 }
 
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .btn-primary:hover {
@@ -379,17 +468,17 @@ textarea {
 }
 
 .btn-secondary:hover {
-  background: #444444;
+  background: var(--text-primary);
 }
 
 .btn-danger {
   background: var(--danger);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .btn-sm {
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-12);
 }
 
 .btn:disabled {
@@ -397,22 +486,23 @@ textarea {
   cursor: not-allowed;
 }
 
-/* 表格 */
+/* 表格 — F1: type tokens applied. Row height comes from --row-h (density
+   block above); cell padding and the existing colours are unchanged. */
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--font-13);
 }
 
 .data-table th,
 .data-table td {
-  padding: 8px 12px;
+  padding: var(--space-3) var(--space-4);
   text-align: left;
   border-bottom: 1px solid var(--border);
 }
 
 .data-table th {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
   font-weight: 500;
   text-transform: uppercase;
@@ -423,12 +513,12 @@ textarea {
   background: rgba(74, 144, 217, 0.04);
 }
 
-/* 状态栏 */
+/* 状态栏 — F1: spacing/radius/type to tokens. Panel colours unchanged. */
 .status-bar {
-  margin-top: 12px;
-  padding: 10px 14px;
-  border-radius: 4px;
-  font-size: 13px;
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-13);
   background: rgba(74, 144, 217, 0.1);
   border: 1px solid rgba(74, 144, 217, 0.2);
   color: var(--accent);
@@ -440,11 +530,11 @@ textarea {
   color: var(--danger);
 }
 
-/* 筛选栏 */
+/* 筛选栏 — F1: spacing to tokens */
 .filter-bar {
   display: flex;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .filter-bar input,
@@ -495,12 +585,12 @@ textarea {
   transform: translateX(14px);
 }
 
-/* 分页 */
+/* 分页 — F1: spacing tokens. */
 .pagination {
   display: flex;
   justify-content: center;
-  gap: 4px;
-  margin-top: 12px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 /* 滚动条 */
@@ -518,27 +608,31 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #444444;
+  background: var(--text-primary);
 }
 
-/* Toast 悬浮提示 */
+/* Toast 悬浮提示 — F1: spacing/radius/type/z-index to tokens. The container
+   keeps its high stacking position via --z-toast; the existing surface and
+   border colours are unchanged so toast variants still read as they do now.
+   The animation is opacity/transform only and is disabled under
+   prefers-reduced-motion (see the density block). */
 .toast-container {
   position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 9999;
+  top: var(--space-5);
+  right: var(--space-5);
+  z-index: var(--z-toast-legacy);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .toast {
-  padding: 10px 16px;
-  border-radius: 6px;
-  font-size: 13px;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--font-13);
   max-width: 360px;
-  animation: toast-in 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  animation: toast-in var(--dur-base) ease;
+  box-shadow: var(--shadow-2);
 }
 
 .toast.success {
@@ -564,38 +658,419 @@ textarea {
   to { opacity: 1; transform: translateX(0); }
 }
 
-/* 分页按钮 */
+/* 分页按钮 — F1: radius/padding/type to tokens. */
 .pagination button {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-12);
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .pagination button.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   border-color: var(--accent);
 }
 
-/* 存储降级/数据库隔离警告横幅 */
+/* 存储降级/数据库隔离警告横幅 — F1: spacing/radius/type to tokens. The banner
+   is a warning, so it adopts the approved --warn / --warn-bg pair; the values
+   are visually near-identical to the previous hardcoded colours. */
 .storage-warning {
   display: none;
-  margin: 8px 16px 0;
-  padding: 10px 14px;
-  border: 1px solid #f0b37e;
-  border-radius: 6px;
-  background: #fff4e5;
-  color: #7a4b00;
-  font-size: 13px;
+  margin: var(--space-3) var(--space-5) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--untrusted-border);
+  border-radius: var(--radius-md);
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: var(--font-13);
   line-height: 1.5;
   word-break: break-all;
 }
 
 /* Lead Detail overlay (B3) */
+/* ==========================================================================
+   Frontend 2.0 F2 — workspace chrome (sidebar + top bar).
+
+   Built entirely from the F1 tokens. Density comes from --row-h and the
+   sidebar from --sidebar-w / --sidebar-w-collapsed. Nothing here redesigns an
+   individual screen: the six existing .view sections are untouched.
+   ========================================================================== */
+
+/* --- Icons: 16px stroke, currentColor, no external asset ---------------- */
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2);
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.btn-ghost {
+  background: transparent;
+}
+
+/* --- Sidebar ------------------------------------------------------------ */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* Collapsed rail: width token only, so the app grid reflows and the sidebar
+   can never overlap the content area. */
+.app-layout.sidebar-collapsed .sidebar {
+  width: var(--sidebar-w-collapsed);
+}
+
+.sidebar-header {
+  height: 44px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.brand {
+  font-size: var(--font-14);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.sidebar-toggle {
+  margin-left: auto;
+}
+
+.sidebar-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) 0 var(--space-5);
+}
+
+.nav-group {
+  padding: 0 var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.nav-group-root {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.nav-group-label {
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  white-space: nowrap;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-13);
+  text-align: left;
+  transition: background-color var(--dur-fast), color var(--dur-fast);
+}
+
+.nav-item + .nav-item {
+  margin-top: 1px;
+}
+
+.nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.nav-item.active {
+  background: var(--bg-selected);
+  color: var(--accent-f2);
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--accent-f2);
+}
+
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Destinations with no implemented view. Native `disabled` keeps them out of
+   the tab order; they carry no data-view and can never navigate. */
+.nav-item-soon,
+.nav-item-soon:hover {
+  color: var(--text-3);
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.nav-soon {
+  font-size: var(--font-11);
+  color: var(--text-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+}
+
+/* Collapsed rail: icons only. Labels and group labels are hidden rather than
+   clipped, so the rail stays exactly --sidebar-w-collapsed wide. */
+.app-layout.sidebar-collapsed .sidebar-header {
+  justify-content: center;
+  padding: 0;
+}
+
+.app-layout.sidebar-collapsed .brand,
+.app-layout.sidebar-collapsed .version,
+.app-layout.sidebar-collapsed .nav-label,
+.app-layout.sidebar-collapsed .nav-group-label,
+.app-layout.sidebar-collapsed .nav-soon {
+  display: none;
+}
+
+.app-layout.sidebar-collapsed .sidebar-toggle {
+  margin-left: 0;
+}
+
+.app-layout.sidebar-collapsed .nav-group {
+  padding: 0 var(--space-2);
+}
+
+.app-layout.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* --- Top bar ------------------------------------------------------------ */
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 44px;
+  padding: 0 var(--space-5);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-1);
+  flex-shrink: 0;
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.top-bar-context {
+  font-size: var(--font-12);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.top-bar-sep {
+  color: var(--text-3);
+  font-size: var(--font-12);
+}
+
+.top-bar-title {
+  font-size: var(--font-16);
+  font-weight: 600;
+  color: var(--text-1);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-bar-center {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.command-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 420px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  color: var(--text-3);
+  font-size: var(--font-13);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
+}
+
+.command-trigger:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-2);
+  color: var(--text-2);
+}
+
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 0 0 auto;
+}
+
+.top-bar-stats {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.top-bar-stats strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.top-bar-time {
+  font-size: var(--font-12);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- Density control ---------------------------------------------------- */
+.density-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+.density-btn {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--font-11);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast), color var(--dur-fast);
+}
+
+.density-btn:hover {
+  color: var(--text-1);
+}
+
+.density-btn[aria-pressed='true'] {
+  background: var(--bg-surface);
+  color: var(--text-1);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent-f2);
+}
+
+/* --- Narrow window ------------------------------------------------------ */
+/* The window minimum is 1200x760 (main.js). Below ~1180px of usable width the
+   sidebar collapses to the rail so the table area is never overlapped. */
+@media (max-width: 1180px) {
+  .sidebar {
+    width: var(--sidebar-w-collapsed);
+  }
+
+  .sidebar .brand,
+  .sidebar .version,
+  .sidebar .nav-label,
+  .sidebar .nav-group-label,
+  .sidebar .nav-soon {
+    display: none;
+  }
+
+  .sidebar .sidebar-header {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .sidebar .nav-item {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .command-trigger {
+    max-width: 240px;
+  }
+}
+
+/* At the tightest usable width the top bar drops its least essential slots
+   rather than wrapping. The collected count and clock go first: both are
+   duplicated inside their own views. */
+@media (max-width: 1000px) {
+  .top-bar-stats,
+  .top-bar-time {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-item,
+  .command-trigger,
+  .density-btn,
+  .btn-icon {
+    transition: none;
+  }
+}
+
+/* Lead Detail overlay (B3) — F1: spacing/radius/shadow to tokens. The overlay
+   stays a centred modal; it becomes a drawer in a later batch. z-index keeps
+   its current value via --z-overlay (see the z-index note in :root). */
 .lead-detail-overlay {
   position: fixed;
   inset: 0;
@@ -603,7 +1078,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9000;
+  z-index: var(--z-overlay);
 }
 
 .lead-detail-overlay[hidden] {
@@ -616,34 +1091,34 @@ textarea {
   overflow-y: auto;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
 }
 
 .lead-detail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
+  padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border);
 }
 
 .lead-detail-title {
-  font-size: 14px;
+  font-size: var(--font-14);
   font-weight: 600;
 }
 
 .lead-detail-body {
-  padding: 8px 18px 14px;
+  padding: var(--space-3) var(--space-5) var(--space-4);
 }
 
 .lead-detail-row {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 8px 0;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--font-13);
 }
 
 .lead-detail-row:last-child {
@@ -664,18 +1139,18 @@ textarea {
 }
 
 .lead-detail-loading {
-  padding: 18px 0;
+  padding: var(--space-5) 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-13);
   text-align: center;
 }
 
 /* Collection Quality Report (P1-G): read-only counts for one run */
 .collect-quality {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin-top: 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-4);
 }
 .collect-quality[hidden] {
   display: none;
@@ -688,28 +1163,28 @@ textarea {
   margin-bottom: 6px;
 }
 .collect-quality-title {
-  font-size: 13px;
+  font-size: var(--font-13);
   font-weight: 600;
   color: var(--text-primary);
 }
 .collect-quality-body .lead-detail-row {
   border-bottom: none;
-  padding: 3px 0;
+  padding: var(--space-2) 0;
 }
 .collect-quality-empty {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
 }
 
 /* Target Builder (P1-F): user-owned prospecting definitions */
 .target-list {
-  margin-top: 12px;
+  margin-top: var(--space-4);
 }
 .target-card {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin-bottom: 10px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
 }
 .target-card-head {
   display: flex;
@@ -719,15 +1194,15 @@ textarea {
   margin-bottom: 4px;
 }
 .target-card-name {
-  font-size: 13px;
+  font-size: var(--font-13);
   font-weight: 600;
   color: var(--text-primary);
 }
 .target-card-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-3);
   flex-wrap: wrap;
-  margin-top: 8px;
+  margin-top: var(--space-3);
 }
 .target-checks {
   display: flex;
@@ -756,26 +1231,27 @@ textarea {
   padding: 14px 16px;
 }
 .dashboard-stat-label {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
 }
 .dashboard-stat-value {
-  font-size: 20px;
+  font-size: var(--font-20);
   font-weight: 600;
   color: var(--text-primary);
   word-break: break-all;
+  font-variant-numeric: tabular-nums;
 }
 .dashboard-note {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
-  margin-top: 8px;
+  margin-top: var(--space-3);
 }
 
 /* Lead Profile B6 user-owned fields (qualification, tags, notes) */
 .lead-detail-b6 {
   border-top: 1px solid var(--border);
-  padding: 12px 18px 16px;
+  padding: var(--space-4) var(--space-5) var(--space-5);
 }
 .lead-detail-b6[hidden] {
   display: none;
@@ -789,11 +1265,11 @@ textarea {
 .lead-tag {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 6px 2px 8px;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-12);
   color: var(--text-primary);
 }
 .lead-tag-text {
@@ -803,20 +1279,20 @@ textarea {
   border: none;
   background: none;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-11);
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0 var(--space-1);
 }
 .lead-tag-remove:hover {
   color: var(--danger);
 }
 .lead-tag-empty {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
 }
 .lead-tag-add {
   display: flex;
-  gap: 8px;
+  gap: var(--space-3);
   align-items: center;
 }
 .lead-tag-add input {
@@ -826,7 +1302,7 @@ textarea {
 /* Lead Profile data-quality section (P1-A): read-only derived signals */
 .lead-detail-quality {
   border-top: 1px solid var(--border);
-  padding: 12px 18px 16px;
+  padding: var(--space-4) var(--space-5) var(--space-5);
 }
 .lead-detail-quality[hidden] {
   display: none;
@@ -839,28 +1315,28 @@ textarea {
   margin-bottom: 4px;
 }
 .lead-detail-quality-title {
-  font-size: 13px;
+  font-size: var(--font-13);
   font-weight: 600;
   color: var(--text-primary);
 }
 .lead-detail-badge {
-  font-size: 11px;
+  font-size: var(--font-11);
   color: var(--text-secondary);
   border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-3);
 }
 .lead-detail-quality-body .lead-detail-row {
   border-bottom: none;
   padding: 4px 0;
 }
 .lead-detail-source {
-  font-size: 11px;
+  font-size: var(--font-11);
   color: var(--text-secondary);
 }
 .lead-detail-quality-note {
-  margin: 8px 0 0;
-  font-size: 11px;
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-11);
   line-height: 1.5;
   color: var(--text-secondary);
 }
@@ -868,9 +1344,9 @@ textarea {
 /* Duplicate review panel (P1-E, read-only) */
 .dup-review {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px 14px;
-  margin-top: 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-top: var(--space-4);
 }
 .dup-review[hidden] {
   display: none;
@@ -883,57 +1359,57 @@ textarea {
   margin-bottom: 8px;
 }
 .dup-review-title {
-  font-size: 13px;
+  font-size: var(--font-13);
   font-weight: 600;
   color: var(--text-primary);
 }
 .dup-review-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 .dup-review-body {
-  margin-top: 8px;
+  margin-top: var(--space-3);
 }
 .dup-review-candidate {
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 .dup-review-candidate-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 .dup-review-class {
-  font-size: 11px;
+  font-size: var(--font-11);
   font-weight: 600;
   border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-3);
   color: var(--text-primary);
 }
 .dup-review-reason {
-  font-size: 11px;
+  font-size: var(--font-11);
   color: var(--text-secondary);
 }
 .dup-review-empty {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
 }
 
 /* Lead Profile user-provided status block (P1-C) */
 .lead-user-status {
-  margin-top: 10px;
+  margin-top: var(--space-3);
   border-top: 1px dashed var(--border);
-  padding-top: 10px;
+  padding-top: var(--space-3);
 }
 .lead-user-status[hidden] {
   display: none;
 }
 .lead-user-status .form-group {
-  margin-bottom: 8px;
+  margin-bottom: var(--space-3);
 }

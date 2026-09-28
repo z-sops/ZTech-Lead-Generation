@@ -331,7 +331,7 @@ function test(name, fn) {
     );
     assert.ok(rendererSource.includes('numbersSearchTimer = setTimeout'), 'search input is debounced');
     assert.ok(!rendererSource.includes('allNumbers'), 'full-array client cache removed');
-    assert.ok(rendererSource.includes("sort: 'collectedAt', label: '采集Time'"), 'sort map covers collectedAt');
+    assert.ok(rendererSource.includes("sort: 'collectedAt', label: 'Collected'"), 'sort map covers collectedAt');
     assert.ok(rendererSource.includes("sort: 'title', label: 'Title'"), 'sort map covers title');
     assert.ok(rendererSource.includes("sort: 'phone', label: 'Phone'"), 'sort map covers phone');
     assert.ok(rendererSource.includes("sort: 'source', label: 'Source'"), 'sort map covers source');
@@ -340,7 +340,7 @@ function test(name, fn) {
     assert.ok(rendererSource.includes('${escapeHtml(n.website || \'-\')}'), 'website cell template unchanged');
     assert.ok(htmlSource.includes('<th>Title</th>'), 'title header literal unchanged');
     assert.ok(htmlSource.includes('<th>Website</th>'), 'website header literal unchanged');
-    assert.ok(htmlSource.includes('搜索Phone/Title/Website/Email/Address/Source/Keyword'), 'placeholder reflects the 7-field search');
+    assert.ok(htmlSource.includes('Search phone, title, website, email, address, source, keyword'), 'placeholder reflects the 7-field search');
   });
 
   test('10. accountStore: read-only query path, no logging, locked literals intact', () => {

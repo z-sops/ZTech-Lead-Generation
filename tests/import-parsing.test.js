@@ -135,8 +135,8 @@ test('import handler uses batch builder and reports skipped count', () => {
   assert.ok(source.includes('buildImportBatch(text)'), 'import must use buildImportBatch');
   assert.ok(source.includes('split(/\\r\\n|\\r|\\n/)'), 'line split must cover LF, CRLF and lone CR');
   assert.ok(!source.includes('split(/\\r?\\n/)'), 'legacy LF/CRLF-only split must be gone');
-  assert.ok(source.includes('已跳过'), 'zero-valid path must report skipped invalid lines');
-  assert.ok(source.includes('忽略'), 'partial import must report skipped invalid lines');
+  assert.ok(source.includes('Skipped'), 'zero-valid path must report skipped invalid lines');
+  assert.ok(source.includes('ignored'), 'partial import must report skipped invalid lines');
 });
 
 console.log('');

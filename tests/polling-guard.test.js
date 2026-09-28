@@ -61,7 +61,7 @@ test('2. empty/undefined status classified as transport-error', () => {
   assert.strictEqual(evaluatePollOutcome(undefined).outcome, 'transport-error');
   assert.strictEqual(evaluatePollOutcome(null).outcome, 'transport-error');
   assert.strictEqual(evaluatePollOutcome({}).outcome, 'transport-error');
-  assert.strictEqual(evaluatePollOutcome({ success: false }).error, '未知错误');
+  assert.strictEqual(evaluatePollOutcome({ success: false }).error, 'Unknown error');
 });
 
 test('3. known terminal success states preserved (all aliases)', () => {
@@ -117,9 +117,9 @@ test('9. terminal behavior preserved in pollRunStatus wiring', () => {
   assert.ok(pollStart >= 0 && pollEnd > pollStart, 'pollRunStatus region located');
   const region = source.slice(pollStart, pollEnd);
   assert.ok(region.includes('loadRunResult(slug, gen);'), 'success still loads results');
-  assert.ok(region.includes("showStatus(`采集失败: ${res.error || '未知错误'}`, true);"), 'failure message preserved');
-  assert.ok(region.includes("showStatus(`任务状态: ${res.state}，稍后自动刷新...`);"), 'pending message preserved');
-  assert.ok(region.includes("showStatus(`正在查询任务状态... (${slug})`);"), 'poll status message preserved');
+  assert.ok(region.includes("showStatus(`Collection failed: ${res.error || 'Unknown error'}`, true);"), 'failure message preserved');
+  assert.ok(region.includes("showStatus(`Job status: ${res.state}. Refreshing automatically...`);"), 'pending message preserved');
+  assert.ok(region.includes("showStatus(`Checking job status... (${slug})`);"), 'poll status message preserved');
 });
 
 test('10. no new provider status invented', () => {

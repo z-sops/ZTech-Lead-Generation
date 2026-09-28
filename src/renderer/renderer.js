@@ -1,36 +1,242 @@
-// 视图切换
+// === Frontend 2.0 F2 — workspace chrome =====================================
+// Navigation is NOT re-implemented. These are the same six existing views; the
+// F2 sidebar only groups and renames them. The lazy-load loop further down
+// (pinned by tests) still drives per-view loading, unchanged.
 const navItems = document.querySelectorAll('.nav-item');
 const views = document.querySelectorAll('.view');
 const pageTitle = document.getElementById('page-title');
+const pageContext = document.getElementById('page-context');
+const sidebarNav = document.getElementById('sidebar-nav');
 
+// English-only UI chrome (Frontend 2.0 decision 1). `viewContexts` is the
+// workspace group shown to the left of the view name in the top bar.
 const viewTitles = {
-  collector: '关键词采集',
-  history: '采集历史',
-  numbers: '号码管理',
+  dashboard: 'Home',
+  numbers: 'All Leads',
+  collector: 'Collection',
+  history: 'Collection History',
   targets: 'Targets',
-  dashboard: '仪表盘',
-  settings: '设置'
+  settings: 'Settings'
 };
+
+const viewContexts = {
+  dashboard: 'Workspace',
+  numbers: 'Leads',
+  collector: 'Discovery',
+  history: 'Discovery',
+  targets: 'Setup',
+  settings: 'Setup'
+};
+
+// A nav target must be a real, existing view. Anything else is refused rather
+// than silently ignored, so a typo can never leave the app with no visible view.
+function isKnownView(viewId) {
+  return typeof viewId === 'string'
+    && Object.prototype.hasOwnProperty.call(viewTitles, viewId)
+    && document.getElementById(`view-${viewId}`) !== null;
+}
+
+function activateView(viewId) {
+  if (!isKnownView(viewId)) return false;
+  navItems.forEach((n) => {
+    const isTarget = n.dataset.view === viewId;
+    n.classList.toggle('active', isTarget);
+    if (isTarget) {
+      n.setAttribute('aria-current', 'page');
+    } else {
+      n.removeAttribute('aria-current');
+    }
+  });
+  views.forEach((v) => v.classList.remove('active'));
+  document.getElementById(`view-${viewId}`).classList.add('active');
+  pageTitle.textContent = viewTitles[viewId];
+  if (pageContext) pageContext.textContent = viewContexts[viewId] || 'Workspace';
+  return true;
+}
 
 navItems.forEach(item => {
   item.addEventListener('click', () => {
-    const viewId = item.dataset.view;
-    navItems.forEach(n => n.classList.remove('active'));
-    views.forEach(v => v.classList.remove('active'));
-    item.classList.add('active');
-    document.getElementById(`view-${viewId}`).classList.add('active');
-    pageTitle.textContent = viewTitles[viewId];
+    activateView(item.dataset.view);
   });
 });
 
 // 时钟
 function updateClock() {
   const now = new Date();
-  const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
+  const timeStr = now.toLocaleTimeString('en-GB', { hour12: false });
   document.getElementById('clock').textContent = timeStr;
 }
 setInterval(updateClock, 1000);
 updateClock();
+
+// === F1: density preference (renderer-local, no IPC) ========================
+// Frontend 2.0 batch F1 (design tokens + density foundation). The preference is
+// stored in localStorage and applied as data-density on <html>; styles.css
+// resolves --row-h from that attribute, so switching costs one attribute write.
+//
+// There is deliberately NO visible control here. The Compact/Comfortable toggle
+// in the top bar belongs to a later frontend batch, so nothing renders to switch
+// it yet and the default (compact) matches the current table density. Only the
+// underlying mechanism is introduced, as scoped for F1.
+//
+// localStorage access is wrapped in try/catch: it can throw in a hardened
+// Electron profile and a density preference must never break startup.
+const DENSITY_STORAGE_KEY = 'ztech.density';
+const DENSITY_COMPACT = 'compact';
+const DENSITY_COMFORTABLE = 'comfortable';
+const DENSITY_VALUES = [DENSITY_COMPACT, DENSITY_COMFORTABLE];
+
+function isValidDensity(value) {
+  return DENSITY_VALUES.indexOf(value) !== -1;
+}
+
+function readStoredDensity() {
+  try {
+    return window.localStorage.getItem(DENSITY_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function getDensity() {
+  return document.documentElement.getAttribute('data-density') || DENSITY_COMPACT;
+}
+
+function setDensity(value) {
+  if (!isValidDensity(value)) return false;
+  document.documentElement.setAttribute('data-density', value);
+  try {
+    window.localStorage.setItem(DENSITY_STORAGE_KEY, value);
+  } catch {
+    // Not persisted; the attribute still applies for this session.
+  }
+  return true;
+}
+
+(function initDensity() {
+  const stored = readStoredDensity();
+  document.documentElement.setAttribute('data-density', isValidDensity(stored) ? stored : DENSITY_COMPACT);
+})();
+
+// Exposed for the later batch that adds the visible control, and for tests.
+// Nothing in the current UI calls setDensity() yet.
+window.ztechUI = Object.assign(window.ztechUI || {}, {
+  density: {
+    get: getDensity,
+    set: setDensity,
+    values: DENSITY_VALUES.slice(),
+    storageKey: DENSITY_STORAGE_KEY
+  }
+});
+
+// === F2: density control in the top bar =====================================
+// Drives the F1 mechanism only. There is no second density system: the buttons
+// call window.ztechUI.density.set(), which writes data-density and the same
+// ztech.density localStorage key. aria-pressed reflects the real state, so the
+// control is correct after a restart with a stored preference.
+(function wireDensityToggle() {
+  const buttons = document.querySelectorAll('.density-btn');
+  if (buttons.length === 0) return;
+
+  function syncPressed() {
+    const current = window.ztechUI.density.get();
+    buttons.forEach((btn) => {
+      btn.setAttribute('aria-pressed', btn.dataset.densityValue === current ? 'true' : 'false');
+    });
+  }
+
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (window.ztechUI.density.set(btn.dataset.densityValue)) syncPressed();
+    });
+  });
+
+  syncPressed();
+})();
+
+// === F2: sidebar collapse ====================================================
+// Renderer-local, persisted in localStorage, no IPC. Collapsing changes the
+// sidebar width token so the app grid reflows — the sidebar can never overlap
+// the content area. The narrow-window media query forces the same rail, and
+// aria-expanded always mirrors the state actually applied.
+const SIDEBAR_STORAGE_KEY = 'ztech.sidebar.collapsed';
+
+function isSidebarCollapsed() {
+  return document.querySelector('.app-layout').classList.contains('sidebar-collapsed');
+}
+
+function setSidebarCollapsed(collapsed) {
+  const layout = document.querySelector('.app-layout');
+  const toggle = document.getElementById('btn-collapse-sidebar');
+  layout.classList.toggle('sidebar-collapsed', collapsed === true);
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', collapsed === true ? 'false' : 'true');
+    toggle.title = collapsed === true ? 'Expand sidebar' : 'Collapse sidebar';
+  }
+  try {
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, collapsed === true ? '1' : '0');
+  } catch {
+    // Not persisted; the class still applies for this session.
+  }
+  return collapsed === true;
+}
+
+(function initSidebar() {
+  let stored = null;
+  try {
+    stored = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
+  } catch {
+    stored = null;
+  }
+  setSidebarCollapsed(stored === '1');
+
+  const toggle = document.getElementById('btn-collapse-sidebar');
+  if (toggle) {
+    toggle.addEventListener('click', () => setSidebarCollapsed(!isSidebarCollapsed()));
+  }
+})();
+
+// Roving arrow-key navigation inside the sidebar. Disabled ("Soon") items are
+// skipped: they are not destinations, so focus must not land on them.
+(function wireSidebarKeyboard() {
+  if (!sidebarNav) return;
+  const isReachable = (el) => !el.disabled;
+
+  sidebarNav.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const items = Array.prototype.slice.call(sidebarNav.querySelectorAll('.nav-item'))
+      .filter(isReachable);
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement);
+    if (current === -1) return;
+    const delta = e.key === 'ArrowDown' ? 1 : -1;
+    const next = items[(current + delta + items.length) % items.length];
+    next.focus();
+    e.preventDefault();
+  });
+})();
+
+// === F2: top bar search shell ===============================================
+// A shell, not a search engine. It navigates to the existing Lead Library and
+// focuses the search box that already exists (#number-search). No new query
+// logic, no global index, no invented capability.
+const globalSearchButton = document.getElementById('btn-global-search');
+if (globalSearchButton) {
+  globalSearchButton.addEventListener('click', () => {
+    if (!activateView('numbers')) return;
+    const input = document.getElementById('number-search');
+    if (input) input.focus();
+  });
+}
+
+// Settings access in the top bar reuses the sidebar's own routing, so there is
+// exactly one way a view is ever activated.
+const topbarSettings = document.getElementById('btn-topbar-settings');
+if (topbarSettings) {
+  topbarSettings.addEventListener('click', () => {
+    activateView('settings');
+  });
+}
 
 function escapeHtml(value) {
   return String(value === undefined || value === null ? '' : value)
@@ -48,7 +254,7 @@ function renderWebsite(value) {
   let parsed;
   try { parsed = new URL(website); } catch { return escapeHtml(website); }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return escapeHtml(website);
-  return `<a href="${escapeHtml(website)}" target="_blank" rel="noopener">链接</a>`;
+  return `<a href="${escapeHtml(website)}" target="_blank" rel="noopener">Open</a>`;
 }
 
 function reportError(message, context = {}) {
@@ -140,15 +346,15 @@ document.getElementById('btn-start-collect').addEventListener('click', safeAsync
     const maxResults = parseInt(document.getElementById('collect-max').value) || 20;
 
     if (!settings.hasApiKey) {
-      showStatus('请先在「设置」中配置 API Key', true);
+      showStatus('Configure an API Key in Settings first', true);
       return;
     }
     if (!keywords) {
-      showStatus('请输入关键词', true);
+      showStatus('Enter at least one keyword', true);
       return;
     }
 
-    showStatus('正在提交采集任务...');
+    showStatus('Submitting collection job...');
 
     runGeneration += 1;
     const gen = runGeneration;
@@ -187,19 +393,19 @@ document.getElementById('btn-start-collect').addEventListener('click', safeAsync
 
     if (result.success) {
       currentRunSlug = result.data.run_slug;
-      showStatus(`任务已提交，ID: ${currentRunSlug}，等待执行中...`);
+      showStatus(`Job submitted, ID: ${currentRunSlug}. Waiting to run...`);
       claimResultView('run');
       clearCurrentResultPresentation();
       startPolling(gen, currentRunSlug);
     } else {
       claimResultView('none');
-      showStatus(`提交失败: ${result.error}`, true);
+      showStatus(`Submission failed: ${result.error}`, true);
     }
   }));
 
 document.getElementById('btn-check-status').addEventListener('click', safeAsync(async () => {
     if (!currentRunSlug) {
-      showStatus('没有进行中的任务', true);
+      showStatus('No job is currently running', true);
       return;
     }
     if (pollTimerId !== null || pollInFlight) return;
@@ -210,7 +416,7 @@ document.getElementById('btn-check-status').addEventListener('click', safeAsync(
 
 function evaluatePollOutcome(status) {
   if (!status || status.success !== true) {
-    return { outcome: 'transport-error', error: (status && status.error) || '未知错误' };
+    return { outcome: 'transport-error', error: (status && status.error) || 'Unknown error' };
   }
   const state = status.data?.status || status.data?.state;
   if (state === 'succeeded' || state === 'completed' || state === 'success') {
@@ -230,7 +436,7 @@ function scheduleNextPoll(gen, slug) {
     pollTimerId = null;
     Promise.resolve().then(() => pollRunStatus(gen, slug)).catch((err) => {
       const msg = err?.message || String(err);
-      showStatus(`轮询异常: ${msg}`, true);
+      showStatus(`Polling error: ${msg}`, true);
       reportError(msg, { handler: 'scheduleNextPoll', gen, slug });
     });
   }, POLL_RETRY_DELAY_MS);
@@ -241,7 +447,7 @@ async function pollRunStatus(gen, slug) {
 
   pollInFlight = true;
   try {
-    showStatus(`正在查询任务状态... (${slug})`);
+    showStatus(`Checking job status... (${slug})`);
 
     const status = await window.appAPI.collection.getStatus(slug);
 
@@ -252,10 +458,10 @@ async function pollRunStatus(gen, slug) {
     if (res.outcome === 'transport-error') {
       pollFailureCount += 1;
       if (pollFailureCount >= MAX_CONSECUTIVE_POLL_FAILURES) {
-        showStatus(`查询失败: ${res.error}`, true);
+        showStatus(`Status check failed: ${res.error}`, true);
         return;
       }
-      showStatus(`查询失败: ${res.error}，稍后自动重试 (${pollFailureCount}/${MAX_CONSECUTIVE_POLL_FAILURES})`, true);
+      showStatus(`Status check failed: ${res.error}. Retrying automatically (${pollFailureCount}/${MAX_CONSECUTIVE_POLL_FAILURES})`, true);
       scheduleNextPoll(gen, slug);
       return;
     }
@@ -266,23 +472,23 @@ async function pollRunStatus(gen, slug) {
     }
 
     if (res.outcome === 'terminal-failure') {
-      showStatus(`采集失败: ${res.error || '未知错误'}`, true);
+      showStatus(`Collection failed: ${res.error || 'Unknown error'}`, true);
       return;
     }
 
     if (res.outcome === 'missing-state') {
       pollFailureCount += 1;
       if (pollFailureCount >= MAX_CONSECUTIVE_POLL_FAILURES) {
-        showStatus('任务状态未知，已停止自动查询，可点击「检查状态」重试', true);
+        showStatus('Job status is unknown. Automatic polling has stopped; use Check Status to retry', true);
         return;
       }
-      showStatus(`任务状态未知，稍后自动刷新 (${pollFailureCount}/${MAX_CONSECUTIVE_POLL_FAILURES})`);
+      showStatus(`Job status is unknown. Refreshing automatically (${pollFailureCount}/${MAX_CONSECUTIVE_POLL_FAILURES})`);
       scheduleNextPoll(gen, slug);
       return;
     }
 
     pollFailureCount = 0;
-    showStatus(`任务状态: ${res.state}，稍后自动刷新...`);
+    showStatus(`Job status: ${res.state}. Refreshing automatically...`);
     scheduleNextPoll(gen, slug);
   } finally {
     if (gen === runGeneration) pollInFlight = false;
@@ -315,35 +521,35 @@ async function loadRunResult(currentRunSlug, gen) {
   try {
     if (!isCurrentRun(gen, currentRunSlug)) return;
     if (viewClaimKind === 'history') {
-      showStatus('采集完成，本次结果未加载');
+      showStatus('Collection finished. Results were not loaded');
       return;
     }
     const seq = claimResultView('run');
 
-    showStatus('采集完成，正在获取结果...');
+    showStatus('Collection finished. Loading results...');
 
     const result = await fetchAllRunResults(currentRunSlug);
 
     if (!isCurrentRun(gen, currentRunSlug)) return;
     if (!isViewClaimCurrent(seq)) {
-      if (viewClaimKind === 'history') showStatus('采集完成，本次结果未加载');
+      if (viewClaimKind === 'history') showStatus('Collection finished. Results were not loaded');
       return;
     }
 
     if (!result.success) {
-      showStatus(`获取结果失败: ${result.error}`, true);
+      showStatus(`Could not load results: ${result.error}`, true);
       return;
     }
 
     const items = result.data?.list || [];
-    showStatus(`采集完成，已加载 ${items.length} 条结果`);
+    showStatus(`Collection finished. Loaded ${items.length} results`);
     window.__collectResults = items;
     currentResultsRunSlug = currentRunSlug;
     const mobileOnly = document.getElementById('collect-mobile-only').checked;
     if (mobileOnly) {
       const filtered = items.filter(item => isMobileNumber(item.phone));
       renderCollectResults(filtered, true);
-      toast(`筛选出 ${filtered.length} 个手机号（已加载 ${items.length} 条）`, 'success');
+      toast(`${filtered.length} phone numbers match the filter (${items.length} loaded)`, 'success');
       window.__filteredResults = filtered;
     } else {
       renderCollectResults(items);
@@ -351,7 +557,7 @@ async function loadRunResult(currentRunSlug, gen) {
     }
   } catch (err) {
     const msg = err?.message || String(err);
-    showStatus(`加载结果异常: ${msg}`, true);
+    showStatus(`Error loading results: ${msg}`, true);
     reportError(msg, { handler: 'loadRunResult', slug: currentRunSlug, gen });
   }
 }
@@ -517,11 +723,11 @@ async function checkStorageStatus() {
       return;
     }
     const parts = [];
-    if (st.mode === 'json-fallback') parts.push('存储已降级为 JSON 备用存储，号码数据可能不完整');
-    if (st.quarantine) parts.push('检测到无法读取的数据库文件，已保留：' + st.quarantine);
-    else if (st.reason === 'corrupt-open') parts.push('检测到无法读取的数据库文件');
-    if (st.dataMayBeIncomplete) parts.push('当前列表可能缺少此前的记录');
-    el.textContent = parts.join('；');
+    if (st.mode === 'json-fallback') parts.push('Storage has fallen back to JSON; lead data may be incomplete');
+    if (st.quarantine) parts.push('An unreadable database file was detected and kept: ' + st.quarantine);
+    else if (st.reason === 'corrupt-open') parts.push('An unreadable database file was detected');
+    if (st.dataMayBeIncomplete) parts.push('The current list may be missing earlier records');
+    el.textContent = parts.join('; ');
     el.style.display = 'block';
   } catch (err) {
     el.style.display = 'none';
@@ -532,7 +738,7 @@ function renderPagination(containerId, totalPages, currentPage, onPageChange) {
   const container = document.getElementById(containerId);
   if (totalPages <= 1) { container.innerHTML = ''; return; }
   let html = '';
-  if (currentPage > 1) html += `<button data-page="${currentPage - 1}">上一页</button>`;
+  if (currentPage > 1) html += `<button data-page="${currentPage - 1}">Previous</button>`;
   for (let i = 1; i <= totalPages; i++) {
     if (totalPages > 7 && Math.abs(i - currentPage) > 2 && i !== 1 && i !== totalPages) {
       if (html.slice(-3) !== '...') html += '<span style="color:var(--text-secondary);padding:0 4px;">...</span>';
@@ -540,7 +746,7 @@ function renderPagination(containerId, totalPages, currentPage, onPageChange) {
     }
     html += `<button data-page="${i}" class="${i === currentPage ? 'active' : ''}">${i}</button>`;
   }
-  if (currentPage < totalPages) html += `<button data-page="${currentPage + 1}">下一页</button>`;
+  if (currentPage < totalPages) html += `<button data-page="${currentPage + 1}">Next</button>`;
   container.innerHTML = html;
   container.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => onPageChange(parseInt(btn.dataset.page)));
@@ -569,7 +775,7 @@ async function loadHistory(page = 1) {
     const result = await window.appAPI.collection.getHistory(HISTORY_PAGE_SIZE, (targetPage - 1) * HISTORY_PAGE_SIZE);
     if (seq !== historyLoadSeq) return;
     if (!result.success) {
-      toast(result.error || '获取采集历史失败', 'error');
+      toast(result.error || 'Could not load collection history', 'error');
       return;
     }
 
@@ -582,9 +788,9 @@ async function loadHistory(page = 1) {
     const tbody = document.getElementById('history-table-body');
 
     tbody.innerHTML = list.map(item => {
-      const startTime = item.started_at ? new Date(item.started_at * 1000).toLocaleString('zh-CN') : '-';
+      const startTime = item.started_at ? new Date(item.started_at * 1000).toLocaleString('en-GB') : '-';
       const statusClass = item.status === 'succeeded' ? 'color:var(--accent)' : item.status === 'failed' ? 'color:var(--danger)' : 'color:var(--warning)';
-      const statusText = item.status === 'succeeded' ? '成功' : item.status === 'failed' ? '失败' : item.status === 'running' ? '运行中' : item.status;
+      const statusText = item.status === 'succeeded' ? 'Succeeded' : item.status === 'failed' ? 'Failed' : item.status === 'running' ? 'Running' : item.status;
       return `<tr>
         <td>${escapeHtml(item.scraper_title || '-')}</td>
         <td style="${statusClass}">${escapeHtml(statusText)}</td>
@@ -593,7 +799,7 @@ async function loadHistory(page = 1) {
         <td>${escapeHtml(item.duration ? item.duration + 's' : '-')}</td>
         <td>${escapeHtml(item.origin || '-')}</td>
         <td>${startTime}</td>
-        <td><button class="btn btn-sm" data-slug="${escapeHtml(item.slug)}">查看结果</button></td>
+        <td><button class="btn btn-sm" data-slug="${escapeHtml(item.slug)}">View results</button></td>
       </tr>`;
     }).join('');
 
@@ -615,12 +821,13 @@ window.viewRunResult = safeAsync(async (slug) => {
     if (!isViewClaimCurrent(seq)) return;
     if (result.success) {
       const items = result.data?.list || [];
-      // 切到采集页显示结果
-      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-      document.querySelector('[data-view="collector"]').classList.add('active');
-      document.getElementById('view-collector').classList.add('active');
-      document.getElementById('page-title').textContent = '关键词采集';
+      // F2.1: a historical run opens the Collection view. This goes through the
+      // single F2 routing function rather than poking the DOM directly, so the
+      // top bar context ("Discovery") cannot go stale the way the title did.
+      // activateView() also maintains nav active state and aria-current, which
+      // the previous inline code did not. No data loading is triggered here:
+      // the run results are rendered below, exactly as before.
+      activateView('collector');
       window.__collectResults = items;
       currentResultsRunSlug = slug;
       const mobileOnly = document.getElementById('collect-mobile-only').checked;
@@ -633,7 +840,7 @@ window.viewRunResult = safeAsync(async (slug) => {
         window.__filteredResults = null;
       }
     } else {
-      toast(result.error || '获取结果失败', 'error');
+      toast(result.error || 'Could not load results', 'error');
     }
   });
 
@@ -648,9 +855,9 @@ async function loadSettings() {
     const taskInput = document.getElementById('settings-task-key');
     const proxyInput = document.getElementById('settings-proxy-url');
     apiInput.value = '';
-    apiInput.placeholder = settings.hasApiKey ? '已保存（留空保持不变）' : 'Enter API key';
+    apiInput.placeholder = settings.hasApiKey ? 'Stored (leave empty to keep it)' : 'Enter API key';
     taskInput.value = '';
-    taskInput.placeholder = settings.hasTaskKey ? '已保存（留空保持不变）' : '如: 01KWA7xxxx';
+    taskInput.placeholder = settings.hasTaskKey ? 'Stored (leave empty to keep it)' : 'e.g. 01KWA7xxxx';
     document.getElementById('btn-clear-apikey').disabled = !settings.hasApiKey;
     document.getElementById('btn-clear-taskkey').disabled = !settings.hasTaskKey;
     proxyInput.value = settings.proxyUrl || '';
@@ -748,11 +955,11 @@ async function clearResearchKey() {
 function settingsSaveFeedback(result) {
   if (result && result.success === true) {
     if (result.proxyApplied) {
-      return { message: '设置已保存', type: 'success' };
+      return { message: 'Settings saved', type: 'success' };
     }
-    return { message: '设置已保存，但代理设置未能生效', type: 'info' };
+    return { message: 'Settings saved, but the proxy could not be applied', type: 'info' };
   }
-  return { message: '保存设置失败，请检查设置内容', type: 'error' };
+  return { message: 'Could not save settings. Check the values and try again', type: 'error' };
 }
 
 document.getElementById('btn-save-settings').addEventListener('click', safeAsync(async () => {
@@ -779,19 +986,19 @@ document.getElementById('btn-save-settings').addEventListener('click', safeAsync
   }));
 
 document.getElementById('btn-detect-proxy').addEventListener('click', safeAsync(async () => {
-    toast('正在检测系统代理...', 'info');
+    toast('Detecting system proxy...', 'info');
     const result = await window.appAPI.proxy.detect();
     if (result && result.proxyUrl) {
       document.getElementById('settings-proxy-url').value = result.proxyUrl;
       if (result.whatsappReachable === false) {
-        toast(`已检测到代理，但 WhatsApp 连通性测试未通过: ${result.proxyUrl} (${result.source})`, 'info');
+        toast(`Proxy detected, but the WhatsApp connectivity check failed: ${result.proxyUrl} (${result.source})`, 'info');
       } else if (result.whatsappReachable === true) {
-        toast(`检测到代理，WhatsApp 连通性测试通过: ${result.proxyUrl} (${result.source})`, 'success');
+        toast(`Proxy detected, WhatsApp connectivity check passed: ${result.proxyUrl} (${result.source})`, 'success');
       } else {
-        toast(`检测到代理: ${result.proxyUrl} (${result.source})`, 'success');
+        toast(`Proxy detected: ${result.proxyUrl} (${result.source})`, 'success');
       }
     } else {
-      toast('未检测到可用代理', 'error');
+      toast('No usable proxy detected', 'error');
     }
   }));
 
@@ -800,7 +1007,7 @@ document.getElementById('btn-research-clear-key').addEventListener('click', safe
   }));
 
 document.getElementById('btn-export-logs').addEventListener('click', safeAsync(async () => {
-    toast('正在导出日志...', 'info');
+    toast('Exporting logs...', 'info');
     const logs = await window.appAPI.logs.exportLogs();
     if (logs) {
       const blob = new Blob([logs], { type: 'text/plain' });
@@ -810,30 +1017,30 @@ document.getElementById('btn-export-logs').addEventListener('click', safeAsync(a
       a.download = `app-logs-${Date.now()}.txt`;
       a.click();
       URL.revokeObjectURL(url);
-      toast('日志已导出', 'success');
+      toast('Logs exported', 'success');
     } else {
-      toast('暂无日志', 'error');
+      toast('There are no logs to export', 'error');
     }
   }));
 
 document.getElementById('btn-test-apikey').addEventListener('click', safeAsync(async () => {
     const apiKey = document.getElementById('settings-apikey').value.trim();
     if (!apiKey) {
-      toast('正在测试已保存的 API Key...', 'info');
+      toast('Testing the stored API Key...', 'info');
       const stored = await window.appAPI.provider.testConnection(undefined, undefined, undefined, true);
       if (stored && stored.success && stored.apiKeyValid) {
-        toast('API Key 连接成功', 'success');
+        toast('API Key connection succeeded', 'success');
       } else {
-        toast((stored && stored.error) || 'API Key 连接失败', 'error');
+        toast((stored && stored.error) || 'API Key connection failed', 'error');
       }
       return;
     }
-    toast('正在测试 API Key...', 'info');
+    toast('Testing API Key...', 'info');
     const result = await window.appAPI.provider.testConnection(apiKey, '');
     if (result.success && result.apiKeyValid) {
-      toast('API Key 连接成功', 'success');
+      toast('API Key connection succeeded', 'success');
     } else {
-      toast('API Key 连接失败', 'error');
+      toast('API Key connection failed', 'error');
     }
   }));
 
@@ -841,23 +1048,23 @@ document.getElementById('btn-test-taskkey').addEventListener('click', safeAsync(
     const apiKey = document.getElementById('settings-apikey').value.trim();
     const taskKey = document.getElementById('settings-task-key').value.trim();
     if (!apiKey && !taskKey) {
-      toast('正在测试已保存的任务流 Key...', 'info');
+      toast('Testing the stored Task Flow Key...', 'info');
       const stored = await window.appAPI.provider.testConnection(undefined, undefined, undefined, true);
       if (stored && stored.success && stored.taskKeyValid) {
-        toast('任务流 Key 验证成功', 'success');
+        toast('Task Flow Key verified', 'success');
       } else {
-        toast((stored && stored.error) || '任务流 Key 验证失败', 'error');
+        toast((stored && stored.error) || 'Task Flow Key verification failed', 'error');
       }
       return;
     }
-    if (!apiKey) { toast('请先填写 API Key', 'error'); return; }
-    if (!taskKey) { toast('请输入任务流 Key', 'error'); return; }
-    toast('正在测试任务流 Key...', 'info');
+    if (!apiKey) { toast('Enter an API Key first', 'error'); return; }
+    if (!taskKey) { toast('Enter a Task Flow Key first', 'error'); return; }
+    toast('Testing Task Flow Key...', 'info');
     const result = await window.appAPI.provider.testConnection(apiKey, taskKey);
     if (result.success && result.taskKeyValid) {
-      toast('任务流 Key 验证成功', 'success');
+      toast('Task Flow Key verified', 'success');
     } else {
-      toast('任务流 Key 验证失败', 'error');
+      toast('Task Flow Key verification failed', 'error');
     }
   }));
 
@@ -905,7 +1112,7 @@ document.getElementById('btn-clear-taskkey').addEventListener('click', safeAsync
 document.getElementById('btn-save-numbers').addEventListener('click', safeAsync(async () => {
     const source = getSelectedResultRows();
     if (!source.length) {
-      showStatus('请先勾选要保存的结果', true);
+      showStatus('Select at least one result to save', true);
       return;
     }
     const numbers = source.map((item) => ({
@@ -931,10 +1138,10 @@ document.getElementById('btn-save-numbers').addEventListener('click', safeAsync(
         targetId: currentResultsTargetId || null
       });
     } catch (err) {
-      showStatus(err?.message || '保存失败', true);
+      showStatus(err?.message || 'Save failed', true);
       return;
     }
-    showStatus(`已保存 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复`);
+    showStatus(`Saved ${result.added || numbers.length} leads. Skipped ${result.duplicates || 0} duplicates`);
     await loadCollectQuality();
   }));
 
@@ -948,7 +1155,7 @@ function csvField(value) {
 document.getElementById('btn-export-results').addEventListener('click', safeAsync(() => {
     const source = getSelectedResultRows();
     if (!source.length) {
-      showStatus('请先勾选要导出的结果', true);
+      showStatus('Select at least one result to export', true);
       return;
     }
     const header = 'title,phone,address,website,email\n';
@@ -1003,7 +1210,7 @@ const NUMBERS_SORTABLE_COLUMNS = [
   { index: 2, sort: 'title', label: 'Title' },
   { index: 4, sort: 'source', label: 'Source' },
   { index: 5, sort: 'keyword', label: 'Keywords' },
-  { index: 7, sort: 'collectedAt', label: '采集Time' }
+  { index: 7, sort: 'collectedAt', label: 'Collected' }
 ];
 
 function numbersQueryPayload() {
@@ -1064,7 +1271,7 @@ async function renderNumbers() {
     <td>${escapeHtml(n.source || '-')}</td>
     <td>${escapeHtml(n.keyword || '-')}</td>
     <td>${escapeHtml(n.status || 'pending')}</td>
-    <td>${n.collectedAt ? new Date(n.collectedAt).toLocaleString('zh-CN') : '-'}</td>
+    <td>${n.collectedAt ? new Date(n.collectedAt).toLocaleString('en-GB') : '-'}</td>
   </tr>`).join('');
 
     renderPagination('numbers-pagination', totalPages, numbersPage, (p) => { numbersPage = p; renderNumbers(); });
@@ -1141,7 +1348,7 @@ function leadDetailTemplate(lead) {
   let collectedAt = '—';
   if (lead.collectedAt) {
     const collected = new Date(lead.collectedAt);
-    if (!isNaN(collected.getTime())) collectedAt = escapeHtml(collected.toLocaleString('zh-CN'));
+    if (!isNaN(collected.getTime())) collectedAt = escapeHtml(collected.toLocaleString('en-GB'));
   }
   return [
     row('ID', id),
@@ -1149,7 +1356,7 @@ function leadDetailTemplate(lead) {
     row('Source', source),
     row('Keywords', keyword),
     row('Status', status),
-    row('采集Time', collectedAt),
+    row('Collected', collectedAt),
     row('Title', title),
     row('Website', website),
     row('Email', email),
@@ -1162,7 +1369,7 @@ async function openLeadDetail(id) {
   const overlay = document.getElementById('lead-detail-overlay');
   const body = document.getElementById('lead-detail-body');
   const seq = ++detailLoadSeq;
-  body.innerHTML = '<div class="lead-detail-loading">加载中...</div>';
+  body.innerHTML = '<div class="lead-detail-loading">Loading...</div>';
   overlay.hidden = false;
   try {
     const result = await window.appAPI.collector.getNumbers({ limit: 1, offset: 0, id });
@@ -1171,7 +1378,7 @@ async function openLeadDetail(id) {
     const lead = rows[0];
     if (!lead) {
       closeLeadDetail();
-      toast('未找到该线索', 'error');
+      toast('That lead could not be found', 'error');
       return;
     }
     body.innerHTML = leadDetailTemplate(lead);
@@ -1818,7 +2025,7 @@ document.getElementById('btn-delete-selected').addEventListener('click', safeAsy
     try {
       await window.appAPI.collector.deleteNumbers(ids);
     } catch (err) {
-      toast(err?.message || '删除失败', 'error');
+      toast(err?.message || 'Delete failed', 'error');
       return;
     }
     loadNumbers();
@@ -1829,7 +2036,7 @@ document.getElementById('btn-export-csv').addEventListener('click', safeAsync(as
     try {
       csv = await window.appAPI.collector.exportNumbers('csv');
     } catch (err) {
-      toast(err?.message || '导出失败', 'error');
+      toast(err?.message || 'Export failed', 'error');
       return;
     }
     if (csv) {
@@ -1877,7 +2084,7 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
       const text = await file.text();
       const { valid, invalid } = buildImportBatch(text);
       if (!valid.length) {
-        toast(invalid > 0 ? `文件中没有有效号码（已跳过 ${invalid} 行无效内容）` : '文件中没有有效号码', 'error');
+        toast(invalid > 0 ? `No valid phone numbers in the file (skipped ${invalid} invalid rows)` : 'No valid phone numbers in the file', 'error');
         return;
       }
       const numbers = valid.map((phone) => ({
@@ -1892,12 +2099,12 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
       try {
         result = await window.appAPI.collector.addNumbers(numbers);
       } catch (err) {
-        toast(err?.message || '导入失败', 'error');
+        toast(err?.message || 'Import failed', 'error');
         return;
       }
       toast(
-        `已导入 ${result.added || numbers.length} 个号码，跳过 ${result.duplicates || 0} 个重复` +
-          (invalid > 0 ? `，忽略 ${invalid} 行无效` : ''),
+        `Imported ${result.added || numbers.length} leads. Skipped ${result.duplicates || 0} duplicates` +
+          (invalid > 0 ? `, ignored ${invalid} invalid rows` : ''),
         invalid > 0 ? 'info' : 'success'
       );
       loadNumbers();
@@ -2035,7 +2242,7 @@ function duplicateReviewLeadRows(lead) {
     ['Phone', row.phone], ['Title', row.title], ['Website', row.website],
     ['Email', row.email], ['Address', row.address], ['Company key', row.companyKey],
     ['Source', row.source], ['Keywords', row.keyword], ['Run slug', row.runSlug],
-    ['采集Time', row.collectedAt]
+    ['Collected', row.collectedAt]
   ];
   return fields
     .map(([label, value]) => `<div class="lead-detail-row"><span class="lead-detail-label">${escapeHtml(label)}</span>`
@@ -2260,7 +2467,7 @@ async function saveTargetFromEditor() {
     const res = await window.appAPI.targets.save(payload);
     if (!res || res.success !== true) {
       setTargetStatusBar((res && res.error) || 'Invalid target', true);
-      toast((res && res.error) || '保存失败', 'error');
+      toast((res && res.error) || 'Save failed', 'error');
       return;
     }
     setTargetStatusBar('Saved', false);
@@ -2281,7 +2488,7 @@ async function setTargetArchived(id, status) {
       await loadTargets();
       return;
     }
-    toast((res && res.error) || '操作失败', 'error');
+    toast((res && res.error) || 'Action failed', 'error');
   } catch (err) {
     const msg = err?.message || String(err);
     toast(msg, 'error');
@@ -2330,7 +2537,7 @@ function useTargetForCollection(target) {
   currentResultsTargetId = qualityReportText(target && target.id) || null;
   const nav = document.querySelector('.nav-item[data-view="collector"]');
   if (nav) nav.click();
-  toast(`已填充 ${filled} 项${kept ? `，保留 ${kept} 项已填内容` : ''}`, 'success');
+  toast(`Filled ${filled} field(s)${kept ? `, kept ${kept} you had already filled in` : ''}`, 'success');
   return { filled, kept };
 }
 
@@ -2356,7 +2563,7 @@ document.getElementById('target-list').addEventListener('click', safeAsync(async
   }
   const target = targets.find(row => row && row.id === id);
   if (!target) {
-    toast('未找到该目标', 'error');
+    toast('That target could not be found', 'error');
     return;
   }
   if (button.dataset.action === 'edit') openTargetEditor(target);
@@ -2379,7 +2586,7 @@ let dashboardCounts = { running: 0, succeeded: 0, failed: 0, windowed: false };
 function formatJobTime(value) {
   if (typeof value !== 'string' || !value) return '-';
   const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('zh-CN');
+  return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('en-GB');
 }
 
 async function loadDashboard(page = 1) {

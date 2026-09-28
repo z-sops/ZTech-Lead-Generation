@@ -52,7 +52,7 @@ function test(name, fn) {
     assert.strictEqual(out, '');
     const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'renderer.js'), 'utf8');
     assert.ok(rendererSource.includes('if (logs)'), 'renderer must gate the download on truthy logs');
-    assert.ok(rendererSource.includes('暂无日志'), 'renderer must keep the no-logs toast');
+    assert.ok(rendererSource.includes('There are no logs to export'), 'renderer must keep the no-logs toast');
     assert.ok(rendererSource.includes('new Blob([logs]'), 'renderer must pass the returned string straight to Blob');
     assert.ok(!rendererSource.includes('+ logs]'), 'renderer must not concatenate the log payload');
     assert.ok(rendererSource.includes('app-logs-'), 'download filename format must be unchanged');
