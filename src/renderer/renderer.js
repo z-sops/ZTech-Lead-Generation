@@ -2065,6 +2065,7 @@ async function openLeadDetail(id) {
   const seq = ++detailLoadSeq;
   body.innerHTML = '<div class="lead-detail-loading">Loading...</div>';
   overlay.hidden = false;
+  showLeadDrawer(id);
   try {
     const result = await window.appAPI.collector.getNumbers({ limit: 1, offset: 0, id });
     if (seq !== detailLoadSeq) return;
@@ -2080,6 +2081,7 @@ async function openLeadDetail(id) {
     populateLeadQuality(lead);
     populateLeadUserStatus(lead);
     populateLeadCompany(lead);
+    renderLeadDrawer(lead);
     loadLeadResearch(id, seq);
   } catch (err) {
     if (seq !== detailLoadSeq) return;
@@ -2197,6 +2199,7 @@ function renderLeadResearch(view) {
   if (!region || !body) return;
   region.hidden = false;
   body.innerHTML = leadResearchTemplate(view);
+  renderLeadDrawerResearch(view, null);
 }
 
 async function loadLeadResearch(leadId, seq) {
@@ -2205,6 +2208,7 @@ async function loadLeadResearch(leadId, seq) {
   if (!body || !region) return;
   region.hidden = false;
   body.innerHTML = '<p class="lead-detail-research-empty">Loading research status...</p>';
+  renderLeadDrawerResearch(undefined, null);
   try {
     const view = await window.appAPI.research.get(leadId);
     if (seq !== undefined && seq !== detailLoadSeq) return;
@@ -2212,6 +2216,7 @@ async function loadLeadResearch(leadId, seq) {
   } catch (err) {
     if (seq !== undefined && seq !== detailLoadSeq) return;
     body.innerHTML = `<p class="lead-detail-research-state" data-availability="failed">${escapeHtml((err && err.message) || 'Research status is unavailable.')}</p>`;
+    renderLeadDrawerResearch(null, (err && err.message) || 'Research status is unavailable.');
   }
 }
 
@@ -2271,6 +2276,7 @@ function closeLeadDetail() {
     if (companyRegion) companyRegion.hidden = true;
     const researchRegion = document.getElementById('lead-detail-research');
     if (researchRegion) researchRegion.hidden = true;
+  resetLeadDrawer();
 }
 
 // Row clicks open the detail; checkbox/input clicks keep selection intact.
@@ -2399,6 +2405,7 @@ async function saveLeadDetail() {
   const seq = detailLoadSeq;
   leadDetailSaveInFlight = true;
   setLeadDetailControlsEnabled(false);
+  setLeadDrawerSaveState('lead-drawer-save-state', 'saving', 'Saving...');
   try {
     const result = await window.appAPI.collector.updateLead({
       id,
@@ -2410,18 +2417,23 @@ async function saveLeadDetail() {
       const msg = (result && result.error) || 'Update refused';
       toast(msg, 'error');
       reportError(msg, { handler: 'saveLeadDetail' });
+      if (seq === detailLoadSeq) setLeadDrawerSaveState('lead-drawer-save-state', 'error', 'Not saved: ' + msg);
       return;
     }
     if (seq !== detailLoadSeq) return;
     if (result && result.updated === false && result.reason === 'unchanged') {
       toast('No changes to save');
+      setLeadDrawerSaveState('lead-drawer-save-state', 'ok', 'No changes to save');
     } else {
       toast('Saved');
+      setLeadDrawerSaveState('lead-drawer-save-state', 'ok', 'Saved');
+      updateLeadDrawerQualificationBadge(select && select.value === 'qualified' ? 'qualified' : 'unqualified');
     }
   } catch (err) {
     const msg = err?.message || String(err);
     toast(msg, 'error');
     reportError(msg, { handler: 'saveLeadDetail' });
+    if (seq === detailLoadSeq) setLeadDrawerSaveState('lead-drawer-save-state', 'error', 'Not saved: ' + msg);
   } finally {
     // Cleared even when the profile was closed mid-save, so reopening it never
     // leaves Save permanently disabled.
@@ -2497,19 +2509,23 @@ async function saveLeadUserStatus() {
   const seq = detailLoadSeq;
   leadUserStatusInFlight = true;
   setLeadUserStatusControlsEnabled(false);
+  setLeadDrawerSaveState('lead-drawer-status-save-state', 'saving', 'Saving...');
   try {
     const result = await window.appAPI.collector.updateLeadQuality(payload);
     if (result && result.success === false) {
       const msg = (result && result.error) || 'Update refused';
       toast(msg, 'error');
       reportError(msg, { handler: 'saveLeadUserStatus' });
+      if (seq === detailLoadSeq) setLeadDrawerSaveState('lead-drawer-status-save-state', 'error', 'Not saved: ' + msg);
       return;
     }
     if (seq !== detailLoadSeq) return;
     if (result && result.updated === false && result.reason === 'unchanged') {
       toast('No changes to save');
+      setLeadDrawerSaveState('lead-drawer-status-save-state', 'ok', 'No changes to save');
     } else {
       toast('Saved');
+      setLeadDrawerSaveState('lead-drawer-status-save-state', 'ok', 'Status saved');
     }
     // Re-read through the existing single-lead path so the displayed values
     // come from storage. The derived signals are recomputed from the same row.
@@ -2518,6 +2534,7 @@ async function saveLeadUserStatus() {
     const msg = err?.message || String(err);
     toast(msg, 'error');
     reportError(msg, { handler: 'saveLeadUserStatus' });
+    if (seq === detailLoadSeq) setLeadDrawerSaveState('lead-drawer-status-save-state', 'error', 'Not saved: ' + msg);
   } finally {
     leadUserStatusInFlight = false;
     setLeadUserStatusControlsEnabled(true);
@@ -2743,6 +2760,680 @@ document.getElementById('btn-export-csv').addEventListener('click', safeAsync(as
       URL.revokeObjectURL(url);
     }
   }));
+
+// === F5 Lead Detail Drawer ===
+// Presentation only. The drawer IS the B3 #lead-detail-overlay: openLeadDetail,
+// closeLeadDetail, detailLoadSeq, the B6 / P1-C save paths and the research IPC
+// are all unchanged, and nothing here adds a query, a channel or a store. Every
+// value shown comes from the stored lead row or from the existing research view
+// (window.appAPI.research.get); anything in neither is reported as not
+// available. Text is always set with textContent - the only markup inserted is
+// the website link produced by the existing protocol-checked renderWebsite.
+const LEAD_DRAWER_LAYOUT_KEY = 'ztech.leadDetail.layout';
+const LEAD_DRAWER_TABS = ['overview', 'research', 'evidence', 'icp', 'pitch'];
+const LEAD_DRAWER_NA = 'Not available';
+const LEAD_DRAWER_EVIDENCE_LIMIT = 50;
+const LEAD_DRAWER_RESEARCH_SHORT = {
+  no_website: 'No website',
+  not_checked: 'Not checked',
+  pending: 'Pending',
+  site_unreachable: 'Site unreachable',
+  no_crawlable_content: 'No crawlable content',
+  partial: 'Partial',
+  complete: 'Complete',
+  failed: 'Failed',
+  stale: 'Stale'
+};
+let leadDrawerTab = 'overview';
+let leadDrawerLeadId = null;
+let leadDrawerReturnFocus = null;
+// { kind: 'idle' | 'loading' | 'error' | 'view', view, error }
+let leadDrawerResearch = { kind: 'idle', view: null, error: null };
+
+// Renderer-local fallback flag: "modal" restores the centred B3 modal with every
+// section stacked; anything else (or no storage) is the drawer.
+function leadDrawerLayout() {
+  try {
+    return localStorage.getItem(LEAD_DRAWER_LAYOUT_KEY) === 'modal' ? 'modal' : 'drawer';
+  } catch {
+    return 'drawer';
+  }
+}
+
+function leadDrawerText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function leadDrawerEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function leadDrawerFormatTime(value) {
+  const raw = leadDrawerText(value);
+  if (!raw) return '';
+  const date = new Date(raw);
+  return isNaN(date.getTime()) ? raw : date.toLocaleString('en-GB');
+}
+
+function leadDrawerValueText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
+  }
+}
+
+// One label/value row. An empty value is an explicit "Not available", never a
+// blank that could be read as a real empty string.
+function leadDrawerField(label, value, action) {
+  const row = leadDrawerEl('div', 'lead-drawer-field');
+  row.appendChild(leadDrawerEl('span', 'lead-drawer-field-label', label));
+  const text = leadDrawerValueText(value).trim();
+  row.appendChild(leadDrawerEl('span', text ? 'lead-drawer-field-value' : 'lead-drawer-field-value is-empty',
+    text || LEAD_DRAWER_NA));
+  if (text && action) row.appendChild(action);
+  return row;
+}
+
+async function copyLeadDrawerValue(label, value) {
+  if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+    toast('Clipboard is not available', 'error');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+    toast(`${label} copied`);
+  } catch (err) {
+    toast((err && err.message) || 'Copy failed', 'error');
+  }
+}
+
+function leadDrawerCopyButton(label, value) {
+  const btn = leadDrawerEl('button', 'lead-drawer-action', 'Copy');
+  btn.type = 'button';
+  btn.setAttribute('aria-label', `Copy ${label.toLowerCase()} ${value}`);
+  btn.addEventListener('click', safeAsync(() => copyLeadDrawerValue(label, value)));
+  return btn;
+}
+
+// The website action is the existing renderWebsite link (http/https only,
+// target=_blank rel=noopener), which main's setWindowOpenHandler hands to the
+// system browser. A value that is not a web address gets no action at all.
+function leadDrawerWebsiteAction(website, host) {
+  const holder = document.createElement('span');
+  holder.innerHTML = renderWebsite(website);
+  const link = holder.querySelector('a');
+  if (!link) return null;
+  link.className = 'lead-drawer-action';
+  link.textContent = 'Open site';
+  link.setAttribute('aria-label', `Open website ${host || website} in your browser`);
+  return link;
+}
+
+function leadDrawerStatusValue(lead) {
+  // Same fallback the Leads table uses for an unset status.
+  return leadDrawerText(lead.status) || 'pending';
+}
+
+function leadDrawerQualificationValue(lead) {
+  return lead.qualification === 'qualified' ? 'qualified' : 'unqualified';
+}
+
+function leadDrawerBadge(className, dataKey, value, label) {
+  const badge = leadDrawerEl('span', className, value);
+  badge.dataset[dataKey] = value;
+  badge.setAttribute('aria-label', `${label}: ${value}`);
+  badge.title = label;
+  return badge;
+}
+
+function renderLeadDrawerHeader(lead) {
+  const signals = leadQualitySignals(lead);
+  const title = leadDrawerText(lead.title);
+  const phone = leadDrawerText(lead.phone);
+  const email = leadDrawerText(lead.email);
+  const website = leadDrawerText(lead.website);
+  const address = leadDrawerText(lead.address);
+
+  const name = document.getElementById('lead-drawer-name');
+  if (name) name.textContent = title || phone || 'Untitled lead';
+  const subtitle = document.getElementById('lead-drawer-subtitle');
+  if (subtitle) {
+    const parts = [];
+    if (!title) parts.push('No business name stored');
+    if (address) parts.push(address);
+    subtitle.textContent = parts.join(' · ');
+    subtitle.hidden = parts.length === 0;
+  }
+
+  const contact = document.getElementById('lead-drawer-contact');
+  if (contact) {
+    contact.replaceChildren();
+    if (website) {
+      const item = leadDrawerEl('span', 'lead-drawer-contact-item');
+      item.appendChild(leadDrawerEl('span', 'lead-drawer-contact-text', signals.website.host || website));
+      const open = leadDrawerWebsiteAction(website, signals.website.host);
+      if (open) item.appendChild(open);
+      contact.appendChild(item);
+    }
+    for (const [label, value] of [['Phone', phone], ['Email', email]]) {
+      if (!value) continue;
+      const item = leadDrawerEl('span', 'lead-drawer-contact-item');
+      item.appendChild(leadDrawerEl('span', 'lead-drawer-contact-text', value));
+      item.appendChild(leadDrawerCopyButton(label, value));
+      contact.appendChild(item);
+    }
+    if (!contact.childElementCount) {
+      contact.appendChild(leadDrawerEl('span', 'lead-drawer-muted', 'No website, phone or email stored'));
+    }
+  }
+
+  const badges = document.getElementById('lead-drawer-badges');
+  if (badges) {
+    const qualification = leadDrawerBadge('qual-tag', 'qualification', leadDrawerQualificationValue(lead), 'Qualification');
+    qualification.id = 'lead-drawer-qualification-badge';
+    badges.replaceChildren(
+      leadDrawerBadge('status-tag', 'status', leadDrawerStatusValue(lead), 'Lead status'),
+      qualification
+    );
+  }
+}
+
+function updateLeadDrawerQualificationBadge(value) {
+  const badge = document.getElementById('lead-drawer-qualification-badge');
+  if (!badge) return;
+  badge.textContent = value;
+  badge.dataset.qualification = value;
+  badge.setAttribute('aria-label', `Qualification: ${value}`);
+}
+
+function renderLeadDrawerOverview(lead) {
+  const signals = leadQualitySignals(lead);
+  const phone = leadDrawerText(lead.phone);
+  const email = leadDrawerText(lead.email);
+  const website = leadDrawerText(lead.website);
+  const contact = document.getElementById('lead-drawer-contact-fields');
+  if (contact) {
+    contact.replaceChildren(
+      leadDrawerField('Phone', phone, phone ? leadDrawerCopyButton('Phone', phone) : null),
+      leadDrawerField('Email', email, email ? leadDrawerCopyButton('Email', email) : null),
+      leadDrawerField('Website', website ? (signals.website.host || website) : '',
+        website ? leadDrawerWebsiteAction(website, signals.website.host) : null)
+    );
+  }
+  const business = document.getElementById('lead-drawer-business-fields');
+  if (business) {
+    business.replaceChildren(
+      leadDrawerField('Name', leadDrawerText(lead.title)),
+      leadDrawerField('Source', leadDrawerText(lead.source)),
+      leadDrawerField('Keyword', leadDrawerText(lead.keyword)),
+      leadDrawerField('Address', leadDrawerText(lead.address)),
+      leadDrawerField('Collected', leadDrawerFormatTime(lead.collectedAt))
+    );
+  }
+}
+
+function leadDrawerPacket() {
+  const view = leadDrawerResearch.kind === 'view' ? leadDrawerResearch.view : null;
+  const packet = view && view.packet && typeof view.packet === 'object' ? view.packet : null;
+  return { view, packet };
+}
+
+function leadDrawerFacts(packet) {
+  return packet && Array.isArray(packet.facts)
+    ? packet.facts.filter((f) => f && typeof f === 'object')
+    : [];
+}
+
+// The Lead -> Research -> Evidence -> ICP -> Opportunity -> Pitch -> Outreach
+// progression, each step with its real state only.
+function renderLeadDrawerPipeline() {
+  const list = document.getElementById('lead-drawer-pipeline');
+  if (!list) return;
+  const { view, packet } = leadDrawerPacket();
+  let research = 'Not checked';
+  let researchTone = 'idle';
+  if (leadDrawerResearch.kind === 'loading') research = 'Loading';
+  else if (leadDrawerResearch.kind === 'error') {
+    research = 'Unavailable';
+    researchTone = 'bad';
+  } else if (view) {
+    const availability = researchAvailabilityOf(view);
+    research = LEAD_DRAWER_RESEARCH_SHORT[availability] || availability;
+    if (availability === 'complete') researchTone = 'ok';
+    else if (['partial', 'pending', 'stale'].includes(availability)) researchTone = 'busy';
+  }
+  const facts = leadDrawerFacts(packet);
+  const steps = [
+    ['Lead', 'Stored', 'ok'],
+    ['Research', research, researchTone],
+    ['Evidence', facts.length ? `${facts.length} fact${facts.length === 1 ? '' : 's'}` : 'None yet', facts.length ? 'ok' : 'idle'],
+    ['ICP', 'Unknown', 'idle'],
+    ['Opportunity', 'Not available yet', 'off'],
+    ['Pitch', 'Not available yet', 'off'],
+    ['Outreach', 'Not available yet', 'off']
+  ];
+  list.replaceChildren(...steps.map(([label, state, tone]) => {
+    const item = leadDrawerEl('li', 'lead-drawer-step');
+    item.dataset.tone = tone;
+    item.appendChild(leadDrawerEl('span', 'lead-drawer-step-label', label));
+    item.appendChild(leadDrawerEl('span', 'lead-drawer-step-state', state));
+    return item;
+  }));
+}
+
+function leadDrawerResearchSections(packet) {
+  if (!packet || !packet.sections || typeof packet.sections !== 'object') return [];
+  // The evidence packet keys sections by name; an array form is accepted too.
+  if (Array.isArray(packet.sections)) {
+    return packet.sections.filter((s) => s && typeof s.name === 'string').map((s) => [s.name, s]);
+  }
+  return Object.keys(packet.sections)
+    .filter((name) => packet.sections[name] && typeof packet.sections[name] === 'object')
+    .map((name) => [name, packet.sections[name]]);
+}
+
+function leadDrawerWebsiteStatus(availability, packet) {
+  if (availability === 'no_website') return 'No website on record';
+  if (availability === 'site_unreachable') return 'Unreachable (reported by research)';
+  if (availability === 'no_crawlable_content') return 'Responded, but no readable content';
+  if (packet) return 'Reached by research';
+  return 'Not checked';
+}
+
+function renderLeadDrawerResearchSummary() {
+  const box = document.getElementById('lead-drawer-research-summary');
+  if (!box) return;
+  if (leadDrawerResearch.kind === 'loading' || leadDrawerResearch.kind === 'idle') {
+    box.replaceChildren(leadDrawerEl('p', 'lead-drawer-muted', 'Loading research status...'));
+    return;
+  }
+  if (leadDrawerResearch.kind === 'error') {
+    box.replaceChildren(leadDrawerEl('p', 'lead-drawer-empty',
+      `Research status could not be loaded: ${leadDrawerResearch.error}`));
+    return;
+  }
+  const { view, packet } = leadDrawerPacket();
+  const availability = researchAvailabilityOf(view);
+  const rows = [];
+  if (availability === 'not_checked' && !packet) {
+    rows.push(leadDrawerEl('p', 'lead-drawer-empty', 'Research has not been completed for this lead.'));
+  }
+  rows.push(leadDrawerField('Research status', LEAD_DRAWER_RESEARCH_SHORT[availability] || availability));
+  rows.push(leadDrawerField('Website', leadDrawerText(view.website)));
+  rows.push(leadDrawerField('Website status', leadDrawerWebsiteStatus(availability, packet)));
+  if (packet && packet.subject && leadDrawerText(packet.subject.auditedUrl)) {
+    rows.push(leadDrawerField('Audited URL', leadDrawerText(packet.subject.auditedUrl)));
+  }
+  rows.push(leadDrawerField('Requested', leadDrawerFormatTime(view.requestedAt)));
+  rows.push(leadDrawerField('Last updated', leadDrawerFormatTime(view.updatedAt)));
+  if (packet) {
+    rows.push(leadDrawerField('Freshness', view.stale === true || availability === 'stale'
+      ? 'Older than the freshness policy allows'
+      : 'Within the freshness policy'));
+    const prov = packet.provenance && typeof packet.provenance === 'object' ? packet.provenance : {};
+    rows.push(leadDrawerField('Provider', leadDrawerText(prov.provider)));
+    rows.push(leadDrawerField('Captured', leadDrawerFormatTime(prov.capturedAt)));
+    const coverage = packet.coverage && typeof packet.coverage === 'object' ? packet.coverage : {};
+    if (Number.isFinite(coverage.pagesFetched)) rows.push(leadDrawerField('Pages fetched', coverage.pagesFetched));
+    for (const [name, section] of leadDrawerResearchSections(packet)) {
+      const state = leadDrawerText(section.state) || leadDrawerText(section.availability);
+      const reason = leadDrawerText(section.reason);
+      rows.push(leadDrawerField(`${RESEARCH_SECTION_TEXT[name] || name} section`,
+        state ? (reason ? `${state} - ${reason}` : state) : ''));
+    }
+  }
+  box.replaceChildren(...rows);
+}
+
+function leadDrawerRefs(ids) {
+  const list = Array.isArray(ids) ? ids.filter((id) => typeof id === 'string' && id) : [];
+  if (!list.length) return null;
+  return leadDrawerEl('span', 'lead-drawer-refs', `Evidence: ${list.join(', ')}`);
+}
+
+function leadDrawerEvidenceList(items, build) {
+  const list = leadDrawerEl('ul', 'lead-drawer-evidence-list');
+  for (const entry of items) {
+    const item = leadDrawerEl('li', 'lead-drawer-evidence-item');
+    build(item, entry);
+    list.appendChild(item);
+  }
+  return list;
+}
+
+function renderLeadDrawerEvidence() {
+  const box = document.getElementById('lead-drawer-evidence');
+  if (!box) return;
+  const nodes = [leadDrawerEl('h3', 'lead-drawer-section-title', 'Evidence')];
+  if (leadDrawerResearch.kind === 'loading' || leadDrawerResearch.kind === 'idle') {
+    nodes.push(leadDrawerEl('p', 'lead-drawer-muted', 'Loading evidence...'));
+    box.replaceChildren(...nodes);
+    return;
+  }
+  if (leadDrawerResearch.kind === 'error') {
+    nodes.push(leadDrawerEl('p', 'lead-drawer-empty',
+      'Evidence is unavailable because the research status could not be loaded.'));
+    box.replaceChildren(...nodes);
+    return;
+  }
+  const { view, packet } = leadDrawerPacket();
+  const availability = researchAvailabilityOf(view);
+  if (!packet) {
+    nodes.push(leadDrawerEl('p', 'lead-drawer-empty', 'No evidence is available for this lead.'));
+    nodes.push(leadDrawerEl('p', 'lead-drawer-muted',
+      'Evidence appears here only after website research returns an evidence packet. Research status: ' +
+      (LEAD_DRAWER_RESEARCH_SHORT[availability] || availability) + '.'));
+    box.replaceChildren(...nodes);
+    return;
+  }
+  const prov = packet.provenance && typeof packet.provenance === 'object' ? packet.provenance : {};
+  const subject = packet.subject && typeof packet.subject === 'object' ? packet.subject : {};
+  const meta = leadDrawerEl('div', 'lead-drawer-fields');
+  meta.append(
+    leadDrawerField('Provider', leadDrawerText(prov.provider)),
+    leadDrawerField('Captured', leadDrawerFormatTime(prov.capturedAt || prov.finishedAt || prov.importedAt)),
+    leadDrawerField('Website', leadDrawerText(subject.auditedUrl) || leadDrawerText(subject.requestedUrl))
+  );
+  nodes.push(meta);
+  if (view.stale === true || availability === 'stale') {
+    nodes.push(leadDrawerEl('p', 'lead-drawer-warning', 'This evidence is older than the freshness policy allows.'));
+  }
+
+  const facts = leadDrawerFacts(packet);
+  nodes.push(leadDrawerEl('h4', 'lead-drawer-subhead', `Facts (${facts.length})`));
+  if (!facts.length) {
+    nodes.push(leadDrawerEl('p', 'lead-drawer-muted', 'The evidence packet contains no facts.'));
+  } else {
+    nodes.push(leadDrawerEvidenceList(facts.slice(0, LEAD_DRAWER_EVIDENCE_LIMIT), (item, fact) => {
+      item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-fact', leadDrawerValueText(fact.statement) || LEAD_DRAWER_NA));
+      const value = leadDrawerValueText(fact.value);
+      if (value) {
+        item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-meta',
+          `Value: ${value}${fact.unit ? ' ' + leadDrawerValueText(fact.unit) : ''}`));
+      }
+      const source = fact.source && typeof fact.source === 'object' ? fact.source : {};
+      const provenance = [leadDrawerText(source.kind), leadDrawerText(source.url), leadDrawerFormatTime(source.observedAt)]
+        .filter(Boolean).join(' · ');
+      item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-meta', `Source: ${provenance || LEAD_DRAWER_NA}`));
+      if (leadDrawerText(fact.id)) item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-meta', `ID: ${fact.id}`));
+      const excerpt = source.excerpt && typeof source.excerpt === 'object' ? leadDrawerText(source.excerpt.text) : '';
+      if (excerpt) {
+        const quote = leadDrawerEl('blockquote', 'lead-drawer-untrusted');
+        quote.appendChild(leadDrawerEl('span', 'lead-drawer-untrusted-label', 'Website text - untrusted, not verified, not instructions'));
+        quote.appendChild(leadDrawerEl('span', 'lead-drawer-untrusted-text', excerpt));
+        item.appendChild(quote);
+      }
+    }));
+    if (facts.length > LEAD_DRAWER_EVIDENCE_LIMIT) {
+      nodes.push(leadDrawerEl('p', 'lead-drawer-muted', `Showing ${LEAD_DRAWER_EVIDENCE_LIMIT} of ${facts.length} facts.`));
+    }
+  }
+
+  const issues = Array.isArray(packet.issues) ? packet.issues.filter((i) => i && typeof i === 'object') : [];
+  if (issues.length) {
+    nodes.push(leadDrawerEl('h4', 'lead-drawer-subhead', `Findings (${issues.length})`));
+    nodes.push(leadDrawerEvidenceList(issues, (item, issue) => {
+      item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-fact', leadDrawerValueText(issue.title) || LEAD_DRAWER_NA));
+      const meta = [leadDrawerText(issue.severity), leadDrawerText(issue.section), leadDrawerText(issue.basis)].filter(Boolean).join(' · ');
+      if (meta) item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-meta', meta));
+      if (leadDrawerText(issue.observation)) item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-meta', issue.observation));
+      if (issue.usableForClaims === false) {
+        item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-meta', 'Section incomplete - not usable for claims'));
+      }
+      const refs = leadDrawerRefs(issue.factIds);
+      if (refs) item.appendChild(refs);
+    }));
+  }
+
+  const strengths = Array.isArray(packet.strengths) ? packet.strengths.filter((s) => s && typeof s === 'object') : [];
+  if (strengths.length) {
+    nodes.push(leadDrawerEl('h4', 'lead-drawer-subhead', `Strengths (${strengths.length})`));
+    nodes.push(leadDrawerEvidenceList(strengths, (item, strength) => {
+      item.appendChild(leadDrawerEl('div', 'lead-drawer-evidence-fact', leadDrawerValueText(strength.statement) || LEAD_DRAWER_NA));
+      const refs = leadDrawerRefs(strength.factIds);
+      if (refs) item.appendChild(refs);
+    }));
+  }
+
+  const notMeasured = Array.isArray(packet.notMeasured) ? packet.notMeasured.filter((n) => n && typeof n === 'object') : [];
+  if (notMeasured.length) {
+    nodes.push(leadDrawerEl('h4', 'lead-drawer-subhead', 'Not measured'));
+    const list = leadDrawerEl('ul', 'lead-drawer-plain-list');
+    for (const entry of notMeasured) {
+      list.appendChild(leadDrawerEl('li', null,
+        [leadDrawerValueText(entry.item), leadDrawerValueText(entry.reason)].filter(Boolean).join(': ')));
+    }
+    nodes.push(list);
+  }
+  box.replaceChildren(...nodes);
+}
+
+// No ICP evaluation reaches the renderer in this build, so the only honest
+// state is UNKNOWN, with the concrete reasons why. No score is ever shown.
+function renderLeadDrawerIcp(lead) {
+  const box = document.getElementById('lead-drawer-icp');
+  if (!box) return;
+  const state = leadDrawerEl('div', 'lead-drawer-state-line');
+  const badge = leadDrawerEl('span', 'lead-drawer-state', 'UNKNOWN');
+  badge.dataset.state = 'unknown';
+  state.append(badge, leadDrawerEl('span', 'lead-drawer-muted', 'No ICP fit decision has been made for this lead.'));
+  const reasons = leadDrawerEl('ul', 'lead-drawer-plain-list');
+  for (const reason of [
+    'ICP fit evaluation is not available in the Leads workspace in this build.',
+    'This lead is not linked to a Target.',
+    'The lead record stores no industry, business type, city or country fields, and none are inferred.'
+  ]) reasons.appendChild(leadDrawerEl('li', null, reason));
+  const fields = leadDrawerEl('div', 'lead-drawer-fields');
+  fields.append(
+    leadDrawerField('Keyword (search term)', leadDrawerText(lead.keyword)),
+    leadDrawerField('Address (unparsed)', leadDrawerText(lead.address))
+  );
+  box.replaceChildren(
+    leadDrawerEl('h3', 'lead-drawer-section-title', 'ICP fit'),
+    state,
+    leadDrawerEl('h4', 'lead-drawer-subhead', 'Why the state is UNKNOWN'),
+    reasons,
+    leadDrawerEl('h4', 'lead-drawer-subhead', 'Stored fields an evaluation could use'),
+    fields,
+    leadDrawerEl('p', 'lead-drawer-muted',
+      'Possible states are FIT, NOT FIT and UNKNOWN. UNKNOWN means not enough data or no evaluation - it is not the same as NOT FIT.')
+  );
+}
+
+function renderLeadDrawerPitch() {
+  const box = document.getElementById('lead-drawer-pitch');
+  if (!box) return;
+  box.replaceChildren(
+    leadDrawerEl('h3', 'lead-drawer-section-title', 'Pitch'),
+    leadDrawerEl('p', 'lead-drawer-empty', 'Pitch generation is not available yet.'),
+    leadDrawerEl('p', 'lead-drawer-muted',
+      'No pitch has been generated for this lead, so there is no pitch text, no evidence references and no approval state to show.'),
+    leadDrawerEl('p', 'lead-drawer-muted', 'Nothing is sent from this drawer.')
+  );
+}
+
+function setLeadDrawerSaveState(id, state, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text || '';
+  if (state) el.dataset.state = state;
+  else delete el.dataset.state;
+}
+
+function selectLeadDrawerTab(name, focus) {
+  const tab = LEAD_DRAWER_TABS.includes(name) ? name : 'overview';
+  const changed = tab !== leadDrawerTab;
+  leadDrawerTab = tab;
+  for (const key of LEAD_DRAWER_TABS) {
+    const button = document.getElementById(`lead-tab-${key}`);
+    const panel = document.getElementById(`lead-panel-${key}`);
+    const active = key === tab;
+    if (button) {
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+      button.tabIndex = active ? 0 : -1;
+      if (active && focus) button.focus();
+    }
+    if (panel) panel.hidden = !active;
+  }
+  const scroll = document.getElementById('lead-drawer-scroll');
+  if (scroll && changed) scroll.scrollTop = 0;
+}
+
+// Previous / next walk the leads already rendered on the current table page -
+// no query is made, and the drawer never crosses a page boundary.
+function leadDrawerPageIds() {
+  return [...document.querySelectorAll('#numbers-table-body .number-check')]
+    .map((cb) => cb.dataset.id)
+    .filter(Boolean);
+}
+
+function markLeadDrawerRow(id) {
+  for (const row of document.querySelectorAll('#numbers-table-body tr.lead-row-open')) {
+    row.classList.remove('lead-row-open');
+    row.removeAttribute('aria-current');
+  }
+  if (!id) return;
+  for (const row of document.querySelectorAll('#numbers-table-body tr[data-lead-id]')) {
+    if (row.dataset.leadId === id) {
+      row.classList.add('lead-row-open');
+      row.setAttribute('aria-current', 'true');
+    }
+  }
+}
+
+function updateLeadDrawerNav() {
+  const ids = leadDrawerPageIds();
+  const index = leadDrawerLeadId ? ids.indexOf(leadDrawerLeadId) : -1;
+  const prev = document.getElementById('btn-lead-drawer-prev');
+  const next = document.getElementById('btn-lead-drawer-next');
+  if (prev) prev.disabled = index <= 0;
+  if (next) next.disabled = index === -1 || index >= ids.length - 1;
+  const position = document.getElementById('lead-drawer-position');
+  if (position) position.textContent = index === -1 ? '' : `${index + 1} of ${ids.length} on this page`;
+}
+
+async function stepLeadDrawer(delta) {
+  const ids = leadDrawerPageIds();
+  const index = ids.indexOf(leadDrawerLeadId);
+  if (index === -1) return;
+  const target = ids[index + delta];
+  if (!target) return;
+  await openLeadDetail(target);
+}
+
+// Called by openLeadDetail before the single-lead read resolves.
+function showLeadDrawer(id) {
+  const overlay = document.getElementById('lead-detail-overlay');
+  const panel = document.getElementById('lead-drawer');
+  if (!overlay || !panel) return;
+  const layout = leadDrawerLayout();
+  overlay.dataset.layout = layout;
+  panel.setAttribute('aria-modal', layout === 'modal' ? 'true' : 'false');
+  if (!leadDrawerLeadId && document.activeElement && !overlay.contains(document.activeElement)) {
+    leadDrawerReturnFocus = document.activeElement;
+  }
+  if (id !== leadDrawerLeadId) {
+    const name = document.getElementById('lead-drawer-name');
+    if (name) name.textContent = 'Loading...';
+    for (const slot of ['lead-drawer-subtitle', 'lead-drawer-contact', 'lead-drawer-badges']) {
+      const el = document.getElementById(slot);
+      if (el) el.replaceChildren();
+    }
+    setLeadDrawerSaveState('lead-drawer-save-state', null, '');
+    setLeadDrawerSaveState('lead-drawer-status-save-state', null, '');
+    leadDrawerLeadId = id;
+    leadDrawerResearch = { kind: 'loading', view: null, error: null };
+    renderLeadDrawerResearchViews();
+  }
+  markLeadDrawerRow(id);
+  updateLeadDrawerNav();
+  selectLeadDrawerTab(leadDrawerTab, false);
+  if (!panel.contains(document.activeElement)) panel.focus({ preventScroll: true });
+}
+
+// Called by openLeadDetail once the stored row is loaded (same seq guard).
+function renderLeadDrawer(lead) {
+  const row = lead && typeof lead === 'object' ? lead : {};
+  renderLeadDrawerHeader(row);
+  renderLeadDrawerOverview(row);
+  renderLeadDrawerIcp(row);
+  renderLeadDrawerPitch();
+  renderLeadDrawerPipeline();
+}
+
+function renderLeadDrawerResearchViews() {
+  renderLeadDrawerResearchSummary();
+  renderLeadDrawerEvidence();
+  renderLeadDrawerPipeline();
+}
+
+// Fed by the existing research render path: undefined = loading, an error
+// message = the research read failed, otherwise the research view itself.
+function renderLeadDrawerResearch(view, error) {
+  if (!leadDrawerLeadId) return;
+  // A late response for a different lead is never applied to this one.
+  if (view && typeof view.leadRef === 'string' && view.leadRef && view.leadRef !== leadDrawerLeadId) return;
+  if (error) leadDrawerResearch = { kind: 'error', view: null, error: String(error) };
+  else if (view === undefined) leadDrawerResearch = { kind: 'loading', view: null, error: null };
+  else if (view && typeof view === 'object') leadDrawerResearch = { kind: 'view', view, error: null };
+  else leadDrawerResearch = { kind: 'error', view: null, error: 'Research status is unavailable.' };
+  renderLeadDrawerResearchViews();
+}
+
+// Called by closeLeadDetail.
+function resetLeadDrawer() {
+  leadDrawerLeadId = null;
+  leadDrawerResearch = { kind: 'idle', view: null, error: null };
+  leadDrawerTab = 'overview';
+  markLeadDrawerRow(null);
+  setLeadDrawerSaveState('lead-drawer-save-state', null, '');
+  setLeadDrawerSaveState('lead-drawer-status-save-state', null, '');
+  const back = leadDrawerReturnFocus;
+  leadDrawerReturnFocus = null;
+  if (back && document.contains(back) && typeof back.focus === 'function') back.focus({ preventScroll: true });
+}
+
+document.getElementById('lead-drawer-tabs').addEventListener('click', (e) => {
+  const tab = e.target.closest('[role="tab"]');
+  if (!tab) return;
+  selectLeadDrawerTab(tab.dataset.tab, true);
+});
+document.getElementById('lead-drawer-tabs').addEventListener('keydown', (e) => {
+  const index = LEAD_DRAWER_TABS.indexOf(leadDrawerTab);
+  let next = null;
+  if (e.key === 'ArrowRight') next = LEAD_DRAWER_TABS[(index + 1) % LEAD_DRAWER_TABS.length];
+  else if (e.key === 'ArrowLeft') next = LEAD_DRAWER_TABS[(index - 1 + LEAD_DRAWER_TABS.length) % LEAD_DRAWER_TABS.length];
+  else if (e.key === 'Home') next = LEAD_DRAWER_TABS[0];
+  else if (e.key === 'End') next = LEAD_DRAWER_TABS[LEAD_DRAWER_TABS.length - 1];
+  if (!next) return;
+  e.preventDefault();
+  selectLeadDrawerTab(next, true);
+});
+document.getElementById('btn-lead-drawer-prev').addEventListener('click', safeAsync(() => stepLeadDrawer(-1)));
+document.getElementById('btn-lead-drawer-next').addEventListener('click', safeAsync(() => stepLeadDrawer(1)));
+// Escape closes the drawer. An Escape already consumed (the Leads filter
+// popover, or a native control) is left alone.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  const overlay = document.getElementById('lead-detail-overlay');
+  if (!overlay || overlay.hidden) return;
+  e.preventDefault();
+  closeLeadDetail();
+});
+// A table re-render (page, sort, filter) keeps the open-row marker and the
+// previous / next state in step with the rows actually on screen.
+new MutationObserver(() => {
+  if (!leadDrawerLeadId) return;
+  markLeadDrawerRow(leadDrawerLeadId);
+  updateLeadDrawerNav();
+}).observe(document.getElementById('numbers-table-body'), { childList: true });
 
 function splitImportLines(text) {
   return String(text).split(/\r\n|\r|\n/);

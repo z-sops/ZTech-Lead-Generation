@@ -857,133 +857,208 @@
               Candidates share one exact key with the lead. Missing data never matches. Nothing is combined here.
             </p>
           </div>
-          <!-- Lead Detail overlay (B3): 11 field slots are rendered by leadDetailTemplate -->
-          <div class="lead-detail-overlay" id="lead-detail-overlay" hidden>
-            <div class="lead-detail-panel" role="dialog" aria-modal="true" aria-label="Lead Detail">
-              <div class="lead-detail-header">
-                <span class="lead-detail-title">Lead Detail</span>
-                <button type="button" class="btn btn-sm btn-secondary" id="btn-close-lead-detail">Close</button>
-              </div>
-              <div class="lead-detail-body" id="lead-detail-body"></div>
-              <!-- B6 user-owned fields. Never written by collection, import or a
-                   provider: the Lead Profile Save button is the only writer, via
-                   collector:update-lead. No autosave. -->
-              <div class="lead-detail-b6" id="lead-detail-b6" hidden>
-                <div class="form-group">
-                  <label for="lead-detail-qualification">Qualification</label>
-                  <select id="lead-detail-qualification">
-                    <option value="unqualified">Unqualified</option>
-                    <option value="qualified">Qualified</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="lead-detail-tag-input">Tags</label>
-                  <div class="lead-tag-list" id="lead-detail-tag-list"></div>
-                  <div class="lead-tag-add">
-                    <input type="text" id="lead-detail-tag-input" maxlength="50" placeholder="Add a tag">
-                    <button type="button" class="btn btn-sm" id="btn-lead-detail-add-tag">Add tag</button>
+          <!-- Lead Detail (B3) - F5: rendered as a right-side Lead Detail Drawer.
+               The element ids, the single-lead read, the detailLoadSeq race guard and
+               every save path are the same ones the centred modal used; F5 only moves
+               the existing regions into tabs. The old centred modal remains available
+               as a renderer-local fallback (localStorage "ztech.leadDetail.layout" =
+               "modal"). 11 field slots are still rendered by leadDetailTemplate. -->
+          <div class="lead-detail-overlay" id="lead-detail-overlay" hidden data-layout="drawer">
+            <div class="lead-detail-panel lead-drawer" id="lead-drawer" role="dialog" aria-modal="false"
+                 aria-labelledby="lead-drawer-name" aria-describedby="lead-drawer-subtitle" tabindex="-1">
+              <div class="lead-detail-header lead-drawer-header">
+                <div class="lead-drawer-toolbar">
+                  <div class="lead-drawer-nav" role="group" aria-label="Lead navigation">
+                    <button type="button" class="lead-drawer-icon-btn" id="btn-lead-drawer-prev" aria-label="Previous lead on this page" title="Previous lead on this page" disabled>&#8249;</button>
+                    <button type="button" class="lead-drawer-icon-btn" id="btn-lead-drawer-next" aria-label="Next lead on this page" title="Next lead on this page" disabled>&#8250;</button>
+                    <span class="lead-drawer-position" id="lead-drawer-position" aria-live="polite"></span>
                   </div>
+                  <span class="lead-detail-title">Lead Detail</span>
+                  <button type="button" class="lead-drawer-icon-btn lead-drawer-close" id="btn-close-lead-detail" aria-label="Close lead detail" title="Close (Esc)">&#215;</button>
                 </div>
-                <div class="form-group">
-                  <label for="lead-detail-notes">Notes</label>
-                  <textarea id="lead-detail-notes" rows="4" maxlength="5000" placeholder="Notes"></textarea>
-                </div>
-                <div class="form-actions">
-                  <button type="button" class="btn btn-sm" id="btn-save-lead-detail">Save</button>
-                </div>
-              </div>
-              <!-- Zuni-SEO website research. Availability is one of nine distinct
-                   states; every value shown here is third-party text and is
-                   rendered as untrusted text, never as instructions. Refresh forces a
-                   new run; Import opens a file dialog owned by main. -->
-              <div class="lead-detail-research" id="lead-detail-research" hidden>
-                <div class="lead-detail-research-header">
-                  <span class="lead-detail-research-title">Website Research</span>
-                  <span class="lead-detail-badge">Zuni-SEO</span>
-                </div>
-                <div class="lead-detail-research-body" id="lead-detail-research-body">
-                  <p class="lead-detail-research-empty">Not checked yet.</p>
-                </div>
-                <div class="lead-detail-research-actions">
-                  <button type="button" class="btn btn-sm" id="btn-research-refresh">Refresh research</button>
-                  <button type="button" class="btn btn-sm btn-secondary" id="btn-research-import">Import Zuni-SEO file</button>
+                <h2 class="lead-drawer-name" id="lead-drawer-name">Lead</h2>
+                <p class="lead-drawer-subtitle" id="lead-drawer-subtitle"></p>
+                <!-- Header contact line: only values the stored lead actually has get an
+                     action. Website opening goes through renderWebsite (http/https only,
+                     target=_blank rel=noopener -> main's setWindowOpenHandler). -->
+                <div class="lead-drawer-contact" id="lead-drawer-contact"></div>
+                <div class="lead-drawer-badges" id="lead-drawer-badges"></div>
+                <div class="lead-drawer-tabs" role="tablist" aria-label="Lead sections" id="lead-drawer-tabs">
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-overview" data-tab="overview" aria-controls="lead-panel-overview" aria-selected="true" tabindex="0">Overview</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-research" data-tab="research" aria-controls="lead-panel-research" aria-selected="false" tabindex="-1">Research</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-evidence" data-tab="evidence" aria-controls="lead-panel-evidence" aria-selected="false" tabindex="-1">Evidence</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-icp" data-tab="icp" aria-controls="lead-panel-icp" aria-selected="false" tabindex="-1">ICP</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-pitch" data-tab="pitch" aria-controls="lead-panel-pitch" aria-selected="false" tabindex="-1">Pitch</button>
                 </div>
               </div>
-              <!-- P1-A: read-only data-quality signals derived on this device.
-                   No value here is persisted, and none of it is a third-party
-                   verification claim. -->
-              <div class="lead-detail-quality" id="lead-detail-quality" hidden>
-                <div class="lead-detail-quality-header">
-                  <span class="lead-detail-quality-title">Data Quality</span>
-                  <span class="lead-detail-badge">Derived locally</span>
-                </div>
-                <div class="lead-detail-quality-body" id="lead-detail-quality-body"></div>
-                <!-- P1-C: user-provided statuses. A user assertion about this
-                     lead, never a third-party verification. -->
-                <div class="lead-user-status" id="lead-user-status" hidden>
-                  <div class="lead-detail-quality-header">
-                    <span class="lead-detail-quality-title">Your status</span>
-                    <span class="lead-detail-badge">User-provided</span>
+              <div class="lead-drawer-scroll" id="lead-drawer-scroll">
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-overview" aria-labelledby="lead-tab-overview" tabindex="0">
+                  <!-- Prospecting progress: each step reports its real state only. -->
+                  <div class="lead-drawer-section">
+                    <h3 class="lead-drawer-section-title">Prospecting progress</h3>
+                    <ol class="lead-drawer-pipeline" id="lead-drawer-pipeline"></ol>
                   </div>
-                  <div class="form-group">
-                    <label for="lead-status-phone">Phone</label>
-                    <select id="lead-status-phone" data-status-field="phoneStatus">
-                      <option value="unknown">Unknown</option>
-                      <option value="verified">Verified</option>
-                      <option value="unverified">Unverified</option>
-                      <option value="invalid">Invalid</option>
-                    </select>
+                  <div class="lead-drawer-section">
+                    <h3 class="lead-drawer-section-title">Contact</h3>
+                    <div class="lead-drawer-fields" id="lead-drawer-contact-fields"></div>
                   </div>
-                  <div class="form-group">
-                    <label for="lead-status-email">Email</label>
-                    <select id="lead-status-email" data-status-field="emailStatus">
-                      <option value="unknown">Unknown</option>
-                      <option value="verified">Verified</option>
-                      <option value="unverified">Unverified</option>
-                      <option value="risky">Risky</option>
-                    </select>
+                  <div class="lead-drawer-section">
+                    <h3 class="lead-drawer-section-title">Business</h3>
+                    <div class="lead-drawer-fields" id="lead-drawer-business-fields"></div>
                   </div>
-                  <div class="form-group">
-                    <label for="lead-status-website">Website</label>
-                    <select id="lead-status-website" data-status-field="websiteStatus">
-                      <option value="unknown">Unknown</option>
-                      <option value="live">Live</option>
-                      <option value="dead">Dead</option>
-                      <option value="redirect">Redirect</option>
-                    </select>
+                  <div class="lead-drawer-section lead-drawer-section-edit">
+                    <h3 class="lead-drawer-section-title">Qualification</h3>
+
+                    <!-- B6 user-owned fields. Never written by collection, import or a
+                         provider: the Lead Profile Save button is the only writer, via
+                         collector:update-lead. No autosave. -->
+                    <div class="lead-detail-b6" id="lead-detail-b6" hidden>
+                      <div class="form-group">
+                        <label for="lead-detail-qualification">Qualification</label>
+                        <select id="lead-detail-qualification">
+                          <option value="unqualified">Unqualified</option>
+                          <option value="qualified">Qualified</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label for="lead-detail-tag-input">Tags</label>
+                        <div class="lead-tag-list" id="lead-detail-tag-list"></div>
+                        <div class="lead-tag-add">
+                          <input type="text" id="lead-detail-tag-input" maxlength="50" placeholder="Add a tag">
+                          <button type="button" class="btn btn-sm" id="btn-lead-detail-add-tag">Add tag</button>
+                        </div>
+                      </div>
+                      <div class="form-group">
+                        <label for="lead-detail-notes">Notes</label>
+                        <textarea id="lead-detail-notes" rows="4" maxlength="5000" placeholder="Notes"></textarea>
+                      </div>
+                      <div class="form-actions">
+                        <button type="button" class="btn btn-sm" id="btn-save-lead-detail">Save</button>
+                      </div>
+                    </div>
+                    <p class="lead-drawer-save-state" id="lead-drawer-save-state" role="status" aria-live="polite"></p>
                   </div>
-                  <div class="form-group">
-                    <label for="lead-status-business">Business</label>
-                    <select id="lead-status-business" data-status-field="businessStatus">
-                      <option value="unknown">Unknown</option>
-                      <option value="active">Active</option>
-                      <option value="closed">Closed</option>
-                    </select>
+                  <div class="lead-drawer-section lead-drawer-section-edit">
+                    <!-- P1-A: read-only data-quality signals derived on this device.
+                         No value here is persisted, and none of it is a third-party
+                         verification claim. -->
+                    <div class="lead-detail-quality" id="lead-detail-quality" hidden>
+                      <div class="lead-detail-quality-header">
+                        <span class="lead-detail-quality-title">Data Quality</span>
+                        <span class="lead-detail-badge">Derived locally</span>
+                      </div>
+                      <div class="lead-detail-quality-body" id="lead-detail-quality-body"></div>
+                      <!-- P1-C: user-provided statuses. A user assertion about this
+                           lead, never a third-party verification. -->
+                      <div class="lead-user-status" id="lead-user-status" hidden>
+                        <div class="lead-detail-quality-header">
+                          <span class="lead-detail-quality-title">Your status</span>
+                          <span class="lead-detail-badge">User-provided</span>
+                        </div>
+                        <div class="form-group">
+                          <label for="lead-status-phone">Phone</label>
+                          <select id="lead-status-phone" data-status-field="phoneStatus">
+                            <option value="unknown">Unknown</option>
+                            <option value="verified">Verified</option>
+                            <option value="unverified">Unverified</option>
+                            <option value="invalid">Invalid</option>
+                          </select>
+                        </div>
+                        <div class="form-group">
+                          <label for="lead-status-email">Email</label>
+                          <select id="lead-status-email" data-status-field="emailStatus">
+                            <option value="unknown">Unknown</option>
+                            <option value="verified">Verified</option>
+                            <option value="unverified">Unverified</option>
+                            <option value="risky">Risky</option>
+                          </select>
+                        </div>
+                        <div class="form-group">
+                          <label for="lead-status-website">Website</label>
+                          <select id="lead-status-website" data-status-field="websiteStatus">
+                            <option value="unknown">Unknown</option>
+                            <option value="live">Live</option>
+                            <option value="dead">Dead</option>
+                            <option value="redirect">Redirect</option>
+                          </select>
+                        </div>
+                        <div class="form-group">
+                          <label for="lead-status-business">Business</label>
+                          <select id="lead-status-business" data-status-field="businessStatus">
+                            <option value="unknown">Unknown</option>
+                            <option value="active">Active</option>
+                            <option value="closed">Closed</option>
+                          </select>
+                        </div>
+                        <div class="form-actions">
+                          <button type="button" class="btn btn-sm" id="btn-save-lead-status">Save status</button>
+                        </div>
+                        <p class="lead-detail-quality-note">
+                          Your status is a note you make about this lead. It is not checked against any external service.
+                        </p>
+                      </div>
+                      <p class="lead-detail-quality-note">
+                        Signals are computed on this device from the stored lead data. They are not third-party verification.
+                      </p>
+                    </div>
+                    <p class="lead-drawer-save-state" id="lead-drawer-status-save-state" role="status" aria-live="polite"></p>
                   </div>
-                  <div class="form-actions">
-                    <button type="button" class="btn btn-sm" id="btn-save-lead-status">Save status</button>
+                  <div class="lead-drawer-section">
+                    <!-- P1-D: the company foundation, read-only. companyKey is a
+                         deterministic grouping key derived on read (website host,
+                         else title + address); companyId is a nullable system pointer.
+                         No company entity, no merge action, no company search. -->
+                    <div class="lead-detail-company" id="lead-detail-company" hidden>
+                      <div class="lead-detail-quality-header">
+                        <span class="lead-detail-quality-title">Company</span>
+                        <span class="lead-detail-badge">Derived locally</span>
+                      </div>
+                      <div class="lead-detail-quality-body" id="lead-detail-company-body"></div>
+                      <p class="lead-detail-quality-note">
+                        Leads sharing a company key belong to the same website host. Nothing is merged or verified here.
+                      </p>
+                    </div>
                   </div>
-                  <p class="lead-detail-quality-note">
-                    Your status is a note you make about this lead. It is not checked against any external service.
-                  </p>
-                </div>
-                <p class="lead-detail-quality-note">
-                  Signals are computed on this device from the stored lead data. They are not third-party verification.
-                </p>
-              </div>
-              <!-- P1-D: the company foundation, read-only. companyKey is a
-                   deterministic grouping key derived on read (website host,
-                   else title + address); companyId is a nullable system pointer.
-                   No company entity, no merge action, no company search. -->
-              <div class="lead-detail-company" id="lead-detail-company" hidden>
-                <div class="lead-detail-quality-header">
-                  <span class="lead-detail-quality-title">Company</span>
-                  <span class="lead-detail-badge">Derived locally</span>
-                </div>
-                <div class="lead-detail-quality-body" id="lead-detail-company-body"></div>
-                <p class="lead-detail-quality-note">
-                  Leads sharing a company key belong to the same website host. Nothing is merged or verified here.
-                </p>
+                  <!-- The complete stored record, rendered by the unchanged B3 template. -->
+                  <details class="lead-drawer-section lead-drawer-record">
+                    <summary class="lead-drawer-section-title">All stored fields</summary>
+                    <div class="lead-detail-body" id="lead-detail-body"></div>
+                  </details>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-research" aria-labelledby="lead-tab-research" tabindex="0" hidden>
+                  <div class="lead-drawer-section">
+                    <h3 class="lead-drawer-section-title">Research summary</h3>
+                    <div class="lead-drawer-fields" id="lead-drawer-research-summary"></div>
+                  </div>
+                  <div class="lead-drawer-section">
+                    <!-- Zuni-SEO website research. Availability is one of nine distinct
+                         states; every value shown here is third-party text and is
+                         rendered as untrusted text, never as instructions. Refresh forces a
+                         new run; Import opens a file dialog owned by main. -->
+                    <div class="lead-detail-research" id="lead-detail-research" hidden>
+                      <div class="lead-detail-research-header">
+                        <span class="lead-detail-research-title">Website Research</span>
+                        <span class="lead-detail-badge">Zuni-SEO</span>
+                      </div>
+                      <div class="lead-detail-research-body" id="lead-detail-research-body">
+                        <p class="lead-detail-research-empty">Not checked yet.</p>
+                      </div>
+                      <div class="lead-detail-research-actions">
+                        <button type="button" class="btn btn-sm" id="btn-research-refresh">Refresh research</button>
+                        <button type="button" class="btn btn-sm btn-secondary" id="btn-research-import">Import Zuni-SEO file</button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-evidence" aria-labelledby="lead-tab-evidence" tabindex="0" hidden>
+                  <div class="lead-drawer-section" id="lead-drawer-evidence" aria-live="polite"></div>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-icp" aria-labelledby="lead-tab-icp" tabindex="0" hidden>
+                  <div class="lead-drawer-section" id="lead-drawer-icp"></div>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-pitch" aria-labelledby="lead-tab-pitch" tabindex="0" hidden>
+                  <div class="lead-drawer-section" id="lead-drawer-pitch"></div>
+                </section>
               </div>
             </div>
           </div>

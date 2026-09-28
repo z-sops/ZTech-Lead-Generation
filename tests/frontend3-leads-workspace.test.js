@@ -582,8 +582,11 @@ test('22. clicking a lead still opens the existing detail modal', () => {
   assert.ok(handler.includes("tr.querySelector('.number-check')"), 'the id still comes from the row checkbox');
   assert.ok(handler.includes('openLeadDetail(leadId)'), 'the existing detail path is used');
   assert.ok(handler.includes("e.target.closest('input, a, button')"), 'selecting a row does not open the detail');
-  assert.ok(htmlSource.includes('id="lead-detail-overlay"'), 'the F5 drawer was NOT built in F3');
-  assert.ok(!htmlSource.includes('lead-drawer'), 'no drawer exists yet');
+  // F5 has since built the drawer. Structural update: it is not a second
+  // surface - it is this same B3 overlay, opened by this same row handler.
+  assert.ok(htmlSource.includes('id="lead-detail-overlay"'), 'the B3 overlay is still the detail surface');
+  assert.strictEqual((htmlSource.match(/role="dialog"[^>]*aria-labelledby="lead-drawer-name"/g) || []).length, 1,
+    'the F5 drawer is that overlay\'s single dialog, not a parallel one');
   assert.ok(!rendererSource.includes('shiftKey'), 'no fabricated split-view interaction');
 });
 

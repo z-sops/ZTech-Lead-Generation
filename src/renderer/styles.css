@@ -1068,9 +1068,10 @@ textarea {
   }
 }
 
-/* Lead Detail overlay (B3) — F1: spacing/radius/shadow to tokens. The overlay
-   stays a centred modal; it becomes a drawer in a later batch. z-index keeps
-   its current value via --z-overlay (see the z-index note in :root). */
+/* Lead Detail overlay (B3) — F1: spacing/radius/shadow to tokens. These rules
+   are the centred modal; F5 renders the same overlay as a drawer (see the F5
+   block) and keeps this modal as its alternate layout. z-index keeps its current value
+   via --z-overlay (see the z-index note in :root). */
 .lead-detail-overlay {
   position: fixed;
   inset: 0;
@@ -1414,6 +1415,547 @@ textarea {
   margin-bottom: var(--space-3);
 }
 
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F5: Lead Detail Drawer.
+
+   The B3 #lead-detail-overlay rendered as a right-side drawer. The overlay no
+   longer dims or blocks the Leads table (pointer-events pass through), so the
+   table stays visible and usable beside it. The header is outside the scroll
+   region, so it is always visible. data-layout="modal" (renderer-local
+   layout flag) keeps the original centred modal from the rules above with
+   every section stacked. Stays on the existing overlay z-index, under toasts.
+   ========================================================================== */
+.lead-detail-overlay[data-layout="drawer"] {
+  background: transparent;
+  pointer-events: none;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.lead-detail-overlay[data-layout="drawer"] .lead-drawer {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  width: clamp(420px, 38vw, 520px);
+  max-width: 100vw;
+  height: 100%;
+  max-height: none;
+  overflow: hidden;
+  background: var(--bg-surface);
+  border: 0;
+  border-left: 1px solid var(--border-1);
+  border-radius: 0;
+  box-shadow: var(--shadow-2);
+}
+
+.lead-drawer:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.lead-drawer-header {
+  display: block;
+  flex: none;
+  padding: var(--space-4) var(--space-5) 0;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lead-drawer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lead-drawer-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lead-drawer-position {
+  font-size: var(--font-11);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.lead-drawer-header .lead-detail-title {
+  flex: 1;
+  text-align: right;
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.lead-drawer-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: var(--font-16);
+  line-height: 1;
+  color: var(--text-2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.lead-drawer-icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.lead-drawer-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lead-drawer-name {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--font-16);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-subtitle {
+  margin: 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-contact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  font-size: var(--font-12);
+}
+
+.lead-drawer-contact-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lead-drawer-contact-text {
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-action {
+  flex: none;
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--accent-f2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.lead-drawer-action:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent-f2);
+}
+
+.lead-drawer-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.lead-drawer-badges:empty {
+  display: none;
+}
+
+.lead-drawer-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin: var(--space-4) calc(-1 * var(--space-3)) 0;
+  overflow-x: auto;
+}
+
+.lead-drawer-tab {
+  flex: none;
+  padding: var(--space-3) var(--space-4);
+  font: inherit;
+  font-size: var(--font-13);
+  color: var(--text-2);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.lead-drawer-tab:hover {
+  color: var(--text-1);
+}
+
+.lead-drawer-tab[aria-selected="true"] {
+  font-weight: 600;
+  color: var(--accent-f2);
+  border-bottom-color: var(--accent-f2);
+}
+
+.lead-drawer-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.lead-drawer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.lead-drawer-panel {
+  padding: 0 var(--space-5) var(--space-6);
+}
+
+.lead-drawer-panel:focus-visible {
+  outline-offset: -2px;
+}
+
+.lead-drawer-section {
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lead-drawer-section:last-child {
+  border-bottom: 0;
+}
+
+.lead-drawer-section-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.lead-drawer-subhead {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.lead-drawer-fields {
+  display: flex;
+  flex-direction: column;
+}
+
+.lead-drawer-field {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  font-size: var(--font-13);
+}
+
+.lead-drawer-field-label {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lead-drawer-field-value {
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-field-value.is-empty {
+  color: var(--text-3);
+}
+
+.lead-drawer-pipeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lead-drawer-step {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lead-drawer-step-label {
+  display: block;
+  font-size: var(--font-11);
+  color: var(--text-3);
+}
+
+.lead-drawer-step-state {
+  display: block;
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.lead-drawer-step[data-tone="ok"] .lead-drawer-step-state {
+  color: var(--ok);
+}
+
+.lead-drawer-step[data-tone="busy"] .lead-drawer-step-state {
+  color: var(--warn);
+}
+
+.lead-drawer-step[data-tone="bad"] .lead-drawer-step-state {
+  color: var(--danger-f2);
+}
+
+.lead-drawer-step[data-tone="off"] .lead-drawer-step-state {
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.lead-drawer-empty {
+  margin: var(--space-2) 0;
+  font-size: var(--font-13);
+  color: var(--text-1);
+}
+
+.lead-drawer-muted {
+  margin: var(--space-2) 0;
+  font-size: var(--font-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.lead-drawer-warning {
+  margin: var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-12);
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lead-drawer-state-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lead-drawer-state {
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.lead-drawer-state[data-state="unknown"] {
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.lead-drawer-plain-list {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-12);
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+.lead-drawer-evidence-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lead-drawer-evidence-item {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-1);
+}
+
+.lead-drawer-evidence-fact {
+  font-size: var(--font-13);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-evidence-meta,
+.lead-drawer-refs {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-refs {
+  color: var(--info);
+}
+
+.lead-drawer-untrusted {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--untrusted-bg);
+  border-left: 2px solid var(--untrusted-border);
+}
+
+.lead-drawer-untrusted-label {
+  display: block;
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.lead-drawer-untrusted-text {
+  font-size: var(--font-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-save-state {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lead-drawer-save-state:empty {
+  display: none;
+}
+
+.lead-drawer-save-state[data-state="ok"] {
+  color: var(--ok);
+}
+
+.lead-drawer-save-state[data-state="error"] {
+  color: var(--danger-f2);
+}
+
+.lead-drawer-record > summary {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* The existing B3/B6/P1/A7 regions sit inside drawer sections, which carry
+   the separators; their own modal-era frame is dropped here only. */
+.lead-drawer .lead-detail-body,
+.lead-drawer .lead-detail-b6,
+.lead-drawer .lead-detail-quality,
+.lead-drawer .lead-detail-company,
+.lead-drawer .lead-detail-research {
+  padding: 0;
+  border-top: 0;
+}
+
+.lead-drawer .lead-detail-row {
+  border-bottom-color: var(--border-1);
+}
+
+/* Compact controls for the existing editing forms, inside the drawer only. */
+.lead-drawer .form-group {
+  flex: none;
+  margin-bottom: var(--space-4);
+}
+
+.lead-drawer .form-group label {
+  color: var(--text-2);
+}
+
+.lead-drawer select,
+.lead-drawer input[type="text"],
+.lead-drawer textarea {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.lead-drawer .form-actions {
+  margin-top: 0;
+}
+
+.lead-drawer .lead-user-status {
+  border-top-color: var(--border-1);
+}
+
+.lead-drawer .lead-detail-research-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.lead-drawer .lead-detail-research-body {
+  font-size: var(--font-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer .lead-detail-research-quotes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer .lead-detail-research-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+/* The lead whose record is open, marked in the table beside the drawer. */
+#numbers-table-body tr.lead-row-open td {
+  background: var(--bg-selected);
+}
+
+#numbers-table-body tr.lead-row-open td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent-f2);
+}
+
+/* Modal layout: the original centred modal, every section stacked, no tabs. */
+.lead-detail-overlay[data-layout="modal"] .lead-drawer-tabs {
+  display: none;
+}
+
+.lead-detail-overlay[data-layout="modal"] .lead-drawer-panel[hidden] {
+  display: block;
+}
+
+/* Narrow window: the drawer becomes a full-width panel over the workspace.
+   The table underneath keeps its own layout and is not reflowed. */
+@media (max-width: 960px) {
+  .lead-detail-overlay[data-layout="drawer"] .lead-drawer {
+    width: 100vw;
+    border-left: 0;
+  }
+
+  .lead-drawer-field {
+    grid-template-columns: 104px minmax(0, 1fr) auto;
+  }
+}
 
 /* ==========================================================================
    ZTech Frontend 2.0 - F3: Leads workspace.
