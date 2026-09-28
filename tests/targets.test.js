@@ -651,9 +651,25 @@ function test(name, fn) {
       locations: ['Bangkok'], requiredFields: ['phone'], optionalFields: 'email',
       exclusions: 'Casino', status: 'active', createdAt: 'forged', updatedAt: 'forged', extra: 'ignored'
     });
+    // A9 declared update: this assertion used to pin the P1-F omission where the
+    // three list fields were shape-checked but dropped from the output, so every
+    // save through targets:save stored []. The validator now passes the checked
+    // values through unchanged; the store remains the one place that normalises
+    // and caps them (see test 19 for the full validator -> store flow).
     assert.deepStrictEqual(accepted, {
-      name: 'Bangkok HVAC', industry: 'HVAC', requiredFields: ['phone'], optionalFields: ['email'], status: 'active'
+      name: 'Bangkok HVAC', industry: 'HVAC', businessTypes: 'A, B', locations: ['Bangkok'],
+      exclusions: 'Casino', requiredFields: ['phone'], optionalFields: ['email'], status: 'active'
     }, 'only the approved fields survive; system timestamps are never read');
+    // An omitted list stays omitted (the store reads it as an empty list), and an
+    // array is copied, never shared with the caller.
+    const omitted = validateTarget({ name: 'x' });
+    for (const field of ['businessTypes', 'locations', 'exclusions']) {
+      assert.ok(!(field in omitted), field + ' is not invented when omitted');
+    }
+    const input = ['Bangkok'];
+    const copied = validateTarget({ name: 'x', locations: input });
+    assert.deepStrictEqual(copied.locations, ['Bangkok']);
+    assert.notStrictEqual(copied.locations, input, 'the list is a copy');
     for (const rule of storeApi.TARGET_FIELD_ALLOWLIST) {
       assert.ok(validateTarget({ name: 'x', requiredFields: [rule] }).requiredFields.includes(rule), 'accepted: ' + rule);
     }
@@ -763,6 +779,80 @@ function test(name, fn) {
   });
 
   // --- 18. dependencies and logging ---
+
+  // --- 19. A9 regression: the real validator -> store -> read -> edit flow ---
+  test('19. business types, locations and exclusions survive save, read and edit (A9)', async () => {
+    const validateTarget = loadValidator('validateTargetPayload', '// B2 query layer: the only sort identifiers');
+    for (const [storage, open] of [['sql', openStore], ['json', openJsonStore]]) {
+      reset();
+      const store = await open();
+      const readBack = async (id) => (await store.listTargets()).rows.find(row => row.id === id);
+
+      // Create exactly as the renderer does: the three lists as the text the user typed.
+      const created = await store.saveTarget(validateTarget({
+        name: 'Baku Dental', industry: 'Dental',
+        businessTypes: 'Dentist, Dental Clinic, dentist', locations: 'Baku,\nAbsheron', exclusions: 'Casino, closed',
+        requiredFields: ['phone'], status: 'active'
+      }));
+      assert.strictEqual(created.success, true, storage + ': created');
+      let row = await readBack(created.id);
+      // Normalised by the store: trimmed, split on commas and newlines, duplicates
+      // removed case-insensitively with the first kept, user order preserved.
+      assert.deepStrictEqual(row.businessTypes, ['Dentist', 'Dental Clinic'], storage + ': businessTypes stored');
+      assert.deepStrictEqual(row.locations, ['Baku', 'Absheron'], storage + ': locations stored');
+      assert.deepStrictEqual(row.exclusions, ['Casino', 'closed'], storage + ': exclusions stored');
+
+      // Edit an unrelated field, re-sending the lists the way the editor shows them.
+      const renamed = await store.saveTarget(validateTarget({
+        id: created.id, name: 'Baku Dental Clinics', industry: row.industry,
+        businessTypes: row.businessTypes.join(', '), locations: row.locations.join(', '),
+        exclusions: row.exclusions.join(', '), requiredFields: row.requiredFields, status: row.status
+      }));
+      assert.strictEqual(renamed.updated, true, storage + ': updated');
+      row = await readBack(created.id);
+      assert.strictEqual(row.name, 'Baku Dental Clinics');
+      assert.deepStrictEqual([row.businessTypes, row.locations, row.exclusions],
+        [['Dentist', 'Dental Clinic'], ['Baku', 'Absheron'], ['Casino', 'closed']], storage + ': an edit keeps all three lists');
+
+      // Edit the lists themselves (array form this time).
+      await store.saveTarget(validateTarget({
+        id: created.id, name: row.name, businessTypes: ['Orthodontist'], locations: ['Ganja', 'Baku'], exclusions: []
+      }));
+      row = await readBack(created.id);
+      assert.deepStrictEqual([row.businessTypes, row.locations, row.exclusions],
+        [['Orthodontist'], ['Ganja', 'Baku'], []], storage + ': list edits are stored exactly');
+
+      // The existing limits still hold on this path: refused, never truncated.
+      const tooMany = Array.from({ length: 21 }, (_, i) => 'term' + i).join(', ');
+      for (const field of ['businessTypes', 'locations', 'exclusions']) {
+        const over = await store.saveTarget(validateTarget({ name: 'Limits', [field]: tooMany }));
+        assert.deepStrictEqual(over, { success: false, error: 'Invalid target: ' + field }, storage + ': 21 terms refused for ' + field);
+        const long = await store.saveTarget(validateTarget({ name: 'Limits', [field]: 'x'.repeat(51) }));
+        assert.deepStrictEqual(long, { success: false, error: 'Invalid target: ' + field }, storage + ': 51 characters refused for ' + field);
+        const atLimit = await store.saveTarget(validateTarget({
+          name: 'Limits ' + field, [field]: Array.from({ length: 20 }, (_, i) => 'y'.repeat(49) + String.fromCharCode(97 + i)).join(', ')
+        }));
+        assert.strictEqual(atLimit.success, true, storage + ': 20 terms of 50 characters accepted for ' + field);
+      }
+      // Shape checks in main are unchanged.
+      expectInvalid(validateTarget, { name: 'ok', exclusions: 42 });
+      expectInvalid(validateTarget, { name: 'ok', businessTypes: ['ok', 7] });
+
+      // Persisted, not just cached: SQL is reopened from the database file; the
+      // JSON branch is read back from targets.json (the harness JSON store is a
+      // SQL store with db detached, so a reopen would not read the file).
+      let persisted;
+      if (storage === 'sql') {
+        const reopened = await openStore();
+        persisted = (await reopened.listTargets()).rows.find(r => r.id === created.id);
+      } else {
+        const onDisk = JSON.parse(fs.readFileSync(targetsFile, 'utf8'));
+        persisted = storeApi.normalizeTargetRow(onDisk.find(r => r.id === created.id));
+      }
+      assert.deepStrictEqual([persisted.businessTypes, persisted.locations, persisted.exclusions],
+        [['Orthodontist'], ['Ganja', 'Baku'], []], storage + ': survives on disk');
+    }
+  });
 
   test('18. no dependency change and no PII logging', () => {
     // The only production dependency change in the project's history is the

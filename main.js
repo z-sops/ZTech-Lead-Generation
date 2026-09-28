@@ -461,7 +461,13 @@ function validateTargetPayload(payload) {
   }
   out.name = validateTargetText(payload.name, 'name', MAX_TARGET_NAME_LENGTH, { required: true });
   out.industry = validateTargetText(payload.industry, 'industry', MAX_TARGET_INDUSTRY_LENGTH);
-  for (const field of TARGET_LIST_FIELDS) assertTargetList(payload[field], field);
+  // A9: the checked lists are passed through unchanged (an array is copied);
+  // the store normalises and caps them. An omitted list stays omitted.
+  for (const field of TARGET_LIST_FIELDS) {
+    assertTargetList(payload[field], field);
+    const value = payload[field];
+    if (value !== undefined && value !== null) out[field] = Array.isArray(value) ? value.slice() : value;
+  }
   out.requiredFields = validateTargetFieldList(payload.requiredFields, 'requiredFields');
   out.optionalFields = validateTargetFieldList(payload.optionalFields, 'optionalFields');
   for (const name of out.requiredFields) {
