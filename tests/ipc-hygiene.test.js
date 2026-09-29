@@ -35,6 +35,14 @@ function researchChannels() {
   return [...src.matchAll(/ipcMain\.handle\(CHANNELS\.(\w+)/g)].map(m => `prospect-research:${m[1].replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`);
 }
 
+// A10: the five Lead Intelligence channels are registered by registerOutreachIpc
+// in src/main/lead-intelligence/outreach-ipc.js (a narrowly scoped registrar), so
+// they are read from that file's channel constant rather than from main.js.
+function leadIntelChannels() {
+  const src = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+  return [...src.matchAll(/'(lead-intel:[a-z-]+)'/g)].map(m => m[1]);
+}
+
 function preloadChannels(src) {
   return [...src.matchAll(/invoke\('([^']+)'/g)].map(m => m[1]);
 }
@@ -107,7 +115,9 @@ test('6. all 21 live main IPC channels present exactly once', () => {
 });
 
 test('7. preload channel set matches main; only documented exception', () => {
-  const main = new Set([...mainChannels(mainSource), ...researchChannels()]);
+  // A10 declared lock update: the five lead-intel:* channels are registered by the
+  // narrowly scoped outreach registrar, so they join the main channel set here.
+  const main = new Set([...mainChannels(mainSource), ...researchChannels(), ...leadIntelChannels()]);
   const preload = [...new Set(preloadChannels(preloadSource))];
   for (const ch of preload) {
     assert.ok(main.has(ch), 'preload channel missing in main: ' + ch);

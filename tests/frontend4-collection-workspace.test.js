@@ -328,8 +328,10 @@ test('15. no backend, preload or dependency surface changed', () => {
   // F8 declared lock update: +1 intelligence:icp.
   assert.strictEqual(channels, 34, '34 main IPC handlers');
   const invokes = (preloadSource.match(/ipcRenderer\.invoke/g) || []).length;
-  // F7 declared lock update: +1 preload method (research.list).
-  assert.strictEqual(invokes, 41, 'the preload surface is 41 channels');
+  // A10 declared lock update: 41 -> 46 preload invocations (the five approved
+  // Lead Intelligence methods). main.js still registers exactly 34 literal
+  // channels; the lead-intel:* channels come from their own scoped registrar.
+  assert.strictEqual(invokes, 46, 'the preload surface is 46 channels');
   const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(htmlSource);
   assert.strictEqual(csp[1],
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",

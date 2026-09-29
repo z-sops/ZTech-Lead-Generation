@@ -278,8 +278,12 @@ test('19. no IPC, channel, or dependency was added', () => {
   }
   assert.strictEqual((htmlSource.match(/ipcRenderer\.invoke\(/g) || []).length, 0,
     'no invoke was added to the document');
+  // A10 declared lock update: 41 -> 46 preload invocations. The single change is
+  // the five approved Lead Intelligence methods (3 pitch + 2 outreach) under the
+  // new `ztechLeadIntel` key. The appAPI surface is untouched and no renderer
+  // invoke was added to the document.
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 41, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list and the F8 ICP read');
+    .split('ipcRenderer.invoke').length - 1, 46, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read and the five A10 Lead Intelligence methods');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {

@@ -37,7 +37,7 @@ const { EvidencePacketEnrichmentProvider } = require('./enrichment/EvidencePacke
  * @param {object} [deps.emailProvider] optional EmailProvider (FakeEmailProvider in dev/tests only)
  * @param {object[]} [deps.enrichmentProviders] extra EnrichmentProvider instances (verified adapters or fakes)
  */
-function createLeadIntelligence({ store, leadSource, targetSource = null, providers = new Map(), round1 = null, config = {}, clock = () => new Date(), logger = console, llmComplete = null, emailProvider = null, enrichmentProviders = [] }) {
+function createLeadIntelligence({ store, leadSource, targetSource = null, providers = new Map(), round1 = null, config = {}, clock = () => new Date(), logger = console, llmComplete = null, emailProvider = null, enrichmentProviders = [], round1ResultMapper = undefined }) {
   if (!store || !leadSource) throw new TypeError('store and leadSource are required');
   const research = config.research || {};
   const mode = research.mode || 'module';
@@ -75,7 +75,10 @@ function createLeadIntelligence({ store, leadSource, targetSource = null, provid
     });
     gateway = new ProspectIntelligenceGateway({ leadSource, store, coordinator, freshness, config, clock, fieldMap, limitedPageThreshold, logger });
   } else {
-    bridge = new Round1ResearchBridge({ round1, store, leadSource, freshness, fieldMap, recordPaths: research.round1RecordPaths, clock, logger, limitedPageThreshold });
+    // A10: the Round-1 record -> ProviderResult mapping is an INJECTED mapper, so
+    // the bridge holds no Round-1-specific knowledge. Left undefined, the bridge
+    // uses its own default mapper.
+    bridge = new Round1ResearchBridge({ round1, store, leadSource, freshness, fieldMap, recordPaths: research.round1RecordPaths, clock, logger, limitedPageThreshold, ...(round1ResultMapper ? { mapper: round1ResultMapper } : {}) });
   }
 
   const ecfg = config.enrichment || {};

@@ -213,7 +213,10 @@ test('11. the settings contract is unchanged', () => {
   assert.ok(preloadSource.includes("load: () => ipcRenderer.invoke('settings:load')"), 'preload load');
   const handlers = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((m) => m[1]);
   assert.strictEqual(handlers.length, 34, 'F9 adds no IPC channel');
-  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 41, 'F9 adds no preload method');
+  // A10 declared lock update: 41 -> 46 preload invocations. F9 itself still adds
+  // no preload method; the increase is the five approved Lead Intelligence
+  // methods added by A10.
+  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 46, 'A10 adds the five Lead Intelligence preload methods');
   assert.ok(vaultSource.includes("const CREDENTIAL_FIELDS = ['apiKey', 'taskKey'];"), 'credentialVault untouched');
   // The existing save / clear / test handlers keep their payloads.
   assert.ok(/apiKey: document\.getElementById\('settings-apikey'\)\.value\.trim\(\),\s*taskKey: document\.getElementById\('settings-task-key'\)\.value\.trim\(\),\s*proxyUrl: document\.getElementById\('settings-proxy-url'\)\.value\.trim\(\),\s*research: collectResearchSettings\(\)/.test(rendererSource),

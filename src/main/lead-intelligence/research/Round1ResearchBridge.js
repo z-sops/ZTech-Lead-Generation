@@ -7,7 +7,7 @@ const { NotFoundError } = require('../core/errors');
 const { toLeadView, identityFromView } = require('../contracts/leadView');
 const { buildEvidencePacket, validateEvidencePacket } = require('../contracts/evidencePacket');
 const { validateProviderResult } = require('../providers/ProspectResearchProvider');
-const { mapZuniSeoEnvelope } = require('../providers/envelopeMapper');
+const { round1PacketMapper } = require('../round1PacketMapper');
 const { detectChanges } = require('./changeDetection');
 const { RESEARCH_STATES } = require('../contracts/constants');
 
@@ -26,19 +26,25 @@ const { RESEARCH_STATES } = require('../contracts/constants');
  * VERIFY (QwenCoder): ROUND1_RECORD_PATHS and ROUND1_STATE_MAP must be checked against a
  * real `prospect_research` row and round-1's state names. Add the real path / state to
  * the FRONT of each list; do not change the EvidencePacket.
+ *
+ * A10: the paths below now lead with the GENUINE Round-1 record shape written by the
+ * round-1 coordinator (camelCase `record_json`: leadRef, phase, website, providerJobId,
+ * createdAt, updatedAt, finishedAt, failureReason, failureMessage). The older
+ * snake_case aliases are kept behind them, so nothing that read before still reads.
+ * The result mapping itself is NOT here: it is the injected mapper.
  */
 const ROUND1_RECORD_PATHS = Object.freeze({
   recordId: ['id', 'record_id', 'recordId', 'request_id', 'requestId'],
-  leadId: ['lead_id', 'leadId', 'number_id', 'numberId'],
-  providerJobId: ['provider_job_id', 'providerJobId', 'job_id', 'jobId', 'zuni_job_id'],
-  state: ['state', 'status'],
-  domain: ['domain', 'requested_domain', 'requestedDomain', 'url', 'target_url'],
-  createdAt: ['created_at', 'createdAt', 'requested_at', 'requestedAt'],
-  updatedAt: ['updated_at', 'updatedAt'],
-  completedAt: ['completed_at', 'completedAt', 'finished_at', 'finishedAt'],
-  errorCode: ['error_code', 'errorCode', 'last_error_code', 'lastErrorCode'],
-  errorMessage: ['error_message', 'errorMessage', 'last_error_message', 'lastErrorMessage'],
-  result: ['result', 'result_json', 'resultJson', 'envelope', 'envelope_json', 'payload'],
+  leadId: ['leadRef', 'lead_ref', 'lead_id', 'leadId', 'number_id', 'numberId'],
+  providerJobId: ['providerJobId', 'provider_job_id', 'job_id', 'jobId', 'zuni_job_id'],
+  state: ['phase', 'state', 'status'],
+  domain: ['website', 'domain', 'requested_domain', 'requestedDomain', 'url', 'target_url'],
+  createdAt: ['createdAt', 'created_at', 'requested_at', 'requestedAt'],
+  updatedAt: ['updatedAt', 'updated_at'],
+  completedAt: ['finishedAt', 'completed_at', 'completedAt', 'finished_at', 'finishedAt'],
+  errorCode: ['failureReason', 'failure_reason', 'error_code', 'errorCode', 'last_error_code', 'lastErrorCode'],
+  errorMessage: ['failureMessage', 'failure_message', 'error_message', 'errorMessage', 'last_error_message', 'lastErrorMessage'],
+  result: ['packet', 'result', 'result_json', 'resultJson', 'envelope', 'envelope_json', 'payload'],
 });
 
 const ROUND1_STATE_MAP = Object.freeze({
@@ -128,10 +134,11 @@ function jobFromRecord(rec, packetId = null) {
 }
 
 class Round1ResearchBridge {
-  constructor({ round1, store, leadSource, freshness, fieldMap, recordPaths, clock = () => new Date(), logger = console, limitedPageThreshold }) {
+  constructor({ round1, store, leadSource, freshness, fieldMap, recordPaths, clock = () => new Date(), logger = console, limitedPageThreshold, mapper = round1PacketMapper }) {
     for (const m of ['getLatest', 'listByLead', 'listLatestPerLead']) {
       if (!round1 || typeof round1[m] !== 'function') throw new TypeError(`round1 port is missing ${m}()`);
     }
+    if (typeof mapper !== 'function') throw new TypeError('mapper must be a function');
     this.round1 = round1;
     this.store = store;
     this.leadSource = leadSource;
@@ -141,6 +148,7 @@ class Round1ResearchBridge {
     this.clock = clock;
     this.logger = logger;
     this.limitedPageThreshold = limitedPageThreshold;
+    this._mapper = mapper;
     this._syncing = new Map();
   }
 
@@ -199,7 +207,7 @@ class Round1ResearchBridge {
 
     let result;
     try {
-      result = mapZuniSeoEnvelope(rec.result, { requestedDomain: d.host, providerJobId: rec.providerJobId || rec.recordId });
+      result = this._mapper(rec, { requestedDomain: d.host, providerJobId: rec.providerJobId || rec.recordId });
     } catch {
       return this._reject(rec, 'MALFORMED_RESULT');
     }
@@ -257,6 +265,19 @@ class Round1ResearchBridge {
     }
     return { synced, skipped };
   }
+
+  /** Read-only port for runtime use — does NOT mutate or control the Round-1 engine. */
+  getLatest(leadId) {
+    return this.round1.getLatest(leadId);
+  }
+
+  listByLead(leadId) {
+    return this.round1.listByLead(leadId);
+  }
+
+  listLatestPerLead() {
+    return this.round1.listLatestPerLead();
+  }
 }
 
-module.exports = { Round1ResearchBridge, normalizeRound1Record, jobFromRecord, ROUND1_RECORD_PATHS, ROUND1_STATE_MAP, ROUND1_PROVIDER: PROVIDER };
+module.exports = { Round1ResearchBridge, normalizeRound1Record, jobFromRecord, ROUND1_RECORD_PATHS, ROUND1_STATE_MAP, ROUND1_PROVIDER: PROVIDER, round1PacketMapper };

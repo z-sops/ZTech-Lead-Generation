@@ -12,6 +12,9 @@ const { createTrustedSender } = require('./src/main/prospect-research/trusted-se
 // F8: the Lead Intelligence ICP contract (pure, deterministic; no LI runtime).
 const { targetToIcp, evaluateIcpFit } = require('./src/main/lead-intelligence/icp/icpFit');
 const { toLeadView } = require('./src/main/lead-intelligence/contracts/leadView');
+// A10: the Lead Intelligence outreach runtime (pitch + gate) on the shared db.
+const { initializeLeadIntelligenceRuntime } = require('./src/main/lead-intelligence/lead-intelligence-runtime');
+const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/main/lead-intelligence/outreach-ipc');
 
 let mainWindow = null;
 let providerManager = null;
@@ -21,6 +24,10 @@ let researchClosing = false;
 let researchTrustedSender = null;
 // F6: the same trusted-sender rule, applied to the Lists channels.
 let listsTrustedSender = null;
+// A10: Lead Intelligence runtime handle + the trusted sender for its channels.
+let leadIntelRuntime = null;
+let leadIntelIpc = null;
+let leadIntelTrustedSender = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -1108,6 +1115,109 @@ function registerResearchIpcHandlers() {
   }
 }
 
+// A10: the Lead Intelligence target source, over the app's EXISTING `targets`
+// table. Read-only: it can only resolve a stored user-owned definition, and it
+// never creates, edits or archives one.
+function leadIntelTargetSource() {
+  return {
+    async getTarget(id) {
+      try {
+        const listed = await accountStore.listTargets();
+        const rows = listed && Array.isArray(listed.rows) ? listed.rows : [];
+        return rows.find((row) => String(row.id) === String(id)) || null;
+      } catch (err) {
+        logger.warn('lead-intel', 'target lookup failed', { error: err.message });
+        return null;
+      }
+    },
+  };
+}
+
+// A10: the runtime is constructed ONLY after `await accountStore.ready` (done in
+// initServices). It reuses the same whatsapp.db, runs the additive li_* migrations
+// and does NOT call li.start(): no background timer, no scheduler, no research.
+async function initLeadIntelligence() {
+  try {
+    if (!accountStore || !accountStore.db) {
+      logger.warn('lead-intel', 'lead intelligence unavailable', { reason: 'no-database' });
+      return;
+    }
+    // The Round-1 table is created by the Round-1 store; make sure it exists
+    // before Lead Intelligence reads it. This is Round-1's own idempotent
+    // CREATE IF NOT EXISTS — it adds nothing and controls nothing.
+    if (researchService && researchService.store && typeof researchService.store.ready === 'function') {
+      try {
+        await researchService.store.ready();
+      } catch (err) {
+        logger.warn('lead-intel', 'round-1 store not ready', { error: err.message });
+      }
+    }
+    leadIntelRuntime = await initializeLeadIntelligenceRuntime({
+      accountStore,
+      targetSource: leadIntelTargetSource(),
+      config: LEAD_INTEL_CONFIG,
+      logger: {
+        warn: (msg) => logger.warn('lead-intel', String(msg)),
+        error: (msg) => logger.error('lead-intel', String(msg)),
+        info: (msg) => logger.info('lead-intel', String(msg)),
+      },
+    });
+    logger.info('lead-intel', 'runtime initialised', { mode: leadIntelRuntime.li.mode });
+  } catch (err) {
+    leadIntelRuntime = null;
+    logger.error('lead-intel', 'runtime initialisation failed', { error: err.message });
+  }
+}
+
+// The user's own offer text. It is USER content, not a credential, and it never
+// leaves the main process: the pitch draft is composed here and the renderer only
+// ever receives the finished, scrubbed draft.
+const LEAD_INTEL_CONFIG = Object.freeze({
+  freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
+  outreach: { allowedQualification: ['qualified'], allowPartialEvidence: false, requireIcpFit: false },
+  offer: {
+    sender_name: 'Zee',
+    sender_company: 'ZuniTech',
+    value_proposition: 'We help local businesses fix the website issues found in an audit like this one.',
+    call_to_action: 'Would a short call next week be useful to go through these points?',
+  },
+  // Email stays abstract: no provider is configured, so no send path exists.
+  email: { enabled: false, fromAddress: null },
+});
+
+// A10: registers EXACTLY the five approved Lead Intelligence channels, behind the
+// same trusted-sender rule as the research and Lists channels. Email sending is
+// deliberately not registered.
+function registerLeadIntelIpcHandlers() {
+  if (!leadIntelRuntime) return;
+  if (!leadIntelTrustedSender) {
+    leadIntelTrustedSender = createTrustedSender(() => mainWindow, {
+      isDev,
+      port: Number(process.env.VITE_PORT) || undefined,
+      indexPath: path.join(__dirname, 'index.html'),
+      onReject: (reason) => logger.warn('ipc', `lead-intel rejected: ${reason}`)
+    });
+  }
+  try {
+    leadIntelIpc = registerOutreachIpc({
+      ipcMain,
+      outreach: leadIntelRuntime.li.outreach,
+      isTrustedSender: (event) => {
+        try {
+          return leadIntelTrustedSender(event) === true;
+        } catch {
+          return false;
+        }
+      },
+      logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
+    });
+    logger.info('lead-intel', `registered ${leadIntelIpc.channels.length} channels`);
+  } catch (err) {
+    leadIntelIpc = null;
+    logger.error('lead-intel', 'IPC registration failed', { error: err.message });
+  }
+}
+
 function registerIpcHandlers() {
   function providerIdFrom(payload) {
     const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
@@ -1669,10 +1779,15 @@ function registerIpcHandlers() {
 app.whenReady().then(async () => {
     if (!gotTheLock) return;
     logger.info('app', 'application started', { version: app.getVersion(), isDev });
+    // 1. create AccountStore, 2. await AccountStore.ready (inside initServices)
     await initServices();
     initResearch();
     createMainWindow();
     registerIpcHandlers();
+    // 3. initialise the Lead Intelligence runtime (after the db is open), then
+    // 4. register its five IPC handlers. li.start() is deliberately NOT called.
+    await initLeadIntelligence();
+    registerLeadIntelIpcHandlers();
     let storedProxyUrl = '';
     try {
       const Store = require('electron-store');
@@ -1697,6 +1812,28 @@ app.whenReady().then(async () => {
 // The re-entrancy flag makes the preventDefault/app.quit() pair safe, and the
 // 3s race bounds shutdown so a transport that will not close cannot trap the app.
 app.on('before-quit', (event) => {
+  // A10: Lead Intelligence holds no timers of its own (li.start() was never
+  // called). Its handlers and runtime are torn down synchronously and the
+  // database is left to the existing AccountStore lifecycle, so no race and no
+  // second close is introduced.
+  if (leadIntelIpc) {
+    try {
+      leadIntelIpc.dispose();
+    } catch {}
+    leadIntelIpc = null;
+  }
+  if (leadIntelRuntime) {
+    const runtime = leadIntelRuntime;
+    leadIntelRuntime = null;
+    Promise.race([
+      runtime.shutdown(),
+      new Promise((resolve) => setTimeout(resolve, 2000))
+    ]).catch((err) => {
+      try {
+        logger.warn('lead-intel', 'shutdown did not complete cleanly', { error: err && err.message });
+      } catch {}
+    });
+  }
   if (!researchService || researchClosing) return;
   event.preventDefault();
   researchClosing = true;

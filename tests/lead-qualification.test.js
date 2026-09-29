@@ -583,8 +583,16 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
       .map(m => `prospect-research:${m[1].replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`);
   }
 
+  // A10: the five approved Lead Intelligence channels live in their own narrowly
+  // scoped registrar (src/main/lead-intelligence/outreach-ipc.js), so a main.js
+  // scan alone does not see them either.
+  function leadIntelChannels() {
+    const src = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+    return [...src.matchAll(/'(lead-intel:[a-z-]+)'/g)].map(m => m[1]);
+  }
+
   function allChannels() {
-    return [...mainChannels(), ...researchChannels()];
+    return [...mainChannels(), ...researchChannels(), ...leadIntelChannels()];
   }
 
   // Loads the real validator out of main.js together with the guards it uses
@@ -705,8 +713,10 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
     // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
     // F8 declared lock update: 41 -> 42, intelligence:icp.
-    assert.strictEqual(channels.length, 42, 'exactly 42 channels');
-    assert.strictEqual(new Set(channels).size, 42, 'no duplicate channel names');
+    // A10 declared lock update: 42 -> 47, the five approved Lead Intelligence
+    // channels (3 pitch + outreach approve/gate). No email-send channel exists.
+    assert.strictEqual(channels.length, 47, 'exactly 47 channels');
+    assert.strictEqual(new Set(channels).size, 47, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1407,7 +1417,8 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
     // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
     // F8 declared lock update: 41 -> 42, intelligence:icp.
-    assert.strictEqual(allChannels().length, 42, 'exactly 42 channels (A4 + F7 research, F6 Lists, F8 ICP)');
+    // A10 declared lock update: 42 -> 47, the five approved Lead Intelligence channels.
+    assert.strictEqual(allChannels().length, 47, 'exactly 47 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');
