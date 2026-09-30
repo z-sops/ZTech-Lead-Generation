@@ -3319,16 +3319,15 @@ function renderLeadDrawerIcp(lead) {
   if (typeof loadLeadDrawerIcp === 'function') loadLeadDrawerIcp(lead);
 }
 
-function renderLeadDrawerPitch() {
+// F11 Outreach: the Pitch tab shows the real A10 pitch draft - its status, the
+// editable text, the evidence-backed observations with their refs, the
+// unsupported-claim warnings, the Outreach Gate result and the human approval
+// state. The F5 slice performs no I/O: it hands off to loadLeadDrawerPitch, in
+// the F11 block, exactly as the ICP tab hands off to loadLeadDrawerIcp.
+function renderLeadDrawerPitch(lead) {
   const box = document.getElementById('lead-drawer-pitch');
   if (!box) return;
-  box.replaceChildren(
-    leadDrawerEl('h3', 'lead-drawer-section-title', 'Pitch'),
-    leadDrawerEl('p', 'lead-drawer-empty', 'Pitch generation is not available yet.'),
-    leadDrawerEl('p', 'lead-drawer-muted',
-      'No pitch has been generated for this lead, so there is no pitch text, no evidence references and no approval state to show.'),
-    leadDrawerEl('p', 'lead-drawer-muted', 'Nothing is sent from this drawer.')
-  );
+  if (typeof loadLeadDrawerPitch === 'function') loadLeadDrawerPitch(lead);
 }
 
 function setLeadDrawerSaveState(id, state, text) {
@@ -3436,7 +3435,7 @@ function renderLeadDrawer(lead) {
   renderLeadDrawerHeader(row);
   renderLeadDrawerOverview(row);
   renderLeadDrawerIcp(row);
-  renderLeadDrawerPitch();
+  renderLeadDrawerPitch(row);
   renderLeadDrawerPipeline();
 }
 
@@ -6238,3 +6237,476 @@ initSegmentRuleSelects();
 // 初始化补充
 loadNumbers();
 checkStorageStatus();
+
+// === F11 Outreach: Lead Drawer Pitch tab ===
+//
+// The primary pitch surface. It renders the A10 Lead Intelligence contract and
+// nothing else: the stored pitch draft, its real status, the evidence-backed
+// observations with their refs, the unsupported-claim warnings and the Outreach
+// Gate result.
+//
+// RULES THIS BLOCK KEEPS
+//  - The backend is the only source of truth. The gate is never recomputed here:
+//    every reason and warning is rendered exactly as the backend returned it, and
+//    "approved" is derived ONLY from gate.decision, never from the pitch status.
+//  - There is no pitch state called "approved". The three real states are
+//    insufficient_evidence, needs_revision and draft; "no pitch" is a null draft.
+//  - Observations are evidence, not copy: they are shown with their refs and are
+//    never edited as text. They can only be removed by index.
+//  - Nothing is sent. There is no email provider, no send channel and no send
+//    control anywhere in this block.
+//  - Async results are bound to the lead and the session that asked for them, so
+//    a previous lead's pitch can never overwrite the current drawer.
+//  - Only window.ztechLeadIntel is used. No appAPI, no fetch, no innerHTML.
+
+const F11_PITCH_STATUS = Object.freeze({
+  insufficient_evidence: { label: 'Insufficient evidence', tone: 'warn' },
+  needs_revision: { label: 'Needs revision', tone: 'warn' },
+  draft: { label: 'Draft', tone: 'ok' }
+});
+
+const F11_PITCH_STATUS_UNKNOWN = { label: 'Unknown status', tone: 'neutral' };
+
+// Every code the backend can return, so a reason is never summarised away and
+// never shown as a raw contract seq.
+const F11_GATE_REASON_LABELS = Object.freeze({
+  LEAD_IDENTITY: 'Business name',
+  CONTACT_FIELD: 'Email address',
+  CHANNEL_NOT_SUPPORTED: 'Channel',
+  QUALIFICATION: 'Qualification',
+  ICP_FIT: 'ICP fit',
+  PITCH_MISSING: 'Pitch draft',
+  EVIDENCE_PRESENT: 'Evidence link',
+  EVIDENCE_OUTDATED: 'Evidence is outdated',
+  EVIDENCE_FRESH: 'Evidence freshness',
+  EVIDENCE_COMPLETE: 'Evidence completeness',
+  PROHIBITED_CLAIMS: 'Unsupported claims',
+  PITCH_INTEGRITY: 'Pitch integrity',
+  HUMAN_APPROVAL: 'Human approval'
+});
+
+const F11_GATE_WARNING_LABELS = Object.freeze({
+  ICP_FIT_UNKNOWN: 'ICP fit is not fully known',
+  EVIDENCE_PARTIAL: 'Research is partial'
+});
+
+const F11_UNSUPPORTED_CLAIM_LABELS = Object.freeze({
+  PROHIBITED_CLAIM: 'Prohibited claim',
+  PROBLEM_CLAIM_WITHOUT_EVIDENCE: 'Claims a problem without evidence',
+  OBSERVATION_WITHOUT_EVIDENCE: 'Observation without evidence'
+});
+
+// Field maxlengths are the backend's own contract bounds, not a UI choice.
+const F11_PITCH_FIELD_MAX = Object.freeze({
+  subject: 150,
+  opening: 600,
+  valueProposition: 1200,
+  callToAction: 400
+});
+
+const F11_PITCH_NO_EVIDENCE_HINT = 'No stored research evidence for this lead yet. A pitch generated now would have no evidence-backed observations.';
+const F11_PITCH_FAILED_HINT = 'The latest stored research for this lead failed, so no evidence-backed pitch can be produced.';
+const F11_NO_RESEARCH_HINT = 'This lead has not been researched yet. Run website research first: a pitch without evidence cannot be created.';
+
+// Session state. `seq` invalidates every in-flight F11 request; `leadId` is
+// the lead the panel currently belongs to.
+let f11PitchToken = 0;
+let f11PitchLeadId = null;
+
+function f11El(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function f11LeadIntel() {
+  return typeof window !== 'undefined' && window.ztechLeadIntel ? window.ztechLeadIntel : null;
+}
+
+/** Unwrap the A10 {ok,data} / {ok,error} envelope into a value, or throw a safe Error. */
+function f11Unwrap(res) {
+  if (res && res.ok) return res.data;
+  const err = new Error(res && res.error && res.error.message ? res.error.message : 'The request failed.');
+  err.code = res && res.error && res.error.code ? res.error.code : 'ERROR';
+  err.errors = res && res.error ? res.error.errors : undefined;
+  throw err;
+}
+
+function f11Status(text, tone) {
+  const el = f11El('span', 'lead-drawer-state', text);
+  el.setAttribute('data-state', tone);
+  return el;
+}
+
+function f11PitchStatusBadge(status) {
+  const known = typeof status === 'string' && Object.prototype.hasOwnProperty.call(F11_PITCH_STATUS, status)
+    ? F11_PITCH_STATUS[status]
+    : F11_PITCH_STATUS_UNKNOWN;
+  return f11Status(known.label, known.tone);
+}
+
+function f11Date(iso) {
+  if (typeof iso !== 'string' || !iso) return '';
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function f11Text(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/**
+ * Honest, evidence-first one-liner. Every part comes from stored backend data.
+ *
+ * The date shown is the DRAFT's own created_at, labelled as such. It is NOT the
+ * evidence capture time: the EvidencePacket is not reachable through the five
+ * approved Lead Intelligence channels, so no capture timestamp can be shown here
+ * and none is invented. Evidence freshness is judged by the backend's own
+ * EVIDENCE_FRESH gate check, which does use the real packet date.
+ */
+function f11EvidenceLine(pitch) {
+  const line = f11El('p', 'lead-drawer-muted');
+  const parts = [];
+  const research = f11Text(pitch.research_status);
+  parts.push('Research ' + (research || 'state unknown'));
+  const drafted = f11Date(pitch.created_at);
+  if (drafted) parts.push('drafted ' + drafted);
+  const observations = Array.isArray(pitch.observations) ? pitch.observations : [];
+  parts.push(observations.length + (observations.length === 1 ? ' observation' : ' observations'));
+  line.textContent = parts.join(' · ');
+  return line;
+}
+
+function f11AlertBox(err) {
+  const box = f11El('div', 'lead-drawer-warning');
+  box.setAttribute('role', 'alert');
+  box.appendChild(f11El('strong', null, 'Could not complete: ' + (err && err.code ? err.code : 'ERROR')));
+  box.appendChild(f11El('p', 'lead-drawer-muted', err && err.message ? err.message : 'The request failed.'));
+  const details = err && Array.isArray(err.errors) ? err.errors : [];
+  if (details.length) {
+    const list = f11El('ul', 'lead-drawer-plain-list');
+    for (const item of details) {
+      const path = item && typeof item.path === 'string' ? item.path : '';
+      const message = item && typeof item.message === 'string' ? item.message : '';
+      list.appendChild(f11El('li', null, (path ? path + ': ' : '') + message));
+    }
+    box.appendChild(list);
+  }
+  return box;
+}
+
+/** True when this async result still belongs to the lead that asked for it. */
+function f11PitchIsCurrent(seq, leadId) {
+  return seq === f11PitchToken && String(leadId) === String(f11PitchLeadId);
+}
+
+/** A labelled form control. The id is the field key, so it is stable and testable. */
+function f11Field(key, labelText, input) {
+  const wrap = f11El('div', 'f11-field');
+  const id = 'f11-' + key;
+  const label = f11El('label', 'f11-field-label', labelText);
+  label.setAttribute('for', id);
+  input.id = id;
+  wrap.appendChild(label);
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function f11TextInput(value, max) {
+  const input = f11El('input', 'f11-input');
+  input.type = 'text';
+  input.value = typeof value === 'string' ? value : '';
+  input.maxLength = max;
+  input.setAttribute('maxlength', String(max));
+  return input;
+}
+
+function f11TextArea(value, max, rows) {
+  const input = f11El('textarea', 'f11-input');
+  input.value = typeof value === 'string' ? value : '';
+  input.rows = rows;
+  input.maxLength = max;
+  input.setAttribute('maxlength', String(max));
+  return input;
+}
+
+function f11ActionButton(label, className, onClick, disabled) {
+  const btn = f11El('button', className, label);
+  btn.type = 'button';
+  btn.disabled = disabled === true;
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+/**
+ * The gate result, rendered exactly as the backend returned it. No reason code
+ * is summarised away and no decision is recomputed here.
+ */
+function f11RenderGate(gate) {
+  const box = f11El('div', 'f11-gate');
+  box.setAttribute('data-decision', gate && gate.decision ? gate.decision : 'blocked');
+  const allowed = Boolean(gate) && gate.decision === 'allowed';
+  box.setAttribute('aria-live', 'polite');
+
+  const head = f11El('div', 'f11-gate-head');
+  head.appendChild(f11El('h4', 'f11-subtitle', 'Outreach gate'));
+  head.appendChild(f11Status(allowed ? 'Allowed' : 'Blocked', allowed ? 'ok' : 'danger'));
+  box.appendChild(head);
+
+  if (allowed) {
+    // "allowed" means cleared for outreach. It never means sent: nothing sends.
+    box.appendChild(f11El('p', 'lead-drawer-muted', 'All checks passed. Sending is not automatic.'));
+    return box;
+  }
+
+  const reasons = Array.isArray(gate && gate.reasons) ? gate.reasons : [];
+  if (!reasons.length) {
+    box.appendChild(f11El('p', 'lead-drawer-muted', 'The gate reported no decision.'));
+    return box;
+  }
+  const list = f11El('ul', 'f11-reasons');
+  for (const reason of reasons) {
+    const code = reason && typeof reason.code === 'string' ? reason.code : 'UNKNOWN';
+    const label = Object.prototype.hasOwnProperty.call(F11_GATE_REASON_LABELS, code)
+      ? F11_GATE_REASON_LABELS[code]
+      : code;
+    const item = f11El('li', 'f11-reason');
+    item.appendChild(f11El('span', 'f11-reason-code', label));
+    item.appendChild(f11El('span', 'f11-reason-code-raw', code));
+    item.appendChild(f11El('span', 'f11-reason-message', reason && typeof reason.message === 'string' ? reason.message : ''));
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+
+  const warnings = Array.isArray(gate && gate.warnings) ? gate.warnings : [];
+  if (warnings.length) {
+    box.appendChild(f11El('p', 'f11-subtitle', 'Warnings (do not block outreach)'));
+    const warnList = f11El('ul', 'f11-warnings');
+    for (const warning of warnings) {
+      const code = warning && typeof warning.code === 'string' ? warning.code : 'UNKNOWN';
+      const label = Object.prototype.hasOwnProperty.call(F11_GATE_WARNING_LABELS, code)
+        ? F11_GATE_WARNING_LABELS[code]
+        : code;
+      const item = f11El('li', 'f11-warning');
+      item.appendChild(f11El('span', 'f11-reason-code', label));
+      item.appendChild(f11El('span', 'f11-reason-code-raw', code));
+      item.appendChild(f11El('span', 'f11-reason-message', warning && typeof warning.message === 'string' ? warning.message : ''));
+      warnList.appendChild(item);
+    }
+    box.appendChild(warnList);
+  }
+  return box;
+}
+
+function f11RenderUnsupportedClaims(claims) {
+  const box = f11El('div', 'lead-drawer-warning f11-claims');
+  box.setAttribute('role', 'alert');
+  box.appendChild(f11El('strong', null, 'Unsupported claims - remove before approval (' + claims.length + ')'));
+  const list = f11El('ul', 'lead-drawer-plain-list');
+  for (const claim of claims) {
+    const reason = claim && typeof claim.reason === 'string' ? claim.reason : 'UNKNOWN';
+    const label = Object.prototype.hasOwnProperty.call(F11_UNSUPPORTED_CLAIM_LABELS, reason)
+      ? F11_UNSUPPORTED_CLAIM_LABELS[reason]
+      : reason;
+    const item = f11El('li');
+    item.appendChild(f11El('strong', null, (claim && typeof claim.field === 'string' ? claim.field : '') + ': '));
+    item.appendChild(document.createTextNode(typeof claim.text === 'string' ? claim.text : ''));
+    item.appendChild(f11El('span', 'f11-reason-code-raw', label + ' (' + reason + ')'));
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  return box;
+}
+
+/** The stored draft, its status, the editable text and the gate result. */
+function f11RenderPitch(lead, pitch, gate, seq) {
+  const box = document.getElementById('lead-drawer-pitch');
+  if (!box) return;
+  const status = f11Text(pitch.status);
+  const observations = Array.isArray(pitch.observations) ? pitch.observations : [];
+  const claims = Array.isArray(pitch.unsupportedClaims) ? pitch.unsupportedClaims : [];
+
+  const head = f11El('div', 'lead-drawer-section-head');
+  head.appendChild(f11El('h3', 'lead-drawer-section-title', 'Pitch'));
+  head.appendChild(f11PitchStatusBadge(status));
+  box.replaceChildren(head, f11EvidenceLine(pitch));
+
+  // Honest cause when there is no usable evidence, and no fabricated observations.
+  if (status === 'insufficient_evidence') {
+    const research = f11Text(pitch.research_status);
+    const hint = research === 'failed' ? F11_PITCH_FAILED_HINT
+      : pitch.packet_id ? 'The stored evidence produced no usable observations, so this draft has nothing to cite.'
+        : F11_PITCH_NO_EVIDENCE_HINT;
+    box.appendChild(f11El('p', 'lead-drawer-muted', hint));
+  }
+
+  // The live controls of this render, so Save reads exactly what is on screen.
+  const controls = {
+    subject: f11TextInput(pitch.subject, F11_PITCH_FIELD_MAX.subject),
+    opening: f11TextArea(pitch.opening, F11_PITCH_FIELD_MAX.opening, 3),
+    valueProposition: f11TextArea(pitch.valueProposition, F11_PITCH_FIELD_MAX.valueProposition, 3),
+    callToAction: f11TextArea(pitch.callToAction, F11_PITCH_FIELD_MAX.callToAction, 2),
+    removes: []
+  };
+
+  const form = f11El('div', 'f11-form');
+  form.appendChild(f11Field('subject', 'Subject', controls.subject));
+  form.appendChild(f11Field('opening', 'Opening', controls.opening));
+
+  const observationBlock = f11El('div', 'f11-observations');
+  observationBlock.appendChild(f11El('h4', 'f11-subtitle', 'Observations (from evidence, not editable)'));
+  if (!observations.length) {
+    observationBlock.appendChild(f11El('p', 'lead-drawer-muted', 'This pitch has no evidence-backed observations.'));
+  } else {
+    const list = f11El('ul', 'f11-observation-list');
+    observations.forEach((observation, index) => {
+      const item = f11El('li', 'f11-observation');
+      item.appendChild(f11El('div', 'f11-observation-text', observation && typeof observation.text === 'string' ? observation.text : ''));
+      const refs = Array.isArray(observation && observation.refs) ? observation.refs.filter((r) => typeof r === 'string' && r) : [];
+      if (refs.length) item.appendChild(f11El('div', 'lead-drawer-refs', 'Evidence: ' + refs.join(', ')));
+      const remove = f11El('input', 'f11-remove');
+      remove.type = 'checkbox';
+      remove.checked = false;
+      remove.setAttribute('aria-label', 'Remove observation ' + (index + 1));
+      controls.removes.push(remove);
+      item.appendChild(remove);
+      list.appendChild(item);
+    });
+    observationBlock.appendChild(list);
+    observationBlock.appendChild(f11El('p', 'lead-drawer-muted', 'An observation is evidence, not copy. It can be removed, but its text cannot be edited.'));
+  }
+  form.appendChild(observationBlock);
+  form.appendChild(f11Field('valueProposition', 'Value proposition', controls.valueProposition));
+  form.appendChild(f11Field('callToAction', 'Call to action', controls.callToAction));
+  box.appendChild(form);
+
+  if (claims.length) box.appendChild(f11RenderUnsupportedClaims(claims));
+
+  const actions = f11El('div', 'f11-actions');
+  actions.appendChild(f11ActionButton('Save edits', 'btn btn-sm btn-secondary', () => {
+    const removeObservations = [];
+    controls.removes.forEach((node, index) => { if (node.checked) removeObservations.push(index); });
+    f11Run(lead, {
+      save: {
+        pitchId: pitch.pitch_id,
+        subject: controls.subject.value,
+        opening: controls.opening.value,
+        valueProposition: controls.valueProposition.value,
+        callToAction: controls.callToAction.value,
+        removeObservations
+      }
+    });
+  }));
+  // Approve is offered only for a clean draft, the only status the backend
+  // accepts. It is not a pitch state: the gate is re-read straight afterwards.
+  actions.appendChild(f11ActionButton('Approve pitch', 'btn btn-sm btn-primary', () => {
+    f11Run(lead, { approve: pitch.pitch_id });
+  }, status !== 'draft'));
+  box.appendChild(actions);
+
+  if (gate) box.appendChild(f11RenderGate(gate));
+  box.appendChild(f11El('p', 'lead-drawer-muted', 'Nothing is sent from this drawer.'));
+  return controls;
+}
+
+/** The pending state while a lead's pitch is being read. */
+function f11RenderLoading() {
+  const box = document.getElementById('lead-drawer-pitch');
+  if (!box) return;
+  const status = f11El('p', 'lead-drawer-muted', 'Loading pitch...');
+  status.setAttribute('aria-live', 'polite');
+  box.replaceChildren(f11El('h3', 'lead-drawer-section-title', 'Pitch'), status);
+}
+
+/** The "no pitch yet" state. The cause comes from stored data, never invented. */
+function f11RenderNoPitch(lead) {
+  const box = document.getElementById('lead-drawer-pitch');
+  if (!box) return;
+  const hasWebsite = Boolean(lead && typeof lead.website === 'string' && lead.website.trim());
+  box.replaceChildren(
+    f11El('h3', 'lead-drawer-section-title', 'Pitch'),
+    f11El('p', 'lead-drawer-empty', 'No pitch yet'),
+    f11El('p', 'lead-drawer-muted', hasWebsite
+      ? 'No pitch has been generated for this lead. A pitch is built from stored research evidence, so run website research first if this lead has not been researched.'
+      : F11_NO_RESEARCH_HINT),
+    f11Actions(lead),
+    f11El('p', 'lead-drawer-muted', 'Nothing is sent from this drawer.')
+  );
+}
+
+/** The single Generate action, offered only when there is no pitch to edit. */
+function f11Actions(lead) {
+  const actions = f11El('div', 'f11-actions');
+  actions.appendChild(f11ActionButton('Generate pitch', 'btn btn-sm btn-primary', () => {
+    f11Run(lead, { generate: true });
+  }));
+  return actions;
+}
+
+/**
+ * Every F11 action runs through here, so the seq guard, the envelope unwrap and
+ * the re-read are identical for generate, save, approve and gate.
+ */
+async function f11Run(lead, action) {
+  const box = document.getElementById('lead-drawer-pitch');
+  if (!box) return;
+  const api = f11LeadIntel();
+  if (!api || !api.pitch || !api.outreach) {
+    box.replaceChildren(f11AlertBox({ code: 'NOT_AVAILABLE', message: 'Lead Intelligence is not available in this session.' }));
+    return;
+  }
+  const leadId = lead && lead.id !== undefined && lead.id !== null ? lead.id : null;
+  if (leadId === null) return;
+
+  // Every call bumps the seq, so any earlier in-flight result is stale.
+  const seq = ++f11PitchToken;
+  f11PitchLeadId = String(leadId);
+  f11RenderLoading();
+
+  try {
+    let pitch = null;
+    if (action && action.generate) {
+      pitch = f11Unwrap(await api.pitch.generate({ leadId }));
+    } else if (action && action.save) {
+      pitch = f11Unwrap(await api.pitch.update(action.save));
+    }
+    if (!f11PitchIsCurrent(seq, leadId)) return;
+
+    if (action && action.approve) {
+      // Approval is a record, not a state. The gate is the only thing that says
+      // whether this exact content is now cleared, so it is always read after.
+      f11Unwrap(await api.outreach.approve({ pitchId: action.approve }));
+      if (!f11PitchIsCurrent(seq, leadId)) return;
+      pitch = f11Unwrap(await api.pitch.get({ leadId, pitchId: action.approve }));
+      if (!f11PitchIsCurrent(seq, leadId)) return;
+    }
+
+    if (!pitch) {
+      pitch = f11Unwrap(await api.pitch.get({ leadId }));
+      if (!f11PitchIsCurrent(seq, leadId)) return;
+    }
+
+    if (!pitch) {
+      f11RenderNoPitch(lead);
+      return;
+    }
+
+    const gate = f11Unwrap(await api.outreach.gate({ pitchId: pitch.pitch_id, channel: 'email' }));
+    if (!f11PitchIsCurrent(seq, leadId)) return;
+    f11RenderPitch(lead, pitch, gate, seq);
+  } catch (err) {
+    // A stale failure must not replace the current lead's panel either.
+    if (!f11PitchIsCurrent(seq, leadId)) return;
+    const errorBox = f11El('div');
+    errorBox.appendChild(f11El('h3', 'lead-drawer-section-title', 'Pitch'));
+    errorBox.appendChild(f11AlertBox(err));
+    box.replaceChildren(errorBox);
+  }
+}
+
+/** Entry point called by the F5 hand-off. */
+function loadLeadDrawerPitch(lead) {
+  return f11Run(lead, null);
+}

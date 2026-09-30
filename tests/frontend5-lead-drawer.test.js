@@ -60,6 +60,13 @@ const overlayHtml = between(htmlSource, 'id="lead-detail-overlay"', '<!-- P1-F T
 const f5css = between(cssSource, 'ZTech Frontend 2.0 - F5: Lead Detail Drawer.', 'ZTech Frontend 2.0 - F3: Leads workspace.');
 const openFn = between(rendererSource, 'async function openLeadDetail', '// --- Zuni-SEO website research (A7)');
 const closeFn = between(rendererSource, 'function closeLeadDetail', "getElementById('numbers-table-body')");
+// F11 declared lock update: the two slices test 17 checks. The F11 block is the
+// last block in renderer.js, after every other test's slice boundary, so the F5
+// I/O boundary above stays meaningful and no other block's slice captures it.
+const renderLeadDrawerPitch = functionSource(rendererSource, 'function renderLeadDrawerPitch(lead)');
+const renderLeadDrawerSource = functionSource(rendererSource, 'function renderLeadDrawer(');
+const F11_MARKER = '// === F11 Outreach: Lead Drawer Pitch tab ===';
+const f11Source = rendererSource.slice(rendererSource.indexOf(F11_MARKER));
 
 // --- minimal DOM double ------------------------------------------------------
 
@@ -530,15 +537,25 @@ test('16. ICP decides nothing on its own and never shows a score', () => {
   assert.ok(f5.includes("if (typeof loadLeadDrawerIcp === 'function') loadLeadDrawerIcp(lead);"), 'hands off to the F8 loader');
 });
 
-test('17. Pitch reports that pitch generation is not available, with no send action', () => {
+// F11 declared lock update: the Pitch tab is now a real surface over the A10
+// Lead Intelligence contract. The F5 slice still performs no I/O of its own: it
+// hands the lead off to loadLeadDrawerPitch, in the F11 block, exactly as the ICP
+// tab hands off to loadLeadDrawerIcp. The pitch behaviour itself is pinned in
+// tests/frontend11-outreach.test.js.
+test('17. Pitch hands off to the F11 block and still offers no send action', () => {
   const env = makeEnv();
   openLead(env, FULL);
-  const text = allText(env, 'lead-drawer-pitch');
-  assert.ok(text.startsWith('PitchPitch generation is not available yet.'));
-  assert.ok(text.includes('no pitch text, no evidence references and no approval state'));
-  assert.strictEqual(findAll(env, 'lead-drawer-pitch', (n) => n.tagName === 'BUTTON').length, 0, 'no action at all');
+  assert.ok(renderLeadDrawerPitch.includes("if (typeof loadLeadDrawerPitch === 'function') loadLeadDrawerPitch(lead);"),
+    'the F5 slice hands the lead off to the F11 loader');
+  assert.ok(/^function loadLeadDrawerPitch\(lead\) \{/m.test(rendererSource), 'the F11 loader exists');
+  assert.ok(/^async function f11Run\(/m.test(rendererSource), 'and the F11 action runner is the async part');
+  assert.ok(!/Pitch generation is not available yet\./.test(rendererSource), 'the placeholder is gone');
+  assert.ok(!/renderLeadDrawerPitch\(\);/.test(renderLeadDrawerSource), 'renderLeadDrawer passes the lead row to the Pitch tab');
   assert.ok(!/>\s*Send\b/i.test(overlayHtml) && !/'Send'|"Send"/.test(f5Code), 'no Send button anywhere in the drawer');
-  assert.ok(!/pitch\.(generate|get|update)|outreach\./.test(f5Code), 'no pitch API is invented');
+  // The F5 boundary is unchanged: no pitch API, no I/O, inside this slice.
+  assert.ok(!/pitch\.(generate|get|update)|outreach\./.test(f5Code), 'no pitch API is invented in the F5 slice');
+  assert.ok(!/ztechLeadIntel/.test(f5Code), 'the F5 slice does not reach the Lead Intelligence API');
+  assert.ok(!/'Send'|"Send"/.test(f11Source), 'no send control in the F11 block either');
 });
 
 // --- 18-19. actions and honesty ----------------------------------------------

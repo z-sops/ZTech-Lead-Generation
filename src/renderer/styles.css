@@ -5038,3 +5038,235 @@ textarea {
     margin-left: 0;
   }
 }
+
+/* ZTech Frontend 2.0 - F11: Outreach, Lead Drawer Pitch tab.
+ *
+ * The primary pitch surface. Dense, evidence-first, thin borders, the existing
+ * Frontend 2.0 tokens only: no colour wash, no shadow-heavy cards, no
+ * pill-heavy decoration, no second design language. Every colour and space is a
+ * token the F1-F10 blocks already use, so the tab reads as part of the same
+ * drawer, and no font is introduced.
+ *
+ * The pitch text and the evidence it cites are UNTRUSTED third-party content.
+ * They are wrapped so long words, URLs and observation text wrap rather than
+ * widen the drawer, and the reason rows reflow so the panel stays usable at the
+ * narrowest supported window width.
+ */
+
+.lead-drawer-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lead-drawer-section-head .lead-drawer-section-title {
+  margin: 0;
+}
+
+.f11-subtitle {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--font-11);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.f11-form {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.f11-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.f11-field-label {
+  font-size: var(--font-11);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.f11-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-12);
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--text-inverse);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+.f11-input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.f11-observations {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.f11-observation-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.f11-observation {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-1);
+}
+
+.f11-observation:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.f11-observation-text {
+  grid-column: 1;
+  font-size: var(--font-12);
+  line-height: 1.55;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.f11-observation .lead-drawer-refs {
+  grid-column: 1;
+  font-size: var(--font-11);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.f11-remove {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin: 0;
+  cursor: pointer;
+}
+
+.f11-claims {
+  margin: var(--space-3) 0;
+}
+
+.f11-claims .lead-drawer-plain-list {
+  margin: var(--space-2) 0 0;
+}
+
+.f11-claims .f11-reason-code-raw {
+  display: inline-block;
+  margin-left: var(--space-2);
+}
+
+.f11-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.f11-gate {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+  padding: var(--space-3);
+  background: var(--text-inverse);
+  border: 1px solid var(--border-1);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.f11-gate[data-decision="allowed"] {
+  border-left-color: var(--ok);
+}
+
+.f11-gate[data-decision="blocked"] {
+  border-left-color: var(--danger-f2);
+}
+
+.f11-gate-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.f11-gate-head .f11-subtitle {
+  margin: 0;
+}
+
+.f11-reasons,
+.f11-warnings {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.f11-reason,
+.f11-warning {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-1);
+  font-size: var(--font-12);
+}
+
+.f11-reasons .f11-reason:first-child,
+.f11-warnings .f11-warning:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.f11-reason-code {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.f11-warning .f11-reason-code {
+  color: var(--warn);
+}
+
+.f11-reason-code-raw {
+  font-size: var(--font-11);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.f11-reason-message {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1280px) {
+  .f11-reason,
+  .f11-warning {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+}
