@@ -211,15 +211,29 @@ test('setupLeadIntelligence: round1 wiring on a real sql.js db (migrates, regist
   assert.ok(saves > 0);
 });
 
-test('accountStoreLeadSource: numeric ids are passed back as numbers', async () => {
+// F11: the id contract is that queryNumbers receives a STRING. AccountStore
+// validates `id` with `typeof q.id === 'string'` and returns an EMPTY envelope
+// for anything else, so a numeric id is a silent miss, not a lookup. The mock
+// below reproduces that guard rather than accepting any type, so this test can
+// no longer confirm a caller that coerces the id to a number.
+test('accountStoreLeadSource: digit-only ids are passed through as strings', async () => {
   const calls = [];
   const src = accountStoreLeadSource({
-    queryNumbers: async (q) => { calls.push(q); return { rows: q.id === 5 ? [{ id: 5, title: 'X' }] : [], total: 1, limit: 1, offset: 0 }; },
-    getCollectedNumbers: async () => [{ id: 5 }],
+    queryNumbers: async (q) => {
+      calls.push(q);
+      // Mirrors accountStore.js "B3 single-lead lookup": a non-string id
+      // short-circuits to an empty envelope.
+      if (q.id !== undefined && typeof q.id !== 'string') {
+        return { rows: [], total: 0, limit: q.limit, offset: q.offset };
+      }
+      return { rows: q.id === '5' ? [{ id: '5', title: 'X' }] : [], total: 1, limit: 1, offset: 0 };
+    },
+    getCollectedNumbers: async () => [{ id: '5' }],
   });
-  assert.deepEqual(await src.getLead('5'), { id: 5, title: 'X' });
+  assert.deepEqual(await src.getLead('5'), { id: '5', title: 'X' });
+  assert.deepEqual(await src.getLead(5), { id: '5', title: 'X' }, 'a numeric id resolves too');
   assert.equal(await src.getLead('abc'), null);
-  assert.deepEqual(calls.map((c) => c.id), [5, 'abc']);
+  assert.deepEqual(calls.map((c) => c.id), ['5', '5', 'abc'], 'every id reaches queryNumbers as a string');
   assert.equal((await src.listLeads()).length, 1);
 });
 

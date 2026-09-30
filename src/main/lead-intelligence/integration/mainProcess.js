@@ -65,9 +65,14 @@ async function setupLeadIntelligence(p) {
 function accountStoreLeadSource(accountStore) {
   return {
     async getLead(id) {
-      // Lead-intelligence ids are strings; ZTech `numbers.id` is numeric — pass it back as a number.
-      const nativeId = /^\d+$/.test(String(id)) ? Number(id) : id;
-      const r = await accountStore.queryNumbers({ limit: 1, offset: 0, id: nativeId });
+      // accountStore.queryNumbers validates `id` with `typeof q.id === 'string'` and
+      // returns an EMPTY envelope for anything else (accountStore.js, "B3 single-lead
+      // lookup"). ZTech `numbers.id` is declared TEXT and holds string ids, so the id is
+      // normalised to a string and passed through unchanged. A previous numeric
+      // coercion (Number(id)) made every digit-only lead id fail that guard, which
+      // surfaced as NotFoundError('Lead') from LeadContextService.getContext.
+      const key = typeof id === 'string' ? id : String(id);
+      const r = await accountStore.queryNumbers({ limit: 1, offset: 0, id: key });
       return r && Array.isArray(r.rows) && r.rows[0] ? r.rows[0] : null;
     },
     async listLeads() {
