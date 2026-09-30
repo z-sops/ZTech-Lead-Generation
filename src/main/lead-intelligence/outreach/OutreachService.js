@@ -42,6 +42,21 @@ class OutreachService {
     return this.store.pitches.latestForLead(leadId);
   }
 
+  /**
+   * F12 Batch 2: enumerate persisted pitch drafts. Read-only.
+   *
+   * A thin delegation on purpose: validation, status filtering, clamping and ordering all
+   * live in the repository contract (persistence/contract.js), so there is exactly one
+   * definition of them. No gate is evaluated, no packet is read, no pitch is created,
+   * edited, approved or deleted, and this adds no state of its own.
+   *
+   * @param {{limit?: number, offset?: number, status?: string|null}} [query]
+   * @returns {Promise<{rows: object[], total: number, limit: number, offset: number, status: string|null}>}
+   */
+  async list(query) {
+    return this.store.pitches.list(query);
+  }
+
   async update({ pitchId, edits }) {
     const p = await this.get(pitchId);
     const packet = p.packet_id ? await this.store.packets.get(p.packet_id) : null;

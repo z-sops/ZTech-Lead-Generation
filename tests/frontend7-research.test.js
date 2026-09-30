@@ -411,7 +411,7 @@ function test(name, fn) {
     assert.ok(/<button class="nav-item" data-view="completed" type="button">/.test(group));
     assert.ok(!/Soon|nav-item-soon|disabled/.test(group));
     // F8 declared lock update: the three Intelligence items went live in F8.
-    assert.strictEqual((htmlSource.match(/class="nav-item nav-item-soon"/g) || []).length, 6, 'six Soon items remain');
+    assert.strictEqual((htmlSource.match(/class="nav-item nav-item-soon"/g) || []).length, 5, 'five Soon items remain (F12 enabled the Outreach workspace)');
     assert.ok(rendererSource.includes("if (viewId === 'queue') loadResearch();"));
     assert.ok(rendererSource.includes("if (viewId === 'completed') loadResearch();"));
     assert.ok(/queue: 'Research Queue'/.test(rendererSource) && /completed: 'Research'/.test(rendererSource));

@@ -3,7 +3,7 @@
 const { clone } = require('../core/objects');
 const { ConflictError, NotFoundError, DuplicateActiveJobError } = require('../core/errors');
 const { ACTIVE_STATES } = require('../contracts/constants');
-const { packetMeta } = require('./contract');
+const { packetMeta, normalizePitchListQuery } = require('./contract');
 
 /** In-memory implementation of the repository contract. Used by tests and dev tools. */
 
@@ -154,6 +154,19 @@ class MemPitches extends MemKeyed {
     const list = [...this.rows.values()].filter((p) => p.lead_id === String(leadId))
       .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
     return list.length ? clone(list[0]) : null;
+  }
+  /**
+   * F12 Batch 1: the same contract as SqlPitches.list - read-only enumeration, the same
+   * {rows, total, limit, offset, status} envelope, the same status validation and the
+   * same updated_at DESC / pitch_id DESC ordering, so a test that passes here describes
+   * the real SQL store's behaviour.
+   */
+  async list(query) {
+    const { status, limit, offset } = normalizePitchListQuery(query);
+    const all = [...this.rows.values()].filter((p) => (status === null ? true : p.status === status))
+      .sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1
+        : a.pitch_id < b.pitch_id ? 1 : a.pitch_id > b.pitch_id ? -1 : 0));
+    return { rows: all.slice(offset, offset + limit).map(clone), total: all.length, limit, offset, status };
   }
   async deleteByLead(leadId) { for (const [id, p] of this.rows) if (p.lead_id === String(leadId)) this.rows.delete(id); }
 }

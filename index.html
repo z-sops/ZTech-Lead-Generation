@@ -139,12 +139,16 @@
 
         <div class="nav-group">
           <div class="nav-group-label">Outreach</div>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <!-- The read-only Outreach workspace. This is the real workspace, not a
+               placeholder: it lists the stored pitch drafts with their real status and
+               the real Outreach Gate result. It is READ ONLY - no send, approve,
+               generate or campaign action is reachable from it. Campaigns and Activity
+               below stay disabled placeholders. -->
+          <button class="nav-item" data-view="outreach" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M2.5 3.5h11v9h-11z"></path><path d="M2.5 4 8 8.5 13.5 4"></path>
             </svg>
-            <span class="nav-label">Ready</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
+            <span class="nav-label">Outreach</span>
           </button>
           <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -1359,6 +1363,69 @@
              storage because one of them is missing. "Use for collection" only
              pre-fills existing collector inputs. There is no delete, no match
              count and no score. -->
+        <!-- F12 outreach-workspace-view: the read-only Outreach workspace.
+
+             It lists the PERSISTED pitch drafts through window.ztechLeadIntel.outreach.list
+             and shows each pitch's real status plus the real Outreach Gate result returned
+             by window.ztechLeadIntel.outreach.gate. Nothing here is recomputed in the
+             renderer, no value is invented, and there is no send, approve, generate, save,
+             campaign or activity control: the workspace is an operational READ of existing
+             state. Opening a lead reuses the existing F5 drawer.
+
+             A "gate" filter is client-side over the loaded page only, because a gate
+             decision is computed by OutreachGate and is never persisted, so it cannot be
+             filtered in the store. The range line says so explicitly. -->
+        <section class="view" id="view-outreach">
+          <div class="lists-workspace outreach-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Outreach</h2>
+                <p class="lists-subtitle">Every stored pitch draft with its real status and the real Outreach Gate result. Read only: nothing here can send, approve or generate.</p>
+              </div>
+              <div class="lists-actions">
+                <label class="visually-hidden" for="outreach-status-filter">Filter by pitch status</label>
+                <select id="outreach-status-filter" class="outreach-select">
+                  <option value="">All pitch statuses</option>
+                  <option value="draft">Draft</option>
+                  <option value="insufficient_evidence">Insufficient evidence</option>
+                  <option value="needs_revision">Needs revision</option>
+                </select>
+                <label class="visually-hidden" for="outreach-gate-filter">Filter by gate decision</label>
+                <select id="outreach-gate-filter" class="outreach-select">
+                  <option value="">All gate decisions</option>
+                  <option value="allowed">Allowed</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+                <button class="btn btn-sm" id="outreach-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="outreach-table-wrap">
+              <table class="data-table outreach-table">
+                <thead>
+                  <tr>
+                    <th class="col-lead">Lead</th>
+                    <th class="col-status">Pitch status</th>
+                    <th class="col-gate">Gate</th>
+                    <th class="col-subject">Subject</th>
+                    <th class="col-research">Research</th>
+                    <th class="col-icp">ICP</th>
+                    <th class="col-updated">Updated</th>
+                    <th class="col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="outreach-body"></tbody>
+              </table>
+            </div>
+            <div class="lists-footer outreach-footer">
+              <div class="outreach-range" id="outreach-range"></div>
+              <div class="outreach-pager">
+                <button class="btn btn-sm" id="outreach-prev" type="button">Previous</button>
+                <button class="btn btn-sm" id="outreach-next" type="button">Next</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="view" id="view-targets">
           <div class="lists-workspace targets-workspace">
             <div class="lists-header">

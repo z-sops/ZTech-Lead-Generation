@@ -473,26 +473,39 @@ function makeIpcHarness(outreach, { trusted = true } = {}) {
   return { handlers, reg };
 }
 
-test('A10 IPC: exactly the five approved channels are registered; email-send is not', () => {
+test('A10 IPC: exactly the six approved channels are registered; email-send is not', () => {
   const { handlers, reg } = makeIpcHarness({
     generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
+    list: async () => ({ rows: [], total: 0, limit: 20, offset: 0, status: null }),
   });
   assert.deepEqual(reg.channels.slice().sort(), [
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
+    'lead-intel:outreach-list',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.equal(handlers.size, 5);
+  assert.equal(handlers.size, 6);
   assert.ok(!handlers.has('lead-intel:email-send'), 'email sending is not registered');
   assert.ok(!reg.channels.includes('lead-intel:email-send'));
   // Nothing beyond the outreach surface is exposed.
   for (const forbidden of ['lead-intel:research-request', 'lead-intel:export-research', 'lead-intel:enrichment-request', 'lead-intel:agent-analyze']) {
     assert.ok(!handlers.has(forbidden), 'must not register ' + forbidden);
   }
-  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 5);
+  // The channel constant itself must stay an exact allowlist, not a lower bound: a
+  // seventh channel declared here would be caught even before registration.
+  assert.deepEqual(Object.values(OUTREACH_CHANNELS).slice().sort(), [
+    'lead-intel:outreach-approve',
+    'lead-intel:outreach-gate',
+    'lead-intel:outreach-list',
+    'lead-intel:pitch-generate',
+    'lead-intel:pitch-get',
+    'lead-intel:pitch-update',
+  ]);
+  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 6);
+  assert.ok(!Object.values(OUTREACH_CHANNELS).includes('lead-intel:email-send'), 'email-send is not even declared here');
   reg.dispose();
   assert.equal(handlers.size, 0, 'dispose removes every handler');
 });
@@ -502,6 +515,7 @@ test('A10 IPC: an untrusted sender is refused before any service call', async ()
   const { handlers } = makeIpcHarness({
     generate: async () => { called = true; return {}; }, get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
+    list: async () => { called = true; return { rows: [], total: 0, limit: 20, offset: 0, status: null }; },
   }, { trusted: false });
   for (const ch of reg_channels()) {
     const res = await handlers.get(ch)({}, { leadId: '5', pitchId: 'p' });
@@ -517,6 +531,7 @@ test('A10 IPC: invalid input is rejected and errors are structured', async () =>
     generate: async () => { throw new Error('must not be reached'); },
     get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
+    list: async () => { throw new Error('must not be reached'); },
   });
   const bad = [
     ['lead-intel:pitch-generate', {}],                                   // leadId required
@@ -526,6 +541,10 @@ test('A10 IPC: invalid input is rejected and errors are structured', async () =>
     ['lead-intel:pitch-update', { pitchId: 'p', subject: 'x'.repeat(500) }],
     ['lead-intel:outreach-approve', { pitchId: '' }],
     ['lead-intel:outreach-gate', { pitchId: 'p', channel: 'sms' }],      // only email is in the vocabulary
+    ['lead-intel:outreach-list', { status: 'approved' }],                 // not a persisted pitch status
+    ['lead-intel:outreach-list', { status: 'blocked' }],                  // gate.decision is not a pitch status
+    ['lead-intel:outreach-list', { limit: 0 }],                           // out of range
+    ['lead-intel:outreach-list', { orderBy: 'lead_id' }],                 // no client-chosen ordering
   ];
   for (const [ch, payload] of bad) {
     const res = await handlers.get(ch)({}, payload);
@@ -538,6 +557,7 @@ test('A10 IPC: invalid input is rejected and errors are structured', async () =>
     generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}),
     gate: async () => { throw new NotFoundError('Pitch', 'p'); },
+    list: async () => { throw new NotFoundError('Pitch', 'p'); },
   });
   const gated = await h2.get('lead-intel:outreach-gate')({}, { pitchId: 'p' });
   assert.equal(gated.ok, false);
@@ -559,6 +579,11 @@ test('A10 IPC: no credential, DB handle or provider secret can reach the rendere
     }),
     get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
+    // The enumeration response is scrubbed by exactly the same path.
+    list: async () => ({
+      rows: [{ pitch_id: 'p', status: 'draft', apiKey: 'sk-live-should-never-be-returned', password: 'hunter2' }],
+      total: 1, limit: 20, offset: 0, status: null,
+    }),
   });
   const res = await handlers.get('lead-intel:pitch-generate')({}, { leadId: '5' });
   assert.equal(res.ok, true);
@@ -567,6 +592,17 @@ test('A10 IPC: no credential, DB handle or provider secret can reach the rendere
     assert.ok(!serialized.includes(secret), 'no credential is returned: ' + secret);
   }
   assert.ok(!('apiKey' in res.data) && !('password' in res.data), 'secret-like keys are dropped, whatever produced them');
+
+  // The same scrubbing applies to the new enumeration channel.
+  const listed = await handlers.get('lead-intel:outreach-list')({}, {});
+  assert.equal(listed.ok, true);
+  const listedSerialized = JSON.stringify(listed);
+  for (const secret of ['sk-live-should-never-be-returned', 'hunter2']) {
+    assert.ok(!listedSerialized.includes(secret), 'outreach:list returns no credential: ' + secret);
+  }
+  assert.ok(!('apiKey' in listed.data.rows[0]) && !('password' in listed.data.rows[0]),
+    'outreach:list drops secret-like keys from every row');
+  assert.deepEqual(listed, JSON.parse(JSON.stringify(listed)), 'the list envelope survives a JSON round-trip unchanged');
   // The response is JSON-safe plain data: no live handle, function or class instance.
   assert.equal(Object.getPrototypeOf(res.data), Object.prototype);
   assert.deepEqual(res, JSON.parse(JSON.stringify(res)), 'the envelope survives a JSON round-trip unchanged');
@@ -577,28 +613,35 @@ test('A10 IPC: the registrar requires a trusted sender and a real outreach servi
   const ipcMain = { handle() {}, removeHandler() {} };
   assert.throws(() => registerOutreachIpc({ ipcMain, outreach: {}, isTrustedSender: null }), /isTrustedSender is required/);
   assert.throws(() => registerOutreachIpc({ ipcMain, isTrustedSender: () => true }), /outreach service is required/);
+  // F12 Batch 2: outreach:list is registered unconditionally, so a service that cannot
+  // serve it is refused at registration rather than failing on its first invoke.
+  assert.throws(() => registerOutreachIpc({
+    ipcMain, isTrustedSender: () => true, outreach: { generate: async () => ({}) },
+  }), /must implement list/);
 });
 
 // ============================================================ 5. Preload
 
-test('A10 preload: exposes exactly the five approved methods and no email.send', () => {
+test('A10 preload: exposes exactly the six approved methods and no email.send', () => {
   const source = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
   const invoked = [...source.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((m) => m[1]);
   const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
+  // An EXACT allowlist, not a lower bound: a seventh channel, or a swapped one, fails here.
   assert.deepEqual(leadIntel.slice().sort(), [
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
+    'lead-intel:outreach-list',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.equal(leadIntel.length, 5, 'exactly five Lead Intelligence methods');
+  assert.equal(leadIntel.length, 6, 'exactly six Lead Intelligence methods');
   assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 
   // The API lives under its own key; the existing appAPI surface is unchanged.
   assert.ok(/exposeInMainWorld\('ztechLeadIntel'/.test(source));
   const leadIntelBlock = source.slice(source.indexOf("exposeInMainWorld('ztechLeadIntel'"));
-  for (const method of ['generate:', 'get:', 'update:', 'approve:', 'gate:']) {
+  for (const method of ['generate:', 'get:', 'update:', 'approve:', 'gate:', 'list:']) {
     assert.ok(leadIntelBlock.includes(method), 'missing method: ' + method);
   }
   assert.ok(!/email\s*:/.test(leadIntelBlock), 'no email namespace is exposed');

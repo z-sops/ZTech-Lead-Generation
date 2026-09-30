@@ -88,10 +88,14 @@ contextBridge.exposeInMainWorld('appAPI', {
   }
 });
 
-// A10 Lead Intelligence (outreach only). Exactly five methods, each a fixed
+// A10 Lead Intelligence (outreach only). Exactly six methods, each a fixed
 // channel: the renderer can never pass a channel name, a URL, a file path or a
 // credential. There is deliberately NO email.send — the email provider stays
 // abstract in this phase, so no send path is exposed to the renderer at all.
+//
+// outreach.list is read-only enumeration of stored pitch drafts. It passes a fixed
+// payload shape only; the renderer cannot choose a sort field, an ordering or any
+// column, because the main-process schema rejects any other property.
 contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
   pitch: Object.freeze({
     generate: (payload) => ipcRenderer.invoke('lead-intel:pitch-generate', payload || {}),
@@ -100,6 +104,7 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
   }),
   outreach: Object.freeze({
     approve: (payload) => ipcRenderer.invoke('lead-intel:outreach-approve', payload || {}),
-    gate: (payload) => ipcRenderer.invoke('lead-intel:outreach-gate', payload || {})
+    gate: (payload) => ipcRenderer.invoke('lead-intel:outreach-gate', payload || {}),
+    list: (payload) => ipcRenderer.invoke('lead-intel:outreach-list', payload || {})
   })
 }));

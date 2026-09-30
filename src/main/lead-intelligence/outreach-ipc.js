@@ -3,9 +3,10 @@
 const { assertValid, S } = require('./core/validate');
 const { publicError, ForbiddenError } = require('./core/errors');
 const { scrubSecrets } = require('./core/objects');
+const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET } = require('./persistence/contract');
 
 /**
- * The five — and only five — A10 Lead Intelligence channels.
+ * The six — and only six — A10 Lead Intelligence channels reachable by the renderer.
  *
  * `lead-intel:email-send` is deliberately NOT here. The email provider stays
  * abstract in this phase, so no send path exists to register: OutreachService
@@ -17,6 +18,7 @@ const CHANNELS = Object.freeze({
   PITCH_UPDATE: 'lead-intel:pitch-update',
   OUTREACH_APPROVE: 'lead-intel:outreach-approve',
   OUTREACH_GATE: 'lead-intel:outreach-gate',
+  OUTREACH_LIST: 'lead-intel:outreach-list',
 });
 
 /**
@@ -40,11 +42,27 @@ const INPUT_SCHEMAS = Object.freeze({
   }, ['pitchId']),
   [CHANNELS.OUTREACH_APPROVE]: obj({ pitchId }, ['pitchId']),
   [CHANNELS.OUTREACH_GATE]: obj({ pitchId, channel: { type: 'string', enum: ['email'] } }, ['pitchId']),
+  // F12 Batch 2: pitch enumeration. Structurally validated only - `status` is
+  // deliberately typed as a plain string here rather than given a second enum, because
+  // the authoritative list of persisted pitch statuses lives in ONE place,
+  // PITCH_STATUSES in persistence/contract.js, and OutreachService.list delegates to it.
+  // Duplicating the list in this schema would let the two drift apart. Bounds are
+  // imported from the same module so they cannot drift either. additionalProperties:false
+  // is what stops a client-supplied sort field, ORDER BY or SQL fragment.
+  [CHANNELS.OUTREACH_LIST]: obj({
+    limit: { type: 'integer', minimum: 1, maximum: PITCH_LIST_MAX_LIMIT },
+    offset: { type: 'integer', minimum: 0, maximum: PITCH_LIST_MAX_OFFSET },
+    status: { type: 'string', minLength: 1, maxLength: 40 },
+  }),
 });
 
 function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = console }) {
   if (typeof isTrustedSender !== 'function') throw new TypeError('isTrustedSender is required');
   if (!outreach || typeof outreach.generate !== 'function') throw new TypeError('outreach service is required');
+  // F12 Batch 2: outreach:list is registered unconditionally, so refuse to start unless
+  // the service can actually serve it. Failing here is far better than a channel that
+  // throws only on its first invoke.
+  if (typeof outreach.list !== 'function') throw new TypeError('outreach service must implement list');
 
   const registered = [];
 
@@ -80,6 +98,11 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   }));
   handle(CHANNELS.OUTREACH_APPROVE, (a) => outreach.approve({ pitchId: a.pitchId }));
   handle(CHANNELS.OUTREACH_GATE, (a) => outreach.gate({ pitchId: a.pitchId, channel: a.channel || 'email' }));
+  // F12 Batch 2: read-only enumeration of persisted pitch drafts. Only the three
+  // reviewed paging/filter fields cross this boundary - no sort, no field selection and
+  // no ordering choice is accepted from the renderer, so the store's fixed
+  // `updated_at DESC, pitch_id DESC` ordering is the only order that can be requested.
+  handle(CHANNELS.OUTREACH_LIST, (a) => outreach.list({ limit: a.limit, offset: a.offset, status: a.status }));
 
   return {
     channels: [...registered],

@@ -30,9 +30,15 @@ const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 
 const F11_MARKER = '// === F11 Outreach: Lead Drawer Pitch tab ===';
+// F12 declared lock update: the F11 slice is now bounded at the start of the F12
+// block. It used to run to the end of the file, which silently swept the F12 Outreach
+// workspace into every F11 assertion. The boundary keeps each block's tests honest.
+const F12_MARKER = '// === F12 Outreach: the read-only Outreach workspace ===';
 const f11From = rendererSource.indexOf(F11_MARKER);
+const f12From = rendererSource.indexOf(F12_MARKER);
 assert.ok(f11From > -1, 'the F11 block exists in renderer.js');
-const F11 = rendererSource.slice(f11From);
+assert.ok(f12From > f11From, 'the F12 block follows the F11 block, so the slice can be bounded there');
+const F11 = rendererSource.slice(f11From, f12From);
 const f11Code = F11.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const f5From = rendererSource.indexOf('// === F5 Lead Detail Drawer ===');
 const F5 = rendererSource.slice(f5From, rendererSource.indexOf('function splitImportLines('));
@@ -654,13 +660,22 @@ test('20. the drawer markup, CSP, channel set and dependencies are untouched by 
     "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'", 'CSP byte-identical');
   assert.ok(!/<script(?![^>]*src=)/i.test(pitchPanelHtml) && !/\son\w+="/.test(pitchPanelHtml), 'no inline script or handler');
   assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 34, 'still 34 main channels');
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 46, 'still 46 preload methods');
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 47, 'still 47 preload methods');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');
-  for (const nav of ['Ready', 'Campaigns', 'Activity']) {
+  // F12 declared lock update: the former "Ready" placeholder became the live, read-only
+  // Outreach workspace, so it is no longer a placeholder. Campaigns and Activity must
+  // still be untouched placeholders, and no campaign or activity view may exist.
+  for (const nav of ['Campaigns', 'Activity']) {
     const re = new RegExp('nav-item nav-item-soon[^>]*>\\s*<svg[\\s\\S]*?<span class="nav-label">' + nav + '</span>', 'm');
     assert.ok(re.test(htmlSource), 'the Outreach placeholder is unchanged: ' + nav);
   }
+  const outreachRe = new RegExp('<button class="nav-item" data-view="outreach"[^>]*>[\\s\\S]*?<span class="nav-label">Outreach</span>');
+  assert.ok(outreachRe.test(htmlSource), 'the workspace is the live Outreach route');
+  assert.ok(/aria-disabled="true"[^>]*>[\s\S]*?<span class="nav-label">Ready<\/span>/.test(htmlSource) === false,
+    'Ready is no longer a disabled placeholder');
+  assert.ok(!/id="view-campaigns?/.test(htmlSource), 'no campaign view was added');
+  assert.ok(!/id="view-activity"/.test(htmlSource), 'no activity view was added');
   assert.ok(!/id="view-ready"/.test(htmlSource), 'no Outreach Ready view was added');
 });
 

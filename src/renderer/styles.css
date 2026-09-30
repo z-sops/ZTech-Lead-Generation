@@ -5270,3 +5270,121 @@ textarea {
     gap: var(--space-1);
   }
 }
+
+/* ZTech Frontend 2.0 - F12: Outreach workspace.
+  *
+  * A dense operational read of existing pitch/gate state. It follows the same
+  * construction as the Leads and Lists workspaces: the existing `data-table`, the
+  * existing `lists-*` chrome, the existing F11 status/gate badges, and only tokens
+  * F1-F11 already define. No new colour, no shadow, no radius language, no second
+  * design system, and no metric-card styling.
+  *
+  * The only layout decision worth stating: `.outreach-table-wrap` reuses the
+  * `.leads-table-wrap` contract (flex child + `overflow:auto`) so a wide row scrolls
+  * inside the table rather than pushing the page wider. The page itself never scrolls
+  * horizontally.
+  */
+
+.outreach-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.outreach-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.outreach-select {
+  font-size: var(--font-12);
+  font-family: inherit;
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  min-height: 26px;
+}
+
+.outreach-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.outreach-table {
+  width: 100%;
+}
+
+/* Column sizing only. The table may exceed the viewport and scroll inside
+   `.outreach-table-wrap`; it must never widen the page. */
+.outreach-table .col-lead { width: 88px; }
+.outreach-table .col-status { width: 130px; }
+.outreach-table .col-gate { width: 260px; }
+.outreach-table .col-subject { min-width: 220px; }
+.outreach-table .col-research { width: 96px; }
+.outreach-table .col-icp { width: 88px; }
+.outreach-table .col-updated { width: 96px; }
+.outreach-table .col-actions { width: 104px; }
+
+.outreach-table td {
+  vertical-align: top;
+}
+
+/* The gate cell carries a decision plus its real reasons, so it is the one column
+   allowed to wrap onto several lines. */
+.outreach-gate-reasons {
+  margin: 4px 0 0;
+  padding-left: 14px;
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.outreach-gate-reasons li {
+  margin: 0 0 2px;
+  overflow-wrap: anywhere;
+}
+
+.outreach-gate-error {
+  font-size: var(--font-11);
+}
+
+.outreach-empty-cell {
+  padding: 18px 12px;
+  color: var(--text-2);
+  font-size: var(--font-12);
+}
+
+.outreach-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
+.outreach-range {
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.outreach-pager {
+  display: flex;
+  gap: var(--space-1);
+}
+
+@media (max-width: 900px) {
+  /* At the narrowest supported width the table keeps its own scroll and the footer
+     stacks, so nothing is clipped and the page still has no horizontal overflow. */
+  .outreach-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

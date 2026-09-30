@@ -27,7 +27,7 @@ function test(name, fn) {
 // F7 declared update: Research Queue and Completed became real views.
 // F8 declared update: ICP, Signals and Opportunities became real views.
 const EXISTING_VIEWS = ['collector', 'history', 'numbers', 'targets', 'dashboard', 'settings', 'searches', 'segments', 'queue', 'completed',
-  'icp', 'signals', 'opportunities'];
+  'icp', 'signals', 'opportunities', 'outreach'];
 
 function sidebarHtml() {
   const s = htmlSource.indexOf('<nav class="sidebar-nav"');
@@ -65,7 +65,9 @@ test('2. no route points at a view that does not exist', () => {
     assert.ok(htmlSource.includes(`id="view-${m[1]}"`), 'no dangling route: ' + m[1]);
   }
   // F6 implemented the Lists routes, so list/segment left this set.
-  assert.ok(!/data-view="[^"]*(research|intel|outreach|campaign|analytic)[^"]*"/i.test(nav),
+  // F12 implemented the Outreach workspace, so `outreach` left this set too. The
+  // remaining words are still unimplemented and must still have no route.
+  assert.ok(!/data-view="[^"]*(research|intel|campaign|analytic)[^"]*"/i.test(nav),
     'no route invented for an unimplemented workspace');
 });
 
@@ -87,7 +89,10 @@ test('4. unimplemented destinations are disabled, not fake', () => {
   const soon = [...nav.matchAll(/<button class="nav-item nav-item-soon"[^>]*>/g)].map((m) => m[0]);
   // F7 declared update: two Research items went live, nine remain disabled.
   // F8 declared update: the three Intelligence items went live, six remain disabled.
-  assert.ok(soon.length >= 6, 'the unimplemented destinations are present but disabled: ' + soon.length);
+  // F12 declared update: the Outreach workspace went live, so the former Ready
+  // placeholder became a real route and exactly five remain disabled. The allowlist
+  // below still pins each one as disabled, route-free and count-free.
+  assert.strictEqual(soon.length, 5, 'the unimplemented destinations are present but disabled: ' + soon.length);
   for (const tag of soon) {
     assert.ok(tag.includes('disabled'), 'native disabled present');
     assert.ok(tag.includes('aria-disabled="true"'), 'aria-disabled present');
@@ -278,12 +283,13 @@ test('19. no IPC, channel, or dependency was added', () => {
   }
   assert.strictEqual((htmlSource.match(/ipcRenderer\.invoke\(/g) || []).length, 0,
     'no invoke was added to the document');
-  // A10 declared lock update: 41 -> 46 preload invocations. The single change is
-  // the five approved Lead Intelligence methods (3 pitch + 2 outreach) under the
-  // new `ztechLeadIntel` key. The appAPI surface is untouched and no renderer
-  // invoke was added to the document.
+  // A10 declared lock update: 41 -> 46 preload invocations. F12 Batch 2 declared
+  // lock update: 46 -> 47. The single change is the one extra approved Lead
+  // Intelligence method (outreach.list) under the existing `ztechLeadIntel` key.
+  // The appAPI surface is untouched and no renderer invoke was added to the
+  // document.
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 46, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read and the five A10 Lead Intelligence methods');
+    .split('ipcRenderer.invoke').length - 1, 47, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read and the six A10 Lead Intelligence methods');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {
@@ -329,7 +335,8 @@ test('22. the shell kept the existing view sections untouched', () => {
   // F6 declared update: the two Lists views were added; the six are untouched.
   // F7 declared lock update: the two Research views join them.
   // F8 declared lock update: the three Intelligence views join them.
-  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 13, 'six view sections plus two F6 Lists, two F7 Research and three F8 Intelligence views');
+  // F12 declared lock update: the read-only Outreach view joins them.
+  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 14, 'six view sections plus two F6 Lists, two F7 Research, three F8 Intelligence and the F12 Outreach view');
   assert.ok(/<section class="view active" id="view-collector"/.test(htmlSource), 'collector still starts active');
 });
 

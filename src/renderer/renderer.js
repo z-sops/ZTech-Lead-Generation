@@ -23,7 +23,9 @@ const viewTitles = {
   completed: 'Completed',
   icp: 'ICP',
   signals: 'Signals',
-  opportunities: 'Opportunities'
+  opportunities: 'Opportunities',
+  // F12: the read-only Outreach workspace.
+  outreach: 'Outreach'
 };
 
 const viewContexts = {
@@ -39,7 +41,9 @@ const viewContexts = {
   completed: 'Research',
   icp: 'Intelligence',
   signals: 'Intelligence',
-  opportunities: 'Intelligence'
+  opportunities: 'Intelligence',
+  // F12: the read-only Outreach workspace.
+  outreach: 'Outreach'
 };
 
 // A nav target must be a real, existing view. Anything else is refused rather
@@ -6710,3 +6714,384 @@ async function f11Run(lead, action) {
 function loadLeadDrawerPitch(lead) {
   return f11Run(lead, null);
 }
+
+// === F12 Outreach: the read-only Outreach workspace ===
+//
+// The operational view of the pitch/gate state that already exists. It lists the
+// PERSISTED pitch drafts through window.ztechLeadIntel.outreach.list and shows each
+// pitch's real status alongside the real Outreach Gate result returned by
+// window.ztechLeadIntel.outreach.gate.
+//
+// RULES THIS BLOCK KEEPS
+//  - READ ONLY. There is no generate, save, approve, send, campaign or activity action
+//    anywhere in this block. The only action is opening the existing F5 lead drawer.
+//  - The backend is the only source of truth. The gate is never recomputed, summarised or
+//    inferred here: the decision and every reason/warning are rendered exactly as
+//    OutreachGate returned them, reusing the F11 label maps.
+//  - "approved" is not a pitch state. Human approval stays an approval RECORD, visible
+//    only through the gate result, so no fourth status is invented for it.
+//  - The three real statuses are the only ones offered: draft, insufficient_evidence and
+//    needs_revision. F11_PITCH_STATUS is reused, never redeclared.
+//  - Nothing is fabricated. A field the pitch does not carry renders as the honest
+//    unavailable dash rather than an invented name, score, date or metric.
+//  - Only window.ztechLeadIntel is used. No appAPI, no fetch, no innerHTML, no require().
+//  - Gate evaluation is BOUNDED: the visible page only, at most F12_OUTREACH_MAX_GATES
+//    requests, issued sequentially. The whole pitch table is never gate-evaluated.
+
+// The only pitch statuses a filter may offer. Deliberately not a redefinition of
+// F11_PITCH_STATUS: it is that object's own key set, so a fourth status added there
+// cannot be silently missing from this filter.
+const F12_OUTREACH_STATUSES = Object.freeze(Object.keys(F11_PITCH_STATUS));
+
+const F12_OUTREACH_PAGE_SIZE = 20;
+// Hard bound on gate requests per load. It can never exceed the page size, and it is
+// stated here so the bound is auditable rather than incidental.
+const F12_OUTREACH_MAX_GATES = 20;
+const F12_OUTREACH_UNAVAILABLE = '—';
+
+let f12OutreachSeq = 0;
+const f12OutreachState = {
+  offset: 0,
+  status: '',
+  gateFilter: '',
+  rows: [],
+  total: 0,
+  limit: F12_OUTREACH_PAGE_SIZE,
+  // pitch_id -> { ok, gate } or { ok:false, error }. Scoped to the current page.
+  gates: new Map()
+};
+
+function f12OutreachEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+/** ISO timestamp -> the workspace's own short date, or the honest dash. */
+function f12OutreachDate(iso) {
+  if (typeof iso !== 'string' || !iso) return '';
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getUTCFullYear();
+}
+
+/** A plain cell value, or the honest unavailable dash when the pitch has no such field. */
+function f12OutreachCell(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  const el = f12OutreachEl('td', null, text || F12_OUTREACH_UNAVAILABLE);
+  if (!text) el.classList.add('cell-muted');
+  return el;
+}
+
+/** An error the way this codebase already reports one: the real code and message. */
+function f12OutreachErrorBox(err) {
+  return f11AlertBox({
+    code: err && err.code ? err.code : 'ERROR',
+    message: err && err.message ? err.message : 'The request failed.'
+  });
+}
+
+function f12OutreachEmptyRow(message) {
+  const tr = f12OutreachEl('tr');
+  const td = f12OutreachEl('td', 'outreach-empty-cell', message);
+  td.colSpan = 8;
+  tr.appendChild(td);
+  return tr;
+}
+
+/**
+ * One gate cell. The decision and every reason/warning come from OutreachGate
+ * unchanged; only the label lookup is reused from the F11 maps. A gate that could not
+ * be read shows that fact instead of being treated as blocked or allowed.
+ */
+function f12OutreachGateCell(entry) {
+  const td = f12OutreachEl('td', 'col-gate');
+  if (!entry) {
+    td.appendChild(f12OutreachEl('span', 'lead-drawer-muted', 'Not evaluated'));
+    return td;
+  }
+  if (!entry.ok) {
+    const badge = f12OutreachEl('span', 'lead-drawer-state', 'Unavailable');
+    badge.setAttribute('data-state', 'neutral');
+    td.appendChild(badge);
+    td.appendChild(f11El('div', 'lead-drawer-muted outreach-gate-error', entry.error && entry.error.code ? entry.error.code : 'ERROR'));
+    return td;
+  }
+  const gate = entry.gate;
+  const allowed = Boolean(gate) && gate.decision === 'allowed';
+  td.appendChild(f11Status(allowed ? 'Allowed' : 'Blocked', allowed ? 'ok' : 'danger'));
+
+  const reasons = Array.isArray(gate && gate.reasons) ? gate.reasons : [];
+  const warnings = Array.isArray(gate && gate.warnings) ? gate.warnings : [];
+  if (allowed) {
+    // "allowed" means cleared for outreach. It never means sent: nothing sends.
+    td.appendChild(f11El('div', 'lead-drawer-muted', 'Cleared for outreach. Nothing is sent.'));
+    return td;
+  }
+  // Every blocked reason is shown, with its real code. Nothing is summarised away.
+  const list = f11El('ul', 'f11-reasons outreach-gate-reasons');
+  for (const reason of reasons) {
+    const code = reason && typeof reason.code === 'string' ? reason.code : 'UNKNOWN';
+    const label = Object.prototype.hasOwnProperty.call(F11_GATE_REASON_LABELS, code) ? F11_GATE_REASON_LABELS[code] : code;
+    const item = f11El('li', 'f11-reason');
+    item.appendChild(f11El('span', 'f11-reason-code', label));
+    item.appendChild(f11El('span', 'f11-reason-code-raw', code));
+    item.appendChild(f11El('span', 'f11-reason-message', reason && typeof reason.message === 'string' ? reason.message : ''));
+    list.appendChild(item);
+  }
+  if (!reasons.length) list.appendChild(f11El('li', 'lead-drawer-muted', 'The gate reported no decision.'));
+  td.appendChild(list);
+
+  if (warnings.length) {
+    const warnList = f11El('ul', 'f11-warnings outreach-gate-reasons');
+    for (const warning of warnings) {
+      const code = warning && typeof warning.code === 'string' ? warning.code : 'UNKNOWN';
+      const label = Object.prototype.hasOwnProperty.call(F11_GATE_WARNING_LABELS, code) ? F11_GATE_WARNING_LABELS[code] : code;
+      const item = f11El('li', 'f11-warning');
+      item.appendChild(f11El('span', 'f11-reason-code', label));
+      item.appendChild(f11El('span', 'f11-reason-code-raw', code));
+      item.appendChild(f11El('span', 'f11-reason-message', warning && typeof warning.message === 'string' ? warning.message : ''));
+      warnList.appendChild(item);
+    }
+    td.appendChild(warnList);
+  }
+  return td;
+}
+
+/** One table row. Every cell is built from the stored pitch; nothing is invented. */
+function f12OutreachRow(pitch, gateEntry) {
+  const tr = f12OutreachEl('tr');
+  const hasLead = pitch && pitch.lead_id !== undefined && pitch.lead_id !== null;
+  tr.setAttribute('data-pitch-id', String(pitch && pitch.pitch_id ? pitch.pitch_id : ''));
+  tr.setAttribute('data-lead-id', String(hasLead ? pitch.lead_id : ''));
+
+  // Lead identity: the pitch records lead_id only. It carries no company name, so none
+  // is shown - the honest lead reference, nothing fabricated.
+  tr.appendChild(f12OutreachCell(hasLead ? String(pitch.lead_id) : ''));
+
+  // Pitch status: the real F11 badge for the real stored status.
+  const statusTd = f12OutreachEl('td', 'col-status');
+  statusTd.appendChild(f11PitchStatusBadge(pitch && pitch.status));
+  tr.appendChild(statusTd);
+
+  tr.appendChild(f12OutreachGateCell(gateEntry));
+  tr.appendChild(f12OutreachCell(pitch && pitch.subject));
+  tr.appendChild(f12OutreachCell(pitch && pitch.research_status));
+  tr.appendChild(f12OutreachCell(pitch && pitch.icp_fit_status));
+  tr.appendChild(f12OutreachCell(f12OutreachDate(pitch && pitch.updated_at)));
+
+  // The one action: open the existing F5 lead drawer for this lead. No pitch mutation.
+  const actions = f12OutreachEl('td', 'col-actions');
+  if (hasLead && typeof openLeadDetail === 'function') {
+    const open = f11El('button', 'btn btn-sm btn-secondary', 'Open lead');
+    open.type = 'button';
+    open.setAttribute('data-lead-id', String(pitch.lead_id));
+    open.addEventListener('click', () => openLeadDetail(String(pitch.lead_id)));
+    actions.appendChild(open);
+  } else {
+    actions.appendChild(f11El('span', 'lead-drawer-muted', 'No lead reference'));
+  }
+  tr.appendChild(actions);
+  return tr;
+}
+
+/** The loaded page after the client-side GATE filter, which is the only client filter. */
+function f12OutreachVisibleRows() {
+  const wanted = f12OutreachState.gateFilter;
+  if (!wanted) return f12OutreachState.rows;
+  return f12OutreachState.rows.filter((pitch) => {
+    const entry = f12OutreachState.gates.get(String(pitch && pitch.pitch_id));
+    if (!entry || !entry.ok) return false; // an unreadable gate is not "allowed" or "blocked"
+    return Boolean(entry.gate) && entry.gate.decision === wanted;
+  });
+}
+
+function f12OutreachRenderRange() {
+  const range = document.getElementById('outreach-range');
+  if (!range) return;
+  const total = f12OutreachState.total;
+  const loaded = f12OutreachState.rows.length;
+  const offset = f12OutreachState.offset;
+  const limit = f12OutreachState.limit;
+
+  if (total === 0) {
+    range.textContent = f12OutreachState.status ? 'No pitches match these filters.' : 'No outreach pitches yet.';
+    return;
+  }
+  const from = offset + 1;
+  const to = offset + loaded;
+  let text = from + '–' + to + ' of ' + total + ' pitch' + (total === 1 ? '' : 'es');
+  // Honest about the one client-side filter: a gate decision is computed, never stored,
+  // so it can only narrow the page that was actually loaded.
+  if (f12OutreachState.gateFilter) {
+    text += ' · ' + f12OutreachVisibleRows().length + ' of ' + loaded + ' on this page are ' + f12OutreachState.gateFilter;
+  }
+  range.textContent = text;
+}
+
+function f12OutreachRenderPager() {
+  const prev = document.getElementById('outreach-prev');
+  const next = document.getElementById('outreach-next');
+  const offset = f12OutreachState.offset;
+  const total = f12OutreachState.total;
+  if (prev) prev.disabled = offset <= 0;
+  // Next is only enabled when a further page can exist, from the store's own total.
+  if (next) next.disabled = offset + f12OutreachState.limit >= total;
+}
+
+function f12OutreachRender() {
+  const tbody = document.getElementById('outreach-body');
+  if (!tbody) return;
+  const visible = f12OutreachVisibleRows();
+
+  if (f12OutreachState.rows.length === 0) {
+    tbody.replaceChildren(f12OutreachEmptyRow(
+      f12OutreachState.status ? 'No pitches match these filters.' : 'No outreach pitches yet.'
+    ));
+  } else if (visible.length === 0) {
+    tbody.replaceChildren(f12OutreachEmptyRow('No pitches match these filters.'));
+  } else {
+    tbody.replaceChildren(...visible.map((pitch) =>
+      f12OutreachRow(pitch, f12OutreachState.gates.get(String(pitch && pitch.pitch_id)))));
+  }
+  f12OutreachRenderRange();
+  f12OutreachRenderPager();
+}
+
+/**
+ * Load one page. The pitch list and then each visible row's gate are read through the
+ * single approved API. Gate reads are sequential and capped, so a large library can
+ * never turn into an unbounded request burst.
+ */
+async function f12OutreachLoad() {
+  const seq = ++f12OutreachSeq;
+  const api = f11LeadIntel();
+  const tbody = document.getElementById('outreach-body');
+  if (!api || !api.outreach || typeof api.outreach.list !== 'function') {
+    if (tbody) tbody.replaceChildren(f12OutreachEmptyRow('Outreach is not available in this session.'));
+    return;
+  }
+
+  f12OutreachState.gates = new Map();
+  if (tbody) {
+    const loading = f12OutreachEl('tr');
+    const cell = f12OutreachEl('td', 'outreach-empty-cell', 'Loading outreach...');
+    cell.colSpan = 8;
+    cell.setAttribute('aria-live', 'polite');
+    loading.appendChild(cell);
+    tbody.replaceChildren(loading);
+  }
+
+  let page;
+  try {
+    const query = { limit: f12OutreachState.limit, offset: f12OutreachState.offset };
+    if (f12OutreachState.status) query.status = f12OutreachState.status;
+    page = f11Unwrap(await api.outreach.list(query));
+  } catch (err) {
+    if (seq !== f12OutreachSeq) return;
+    f12OutreachState.rows = [];
+    f12OutreachState.total = 0;
+    if (tbody) {
+      const tr = f12OutreachEl('tr');
+      const cell = f12OutreachEl('td', 'outreach-empty-cell');
+      cell.colSpan = 8;
+      cell.appendChild(f12OutreachErrorBox(err));
+      tr.appendChild(cell);
+      tbody.replaceChildren(tr);
+    }
+    f12OutreachRenderRange();
+    f12OutreachRenderPager();
+    return;
+  }
+  if (seq !== f12OutreachSeq) return;
+
+  f12OutreachState.rows = page && Array.isArray(page.rows) ? page.rows : [];
+  f12OutreachState.total = page && Number.isFinite(page.total) ? page.total : f12OutreachState.rows.length;
+  f12OutreachState.limit = page && Number.isFinite(page.limit) && page.limit > 0 ? page.limit : f12OutreachState.limit;
+
+  // Bounded, sequential gate reads for the visible page only. A stale load can never
+  // overwrite the current one: every write below is guarded by the same seq.
+  const budget = Math.min(f12OutreachState.rows.length, F12_OUTREACH_MAX_GATES);
+  for (let i = 0; i < budget; i++) {
+    const pitch = f12OutreachState.rows[i];
+    const pitchId = pitch && pitch.pitch_id ? String(pitch.pitch_id) : '';
+    if (!pitchId) continue;
+    try {
+      const gate = f11Unwrap(await api.outreach.gate({ pitchId: pitchId, channel: 'email' }));
+      if (seq !== f12OutreachSeq) return;
+      f12OutreachState.gates.set(pitchId, { ok: true, gate: gate });
+    } catch (err) {
+      if (seq !== f12OutreachSeq) return;
+      f12OutreachState.gates.set(pitchId, { ok: false, error: { code: err && err.code ? err.code : 'ERROR', message: err && err.message ? err.message : '' } });
+    }
+  }
+  if (seq !== f12OutreachSeq) return;
+  f12OutreachRender();
+}
+
+/** Wire the controls once. The nav item is loaded through its own listener so
+ *  activateView() stays the single writer of #page-title and #page-context. */
+function f12OutreachInit() {
+  const statusFilter = document.getElementById('outreach-status-filter');
+  if (statusFilter) {
+    // The options are the real stored statuses, not a hand-written list.
+    const options = [''].concat(F12_OUTREACH_STATUSES);
+    statusFilter.replaceChildren(...options.map((value) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value
+        ? (F11_PITCH_STATUS[value] ? F11_PITCH_STATUS[value].label : value)
+        : 'All pitch statuses';
+      return option;
+    }));
+    statusFilter.addEventListener('change', () => {
+      f12OutreachState.status = F12_OUTREACH_STATUSES.indexOf(statusFilter.value) === -1 ? '' : statusFilter.value;
+      f12OutreachState.offset = 0;
+      f12OutreachLoad();
+    });
+  }
+  const gateFilter = document.getElementById('outreach-gate-filter');
+  if (gateFilter) {
+    gateFilter.addEventListener('change', () => {
+      f12OutreachState.gateFilter = gateFilter.value === 'allowed' || gateFilter.value === 'blocked' ? gateFilter.value : '';
+      f12OutreachRender();
+    });
+  }
+  const refresh = document.getElementById('outreach-refresh');
+  if (refresh) refresh.addEventListener('click', () => f12OutreachLoad());
+
+  const prev = document.getElementById('outreach-prev');
+  if (prev) prev.addEventListener('click', () => {
+    const target = Math.max(0, f12OutreachState.offset - f12OutreachState.limit);
+    if (target === f12OutreachState.offset) return;
+    f12OutreachState.offset = target;
+    f12OutreachLoad();
+  });
+  const next = document.getElementById('outreach-next');
+  if (next) next.addEventListener('click', () => {
+    const target = f12OutreachState.offset + f12OutreachState.limit;
+    if (target >= f12OutreachState.total) return;
+    f12OutreachState.offset = target;
+    f12OutreachLoad();
+  });
+
+  // Loading on navigation. The generic nav handler has already switched the view, so
+  // this only fetches. No timer, no polling, no interval.
+  const nav = document.querySelector('.nav-item[data-view="outreach"]');
+  if (nav) nav.addEventListener('click', () => f12OutreachLoad());
+}
+
+// F12: wire the read-only Outreach workspace's controls.
+//
+// This call MUST stay here, at the end of the module, and not beside the other
+// startup calls in the middle of this file. f12OutreachInit() reads F12_OUTREACH_STATUSES
+// and the F11 label maps synchronously, and those are module-scope `const`
+// declarations that appear BELOW those startup calls. Calling it from up there ran it
+// inside their temporal dead zone and threw a ReferenceError that killed the whole
+// renderer module at evaluation time. Its only other job is attaching listeners, so it
+// is order-independent with respect to every other view: this file still has exactly
+// one init point for F12, and the app's own init sequence is otherwise untouched.
+f12OutreachInit();

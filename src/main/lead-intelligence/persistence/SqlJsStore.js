@@ -2,7 +2,7 @@
 
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { MIGRATIONS } = require('./migrations');
-const { packetMeta } = require('./contract');
+const { packetMeta, normalizePitchListQuery } = require('./contract');
 
 /**
  * SqlJsStore — repository contract on top of ZTech's EXISTING sql.js Database.
@@ -411,6 +411,36 @@ class SqlPitches {
 
   async latestForLead(leadId) {
     return this._from(row(this.s.db, 'SELECT pitch_id, draft_json FROM li_pitch_drafts WHERE lead_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1', [String(leadId)]));
+  }
+
+  /**
+   * F12 Batch 1: enumerate persisted pitch drafts. Read-only enumeration only - it
+   * computes no gate, reads no packet, evaluates no ICP and never generates, edits,
+   * approves or deletes a pitch.
+   *
+   * `status` filters the PERSISTED li_pitch_drafts.status column, so the filter runs in
+   * SQL and `total` reflects the filtered set. `blocked`/`allowed` are not pitch
+   * statuses: they are OutreachGate.decision, computed on read and never stored, so
+   * they are rejected here rather than quietly returning an empty page.
+   *
+   * Ordering is updated_at DESC with pitch_id DESC as the tie-breaker, so rows sharing a
+   * timestamp still come back in one fixed order across calls. Envelope shape matches
+   * ZTech's existing paginated query convention (AccountStore.queryNumbers).
+   *
+   * @param {{limit?: number, offset?: number, status?: string|null}} [query]
+   * @returns {Promise<{rows: object[], total: number, limit: number, offset: number, status: string|null}>}
+   */
+  async list(query) {
+    const { status, limit, offset } = normalizePitchListQuery(query);
+    const where = status ? ' WHERE status = ?' : '';
+    const params = status ? [status] : [];
+    const total = row(this.s.db, `SELECT COUNT(*) AS c FROM li_pitch_drafts${where}`, params);
+    const page = rows(
+      this.s.db,
+      `SELECT pitch_id, draft_json FROM li_pitch_drafts${where} ORDER BY updated_at DESC, pitch_id DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+    return { rows: page.map((r) => this._from(r)).filter(Boolean), total: total ? total.c : 0, limit, offset, status };
   }
 }
 

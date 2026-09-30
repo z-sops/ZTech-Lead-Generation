@@ -713,10 +713,10 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
     // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
     // F8 declared lock update: 41 -> 42, intelligence:icp.
-    // A10 declared lock update: 42 -> 47, the five approved Lead Intelligence
+    // F12 Batch 2 declared lock update: 47 -> 48, the six approved Lead Intelligence
     // channels (3 pitch + outreach approve/gate). No email-send channel exists.
-    assert.strictEqual(channels.length, 47, 'exactly 47 channels');
-    assert.strictEqual(new Set(channels).size, 47, 'no duplicate channel names');
+    assert.strictEqual(channels.length, 48, 'exactly 48 channels');
+    assert.strictEqual(new Set(channels).size, 48, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1417,8 +1417,8 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
     // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
     // F8 declared lock update: 41 -> 42, intelligence:icp.
-    // A10 declared lock update: 42 -> 47, the five approved Lead Intelligence channels.
-    assert.strictEqual(allChannels().length, 47, 'exactly 47 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence)');
+    // F12 Batch 2 declared lock update: 47 -> 48, the six approved Lead Intelligence channels.
+    assert.strictEqual(allChannels().length, 48, 'exactly 48 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');
