@@ -161,6 +161,48 @@ function normalizeActivityQuery(query) {
   return { limit, offset, leadId, pitchId };
 }
 
+// === F16: the derived Ready query ===
+//
+// Readiness is NOT a status and NOT a stored flag. A pitch is Ready only when the
+// existing OutreachGate returns `allowed`. So the query is a DERIVED, gate-filtered view,
+// which has a property no plain table read has: an exact row count is unknowable without
+// evaluating the gate for every persisted pitch.
+//
+// Therefore there is deliberately NO `total` here and none in the response. Returning one
+// would mean either scanning the whole pitch table (unbounded work per request) or
+// inventing a number. Instead the envelope is cursor-shaped:
+//
+//   rows        the ready pitches actually found inside this scan window
+//   scanned     how many candidates were gate-evaluated in this call
+//   cursor      the scan position this call started at
+//   nextCursor  where the next call resumes, or null when nothing remains
+//   hasMore     whether any candidate remains unscanned
+//
+// `scanLimit` is the hard bound on gate evaluations per call, which is what keeps this
+// honest: a caller can never make the main process evaluate an unbounded number of gates.
+const READY_PAGE_DEFAULT_LIMIT = 10;
+const READY_PAGE_MAX_LIMIT = 25;
+const READY_SCAN_DEFAULT = 50;
+const READY_SCAN_MAX = 200;
+
+/** Bounded inputs for the derived Ready query. Returns { cursor, limit, scanLimit }. */
+function normalizeReadyQuery(query) {
+  const q = query && typeof query === 'object' && !Array.isArray(query) ? query : {};
+  const int = (value, fallback, max) => {
+    if (value === undefined || value === null) return fallback;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0) return fallback;
+    return Math.min(n, max);
+  };
+  const scanLimit = int(q.scanLimit, READY_SCAN_DEFAULT, READY_SCAN_MAX);
+  return {
+    cursor: int(q.cursor, 0, PITCH_LIST_MAX_OFFSET),
+    // Never ask for more ready rows than we are willing to evaluate in one call.
+    limit: Math.min(int(q.limit, READY_PAGE_DEFAULT_LIMIT, READY_PAGE_MAX_LIMIT), scanLimit),
+    scanLimit
+  };
+}
+
 module.exports = {
   PACKET_META_FIELDS,
   packetMeta,
@@ -176,4 +218,9 @@ module.exports = {
   ACTIVITY_MAX_OFFSET,
   normalizeActivityMetadata,
   normalizeActivityQuery,
+  READY_PAGE_DEFAULT_LIMIT,
+  READY_PAGE_MAX_LIMIT,
+  READY_SCAN_DEFAULT,
+  READY_SCAN_MAX,
+  normalizeReadyQuery,
 };

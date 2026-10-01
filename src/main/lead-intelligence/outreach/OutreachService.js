@@ -5,7 +5,7 @@ const { NotFoundError, LiError, ValidationError } = require('../core/errors');
 const { toLeadView } = require('../contracts/leadView');
 const { generatePitch, editPitch, renderPitchText } = require('./PitchGenerator');
 const { evaluateOutreachGate } = require('./OutreachGate');
-const { normalizeActivityMetadata } = require('../persistence/contract');
+const { normalizeActivityMetadata, normalizeReadyQuery } = require('../persistence/contract');
 
 /**
  * OutreachService — pitch drafts, human approval, gate evaluation and (optional,
@@ -152,6 +152,73 @@ class OutreachService {
       }
     }
     return rec;
+  }
+
+  // === F16: the derived Ready view ===
+  //
+  // Readiness is not a status, not a column and not a flag. It is exactly one thing:
+  // the existing OutreachGate currently returns `allowed` for this pitch.
+  //
+  // How it is derived, and why the envelope has no total:
+  //  - Candidates come from the EXISTING bounded pitch list contract, in its fixed
+  //    `updated_at DESC, pitch_id DESC` order, so the scan position is a stable cursor and
+  //    the result is deterministic for a given store.
+  //  - Each candidate is evaluated by the EXISTING gate. This class never re-implements
+  //    qualification, evidence, integrity, approval or freshness rules; it only asks the
+  //    gate that already owns them.
+  //  - A candidate whose gate cannot be read is EXCLUDED. Unknown is never Ready.
+  //  - An exact row count would require gate-evaluating every persisted pitch, so no
+  //    `total` is returned. The caller gets `hasMore`/`nextCursor`/`scanned` instead, which
+  //    is the truth rather than a number nobody computed.
+  //  - `scanLimit` bounds the work per call. A caller cannot make this evaluate an
+  //    unbounded number of gates.
+  //  - Nothing is written. This is a read: it records no activity and sends nothing.
+  async ready(query) {
+    const { cursor, limit, scanLimit } = normalizeReadyQuery(query);
+    const page = await this.store.pitches.list({ limit: scanLimit, offset: cursor });
+    const candidates = page && Array.isArray(page.rows) ? page.rows : [];
+    const persistedTotal = page && Number.isFinite(page.total) ? page.total : candidates.length;
+
+    const rows = [];
+    let scanned = 0;
+    for (const candidate of candidates) {
+      // Stop before evaluating anything we would not return. This keeps `scanned`
+      // equal to the work actually performed, and never skips a ready row: the next
+      // call resumes at exactly this position.
+      if (rows.length >= limit) break;
+      scanned++;
+      let verdict;
+      try {
+        verdict = await this.gate({ pitchId: candidate.pitch_id });
+      } catch (err) {
+        // An unreadable gate is not a pass. It is simply not Ready.
+        continue;
+      }
+      if (!verdict || verdict.decision !== 'allowed') continue;
+      let lead = { id: candidate.lead_id === undefined ? null : candidate.lead_id, name: null };
+      try {
+        // The lead identity the gate ALREADY resolved for its own check. No extra
+        // enrichment is performed and no field is invented: `name` stays null when the
+        // lead carries no business name.
+        const ctx = await this.contexts.getContext(candidate.lead_id, { targetId: candidate.target_id ?? undefined });
+        if (ctx && ctx.view && typeof ctx.view.name === 'string') lead = { ...lead, name: ctx.view.name };
+      } catch (err) {
+        // Keep the honest lead reference with no name.
+      }
+      rows.push({ pitch: candidate, gate: verdict, lead });
+    }
+
+    const nextCursor = cursor + scanned;
+    const hasMore = nextCursor < persistedTotal;
+    return {
+      rows,
+      scanned,
+      cursor,
+      nextCursor: hasMore ? nextCursor : null,
+      hasMore,
+      // No `total`: it is not known without an unbounded scan, and is not invented here.
+      limit
+    };
   }
 
   async gate({ pitchId, channel = 'email' }) {

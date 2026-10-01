@@ -717,8 +717,8 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // channels (3 pitch + outreach approve/gate). F15 declared lock update: 48 -> 49, the one
     // read-only outreach activity channel. No email-send channel exists, and no activity
     // WRITE channel exists either.
-    assert.strictEqual(channels.length, 49, 'exactly 49 channels');
-    assert.strictEqual(new Set(channels).size, 49, 'no duplicate channel names');
+    assert.strictEqual(channels.length, 50, 'exactly 50 channels');
+    assert.strictEqual(new Set(channels).size, 50, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1420,7 +1420,7 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
     // F8 declared lock update: 41 -> 42, intelligence:icp.
     // F15 declared lock update: 48 -> 49, adding the single read-only outreach activity channel.
-    assert.strictEqual(allChannels().length, 49, 'exactly 49 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read)');
+    assert.strictEqual(allChannels().length, 50, 'exactly 50 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

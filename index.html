@@ -150,6 +150,18 @@
             </svg>
             <span class="nav-label">Outreach</span>
           </button>
+          <!-- The derived Ready queue: prospects the existing backend OutreachGate
+               currently ALLOWS. Readiness is computed by that gate on every read and is
+               never stored as a status or a flag, so a pitch that later goes stale or
+               changes simply stops appearing here. This workspace only reads and opens a
+               lead: there is no compose, no scheduling and no outbound action here, and
+               nothing in this build sends anything. Campaigns stays disabled below. -->
+          <button class="nav-item" data-view="ready" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="5.5"></circle><path d="M5.5 8.2l1.7 1.7 3.4-3.6"></path>
+            </svg>
+            <span class="nav-label">Ready</span>
+          </button>
           <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M3 10.5V13h3l7-7-3-3z"></path>
@@ -1366,6 +1378,58 @@
              storage because one of them is missing. "Use for collection" only
              pre-fills existing collector inputs. There is no delete, no match
              count and no score. -->
+        <!-- F16 ready-workspace-view: the derived Ready queue.
+
+             It lists exactly what window.ztechLeadIntel.outreach.ready returns: the pitches
+             whose OutreachGate verdict is `allowed` at the moment of this read. Nothing is
+             recomputed here, no rule is duplicated, and nothing is invented: if the gate
+             blocks a pitch it simply is not in the list.
+
+             The envelope has no total, because an exact count would need every persisted
+             pitch gate-evaluated. The footer therefore says what is actually true - how
+             many candidates were scanned, and whether any remain - and navigates by the
+             cursor the backend returned.
+
+             Channel-neutral: the delivery line reports the capability the backend reports,
+             whatever channel it names. There is no send, schedule, queue or retry here. -->
+        <section class="view" id="view-ready">
+          <div class="lists-workspace ready-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Ready</h2>
+                <p class="lists-subtitle">Prospects the Outreach Gate allows right now. Nothing here has been sent: this build has no sending provider.</p>
+              </div>
+              <div class="lists-actions">
+                <button class="btn btn-sm" id="ready-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="ready-table-wrap">
+              <table class="data-table ready-table">
+                <thead>
+                  <tr>
+                    <th class="col-lead">Lead</th>
+                    <th class="col-readiness">Readiness</th>
+                    <th class="col-pitch">Pitch</th>
+                    <th class="col-research">Research</th>
+                    <th class="col-icp">ICP</th>
+                    <th class="col-delivery">Delivery</th>
+                    <th class="col-updated">Updated</th>
+                    <th class="col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="ready-body"></tbody>
+              </table>
+            </div>
+            <div class="lists-footer ready-footer">
+              <div class="ready-range" id="ready-range"></div>
+              <div class="ready-pager">
+                <button class="btn btn-sm" id="ready-prev" type="button">Previous</button>
+                <button class="btn btn-sm" id="ready-next" type="button">Next</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- F15 activity-workspace-view: the read-only outreach activity history.
 
              It lists window.ztechLeadIntel.outreach.activity - the canonical persisted

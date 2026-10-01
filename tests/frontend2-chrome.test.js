@@ -27,7 +27,7 @@ function test(name, fn) {
 // F7 declared update: Research Queue and Completed became real views.
 // F8 declared update: ICP, Signals and Opportunities became real views.
 const EXISTING_VIEWS = ['collector', 'history', 'numbers', 'targets', 'dashboard', 'settings', 'searches', 'segments', 'queue', 'completed',
-  'icp', 'signals', 'opportunities', 'outreach', 'activity'];
+  'icp', 'signals', 'opportunities', 'outreach', 'activity', 'ready'];
 
 function sidebarHtml() {
   const s = htmlSource.indexOf('<nav class="sidebar-nav"');
@@ -289,7 +289,7 @@ test('19. no IPC, channel, or dependency was added', () => {
   // The appAPI surface is untouched and no renderer invoke was added to the
   // document.
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 48, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read and the seven A10 Lead Intelligence methods');
+    .split('ipcRenderer.invoke').length - 1, 49, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read and the eight A10 Lead Intelligence methods');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {
@@ -336,7 +336,7 @@ test('22. the shell kept the existing view sections untouched', () => {
   // F7 declared lock update: the two Research views join them.
   // F8 declared lock update: the three Intelligence views join them.
   // F12 declared lock update: the read-only Outreach view joins them.
-  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 15, 'six view sections plus two F6 Lists, two F7 Research, three F8 Intelligence, the F12 Outreach view and the F15 Activity view');
+  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 16, 'six view sections plus two F6 Lists, two F7 Research, three F8 Intelligence, the F12 Outreach view, the F15 Activity view and the F16 Ready view');
   assert.ok(/<section class="view active" id="view-collector"/.test(htmlSource), 'collector still starts active');
 });
 

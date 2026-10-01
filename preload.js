@@ -108,6 +108,10 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     list: (payload) => ipcRenderer.invoke('lead-intel:outreach-list', payload || {}),
     // F15: read-only activity history. This is the ONLY activity method: there is no
     // create/update/delete bridge, so the renderer cannot invent an activity record.
-    activity: (payload) => ipcRenderer.invoke('lead-intel:outreach-activity', payload || {})
+    activity: (payload) => ipcRenderer.invoke('lead-intel:outreach-activity', payload || {}),
+    // F16: the derived Ready queue. Read-only: it reports what the existing OutreachGate
+    // currently allows. There is no send, schedule or provider method anywhere on this
+    // bridge, and readiness is derived, never written.
+    ready: (payload) => ipcRenderer.invoke('lead-intel:outreach-ready', payload || {})
   })
 }));

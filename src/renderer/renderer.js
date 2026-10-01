@@ -27,7 +27,9 @@ const viewTitles = {
   // F12: the read-only Outreach workspace.
   outreach: 'Outreach',
   // F15: the outreach activity history.
-  activity: 'Activity'
+  activity: 'Activity',
+  // F16: the derived Ready queue.
+  ready: 'Ready'
 };
 
 const viewContexts = {
@@ -47,7 +49,9 @@ const viewContexts = {
   // F12: the read-only Outreach workspace.
   outreach: 'Outreach',
   // F15: the outreach activity history.
-  activity: 'Activity'
+  activity: 'Activity',
+  // F16: the derived Ready queue.
+  ready: 'Ready'
 };
 
 // A nav target must be a real, existing view. Anything else is refused rather
@@ -6869,6 +6873,253 @@ function f14DeliveryNote(delivery) {
   return 'A delivery provider is configured. Nothing is sent by this workspace.';
 }
 
+// === F16 Outreach: the derived Ready queue ===
+//
+// Which prospects the EXISTING OutreachGate currently ALLOWS. That is the whole definition.
+//
+// RULES THIS BLOCK KEEPS
+//  - READINESS IS DERIVED, NEVER STORED. There is no `ready` status, no flag on a pitch, no
+//    ready table and no second source of truth. F15's OUTREACH_READY activity is HISTORY
+//    ("this became ready at T"); it is deliberately NOT read here, so a pitch that was
+//    ready once and has since gone stale or been edited disappears from this list.
+//  - NO RULE IS DUPLICATED. This block does not ask "is the approval current?" or "is the
+//    evidence fresh?" - the gate already decided, and only its verdict is rendered.
+//  - UNKNOWN IS NOT READY. A row is rendered only when the gate said `allowed`; a
+//    candidate whose gate could not be read is simply absent from the response.
+//  - NO total is invented. The backend returns `scanned`/`hasMore`/`nextCursor` because an
+//    exact count would need every pitch evaluated. The footer reports exactly those.
+//  - NO OUTBOUND ACTION. The only action opens the existing F5 lead drawer.
+const F16_READY_PAGE_SIZE = 10;
+// The same bound the backend enforces; repeated here only so the renderer cannot ask for
+// a page larger than one scan window.
+const F16_READY_SCAN_SIZE = 50;
+const F16_READY_UNAVAILABLE = '—';
+
+let f16ReadySeq = 0;
+const f16ReadyState = { cursor: 0, rows: [], scanned: 0, hasMore: false, nextCursor: null, limit: F16_READY_PAGE_SIZE, error: null };
+
+function f16ReadyEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+/** ISO timestamp -> this workspace's own short date, or the honest dash. */
+function f16ReadyDate(iso) {
+  if (typeof iso !== 'string' || !iso) return '';
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getUTCFullYear();
+}
+
+/** A plain cell, or the honest dash when there is no such value. */
+function f16ReadyCell(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  const el = f16ReadyEl('td', null, text || F16_READY_UNAVAILABLE);
+  if (!text) el.classList.add('cell-muted');
+  return el;
+}
+
+/**
+ * The delivery sentence for a ready row. `delivery` is the capability the backend reported
+ * beside the gate verdict. The CHANNEL NAME IS NOT ASSUMED: whatever channel the backend
+ * names is rendered, so a future delivery capability needs no change here. When no
+ * capability is configured the row says so plainly, because a ready pitch that nobody can
+ * actually reach must not look like work in flight.
+ */
+function f16ReadyDeliveryNote(delivery) {
+  if (!delivery || typeof delivery !== 'object') {
+    return 'Delivery capability unknown. Nothing is sent.';
+  }
+  const channel = typeof delivery.channel === 'string' && delivery.channel ? delivery.channel : null;
+  const configured = Object.entries(delivery).some(([k, v]) => k !== 'channel' && v === true);
+  // The channel is named whenever the backend reported one, in BOTH cases, so this code
+  // path needs no change when a second channel is added.
+  const named = channel ? ' (' + channel + ')' : '';
+  if (!configured) {
+    return 'Delivery provider not configured' + named;
+  }
+  return 'A delivery provider is configured' + named + '. Nothing is sent by this workspace.';
+}
+
+function f16ReadyEmptyRow(message) {
+  const tr = f16ReadyEl('tr');
+  const td = f16ReadyEl('td', 'ready-empty-cell', message);
+  td.colSpan = 8;
+  tr.appendChild(td);
+  return tr;
+}
+
+/** One ready pitch. Every cell is a stored value or a gate verdict - nothing invented. */
+function f16ReadyRow(item) {
+  const pitch = item && item.pitch ? item.pitch : {};
+  const gate = item && item.gate ? item.gate : {};
+  const lead = item && item.lead ? item.lead : {};
+  const tr = f16ReadyEl('tr');
+  tr.setAttribute('data-pitch-id', String(pitch.pitch_id || ''));
+  tr.setAttribute('data-lead-id', String(lead.id === undefined || lead.id === null ? '' : lead.id));
+
+  // Lead identity: the stored lead reference, plus the business name the gate already
+  // resolved. When the lead has no business name the honest dash is shown instead of a
+  // name derived from a domain.
+  tr.appendChild(f16ReadyCell(lead.name || (lead.id === undefined || lead.id === null ? '' : String(lead.id))));
+
+  const readinessTd = f16ReadyEl('td', 'col-readiness');
+  const badge = f11Status('Ready for outreach', 'ok');
+  badge.setAttribute('data-readiness', 'ready');
+  readinessTd.appendChild(badge);
+  tr.appendChild(readinessTd);
+
+  tr.appendChild(f16ReadyCell(pitch.subject));
+  tr.appendChild(f16ReadyCell(pitch.research_status));
+  tr.appendChild(f16ReadyCell(pitch.icp_fit_status));
+  const delivery = f16ReadyEl('td', 'col-delivery');
+  delivery.appendChild(f16ReadyEl('div', 'lead-drawer-muted ready-delivery-note', f16ReadyDeliveryNote(gate.delivery)));
+  tr.appendChild(delivery);
+  tr.appendChild(f16ReadyCell(f16ReadyDate(pitch.updated_at)));
+
+  // The only action: open the existing F5 lead drawer. No outbound control.
+  const actions = f16ReadyEl('td', 'col-actions');
+  const hasLead = lead.id !== undefined && lead.id !== null;
+  if (hasLead && typeof openLeadDetail === 'function') {
+    const open = f11El('button', 'btn btn-sm btn-secondary', 'Open lead');
+    open.type = 'button';
+    open.setAttribute('data-lead-id', String(lead.id));
+    open.addEventListener('click', () => openLeadDetail(String(lead.id)));
+    actions.appendChild(open);
+  } else {
+    actions.appendChild(f16ReadyEl('span', 'lead-drawer-muted', 'No lead reference'));
+  }
+  tr.appendChild(actions);
+  return tr;
+}
+
+function f16ReadyRenderRange() {
+  const range = document.getElementById('ready-range');
+  if (!range) return;
+  const { rows, scanned, cursor, hasMore, error } = f16ReadyState;
+  if (error) {
+    range.textContent = 'Ready could not be read.';
+    return;
+  }
+  if (rows.length === 0) {
+    range.textContent = 'No prospects are currently ready for outreach.';
+    return;
+  }
+  // Only what the backend actually reported: the rows it returned, the candidates it
+  // evaluated, and whether it says more remain. No invented total.
+  let text = rows.length + ' ready · scanned ' + scanned + ' pitch' + (scanned === 1 ? '' : 'es');
+  if (cursor > 0) text += ' · from position ' + (cursor + 1);
+  text += hasMore ? ' · more remain' : ' · end of list';
+  range.textContent = text;
+}
+
+function f16ReadyRenderPager() {
+  const prev = document.getElementById('ready-prev');
+  const next = document.getElementById('ready-next');
+  const { cursor, limit, hasMore, nextCursor } = f16ReadyState;
+  if (prev) prev.disabled = cursor <= 0;
+  // Next follows the backend's own cursor. When it reported no nextCursor there is
+  // nothing left to scan, so the control is disabled rather than guessing.
+  if (next) next.disabled = !hasMore || nextCursor === null || nextCursor === undefined;
+}
+
+function f16ReadyRender() {
+  const tbody = document.getElementById('ready-body');
+  if (!tbody) return;
+  if (f16ReadyState.error) {
+    const tr = f16ReadyEl('tr');
+    const td = f16ReadyEl('td', 'ready-empty-cell');
+    td.colSpan = 8;
+    td.appendChild(f11AlertBox({ code: 'READY_UNAVAILABLE', message: f16ReadyState.error }));
+    tr.appendChild(td);
+    tbody.replaceChildren(tr);
+  } else if (f16ReadyState.rows.length === 0) {
+    tbody.replaceChildren(f16ReadyEmptyRow('No prospects are currently ready for outreach.'));
+  } else {
+    tbody.replaceChildren(...f16ReadyState.rows.map(f16ReadyRow));
+  }
+  f16ReadyRenderRange();
+  f16ReadyRenderPager();
+}
+
+/** Load one scan window. Sends only the three bounded integers the channel accepts. */
+async function f16ReadyLoad() {
+  const seq = ++f16ReadySeq;
+  const api = f11LeadIntel();
+  const tbody = document.getElementById('ready-body');
+  if (!api || !api.outreach || typeof api.outreach.ready !== 'function') {
+    // Honest: the capability is absent, so say so instead of showing an empty queue.
+    f16ReadyState.error = 'The Ready queue is not available in this session.';
+    f16ReadyState.rows = [];
+    f16ReadyState.scanned = 0;
+    f16ReadyState.hasMore = false;
+    f16ReadyRender();
+    return;
+  }
+  f16ReadyState.error = null;
+  if (tbody) {
+    const loading = f16ReadyEl('tr');
+    const cell = f16ReadyEl('td', 'ready-empty-cell', 'Checking the Outreach Gate…');
+    cell.colSpan = 8;
+    cell.setAttribute('aria-live', 'polite');
+    loading.appendChild(cell);
+    tbody.replaceChildren(loading);
+  }
+  let page;
+  try {
+    page = f11Unwrap(await api.outreach.ready({
+      cursor: f16ReadyState.cursor,
+      limit: f16ReadyState.limit,
+      scanLimit: F16_READY_SCAN_SIZE
+    }));
+  } catch (err) {
+    if (seq !== f16ReadySeq) return;
+    f16ReadyState.rows = [];
+    f16ReadyState.scanned = 0;
+    f16ReadyState.hasMore = false;
+    f16ReadyState.nextCursor = null;
+    f16ReadyState.error = (err && err.message) || 'The Ready queue could not be read.';
+    f16ReadyRender();
+    return;
+  }
+  if (seq !== f16ReadySeq) return;
+  f16ReadyState.rows = page && Array.isArray(page.rows) ? page.rows : [];
+  f16ReadyState.scanned = Number.isFinite(page && page.scanned) ? page.scanned : f16ReadyState.rows.length;
+  f16ReadyState.hasMore = Boolean(page && page.hasMore);
+  f16ReadyState.nextCursor = page && Number.isFinite(page.nextCursor) ? page.nextCursor : null;
+  f16ReadyState.limit = page && Number.isFinite(page.limit) && page.limit > 0 ? page.limit : f16ReadyState.limit;
+  f16ReadyRender();
+}
+
+function f16ReadyInit() {
+  const refresh = document.getElementById('ready-refresh');
+  if (refresh) refresh.addEventListener('click', () => f16ReadyLoad());
+  const prev = document.getElementById('ready-prev');
+  if (prev) prev.addEventListener('click', () => {
+    // Step back one scan window. The backend owns the ordering, so stepping back means
+    // re-scanning from the start of the previous window, which is why the cursor is
+    // recomputed rather than guessed.
+    const target = Math.max(0, f16ReadyState.cursor - F16_READY_SCAN_SIZE);
+    if (target === f16ReadyState.cursor) return;
+    f16ReadyState.cursor = target;
+    f16ReadyLoad();
+  });
+  const next = document.getElementById('ready-next');
+  if (next) next.addEventListener('click', () => {
+    const target = f16ReadyState.nextCursor;
+    if (target === null || target === undefined || target === f16ReadyState.cursor) return;
+    f16ReadyState.cursor = target;
+    f16ReadyLoad();
+  });
+  // Loading on navigation, like the Outreach and Activity workspaces. No timer, no polling.
+  const nav = document.querySelector('.nav-item[data-view="ready"]');
+  if (nav) nav.addEventListener('click', () => f16ReadyLoad());
+}
+
 // === F15 Outreach: activity history ===
 //
 // A READ of the canonical `li_outreach_activity` ledger. The backend writes those rows at
@@ -7524,3 +7775,5 @@ f12OutreachInit();
 // F15: the activity workspace's controls. Same rule as F12: one init point, at the end
 // of the module, so it cannot run inside the temporal dead zone of the constants above.
 f15ActivityInit();
+// F16: the Ready queue's controls, at the end of the module for the same TDZ reason.
+f16ReadyInit();

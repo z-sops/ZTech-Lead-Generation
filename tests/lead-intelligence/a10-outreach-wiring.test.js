@@ -484,11 +484,12 @@ test('A10 IPC: exactly the seven approved channels are registered; email-send is
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
     'lead-intel:outreach-list',
+    'lead-intel:outreach-ready',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.equal(handlers.size, 7); // F15 declared lock update: + the read-only activity channel.
+  assert.equal(handlers.size, 8); // F15/F16 declared lock update: + the read-only activity and ready channels.
   assert.ok(!handlers.has('lead-intel:email-send'), 'email sending is not registered');
   assert.ok(!reg.channels.includes('lead-intel:email-send'));
   // Nothing beyond the outreach surface is exposed.
@@ -502,11 +503,12 @@ test('A10 IPC: exactly the seven approved channels are registered; email-send is
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
     'lead-intel:outreach-list',
+    'lead-intel:outreach-ready',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 7); // F15 declared lock update: + activity.
+  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 8); // F15/F16 declared lock update: + activity and ready.
   assert.ok(!Object.values(OUTREACH_CHANNELS).includes('lead-intel:email-send'), 'email-send is not even declared here');
   reg.dispose();
   assert.equal(handlers.size, 0, 'dispose removes every handler');
@@ -634,11 +636,12 @@ test('A10 preload: exposes exactly the seven approved methods and no email.send'
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
     'lead-intel:outreach-list',
+    'lead-intel:outreach-ready',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.equal(leadIntel.length, 7, 'exactly seven Lead Intelligence methods (F15 adds the read-only outreach activity channel)');
+  assert.equal(leadIntel.length, 8, 'exactly eight Lead Intelligence methods (F15 adds the read-only outreach activity channel, F16 the read-only ready one)');
   assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 
   // The API lives under its own key; the existing appAPI surface is unchanged.

@@ -5497,3 +5497,86 @@ textarea {
     flex-direction: column;
   }
 }
+
+/* ZTech Frontend 2.0 - F16: the Ready workspace.
+  *
+  * Built exactly like the Outreach and Activity workspaces: the existing `data-table`,
+  * the existing `lists-*` chrome, the F11 status badge, and only tokens F1-F15 already
+  * define. No new colour, shadow or radius language, and no aggregate styling - a count
+  * or rate would be exactly the invented number this workspace must not show.
+  */
+
+.ready-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.ready-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.ready-table {
+  width: 100%;
+}
+
+.ready-table td {
+  vertical-align: top;
+}
+
+/* Column sizing only. The table may exceed the viewport and scroll inside its wrap; it
+   must never widen the page. */
+.ready-table .col-lead { width: 160px; }
+.ready-table .col-readiness { width: 150px; }
+.ready-table .col-pitch { min-width: 200px; }
+.ready-table .col-research { width: 96px; }
+.ready-table .col-icp { width: 88px; }
+.ready-table .col-delivery { width: 210px; }
+.ready-table .col-updated { width: 96px; }
+.ready-table .col-actions { width: 104px; }
+
+.ready-empty-cell {
+  padding: 18px 12px;
+  color: var(--text-2);
+  font-size: var(--font-12);
+}
+
+/* The delivery sentence. Deliberately muted and wrapping: readiness is an operational
+   fact, never a claim that anything was sent. */
+.ready-delivery-note {
+  display: block;
+  font-size: var(--font-11);
+  overflow-wrap: anywhere;
+}
+
+.ready-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
+.ready-range {
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.ready-pager {
+  display: flex;
+  gap: var(--space-1);
+}
+
+@media (max-width: 900px) {
+  /* The table keeps its own scroll and the footer stacks, so nothing is clipped. */
+  .ready-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

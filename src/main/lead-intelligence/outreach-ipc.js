@@ -3,7 +3,7 @@
 const { assertValid, S } = require('./core/validate');
 const { publicError, ForbiddenError } = require('./core/errors');
 const { scrubSecrets } = require('./core/objects');
-const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET, ACTIVITY_MAX_LIMIT, ACTIVITY_MAX_OFFSET } = require('./persistence/contract');
+const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET, ACTIVITY_MAX_LIMIT, ACTIVITY_MAX_OFFSET, READY_PAGE_MAX_LIMIT, READY_SCAN_MAX } = require('./persistence/contract');
 
 /**
  * The six — and only six — A10 Lead Intelligence channels reachable by the renderer.
@@ -23,6 +23,9 @@ const CHANNELS = Object.freeze({
   // channel: activity rows are produced only by trusted backend transitions, never by
   // the renderer.
   OUTREACH_ACTIVITY: 'lead-intel:outreach-activity',
+  // F16: the derived Ready queue. Read-only like every other channel here: there is no
+  // ready write, no send channel and no provider channel.
+  OUTREACH_READY: 'lead-intel:outreach-ready',
 });
 
 /**
@@ -72,6 +75,20 @@ const INPUT_SCHEMAS = Object.freeze({
       offset: { type: 'integer', minimum: 0, maximum: ACTIVITY_MAX_OFFSET },
       leadId: { type: 'string', minLength: 1, maxLength: 100 },
       pitchId: { type: 'string', minLength: 1, maxLength: 100 },
+    },
+  },
+  // F16: the derived Ready queue. Three bounded integers and nothing else.
+  // additionalProperties:false stops a sort field, an ORDER BY, a SQL fragment or a
+  // channel name. There is no `total` to ask for and no way to request the whole table:
+  // `scanLimit` caps how many gates ONE call may evaluate, so the main process can never
+  // be talked into an unbounded scan.
+  [CHANNELS.OUTREACH_READY]: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      cursor: { type: 'integer', minimum: 0, maximum: PITCH_LIST_MAX_OFFSET },
+      limit: { type: 'integer', minimum: 1, maximum: READY_PAGE_MAX_LIMIT },
+      scanLimit: { type: 'integer', minimum: 1, maximum: READY_SCAN_MAX },
     },
   },
 });
@@ -128,6 +145,9 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   handle(CHANNELS.OUTREACH_ACTIVITY, (a) => outreach.activityList({
     limit: a.limit, offset: a.offset, leadId: a.leadId, pitchId: a.pitchId
   }));
+  // F16: read-only. The renderer can ask "what is ready right now?" and nothing else: it
+  // cannot write readiness, cannot trigger a send, and cannot reach a provider.
+  handle(CHANNELS.OUTREACH_READY, (a) => outreach.ready({ cursor: a.cursor, limit: a.limit, scanLimit: a.scanLimit }));
 
   return {
     channels: [...registered],

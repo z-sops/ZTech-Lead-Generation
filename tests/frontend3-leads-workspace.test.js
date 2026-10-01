@@ -733,7 +733,7 @@ test('28. no new IPC channel, no dependency change, no network call', () => {
   // A10 declared lock update: 41 -> 46 preload invocations (the five approved
   // Lead Intelligence methods). The 34 main channels are unchanged: A10 registers
   // its five channels from a narrowly scoped registrar, not from main.js.
-  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 48, '48 preload invocations');
+  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 49, '49 preload invocations');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
     'production dependencies unchanged');

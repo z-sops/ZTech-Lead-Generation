@@ -59,8 +59,15 @@ const F13 = rendererSource.slice(f13From, f14From);
 const F15_MARKER = '// === F15 Outreach: activity history ===';
 const f15From = rendererSource.indexOf(F15_MARKER);
 assert.ok(f15From > f14From && f12From > f15From, 'the F15 block sits between F14 and F12');
-const F14 = rendererSource.slice(f14From, f15From);
+// F16 declared lock update: the F16 ready block is defined between F14 and F15, so the F14
+// slice is bounded at the F16 marker. Otherwise "the F14 block calls no API" would
+// silently start covering F16's ready read too.
+const F16_MARKER = '// === F16 Outreach: the derived Ready queue ===';
+const f16From = rendererSource.indexOf(F16_MARKER);
+assert.ok(f16From > f14From && f15From > f16From, 'the F16 block sits between F14 and F15');
+const F14 = rendererSource.slice(f14From, f16From);
 const F15 = rendererSource.slice(f15From, f12From);
+const F16 = rendererSource.slice(f16From, f15From);
 const F12 = rendererSource.slice(f12From);
 const F14_CODE = stripComments(F14);
 
@@ -105,7 +112,9 @@ function loadWorkspace(api) {
   const names = Object.keys(sandbox);
   // F15 is lifted too: the F12 slice runs to the end of the file and therefore contains
   // F15's own init call, which would otherwise be an undefined reference here.
-  const fn = new Function(...names, F11 + '\n' + F13 + '\n' + F14 + '\n' + F15 + '\n' + F12 + '\nreturn {'
+  // F16 is lifted too: the F12 slice runs to the end of the file and now contains F16's
+  // own init call as well as F15's.
+  const fn = new Function(...names, F11 + '\n' + F13 + '\n' + F14 + '\n' + F16 + '\n' + F15 + '\n' + F12 + '\nreturn {'
     + 'f12OutreachLoad, f12OutreachState, f14Readiness, f14DeliveryNote, F14_READINESS };');
   const loaded = fn.apply(null, names.map((n) => sandbox[n]));
   return Object.assign(loaded, { doc });
@@ -249,7 +258,12 @@ test('7. no sent or delivered status exists, and none is invented', () => {
   assert.deepStrictEqual(columnNames,
     ['activity_id', 'lead_id', 'pitch_id', 'activity_type', 'metadata_json', 'created_at'],
     'the activity table has exactly the six intended columns');
-  assert.ok(!/readiness/i.test(contractSource), 'the persistence contract gained no readiness concept');
+  // F16 declared update: the contract now HAS a readiness query, but it must still hold no
+  // PERSISTED readiness concept. A derived query that reads the gate is not a stored state,
+  // so the claim is checked on the shape - no readiness field, and no readiness type.
+  assert.ok(!/readiness\w*\s*:/.test(contractSource), 'no readiness FIELD exists in the persistence contract');
+  assert.ok(/function normalizeReadyQuery/.test(contractSource),
+    'the only readiness in the contract is the derived F16 query normaliser');
   // And F15's own ledger may only allow the three provable types.
   const activityTypes = (contractSource.match(/ACTIVITY_TYPES = Object\.freeze\(\[([^\]]*)\]/s) || [])[1] || '';
   const allowed = activityTypes.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
@@ -275,8 +289,21 @@ test('8. no provider is introduced and no send path is reachable', () => {
     'send() is still refused when email is disabled or no provider exists');
   assert.ok(!/new .*Provider|smtp|nodemailer|sendgrid/i.test(F14_CODE + serviceSource.replace(/^\s*\/\/.*$/gm, '')),
     'no provider is constructed anywhere');
-  // No channel was added for readiness: it rides the existing gate result.
-  assert.ok(!/readiness/i.test(preloadSource), 'preload exposes no readiness method');
+  // F16 declared update: preload now exposes a derived `ready` read. F14 added none, and
+  // the shape is what matters: it must be a single read that hits the fixed ready channel,
+  // with no send, schedule, retry or provider method anywhere beside it. Scanned against
+  // comment-stripped source, so the block's own "there is no send" prose cannot satisfy or
+  // trip the check.
+  const outreachStart = preloadSource.indexOf('outreach: Object.freeze({');
+  const outreachEnd = preloadSource.indexOf('}))', outreachStart);
+  assert.ok(outreachStart > -1 && outreachEnd > outreachStart, 'the outreach bridge block is located');
+  const outreachBlock = stripComments(preloadSource.slice(outreachStart, outreachEnd));
+  for (const forbidden of [/send/i, /schedule/i, /retry/i, /queue/i, /provider/i, /whatsapp/i, /email\s*:/i]) {
+    assert.ok(!forbidden.test(outreachBlock), 'the outreach bridge exposes no ' + forbidden + ': ' + outreachBlock.trim());
+  }
+  assert.ok(/ready:\s*\(payload\)\s*=>\s*ipcRenderer\.invoke\('lead-intel:outreach-ready'/.test(outreachBlock),
+    'ready is a single read on the fixed channel');
+  assert.ok(!/lead-intel:email-send/.test(preloadSource), 'still no email.send channel');
   assert.ok(/delivery: \{[\s\S]*?providerConfigured: this\.emailProvider !== null/.test(serviceSource),
     'the backend reports its existing delivery configuration rather than inventing one');
   assert.ok(/emailEnabled: this\.email\.enabled === true/.test(serviceSource),

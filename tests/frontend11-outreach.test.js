@@ -664,26 +664,35 @@ test('20. the drawer markup, CSP, channel set and dependencies are untouched by 
     "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'", 'CSP byte-identical');
   assert.ok(!/<script(?![^>]*src=)/i.test(pitchPanelHtml) && !/\son\w+="/.test(pitchPanelHtml), 'no inline script or handler');
   assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 34, 'still 34 main channels');
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 48, 'still 48 preload methods');
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 49, 'still 49 preload methods');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');
   // F12 declared lock update: the former "Ready" placeholder became the live, read-only
-  // Outreach workspace, so it is no longer a placeholder. Campaigns and Activity must
-  // still be untouched placeholders, and no campaign or activity view may exist.
-  for (const nav of ['Campaigns', 'Activity']) {
-    const re = new RegExp('nav-item nav-item-soon[^>]*>\\s*<svg[\\s\\S]*?<span class="nav-label">' + nav + '</span>', 'm');
-    assert.ok(re.test(htmlSource), 'the Outreach placeholder is unchanged: ' + nav);
-  }
+  // Outreach workspace, so it is no longer a placeholder. Campaigns must still be an
+  // untouched placeholder, and no campaign or activity view may exist. F15/F16 declared
+  // update: Activity and Ready are now real routes of their own, so only Campaigns remains
+  // a placeholder here - and the check is scoped to Campaigns rather than left to a loose
+  // forward-matching regex that would pass against any later nav item.
+  const campaignRe = /<button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true"[^>]*>[\s\S]*?<span class="nav-label">Campaigns<\/span>/;
+  assert.ok(campaignRe.test(htmlSource), 'the Campaigns placeholder is unchanged');
+  assert.ok(!/data-view="campaigns?/.test(htmlSource), 'Campaigns is still route-free');
   const outreachRe = new RegExp('<button class="nav-item" data-view="outreach"[^>]*>[\\s\\S]*?<span class="nav-label">Outreach</span>');
   assert.ok(outreachRe.test(htmlSource), 'the workspace is the live Outreach route');
-  assert.ok(/aria-disabled="true"[^>]*>[\s\S]*?<span class="nav-label">Ready<\/span>/.test(htmlSource) === false,
-    'Ready is no longer a disabled placeholder');
+  // F16 declared update: there IS now a "Ready" nav item, but it is F16's derived queue -
+  // a live route - so what must stay true is that no "Ready" item is a disabled placeholder.
+  const readyBtn = htmlSource.slice(htmlSource.lastIndexOf('<button', htmlSource.indexOf('<span class="nav-label">Ready</span>')), htmlSource.indexOf('</button>', htmlSource.indexOf('<span class="nav-label">Ready</span>')));
+  assert.ok(/<button class="nav-item" data-view="ready"/.test(readyBtn), 'Ready is the live derived-queue route');
+  assert.ok(!/nav-item-soon|aria-disabled="true"|\sdisabled[\s>]/.test(readyBtn), 'and carries no placeholder markup');
   // F15 declared update: the Activity view now exists, but it is F15's - the read-only
   // outreach history - and F11 still added none of it. What F11 must still own is that no
   // outreach/activity READ surface was smuggled into the pitch drawer block.
   assert.ok(!/view-activity/.test(F11), 'the F11 block still contains no activity view');
   assert.ok(!/id="view-campaigns?/.test(htmlSource), 'no campaign view was added');
-  assert.ok(!/id="view-ready"/.test(htmlSource), 'no Outreach Ready view was added');
+  // F16 declared update: a "Ready" view now exists, but it is F16's derived queue and F11
+  // added none of it. What F11 must still own is that the drawer block contains no part of
+  // it - no Ready view markup and no ready API call.
+  assert.ok(!/view-ready/.test(F11), 'the F11 block still contains no Ready view');
+  assert.ok(!/\.ready\w*\s*\(/.test(f11Code), 'the F11 block never calls a ready API');
 });
 
 test('21. the F11 styles follow the Frontend 2.0 rules', () => {
