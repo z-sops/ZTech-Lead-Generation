@@ -80,7 +80,7 @@ class OutreachService {
     const ctx = await this.contexts.getContext(pitch.lead_id, { targetId: pitch.target_id ?? undefined });
     const packet = pitch.packet_id ? await this.store.packets.get(pitch.packet_id) : null;
     const approval = await this.store.approvals.latestForPitch(pitch.pitch_id);
-    return evaluateOutreachGate({
+    const gate = evaluateOutreachGate({
       view: ctx.view,
       pitch,
       packet,
@@ -92,6 +92,22 @@ class OutreachService {
       now: this.clock(),
       config: this.gateConfig,
     });
+    // F14: report the DELIVERY capability alongside the gate decision, so a caller can
+    // say honestly whether an allowed pitch could actually be delivered.
+    //
+    // This adds no state and no new capability. Both booleans are read from the
+    // configuration this service was constructed with: `this.email.enabled` and whether
+    // an email provider was ever supplied. No provider is created, required or enabled
+    // here, and no send path is added - `send()` is still refused unless both are true,
+    // which in this build they never are. The gate verdict itself is returned unchanged.
+    return {
+      ...gate,
+      delivery: {
+        channel,
+        emailEnabled: this.email.enabled === true,
+        providerConfigured: this.emailProvider !== null && this.emailProvider !== undefined
+      }
+    };
   }
 
   /**

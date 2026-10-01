@@ -6794,6 +6794,77 @@ async function f13ApprovePitch(pitchId, refresh) {
   return { ok: true };
 }
 
+// === F14 Outreach: readiness of an approved pitch ===
+//
+// After F13 a pitch can be approved. This block states the operational consequence of
+// that, without ever implying anything was sent.
+//
+// READINESS IS DERIVED, NEVER STORED. There is no readiness column, table or status
+// value anywhere: nothing new is persisted. Everything here is computed from what the
+// backend already returns for a row - the gate result (decision + every reason it
+// returned) and the delivery capability the service reports alongside it.
+//
+// Why derivation is sufficient, and why the backend is still asked
+//  - "approved" is NOT a pitch status. The store's three statuses (draft,
+//    insufficient_evidence, needs_revision) are untouched, and no fourth status,
+//    "ready" or "sent", is introduced.
+//  - An approval whose content hash no longer matches is not an approval: OutreachGate
+//    turns that into a HUMAN_APPROVAL reason, so a changed pitch falls back to blocked
+//    automatically. Nothing here has to re-check a hash.
+//  - Whether a DELIVERY provider exists cannot be known in the renderer - only the main
+//    process knows, which is why OutreachService.gate now reports `delivery`. It is
+//    reported from existing configuration; no provider is created or required.
+//
+// THE THREE STATES SHOWN
+//   ready    - the backend's gate decision is `allowed`. That already implies a human
+//              approval exists for the current content, because the gate blocks
+//              otherwise. Copy never says sent, delivered or contacted.
+//   blocked  - the gate blocked it. The reasons are the backend's own, unchanged.
+//   unknown  - the gate could not be read. That is never reported as blocked or allowed.
+const F14_READINESS = Object.freeze({ READY: 'ready', BLOCKED: 'blocked', UNKNOWN: 'unknown' });
+
+/**
+ * The readiness of one row, derived from the gate result the backend returned for it.
+ * `gateEntry` is the workspace's own { ok, gate } / { ok:false, error } record.
+ */
+function f14Readiness(gateEntry) {
+  if (!gateEntry || !gateEntry.ok) {
+    return {
+      state: F14_READINESS.UNKNOWN,
+      label: 'Readiness unknown',
+      // Honest: an unreadable gate is neither a pass nor a fail.
+      detail: 'The gate could not be read, so readiness cannot be determined.'
+    };
+  }
+  const gate = gateEntry.gate;
+  const allowed = Boolean(gate) && gate.decision === 'allowed';
+  if (!allowed) {
+    const reasons = Array.isArray(gate && gate.reasons) ? gate.reasons : [];
+    return {
+      state: F14_READINESS.BLOCKED,
+      label: 'Not ready',
+      // The same codes the gate column already lists, so the two columns agree.
+      detail: reasons.length ? 'Blocked: ' + reasons.map((r) => (r && r.code ? r.code : 'UNKNOWN')).join(', ') : 'Blocked by the gate.',
+      reasons
+    };
+  }
+  return { state: F14_READINESS.READY, label: 'Ready for outreach', detail: '', reasons: [] };
+}
+
+/**
+ * The delivery sentence for a ready row. `delivery` is the backend's own report. When it
+ * is missing or unreadable the copy says so rather than assuming a provider exists.
+ */
+function f14DeliveryNote(delivery) {
+  if (!delivery || typeof delivery !== 'object') {
+    return 'Delivery capability unknown. Nothing is sent.';
+  }
+  if (delivery.providerConfigured !== true || delivery.emailEnabled !== true) {
+    return 'delivery provider not configured';
+  }
+  return 'A delivery provider is configured. Nothing is sent by this workspace.';
+}
+
 // === F12 Outreach: the read-only Outreach workspace ===
 //
 // The operational view of the pitch/gate state that already exists. It lists the
@@ -6876,7 +6947,7 @@ function f12OutreachErrorBox(err) {
 function f12OutreachEmptyRow(message) {
   const tr = f12OutreachEl('tr');
   const td = f12OutreachEl('td', 'outreach-empty-cell', message);
-  td.colSpan = 8;
+  td.colSpan = 9;
   tr.appendChild(td);
   return tr;
 }
@@ -6957,6 +7028,21 @@ function f12OutreachRow(pitch, gateEntry) {
   tr.appendChild(statusTd);
 
   tr.appendChild(f12OutreachGateCell(gateEntry));
+
+  // F14: readiness, derived from the same gate result - never stored, never recomputed.
+  // It says what is operationally true about this pitch and, when ready, states the
+  // delivery capability the backend reported. It never implies anything was sent.
+  const readiness = f14Readiness(gateEntry);
+  const readinessTd = f12OutreachEl('td', 'col-readiness');
+  const badge = f11Status(readiness.label, readiness.state === 'ready' ? 'ok' : (readiness.state === 'unknown' ? 'neutral' : 'danger'));
+  badge.setAttribute('data-readiness', readiness.state);
+  readinessTd.appendChild(badge);
+  if (readiness.state === 'ready') {
+    readinessTd.appendChild(f11El('div', 'lead-drawer-muted outreach-ready-note', 'Ready for outreach — ' + f14DeliveryNote(gateEntry.gate && gateEntry.gate.delivery)));
+  } else if (readiness.detail) {
+    readinessTd.appendChild(f11El('div', 'lead-drawer-muted outreach-ready-note', readiness.detail));
+  }
+  tr.appendChild(readinessTd);
   tr.appendChild(f12OutreachCell(pitch && pitch.subject));
   tr.appendChild(f12OutreachCell(pitch && pitch.research_status));
   tr.appendChild(f12OutreachCell(pitch && pitch.icp_fit_status));
@@ -7111,7 +7197,7 @@ async function f12OutreachLoad() {
   if (tbody) {
     const loading = f12OutreachEl('tr');
     const cell = f12OutreachEl('td', 'outreach-empty-cell', 'Loading outreach...');
-    cell.colSpan = 8;
+    cell.colSpan = 9;
     cell.setAttribute('aria-live', 'polite');
     loading.appendChild(cell);
     tbody.replaceChildren(loading);
@@ -7129,7 +7215,7 @@ async function f12OutreachLoad() {
     if (tbody) {
       const tr = f12OutreachEl('tr');
       const cell = f12OutreachEl('td', 'outreach-empty-cell');
-      cell.colSpan = 8;
+      cell.colSpan = 9;
       cell.appendChild(f12OutreachErrorBox(err));
       tr.appendChild(cell);
       tbody.replaceChildren(tr);

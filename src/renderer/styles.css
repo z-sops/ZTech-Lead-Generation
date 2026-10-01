@@ -5406,9 +5406,21 @@ textarea {
   border-radius: var(--radius-sm);
 }
 
+/* F14: one more column, so the table now has nine. */
+.outreach-table .col-readiness { width: 210px; }
+
 /* The row-level explanation is not an error and not a success: it is the reason an
    action is unavailable, so it stays muted and wraps rather than taking the eye. */
 .outreach-approval-note {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--font-11);
+  overflow-wrap: anywhere;
+}
+
+/* The delivery sentence under a ready badge. Deliberately muted: readiness is an
+   operational fact, not a claim of delivery. */
+.outreach-ready-note {
   display: block;
   margin-top: 4px;
   font-size: var(--font-11);

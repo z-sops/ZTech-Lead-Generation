@@ -350,7 +350,7 @@ test('6. the loading state is shown and resolves', async () => {
   const ws = loadWorkspace(api);
   const loading = ws.f12OutreachLoad();
   assert.ok(bodyText(ws).includes('Loading outreach...'), 'the loading state is honest');
-  assert.strictEqual(ws.doc.getElementById('outreach-body').children[0].children[0].colSpan, 8, 'the loading row spans the table');
+  assert.strictEqual(ws.doc.getElementById('outreach-body').children[0].children[0].colSpan, 9, 'the loading row spans the table');
   release();
   await loading;
   assert.ok(!bodyText(ws).includes('Loading outreach...'), 'the loading state clears');
@@ -385,12 +385,15 @@ test('9. a populated table renders every column from the stored pitch', async ()
   const tr = rows(ws)[0];
   assert.strictEqual(tr.getAttribute('data-pitch-id'), 'pitch_1');
   assert.strictEqual(tr.getAttribute('data-lead-id'), '5');
-  assert.strictEqual(tr.children.length, 8, 'one cell per declared column');
+  assert.strictEqual(tr.children.length, 9, 'one cell per declared column');
   assert.strictEqual(cellText(tr, 0), '5', 'lead identity is the stored lead_id');
-  assert.strictEqual(cellText(tr, 3), 'A few notes on www.acme.test', 'subject comes from the pitch');
-  assert.strictEqual(cellText(tr, 4), 'complete', 'research status comes from the pitch');
-  assert.strictEqual(cellText(tr, 5), 'fit', 'icp fit comes from the pitch');
-  assert.ok(/01\/09\/2026/.test(cellText(tr, 6)), 'updated is formatted from the pitch timestamp');
+  // F14 declared lock update: the readiness column sits directly after the gate column,
+  // so every pitch-field column after the gate moved one index later. The claims are
+  // unchanged - each of these still has to come from the stored pitch.
+  assert.strictEqual(cellText(tr, 4), 'A few notes on www.acme.test', 'subject comes from the pitch');
+  assert.strictEqual(cellText(tr, 5), 'complete', 'research status comes from the pitch');
+  assert.strictEqual(cellText(tr, 6), 'fit', 'icp fit comes from the pitch');
+  assert.ok(/01\/09\/2026/.test(cellText(tr, 7)), 'updated is formatted from the pitch timestamp');
   // A pitch carries no company name, so none may appear.
   assert.ok(!/Acme Bakery/i.test(bodyText(ws)), 'no lead name is invented from the domain');
   assert.ok(rangeText(ws).includes('1 of 1 pitch'), 'the range comes from the store total: ' + rangeText(ws));
@@ -670,7 +673,11 @@ test('19. no fake metrics, no invented counts, no invented names', async () => {
   }));
   await ws.f12OutreachLoad();
   const tr = rows(ws)[0];
-  for (const i of [3, 4, 5, 6]) {
+  // F14 declared lock update: the readiness column was added directly after the gate
+  // column, so the table now has nine columns and every pitch-field column after the
+  // gate sits one index later. The claim is unchanged - a missing pitch field still has
+  // to render the honest dash - only the indices moved.
+  for (const i of [4, 5, 6, 7]) {
     assert.strictEqual(cellText(tr, i), '—', 'a missing pitch field renders the honest dash, column ' + i);
   }
 });

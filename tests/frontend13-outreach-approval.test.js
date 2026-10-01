@@ -40,18 +40,24 @@ let passed = 0;
 let failed = 0;
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-// The three lifted blocks, in file order: F11 (helpers), F13 (this increment), F12 (the
-// workspace the action lives in).
+// F14 declared lock update: the F14 readiness block sits after F13 and before F12, and
+// it legitimately talks about a delivery provider's ABSENCE. The "no provider" claim
+// below is a claim about the F13 block itself, so the F13 slice is bounded at the F14
+// marker. Every other boundary is unchanged.
 const F11_MARKER = '// === F11 Outreach: Lead Drawer Pitch tab ===';
 const F13_MARKER = '// === F13 Outreach: human approval of one pitch ===';
+const F14_MARKER = '// === F14 Outreach: readiness of an approved pitch ===';
 const F12_MARKER = '// === F12 Outreach: the read-only Outreach workspace ===';
 const f11From = rendererSource.indexOf(F11_MARKER);
 const f13From = rendererSource.indexOf(F13_MARKER);
+const f14From = rendererSource.indexOf(F14_MARKER);
 const f12From = rendererSource.indexOf(F12_MARKER);
 assert.ok(f11From > -1 && f13From > f11From && f12From > f13From, 'F11, F13, F12 all exist in order');
+assert.ok(f14From > f13From && f12From > f14From, 'the F14 block sits between F13 and F12');
 const F11 = rendererSource.slice(f11From, f13From);
-const F13 = rendererSource.slice(f13From, f12From);
+const F13 = rendererSource.slice(f13From, f14From);
 const F12 = rendererSource.slice(f12From);
+const F14 = rendererSource.slice(f14From, f12From);
 const F13_CODE = stripComments(F13);
 
 // F13 adds no bootstrap of its own: the action is built per row by the F12 row builder,
@@ -114,7 +120,9 @@ function loadWorkspace(api) {
   sandbox.ztechLeadIntel = api;
   sandbox.openLeadDetail = (id) => { opened.push(String(id)); };
   const names = Object.keys(sandbox);
-  const fn = new Function(...names, F11 + '\n' + F13 + '\n' + F12 + '\nreturn {'
+  // F11 and F14 are lifted too: F11 for the helpers the row builder reuses, and F14
+  // because the F12 row builder now also calls f14Readiness for the readiness cell.
+  const fn = new Function(...names, F11 + '\n' + F13 + '\n' + F14 + '\n' + F12 + '\nreturn {'
     + 'f12OutreachLoad, f12OutreachState, f13ApprovalAvailability, F13_APPROVAL_REASON };');
   const loaded = fn.apply(null, names.map((n) => sandbox[n]));
   return Object.assign(loaded, { doc, opened });
