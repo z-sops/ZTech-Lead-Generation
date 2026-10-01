@@ -46,12 +46,18 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\
 
 // F11 first: the F12 block reuses its status/gate label maps and element helpers, so
 // both blocks are lifted together and the real F11 definitions are what render.
+// F13 declared lock update: the F13 approval block sits between F11 and F12 and the F12
+// row builder calls into it, so the evaluated slice now starts at the F13 block. The F12
+// block itself is unchanged, and F12's own read-only rules are asserted on F12 alone below.
 const F11_MARKER = '// === F11 Outreach: Lead Drawer Pitch tab ===';
+const F13_MARKER = '// === F13 Outreach: human approval of one pitch ===';
 const F12_MARKER = '// === F12 Outreach: the read-only Outreach workspace ===';
 const f11From = rendererSource.indexOf(F11_MARKER);
+const f13From = rendererSource.indexOf(F13_MARKER);
 const f12From = rendererSource.indexOf(F12_MARKER);
 assert.ok(f11From > -1, 'the F11 block exists in renderer.js');
 assert.ok(f12From > -1, 'the F12 block exists in renderer.js');
+assert.ok(f13From > f11From && f12From > f13From, 'F11, then F13, then F12');
 assert.ok(f12From > f11From, 'F12 comes after F11, so it can reuse the F11 helpers');
 
 const F11 = rendererSource.slice(f11From, f12From);
@@ -584,7 +590,13 @@ test('15. gate evaluation is bounded to the visible page', async () => {
 
 // ============================================================ 16-20. read-only + guards
 
-test('16. the only action is opening the existing lead drawer', async () => {
+test('16. opening the lead is the only action the F12 block itself offers', async () => {
+  // Scope note, stated honestly: this row's gate is `allowed`, so no approval is
+  // waiting and the F13 block offers no Approve action either - the only button is
+  // "Open lead". F13 deliberately adds a second action for a gate blocked by
+  // HUMAN_APPROVAL; that is covered by tests/frontend13-outreach-approval.test.js and is
+  // NOT a read the F12 block performs. What this test pins is that the F12 block on its
+  // own still reaches only list and gate, and still has no send/generate/save control.
   const ws = loadWorkspace(
     baseApi({ list: () => ok({ rows: [makePitch({})], total: 1, limit: 20, offset: 0, status: null }) }),
     { withDrawer: true }
@@ -692,7 +704,12 @@ test('20b. dependencies and the F11 boundary are untouched', () => {
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');
   assert.ok(/function loadLeadDrawerPitch\(lead\)/.test(F11), 'the F11 entry point is intact');
-  assert.ok(!/F12/.test(F11), 'no F12 code was injected into the F11 block');
+  // The F11 slice above runs to the F12 block so the harness can evaluate the row
+  // builder, and it therefore contains the F13 block too. This boundary assertion is
+  // about the F11 block ITSELF: no F12 and no F13 code may live inside it.
+  const f11Only = rendererSource.slice(f11From, f13From);
+  assert.ok(!/F12/.test(f11Only), 'no F12 code was injected into the F11 block');
+  assert.ok(!/F13/.test(f11Only), 'no F13 code was injected into the F11 block');
   assert.ok(rendererSource.indexOf('// === F5 Lead Detail Drawer ===') < f12From, 'F5 is available to the workspace');
   // No polling or timers were introduced.
   assert.ok(!/setInterval|setTimeout/.test(F12), 'the workspace has no timer or polling');

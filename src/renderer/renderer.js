@@ -6715,6 +6715,85 @@ function loadLeadDrawerPitch(lead) {
   return f11Run(lead, null);
 }
 
+// === F13 Outreach: human approval of one pitch ===
+//
+// The smallest step past the read-only F12 workspace. F12 renders the gate's
+// HUMAN_APPROVAL reason and leaves the user with no way to resolve it. Approving is
+// already a SHIPPED, PERSISTED operation - `window.ztechLeadIntel.outreach.approve` and
+// the `lead-intel:outreach-approve` channel exist, are trusted-sender checked, validate
+// with additionalProperties:false, and OutreachService.approve writes an
+// li_outreach_approvals row. OutreachGate clears HUMAN_APPROVAL only when an approval's
+// content_hash matches the CURRENT content hash, so approving really changes the verdict.
+//
+// THIS BLOCK ADDS NO NEW CAPABILITY TO THE BACKEND. It is renderer only: no new channel,
+// no new preload method, no dependency, no provider, no send path.
+//
+// RULES THIS BLOCK KEEPS
+//  - ONE pitch, ONE deliberate click. There is no bulk approve, no select-all, no queue
+//    and no "approve everything" anywhere.
+//  - NOTHING IS SENT. Approving records a human decision that clears one gate reason. It
+//    does not email, queue, schedule or hand anything to a provider, and the copy on the
+//    button and after the save both say so.
+//  - The backend decides. Whether an approval is even offered comes from the gate result
+//    the backend already returned for that row, never from a guess about the pitch.
+//  - The existing contract's own rule is respected: OutreachService.approve refuses any
+//    pitch whose status is not `draft`, so the action is offered only for a clean draft.
+//    A pitch that is `insufficient_evidence` or `needs_revision` is NOT approvable, and
+//    the row says why instead of offering a button that must fail.
+//  - A pitch the gate already cleared is not offered an approval either: there is nothing
+//    for a human to decide.
+//  - The approval record the backend returns is never rendered. Nothing it carries is
+//    needed to draw the row, so it is deliberately not displayed.
+const F13_APPROVAL_REASON = 'HUMAN_APPROVAL';
+
+/**
+ * Whether this row may be approved, and if not, the honest reason. Derived ONLY from the
+ * stored pitch status and the gate result the backend returned for this row.
+ */
+function f13ApprovalAvailability(pitch, gateEntry) {
+  const status = pitch && typeof pitch.status === 'string' ? pitch.status : '';
+  // The existing service rule, mirrored so the UI does not offer a doomed action.
+  if (status !== 'draft') {
+    return { canApprove: false, reason: 'Only a clean draft can be approved.' };
+  }
+  if (!gateEntry || !gateEntry.ok) {
+    // An unreadable gate is not "blocked", so nothing can be concluded about it.
+    return { canApprove: false, reason: 'The gate could not be read.' };
+  }
+  const gate = gateEntry.gate;
+  if (gate && gate.decision === 'allowed') {
+    return { canApprove: false, reason: 'The gate already cleared this pitch.' };
+  }
+  const reasons = gate && Array.isArray(gate.reasons) ? gate.reasons : [];
+  const waiting = reasons.some((r) => r && r.code === F13_APPROVAL_REASON);
+  if (!waiting) {
+    return { canApprove: false, reason: 'The gate is not waiting for an approval.' };
+  }
+  return { canApprove: true, reason: '' };
+}
+
+/**
+ * Record the human decision for ONE pitch, then re-read the page so the gate column
+ * shows the backend's NEW verdict rather than an optimistic guess made here.
+ */
+async function f13ApprovePitch(pitchId, refresh) {
+  const api = f11LeadIntel();
+  if (!api || !api.outreach || typeof api.outreach.approve !== 'function') {
+    return { ok: false, error: { code: 'UNAVAILABLE', message: 'Approval is not available in this session.' } };
+  }
+  try {
+    // The shipped channel takes exactly { pitchId }; the approval record it returns is
+    // not rendered, so the result of the call is deliberately unused here.
+    await f11Unwrap(await api.outreach.approve({ pitchId: String(pitchId) }));
+  } catch (err) {
+    return { ok: false, error: { code: err && err.code ? err.code : 'ERROR', message: err && err.message ? err.message : 'The approval failed.' } };
+  }
+  // Re-read rather than mutate local state: the new gate decision is the backend's to
+  // report, and it is the only thing that should change on screen.
+  if (typeof refresh === 'function') await refresh();
+  return { ok: true };
+}
+
 // === F12 Outreach: the read-only Outreach workspace ===
 //
 // The operational view of the pitch/gate state that already exists. It lists the
@@ -6883,7 +6962,9 @@ function f12OutreachRow(pitch, gateEntry) {
   tr.appendChild(f12OutreachCell(pitch && pitch.icp_fit_status));
   tr.appendChild(f12OutreachCell(f12OutreachDate(pitch && pitch.updated_at)));
 
-  // The one action: open the existing F5 lead drawer for this lead. No pitch mutation.
+  // The row's actions. "Open lead" reuses the existing F5 drawer and changes nothing.
+  // F13 adds ONE more action: approve this one pitch, and only when the backend's own
+  // gate result says a human approval is what is missing. Neither action sends anything.
   const actions = f12OutreachEl('td', 'col-actions');
   if (hasLead && typeof openLeadDetail === 'function') {
     const open = f11El('button', 'btn btn-sm btn-secondary', 'Open lead');
@@ -6893,6 +6974,29 @@ function f12OutreachRow(pitch, gateEntry) {
     actions.appendChild(open);
   } else {
     actions.appendChild(f11El('span', 'lead-drawer-muted', 'No lead reference'));
+  }
+  // F13: the human approval action for this single pitch.
+  const approval = f13ApprovalAvailability(pitch, gateEntry);
+  if (approval.canApprove) {
+    const approve = f11El('button', 'btn btn-sm btn-secondary', 'Approve');
+    approve.type = 'button';
+    approve.setAttribute('data-pitch-id', String(pitch && pitch.pitch_id ? pitch.pitch_id : ''));
+    approve.title = 'Record your approval of this pitch. Nothing is sent.';
+    approve.addEventListener('click', async () => {
+      approve.disabled = true;
+      const res = await f13ApprovePitch(pitch.pitch_id, f12OutreachLoad);
+      if (res.ok) {
+        f12OutreachSetNotice('Approval recorded. The gate has been re-read; nothing is sent.');
+      } else {
+        approve.disabled = false;
+        f12OutreachSetNotice(null, res.error);
+      }
+    });
+    actions.appendChild(approve);
+  } else {
+    // Honest, and specific: the row says why this pitch cannot be approved instead of
+    // offering a button that the service would refuse.
+    actions.appendChild(f11El('span', 'lead-drawer-muted outreach-approval-note', approval.reason));
   }
   tr.appendChild(actions);
   return tr;
@@ -6907,6 +7011,34 @@ function f12OutreachVisibleRows() {
     if (!entry || !entry.ok) return false; // an unreadable gate is not "allowed" or "blocked"
     return Boolean(entry.gate) && entry.gate.decision === wanted;
   });
+}
+
+/**
+ * One honest line under the header: a confirmation, or the real error code and message.
+ * An error is never dressed up as a success, and a success never claims an effect the
+ * backend did not report.
+ */
+function f12OutreachSetNotice(message, error) {
+  const box = document.getElementById('outreach-notice');
+  if (!box) return;
+  box.replaceChildren();
+  if (error) {
+    box.hidden = false;
+    box.setAttribute('role', 'alert');
+    box.setAttribute('data-state', 'error');
+    box.appendChild(f11AlertBox(error));
+    return;
+  }
+  if (message) {
+    box.hidden = false;
+    box.setAttribute('role', 'status');
+    box.setAttribute('data-state', 'ok');
+    box.appendChild(f12OutreachEl('span', null, message));
+    return;
+  }
+  box.hidden = true;
+  box.removeAttribute('role');
+  box.removeAttribute('data-state');
 }
 
 function f12OutreachRenderRange() {

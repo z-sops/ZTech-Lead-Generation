@@ -33,12 +33,16 @@ const F11_MARKER = '// === F11 Outreach: Lead Drawer Pitch tab ===';
 // F12 declared lock update: the F11 slice is now bounded at the start of the F12
 // block. It used to run to the end of the file, which silently swept the F12 Outreach
 // workspace into every F11 assertion. The boundary keeps each block's tests honest.
-const F12_MARKER = '// === F12 Outreach: the read-only Outreach workspace ===';
+// F13 declared lock update: the F13 approval block is placed immediately after F11 and
+// before F12, so the F11 slice is bounded at the F13 marker instead. Nothing else about
+// the F11 boundary changes: the slice still starts at the F11 block and still stops at
+// the first block that follows it.
+const F13_MARKER = '// === F13 Outreach: human approval of one pitch ===';
 const f11From = rendererSource.indexOf(F11_MARKER);
-const f12From = rendererSource.indexOf(F12_MARKER);
+const f13From = rendererSource.indexOf(F13_MARKER);
 assert.ok(f11From > -1, 'the F11 block exists in renderer.js');
-assert.ok(f12From > f11From, 'the F12 block follows the F11 block, so the slice can be bounded there');
-const F11 = rendererSource.slice(f11From, f12From);
+assert.ok(f13From > f11From, 'the F13 block follows the F11 block, so the slice can be bounded there');
+const F11 = rendererSource.slice(f11From, f13From);
 const f11Code = F11.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const f5From = rendererSource.indexOf('// === F5 Lead Detail Drawer ===');
 const F5 = rendererSource.slice(f5From, rendererSource.indexOf('function splitImportLines('));

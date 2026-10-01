@@ -5388,3 +5388,29 @@ textarea {
     flex-direction: column;
   }
 }
+
+/* ZTech Frontend 2.0 - F13: the Outreach workspace's approval notice and note.
+  *
+  * Two small additions to the F12 block above, and nothing else: one line that reports
+  * the outcome of approving a single pitch, and the inline reason a row cannot be
+  * approved. Both reuse the tokens F1-F12 already define and the existing F11 alert box,
+  * so no new colour, shadow or radius language is introduced.
+  */
+
+.outreach-notice {
+  padding: 6px 8px;
+  font-size: var(--font-12);
+  color: var(--text-1);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+/* The row-level explanation is not an error and not a success: it is the reason an
+   action is unavailable, so it stays muted and wraps rather than taking the eye. */
+.outreach-approval-note {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--font-11);
+  overflow-wrap: anywhere;
+}
