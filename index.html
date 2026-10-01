@@ -157,13 +157,16 @@
             <span class="nav-label">Campaigns</span>
             <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
-          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+          <!-- The Outreach activity history: a READ of the persisted ledger the backend
+               writes when an outreach transition actually happens. There is no compose,
+               no send and no campaign here, and nothing in this build sends anything.
+               Campaigns stays a disabled placeholder below. -->
+          <button class="nav-item" data-view="activity" type="button">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <line x1="2.5" y1="4" x2="13.5" y2="4"></line><line x1="2.5" y1="8" x2="13.5" y2="8"></line>
               <line x1="2.5" y1="12" x2="9" y2="12"></line>
             </svg>
             <span class="nav-label">Activity</span>
-            <span class="nav-soon" aria-hidden="true">Soon</span>
           </button>
         </div>
 
@@ -1363,6 +1366,52 @@
              storage because one of them is missing. "Use for collection" only
              pre-fills existing collector inputs. There is no delete, no match
              count and no score. -->
+        <!-- F15 activity-workspace-view: the read-only outreach activity history.
+
+             It lists window.ztechLeadIntel.outreach.activity - the canonical persisted
+             ledger - newest first, with honest loading, empty and error states. There is
+             no create, edit, send, campaign or metric control anywhere in it: the renderer
+             cannot write activity at all, because no such channel exists.
+
+             Every row is a fact the backend recorded at a real transition. An event type
+             it does not recognise is never silently relabelled into something that
+             sounds like communication; it renders as an unrecognised type, because
+             hiding a row would be less honest than showing a raw label. -->
+        <section class="view" id="view-activity">
+          <div class="lists-workspace activity-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Activity</h2>
+                <p class="lists-subtitle">Outreach actions recorded by the app, newest first. Nothing here has been sent: this build has no sending provider.</p>
+              </div>
+              <div class="lists-actions">
+                <button class="btn btn-sm" id="activity-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="activity-table-wrap">
+              <table class="data-table activity-table">
+                <thead>
+                  <tr>
+                    <th class="col-when">When</th>
+                    <th class="col-lead">Lead</th>
+                    <th class="col-event">Event</th>
+                    <th class="col-pitch">Pitch</th>
+                    <th class="col-detail">Detail</th>
+                  </tr>
+                </thead>
+                <tbody id="activity-body"></tbody>
+              </table>
+            </div>
+            <div class="lists-footer activity-footer">
+              <div class="activity-range" id="activity-range"></div>
+              <div class="activity-pager">
+                <button class="btn btn-sm" id="activity-prev" type="button">Previous</button>
+                <button class="btn btn-sm" id="activity-next" type="button">Next</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- F12 outreach-workspace-view: the read-only Outreach workspace.
 
              It lists the PERSISTED pitch drafts through window.ztechLeadIntel.outreach.list
@@ -1427,6 +1476,7 @@
             </div>
           </div>
         </section>
+
 
         <section class="view" id="view-targets">
           <div class="lists-workspace targets-workspace">

@@ -2,7 +2,7 @@
 
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { MIGRATIONS } = require('./migrations');
-const { packetMeta, normalizePitchListQuery } = require('./contract');
+const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery } = require('./contract');
 
 /**
  * SqlJsStore — repository contract on top of ZTech's EXISTING sql.js Database.
@@ -55,6 +55,7 @@ class SqlJsStore {
     this.segments = new SqlSegments(this);
     this.pitches = new SqlPitches(this);
     this.approvals = new SqlApprovals(this);
+    this.activity = new SqlActivity(this);
     this.enrichmentJobs = new SqlEnrichmentJobs(this);
     this.enrichmentObservations = new SqlEnrichmentObservations(this);
   }
@@ -457,6 +458,88 @@ class SqlApprovals {
 
   async latestForPitch(pitchId) {
     return row(this.s.db, 'SELECT * FROM li_outreach_approvals WHERE pitch_id = ? ORDER BY approved_at DESC, rowid DESC LIMIT 1', [pitchId]);
+  }
+}
+
+/* ---------------------------- outreach activity ---------------------------- */
+
+/**
+ * F15: the append-only outreach activity ledger.
+ *
+ * Writes come only from trusted backend transitions (OutreachService). `append` refuses
+ * any type outside the contract's closed allowlist, so a new event type cannot appear
+ * without that allowlist being changed deliberately.
+ *
+ * `list` is bounded by the contract's paging clamp, so no caller can pull an unbounded
+ * history. Ordering is created_at DESC with activity_id DESC as the tie-breaker, so rows
+ * written inside the same millisecond still come back in one fixed order across calls.
+ */
+class SqlActivity {
+  constructor(s) { this.s = s; }
+
+  _from(r) {
+    if (!r) return null;
+    let metadata = {};
+    if (r.metadata_json) {
+      try {
+        const parsed = JSON.parse(r.metadata_json);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) metadata = parsed;
+      } catch {
+        metadata = {};
+      }
+    }
+    return {
+      activity_id: r.activity_id,
+      lead_id: r.lead_id,
+      pitch_id: r.pitch_id === undefined ? null : r.pitch_id,
+      activity_type: r.activity_type,
+      metadata,
+      created_at: r.created_at
+    };
+  }
+
+  async append(rec) {
+    if (!ACTIVITY_TYPES.includes(rec.activity_type)) {
+      throw new LiError('VALIDATION_FAILED', 'Invalid activity: activity_type');
+    }
+    await this.s.tx(() => this.s.db.run(
+      'INSERT INTO li_outreach_activity (activity_id, lead_id, pitch_id, activity_type, metadata_json, created_at) VALUES (?,?,?,?,?,?)',
+      [rec.activity_id, rec.lead_id, rec.pitch_id ?? null, rec.activity_type,
+        JSON.stringify(rec.metadata || {}), rec.created_at],
+    ));
+    return { ...rec, metadata: { ...(rec.metadata || {}) } };
+  }
+
+  /** Read-only history. `leadId` and `pitchId` narrow it; neither is required. */
+  async list(query) {
+    const { limit, offset, leadId, pitchId } = normalizeActivityQuery(query);
+    const where = [];
+    const params = [];
+    if (leadId) { where.push('lead_id = ?'); params.push(leadId); }
+    if (pitchId) { where.push('pitch_id = ?'); params.push(pitchId); }
+    const clause = where.length ? ' WHERE ' + where.join(' AND ') : '';
+    const total = row(this.s.db, `SELECT COUNT(*) AS c FROM li_outreach_activity${clause}`, params);
+    const page = rows(
+      this.s.db,
+      `SELECT activity_id, lead_id, pitch_id, activity_type, metadata_json, created_at FROM li_outreach_activity${clause} ORDER BY created_at DESC, activity_id DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    );
+    return {
+      rows: page.map((r) => this._from(r)).filter(Boolean),
+      total: total ? total.c : 0,
+      limit,
+      offset,
+      leadId,
+      pitchId
+    };
+  }
+
+  /** Newest-first rows for one pitch, for the duplicate guard on the ready transition. */
+  async latestForPitch(pitchId, activityType) {
+    const r = row(this.s.db,
+      'SELECT activity_id, lead_id, pitch_id, activity_type, metadata_json, created_at FROM li_outreach_activity WHERE pitch_id = ? AND activity_type = ? ORDER BY created_at DESC, activity_id DESC LIMIT 1',
+      [String(pitchId), activityType]);
+    return this._from(r);
   }
 }
 

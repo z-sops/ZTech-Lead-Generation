@@ -39,9 +39,9 @@ test('sqljs: migrate is idempotent and records the version', { skip }, async () 
   const { store, db } = await freshStore();
   await store.migrate();
   const rows = db.exec('SELECT version FROM li_schema_migrations');
-  assert.deepEqual(rows[0].values, [[1], [2]]);
+  assert.deepEqual(rows[0].values, [[1], [2], [3]]);
   const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'li_%' ORDER BY name")[0].values.flat();
-  assert.deepEqual(tables, ['li_enrichment_jobs', 'li_enrichment_observations', 'li_evidence_packets', 'li_outreach_approvals', 'li_pitch_drafts', 'li_research_changes', 'li_research_jobs', 'li_saved_searches', 'li_schema_migrations', 'li_segment_members', 'li_segments']);
+  assert.deepEqual(tables, ['li_enrichment_jobs', 'li_enrichment_observations', 'li_evidence_packets', 'li_outreach_activity', 'li_outreach_approvals', 'li_pitch_drafts', 'li_research_changes', 'li_research_jobs', 'li_saved_searches', 'li_schema_migrations', 'li_segment_members', 'li_segments']);
 });
 
 test('sqljs: full research flow persists, and persist() is called after writes', { skip }, async () => {

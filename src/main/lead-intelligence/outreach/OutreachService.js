@@ -5,13 +5,14 @@ const { NotFoundError, LiError, ValidationError } = require('../core/errors');
 const { toLeadView } = require('../contracts/leadView');
 const { generatePitch, editPitch, renderPitchText } = require('./PitchGenerator');
 const { evaluateOutreachGate } = require('./OutreachGate');
+const { normalizeActivityMetadata } = require('../persistence/contract');
 
 /**
  * OutreachService — pitch drafts, human approval, gate evaluation and (optional,
  * human-triggered) email hand-off. No scheduling, no batch sending, no auto-send.
  */
 class OutreachService {
-  constructor({ store, contexts, leadSource, freshness, config = {}, emailProvider = null, fieldMap, clock = () => new Date() }) {
+  constructor({ store, contexts, leadSource, freshness, config = {}, emailProvider = null, fieldMap, clock = () => new Date(), logger = null }) {
     this.store = store;
     this.contexts = contexts;
     this.leadSource = leadSource;
@@ -23,6 +24,9 @@ class OutreachService {
     this.emailProvider = emailProvider;
     this.fieldMap = fieldMap;
     this.clock = clock;
+    // F15: used only to report that an activity row could not be written. It never
+    // carries activity content, pitch text or anything from the renderer.
+    this.logger = logger;
   }
 
   async generate({ leadId, targetId }) {
@@ -57,11 +61,66 @@ class OutreachService {
     return this.store.pitches.list(query);
   }
 
+  // === F15: outreach activity ===
+  //
+  // Activity rows are written from EXACTLY two places in this file, and both are
+  // mutation boundaries where the event is a provable fact:
+  //   update()  - the pitch content actually changed on disk
+  //   approve() - an approval row was actually persisted
+  //
+  // They are never written from a read. outreach.list, outreach.gate and the renderer
+  // never call this, so refreshing the workspace, re-reading a gate or opening the app
+  // cannot manufacture history.
+  //
+  // A failure to record activity never fails the transition that produced it: the
+  // pitch was still approved, and pretending otherwise would be worse than a missing
+  // history line.
+  async _recordActivity(pitch, type, metadata) {
+    try {
+      const normalized = normalizeActivityMetadata(metadata);
+      if (!normalized.ok) return null;
+      return await this.store.activity.append({
+        activity_id: newId('act'),
+        lead_id: pitch.lead_id,
+        pitch_id: pitch.pitch_id,
+        activity_type: type,
+        metadata: normalized.value,
+        created_at: this.clock().toISOString()
+      });
+    } catch (err) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn('[lead-intelligence] outreach activity not recorded', { type, error: err && err.message });
+      }
+      return null;
+    }
+  }
+
+  /** Newest-first activity history. Read-only; this is what the workspace lists. */
+  async activityList(query) {
+    return this.store.activity.list(query);
+  }
+
   async update({ pitchId, edits }) {
     const p = await this.get(pitchId);
     const packet = p.packet_id ? await this.store.packets.get(p.packet_id) : null;
     const next = editPitch(p, edits, packet, this.clock());
     await this.store.pitches.upsert(next);
+
+    // F15: the content changed, so any approval made for the OLD content no longer
+    // applies. That is provable here, at the mutation boundary - the approval row is
+    // still stored and its hash no longer equals the new content hash. It is recorded
+    // once per (approval, new hash) pair so re-editing to the same content cannot
+    // manufacture duplicates.
+    const approval = await this.store.approvals.latestForPitch(next.pitch_id);
+    if (approval && approval.content_hash !== next.content_hash) {
+      const previous = await this.store.activity.latestForPitch(next.pitch_id, 'APPROVAL_INVALIDATED');
+      if (!previous || previous.metadata.contentHash !== next.content_hash) {
+        await this._recordActivity(next, 'APPROVAL_INVALIDATED', {
+          reason: 'The pitch changed after it was approved.',
+          contentHash: next.content_hash
+        });
+      }
+    }
     return next;
   }
 
@@ -72,6 +131,26 @@ class OutreachService {
     }
     const rec = { approval_id: newId('appr'), pitch_id: p.pitch_id, content_hash: p.content_hash, approved_by: this.operator, approved_at: this.clock().toISOString() };
     await this.store.approvals.insert(rec);
+    // F15: the approval exists now, so PITCH_APPROVED is a fact.
+    await this._recordActivity(p, 'PITCH_APPROVED', { approvedBy: rec.approved_by, contentHash: rec.content_hash });
+
+    // OUTREACH_READY is only recorded when the gate genuinely allows this content right
+    // now, and only when this exact content has not already been recorded as ready - so
+    // a second approval of the same content adds no duplicate line. If the gate cannot
+    // be evaluated here it is simply not recorded; it is never assumed.
+    try {
+      const verdict = await this.gate({ pitchId: p.pitch_id });
+      if (verdict && verdict.decision === 'allowed') {
+        const previous = await this.store.activity.latestForPitch(p.pitch_id, 'OUTREACH_READY');
+        if (!previous || previous.metadata.contentHash !== p.content_hash) {
+          await this._recordActivity(p, 'OUTREACH_READY', { contentHash: p.content_hash });
+        }
+      }
+    } catch (err) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn('[lead-intelligence] ready transition not recorded', { error: err && err.message });
+      }
+    }
     return rec;
   }
 

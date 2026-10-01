@@ -25,7 +25,9 @@ const viewTitles = {
   signals: 'Signals',
   opportunities: 'Opportunities',
   // F12: the read-only Outreach workspace.
-  outreach: 'Outreach'
+  outreach: 'Outreach',
+  // F15: the outreach activity history.
+  activity: 'Activity'
 };
 
 const viewContexts = {
@@ -43,7 +45,9 @@ const viewContexts = {
   signals: 'Intelligence',
   opportunities: 'Intelligence',
   // F12: the read-only Outreach workspace.
-  outreach: 'Outreach'
+  outreach: 'Outreach',
+  // F15: the outreach activity history.
+  activity: 'Activity'
 };
 
 // A nav target must be a real, existing view. Anything else is refused rather
@@ -6865,6 +6869,210 @@ function f14DeliveryNote(delivery) {
   return 'A delivery provider is configured. Nothing is sent by this workspace.';
 }
 
+// === F15 Outreach: activity history ===
+//
+// A READ of the canonical `li_outreach_activity` ledger. The backend writes those rows at
+// real transitions; this workspace only lists them.
+//
+// WHAT THIS BLOCK DELIBERATELY CANNOT DO
+//  - It cannot create, edit or delete activity. There is no such channel on the preload
+//    bridge, so no renderer code path could invent an event even if it tried.
+//  - It shows no metric, rate, counter or aggregate. The only number on screen is the
+//    store's own row total for the current page.
+//  - It shows nothing that implies communication. There is no sent, delivered, opened,
+//    clicked, queued or retried state in the ledger and none is invented here, because
+//    nothing in this build sends anything.
+//
+// The three event types below are the backend's closed allowlist, mirrored as LABELS only
+// so the wording is friendly. An unrecognised type is rendered as itself rather than
+// being hidden or mapped onto something that sounds like outreach.
+const F15_ACTIVITY_LABELS = Object.freeze({
+  PITCH_APPROVED: 'Pitch approved',
+  OUTREACH_READY: 'Ready for outreach',
+  APPROVAL_INVALIDATED: 'Approval needs repeating'
+});
+
+const F15_ACTIVITY_PAGE_SIZE = 20;
+// The same bound the F12 workspace uses, for the same reason: one visible page at a time.
+const F15_ACTIVITY_MAX_GATES = 0;
+const F15_ACTIVITY_UNAVAILABLE = '—';
+
+let f15ActivitySeq = 0;
+const f15ActivityState = { offset: 0, rows: [], total: 0, limit: F15_ACTIVITY_PAGE_SIZE, error: null };
+
+function f15ActivityEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+/** ISO timestamp -> this workspace's own short date-time, or the honest dash. */
+function f15ActivityWhen(iso) {
+  if (typeof iso !== 'string' || !iso) return '';
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getUTCFullYear()
+    + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+}
+
+/** A plain cell, or the honest dash when the ledger row has no such value. */
+function f15ActivityCell(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  const el = f15ActivityEl('td', null, text || F15_ACTIVITY_UNAVAILABLE);
+  if (!text) el.classList.add('cell-muted');
+  return el;
+}
+
+/**
+ * The factual one-line description. It is built ONLY from the ledger row itself, so it
+ * can never state more than the backend recorded.
+ */
+function f15ActivityDetail(row) {
+  const meta = row && row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const parts = [];
+  if (typeof meta.reason === 'string' && meta.reason.trim()) parts.push(meta.reason.trim());
+  if (typeof meta.approvedBy === 'string' && meta.approvedBy.trim()) parts.push('by ' + meta.approvedBy.trim());
+  // Explicit, because "ready" is easy to misread as "sent".
+  if (row && row.activity_type === 'OUTREACH_READY') parts.push('nothing has been sent');
+  return parts.join(' · ');
+}
+
+function f15ActivityEmptyRow(message) {
+  const tr = f15ActivityEl('tr');
+  const td = f15ActivityEl('td', 'activity-empty-cell', message);
+  td.colSpan = 5;
+  tr.appendChild(td);
+  return tr;
+}
+
+/** One ledger row. An unknown event type is shown as itself, never relabelled. */
+function f15ActivityRow(row) {
+  const tr = f15ActivityEl('tr');
+  tr.setAttribute('data-activity-id', String(row && row.activity_id ? row.activity_id : ''));
+  const type = row && typeof row.activity_type === 'string' ? row.activity_type : '';
+  const known = Object.prototype.hasOwnProperty.call(F15_ACTIVITY_LABELS, type);
+  tr.appendChild(f15ActivityCell(f15ActivityWhen(row && row.created_at)));
+  tr.appendChild(f15ActivityCell(row && row.lead_id));
+
+  const eventTd = f15ActivityEl('td', 'col-event');
+  const badge = f11Status(known ? F15_ACTIVITY_LABELS[type] : type, known ? 'neutral' : 'danger');
+  badge.setAttribute('data-activity-type', type);
+  if (!known) badge.title = 'Unrecognised activity type: ' + type;
+  eventTd.appendChild(badge);
+  tr.appendChild(eventTd);
+
+  tr.appendChild(f15ActivityCell(row && row.pitch_id));
+  tr.appendChild(f15ActivityCell(f15ActivityDetail(row)));
+  return tr;
+}
+
+function f15ActivityRenderRange() {
+  const range = document.getElementById('activity-range');
+  if (!range) return;
+  const { total, rows, offset, limit } = f15ActivityState;
+  if (total === 0) {
+    range.textContent = f15ActivityState.error ? 'Activity could not be read.' : 'No outreach activity recorded yet.';
+    return;
+  }
+  range.textContent = (offset + 1) + '–' + (offset + rows.length)
+    + ' of ' + total + ' event' + (total === 1 ? '' : 's');
+}
+
+function f15ActivityRenderPager() {
+  const prev = document.getElementById('activity-prev');
+  const next = document.getElementById('activity-next');
+  const { offset, limit, total } = f15ActivityState;
+  if (prev) prev.disabled = offset <= 0;
+  if (next) next.disabled = offset + limit >= total;
+}
+
+function f15ActivityRender() {
+  const tbody = document.getElementById('activity-body');
+  if (!tbody) return;
+  if (f15ActivityState.error) {
+    const tr = f15ActivityEl('tr');
+    const td = f15ActivityEl('td', 'activity-empty-cell');
+    td.colSpan = 5;
+    td.appendChild(f11AlertBox({ code: 'ACTIVITY_UNAVAILABLE', message: f15ActivityState.error }));
+    tr.appendChild(td);
+    tbody.replaceChildren(tr);
+  } else if (f15ActivityState.rows.length === 0) {
+    tbody.replaceChildren(f15ActivityEmptyRow('No outreach activity recorded yet.'));
+  } else {
+    tbody.replaceChildren(...f15ActivityState.rows.map(f15ActivityRow));
+  }
+  f15ActivityRenderRange();
+  f15ActivityRenderPager();
+}
+
+/**
+ * Load one page of history. Read-only and bounded: the renderer sends only limit/offset,
+ * which is all the channel's schema accepts.
+ */
+async function f15ActivityLoad() {
+  const seq = ++f15ActivitySeq;
+  const api = f11LeadIntel();
+  const tbody = document.getElementById('activity-body');
+  if (!api || !api.outreach || typeof api.outreach.activity !== 'function') {
+    // Honest: the capability is absent, so say so rather than showing an empty history.
+    f15ActivityState.error = 'Activity is not available in this session.';
+    f15ActivityState.rows = [];
+    f15ActivityState.total = 0;
+    f15ActivityRender();
+    return;
+  }
+  f15ActivityState.error = null;
+  if (tbody) {
+    const loading = f15ActivityEl('tr');
+    const cell = f15ActivityEl('td', 'activity-empty-cell', 'Loading activity…');
+    cell.colSpan = 5;
+    cell.setAttribute('aria-live', 'polite');
+    loading.appendChild(cell);
+    tbody.replaceChildren(loading);
+  }
+  let page;
+  try {
+    page = f11Unwrap(await api.outreach.activity({ limit: f15ActivityState.limit, offset: f15ActivityState.offset }));
+  } catch (err) {
+    if (seq !== f15ActivitySeq) return;
+    f15ActivityState.rows = [];
+    f15ActivityState.total = 0;
+    f15ActivityState.error = (err && err.message) || 'The activity history could not be read.';
+    f15ActivityRender();
+    return;
+  }
+  if (seq !== f15ActivitySeq) return;
+  f15ActivityState.rows = page && Array.isArray(page.rows) ? page.rows : [];
+  f15ActivityState.total = page && Number.isFinite(page.total) ? page.total : f15ActivityState.rows.length;
+  f15ActivityState.limit = page && Number.isFinite(page.limit) && page.limit > 0 ? page.limit : f15ActivityState.limit;
+  f15ActivityRender();
+}
+
+function f15ActivityInit() {
+  const refresh = document.getElementById('activity-refresh');
+  if (refresh) refresh.addEventListener('click', () => f15ActivityLoad());
+  const prev = document.getElementById('activity-prev');
+  if (prev) prev.addEventListener('click', () => {
+    const target = Math.max(0, f15ActivityState.offset - f15ActivityState.limit);
+    if (target === f15ActivityState.offset) return;
+    f15ActivityState.offset = target;
+    f15ActivityLoad();
+  });
+  const next = document.getElementById('activity-next');
+  if (next) next.addEventListener('click', () => {
+    const target = f15ActivityState.offset + f15ActivityState.limit;
+    if (target >= f15ActivityState.total) return;
+    f15ActivityState.offset = target;
+    f15ActivityLoad();
+  });
+  // Loading on navigation, exactly like the Outreach workspace. No timer, no polling.
+  const nav = document.querySelector('.nav-item[data-view="activity"]');
+  if (nav) nav.addEventListener('click', () => f15ActivityLoad());
+}
+
 // === F12 Outreach: the read-only Outreach workspace ===
 //
 // The operational view of the pitch/gate state that already exists. It lists the
@@ -7313,3 +7521,6 @@ function f12OutreachInit() {
 // is order-independent with respect to every other view: this file still has exactly
 // one init point for F12, and the app's own init sequence is otherwise untouched.
 f12OutreachInit();
+// F15: the activity workspace's controls. Same rule as F12: one init point, at the end
+// of the module, so it cannot run inside the temporal dead zone of the constants above.
+f15ActivityInit();

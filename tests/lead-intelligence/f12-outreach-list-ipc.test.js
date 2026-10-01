@@ -99,8 +99,10 @@ test('F12 B2: the outreach:list channel exists with the approved name', () => {
 test('F12 B2: outreach:list is registered, and the five previous channels are unchanged', () => {
   const { reg, handlers } = harness(stubOutreach(async () => ({ rows: [], total: 0, limit: 20, offset: 0, status: null })));
   const registered = reg.channels.slice().sort();
-  assert.deepEqual(registered, [...PREVIOUS_FIVE, 'lead-intel:outreach-list'].sort());
-  assert.equal(handlers.size, 6);
+  // F15 declared lock update: outreach:activity is also registered, so outreach:list is no
+  // longer the newest channel. This test pins that F12's own channel is untouched.
+  assert.deepEqual(registered, [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity'].sort());
+  assert.equal(handlers.size, 7); // F15 declared lock update: the read-only activity channel is now also registered.
   for (const c of PREVIOUS_FIVE) assert.ok(handlers.has(c), 'previous channel must survive: ' + c);
   assert.ok(handlers.has('lead-intel:outreach-list'));
   // No new channel beyond this one: email-send, searches, segments, enrichment,
@@ -257,9 +259,9 @@ test('F12 B2: preload exposes outreach.list and no email.send', () => {
   const source = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
   const invoked = [...source.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((m) => m[1]);
   const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
-  // EXACT allowlist of six - a seventh or a substitution fails here.
-  assert.deepEqual(leadIntel.slice().sort(), [...PREVIOUS_FIVE, 'lead-intel:outreach-list'].sort());
-  assert.equal(leadIntel.length, 6);
+  // F15 declared lock update: EXACT allowlist of seven - an eighth or a substitution fails here.
+  assert.deepEqual(leadIntel.slice().sort(), [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity'].sort());
+  assert.equal(leadIntel.length, 7);
   assert.ok(leadIntel.includes('lead-intel:outreach-list'), 'outreach.list must be exposed');
   assert.ok(!leadIntel.includes('lead-intel:email-send'), 'email.send must never be exposed');
 

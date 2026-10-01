@@ -5426,3 +5426,74 @@ textarea {
   font-size: var(--font-11);
   overflow-wrap: anywhere;
 }
+
+/* ZTech Frontend 2.0 - F15: the Activity workspace.
+  *
+  * Follows the same construction as the Outreach and Targets workspaces: the existing
+  * `data-table`, the existing `lists-*` chrome and only tokens F1-F14 already define. No
+  * new colour, shadow or radius language, and no aggregate/percentage styling - an
+  * invented aggregate is exactly what this workspace must not show.
+  */
+
+.activity-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.activity-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.activity-table {
+  width: 100%;
+}
+
+.activity-table td {
+  vertical-align: top;
+}
+
+/* Column sizing only. The table may exceed the viewport and scroll inside its wrap; it
+   must never widen the page. */
+.activity-table .col-when { width: 140px; }
+.activity-table .col-lead { width: 90px; }
+.activity-table .col-event { width: 190px; }
+.activity-table .col-pitch { width: 200px; }
+
+.activity-empty-cell {
+  padding: 18px 12px;
+  color: var(--text-2);
+  font-size: var(--font-12);
+}
+
+.activity-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
+.activity-range {
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.activity-pager {
+  display: flex;
+  gap: var(--space-1);
+}
+
+@media (max-width: 900px) {
+  /* The table keeps its own scroll and the footer stacks, so nothing is clipped. */
+  .activity-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

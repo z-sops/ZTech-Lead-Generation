@@ -94,8 +94,8 @@ test('1. the view section survives as the first active view, with no form', () =
   // F7 declared lock update: the two Research views were added after this section.
   // F8 declared lock update: the three Intelligence views were added after this section.
   // F12 declared lock update: the read-only Outreach view was added after this section.
-  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 14,
-    'six view sections plus two F6 Lists, two F7 Research, three F8 Intelligence and the F12 Outreach view');
+  assert.strictEqual((htmlSource.match(/<section class="view/g) || []).length, 15,
+    'six view sections plus two F6 Lists, two F7 Research, three F8 Intelligence, the F12 Outreach view and the F15 Activity view');
   assert.ok(/<section class="view active" id="view-collector">/.test(htmlSource),
     'the opening tag is unchanged and still active first');
   assert.strictEqual((htmlSource.match(/id="view-collector"/g) || []).length, 1,
@@ -332,7 +332,7 @@ test('15. no backend, preload or dependency surface changed', () => {
   // A10 declared lock update: 41 -> 46 preload invocations (the five approved
   // Lead Intelligence methods). main.js still registers exactly 34 literal
   // channels; the lead-intel:* channels come from their own scoped registrar.
-  assert.strictEqual(invokes, 47, 'the preload surface is 47 channels');
+  assert.strictEqual(invokes, 48, 'the preload surface is 48 channels');
   const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(htmlSource);
   assert.strictEqual(csp[1],
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",

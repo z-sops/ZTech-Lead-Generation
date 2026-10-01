@@ -97,13 +97,16 @@ for (const decl of [
   assert.ok(at > -1, decl + ' exists in renderer.js');
   assert.ok(at < f12CallAt, decl + ' is initialised before the workspace init call');
 }
-// The call reads those bindings at evaluation time, so it must be the last statement of
-// the module - nothing below it may be allowed to depend on it.
-assert.strictEqual(
-  rendererSource.slice(f12CallAt + '\nf12OutreachInit();\n'.length).replace(/\s+$/, ''),
-  '',
-  'the F12 init call is the last statement of renderer.js'
-);
+// The call reads those bindings at evaluation time, so nothing below it may declare a
+// binding that the module still has to initialise. F15 declared lock update: a second
+// init call (f15ActivityInit) now follows the F12 one, so "is the literal last statement"
+// is no longer the invariant - "is every module-scope binding declared above the init
+// calls" is. The check below is that stronger, still-correct form.
+const belowInitCalls = rendererSource.slice(f12CallAt + '\nf12OutreachInit();\n'.length);
+assert.ok(!/^(const|let|class)\s/m.test(belowInitCalls.replace(/^\s*\/\/.*$/gm, '')),
+  'no module-scope binding is declared below the workspace init calls: '
+    + belowInitCalls.slice(0, 120));
+assert.ok(/DOMContentLoaded/.test(belowInitCalls) === false, 'no second bootstrap is added below');
 assert.ok(!/DOMContentLoaded/.test(F12), 'the F12 block adds no second bootstrap listener');
 
 // F12 is the last block in styles.css, so it runs to the end of the file.
@@ -305,12 +308,23 @@ test('3. Campaigns remains a disabled placeholder', () => {
   assert.ok(/Campaigns/.test(button), 'still labelled Campaigns');
 });
 
-test('4. Activity remains a disabled placeholder, and no campaign exists', () => {
+test('4. no campaign exists, and the Activity placeholder is not F12\'s to grant', () => {
+  // F15 declared update: the Activity nav item is now a REAL workspace (the read-only
+  // outreach activity history), so it is deliberately no longer a disabled placeholder.
+  // F12 never granted it that capability and still owns no part of it: the Activity view
+  // lives outside the F12 slice, and the F12 block reaches no activity method at all.
   const button = navButtonFor('Activity');
-  assert.ok(/nav-item-soon/.test(button), 'Activity keeps nav-item-soon');
-  assert.ok(/\sdisabled[\s>]/.test(button), 'Activity stays disabled');
-  assert.ok(/aria-disabled="true"/.test(button), 'Activity stays aria-disabled');
-  assert.ok(/class="nav-soon"/.test(button), 'Activity keeps its Soon badge');
+  assert.ok(/<button class="nav-item" data-view="activity"/.test(button), 'Activity is now a real route');
+  assert.ok(!/nav-item-soon|\sdisabled[\s>]|aria-disabled="true"|nav-soon/.test(button),
+    'Activity no longer carries placeholder markup');
+  assert.ok(!/id="view-activity"/.test(htmlSource.slice(htmlSource.indexOf('<!-- F12 outreach-workspace-view:')))
+    , 'the Activity view is outside the F12 slice');
+  const f12api = [...stripComments(F12).matchAll(/api\.(\w+)\.(\w+)\(/g)].map((m) => m[1] + '.' + m[2]);
+  assert.ok(!f12api.some((c) => /activity/i.test(c)), 'the F12 block reaches no activity method');
+  // Campaigns is still the placeholder it was, and no campaign exists anywhere.
+  const campaigns = navButtonFor('Campaigns');
+  assert.ok(/nav-item-soon/.test(campaigns), 'Campaigns keeps nav-item-soon');
+  assert.ok(/\sdisabled[\s>]/.test(campaigns), 'Campaigns stays disabled');
   // Neither placeholder gained a capability behind its disabled state.
   assert.ok(!/campaign/i.test(F12_CODE), 'the F12 block contains no campaign logic at all');
   // The workspace builds DOM nodes; it creates no domain record of any kind.

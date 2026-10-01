@@ -53,7 +53,14 @@ assert.ok(f11From > -1 && f13From > f11From && f14From > f13From && f12From > f1
   'F11, F13, F14, F12 all exist in order');
 const F11 = rendererSource.slice(f11From, f13From);
 const F13 = rendererSource.slice(f13From, f14From);
-const F14 = rendererSource.slice(f14From, f12From);
+// F15 declared lock update: the F15 activity block is defined between F14 and F12, so the
+// F14 slice is bounded at the F15 marker. Otherwise "the F14 block calls no API" would
+// silently start covering F15's read call too.
+const F15_MARKER = '// === F15 Outreach: activity history ===';
+const f15From = rendererSource.indexOf(F15_MARKER);
+assert.ok(f15From > f14From && f12From > f15From, 'the F15 block sits between F14 and F12');
+const F14 = rendererSource.slice(f14From, f15From);
+const F15 = rendererSource.slice(f15From, f12From);
 const F12 = rendererSource.slice(f12From);
 const F14_CODE = stripComments(F14);
 
@@ -96,7 +103,9 @@ function loadWorkspace(api) {
   sandbox.ztechLeadIntel = api;
   sandbox.openLeadDetail = () => {};
   const names = Object.keys(sandbox);
-  const fn = new Function(...names, F11 + '\n' + F13 + '\n' + F14 + '\n' + F12 + '\nreturn {'
+  // F15 is lifted too: the F12 slice runs to the end of the file and therefore contains
+  // F15's own init call, which would otherwise be an undefined reference here.
+  const fn = new Function(...names, F11 + '\n' + F13 + '\n' + F14 + '\n' + F15 + '\n' + F12 + '\nreturn {'
     + 'f12OutreachLoad, f12OutreachState, f14Readiness, f14DeliveryNote, F14_READINESS };');
   const loaded = fn.apply(null, names.map((n) => sandbox[n]));
   return Object.assign(loaded, { doc });
@@ -224,11 +233,31 @@ test('7. no sent or delivered status exists, and none is invented', () => {
   const values = statuses.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
   assert.deepStrictEqual(values, ['draft', 'insufficient_evidence', 'needs_revision'],
     'the persisted pitch statuses are unchanged - no ready, sent or delivered value');
-  // No readiness table, column or migration.
-  for (const banned of [/readiness/i, /\bready\b/i, /outreach_ready/i]) {
-    assert.ok(!banned.test(migrationsSource), 'no readiness state was migrated: ' + banned);
+  // No readiness STATE was persisted. This checks the SCHEMA, not prose: the migration's
+  // comments legitimately discuss "readiness", and OUTREACH_READY legitimately appears as
+  // a CHECK value. What matters is that no COLUMN is named after a readiness or delivery
+  // state, so the ledger cannot be queried as if a row were "sent".
+  const activityDdl = (migrationsSource.match(/CREATE TABLE IF NOT EXISTS li_outreach_activity \(([\s\S]*?)\n\);/) || ['', ''])[1];
+  const columnNames = activityDdl.split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('--'))
+    .map((l) => l.split(/\s+/)[0]);
+  assert.ok(columnNames.length > 0, 'the activity table declares columns');
+  for (const banned of ['readiness', 'ready', 'sent', 'delivered', 'opened', 'clicked', 'queued', 'status']) {
+    assert.ok(!columnNames.includes(banned), 'the activity table has no "' + banned + '" column: ' + columnNames.join(', '));
   }
+  assert.deepStrictEqual(columnNames,
+    ['activity_id', 'lead_id', 'pitch_id', 'activity_type', 'metadata_json', 'created_at'],
+    'the activity table has exactly the six intended columns');
   assert.ok(!/readiness/i.test(contractSource), 'the persistence contract gained no readiness concept');
+  // And F15's own ledger may only allow the three provable types.
+  const activityTypes = (contractSource.match(/ACTIVITY_TYPES = Object\.freeze\(\[([^\]]*)\]/s) || [])[1] || '';
+  const allowed = activityTypes.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  assert.deepStrictEqual(allowed, ['PITCH_APPROVED', 'OUTREACH_READY', 'APPROVAL_INVALIDATED'],
+    'the closed activity allowlist is exactly the three provable types');
+  for (const banned of ['EMAIL_SENT', 'EMAIL_DELIVERED', 'EMAIL_OPENED', 'EMAIL_CLICKED', 'WHATSAPP_SENT', 'CALL_PLACED', 'CAMPAIGN_STARTED']) {
+    assert.ok(!activityTypes.includes(banned), 'no provider event type exists: ' + banned);
+  }
   // Readiness is a renderer view over the gate, so it must not hash anything itself.
   assert.ok(!/contentHash|content_hash|stableHash/.test(F14_CODE), 'F14 re-checks no hash; the gate did it');
   assert.ok(!/\bfetch\s*\(|XMLHttpRequest|\bWebSocket\b|EventSource|innerHTML|document\.write|require\s*\(|ipcRenderer/.test(F14_CODE),

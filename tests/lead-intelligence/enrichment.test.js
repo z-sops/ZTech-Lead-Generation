@@ -431,7 +431,7 @@ test('sqljs: upgrading a v1 database applies migration 002 only', { skip }, asyn
   db.run("INSERT INTO li_saved_searches VALUES ('srch_keep','Keep','{\"filter\":{}}','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')");
   const store = new SqlJsStore({ db, persist: () => {}, logger: { warn() {} } });
   await store.migrate();
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations ORDER BY version')[0].values, [[1], [2]]);
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations ORDER BY version')[0].values, [[1], [2], [3]]);
   assert.equal((await store.savedSearches.get('srch_keep')).name, 'Keep');
 });
 

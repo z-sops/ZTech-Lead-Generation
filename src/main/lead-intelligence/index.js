@@ -109,7 +109,7 @@ function createLeadIntelligence({ store, leadSource, targetSource = null, provid
   const icp = new IcpService({ contexts });
   const profile = new ProfileService({ contexts, store, freshness, enrichment, clock });
   const agent = new LeadAgent({ complete: llmComplete, clock });
-  const outreach = new OutreachService({ store, contexts, leadSource, freshness, config, emailProvider, fieldMap, clock });
+  const outreach = new OutreachService({ store, contexts, leadSource, freshness, config, emailProvider, fieldMap, clock, logger });
   const exporter = new ExportService({ contexts, store, segments, savedSearches, freshness, clock });
 
   const agentService = {

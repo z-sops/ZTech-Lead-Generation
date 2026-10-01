@@ -100,6 +100,67 @@ function packetMeta(packet) {
   };
 }
 
+// === F15: outreach activity ===
+//
+// The canonical allowlist of outreach events. It is CLOSED, and deliberately tiny: an
+// event type may only be listed here if this codebase can prove it happened at a real
+// mutation boundary.
+//
+// There is intentionally no EMAIL_SENT, EMAIL_DELIVERED, EMAIL_OPENED, EMAIL_CLICKED,
+// WHATSAPP_SENT, CALL_PLACED or CAMPAIGN_STARTED. Nothing in this build sends anything,
+// so persisting such a row would be fabrication. A future channel earns its type here,
+// with the evidence that it really happened.
+const ACTIVITY_TYPES = Object.freeze(['PITCH_APPROVED', 'OUTREACH_READY', 'APPROVAL_INVALIDATED']);
+const ACTIVITY_DEFAULT_LIMIT = 20;
+const ACTIVITY_MAX_LIMIT = 100;
+const ACTIVITY_MAX_OFFSET = 100000;
+// Metadata is a CLOSED set of scalar facts about the event, not a place to put anything.
+// Keys are matched exactly and every value must be a string, so no nested object, array,
+// credential, provider payload or evidence packet can ever be smuggled into the row.
+const ACTIVITY_METADATA_KEYS = Object.freeze(['approvedBy', 'contentHash', 'reason']);
+const ACTIVITY_METADATA_MAX_LENGTH = 200;
+
+/**
+ * Validate and normalise one activity record's metadata against the closed key set.
+ * Returns { ok, value } or { ok:false, error }. Unknown keys and non-string values are
+ * refused rather than dropped, so a caller can never believe it recorded something the
+ * ledger did not store.
+ */
+function normalizeActivityMetadata(value) {
+  if (value === undefined || value === null) return { ok: true, value: {} };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: 'Invalid activity: metadata' };
+  }
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!ACTIVITY_METADATA_KEYS.includes(key)) return { ok: false, error: 'Invalid activity: metadata key: ' + key };
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== 'string') return { ok: false, error: 'Invalid activity: metadata value: ' + key };
+    if (raw.length > ACTIVITY_METADATA_MAX_LENGTH) return { ok: false, error: 'Invalid activity: metadata value: ' + key };
+    out[key] = raw;
+  }
+  return { ok: true, value: out };
+}
+
+/**
+ * Read query for activity history: bounded paging, optionally narrowed to one lead or
+ * one pitch. A caller can never ask for the whole ledger, because limit is capped.
+ */
+function normalizeActivityQuery(query) {
+  const q = query && typeof query === 'object' && !Array.isArray(query) ? query : {};
+  const clampInt = (value, fallback, max) => {
+    if (value === undefined || value === null) return fallback;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0) return fallback;
+    return Math.min(n, max);
+  };
+  const limit = clampInt(q.limit, ACTIVITY_DEFAULT_LIMIT, ACTIVITY_MAX_LIMIT) || ACTIVITY_DEFAULT_LIMIT;
+  const offset = clampInt(q.offset, 0, ACTIVITY_MAX_OFFSET);
+  const leadId = typeof q.leadId === 'string' && q.leadId ? q.leadId : null;
+  const pitchId = typeof q.pitchId === 'string' && q.pitchId ? q.pitchId : null;
+  return { limit, offset, leadId, pitchId };
+}
+
 module.exports = {
   PACKET_META_FIELDS,
   packetMeta,
@@ -108,4 +169,11 @@ module.exports = {
   PITCH_LIST_DEFAULT_LIMIT,
   PITCH_LIST_MAX_LIMIT,
   PITCH_LIST_MAX_OFFSET,
+  ACTIVITY_TYPES,
+  ACTIVITY_METADATA_KEYS,
+  ACTIVITY_DEFAULT_LIMIT,
+  ACTIVITY_MAX_LIMIT,
+  ACTIVITY_MAX_OFFSET,
+  normalizeActivityMetadata,
+  normalizeActivityQuery,
 };

@@ -664,7 +664,7 @@ test('20. the drawer markup, CSP, channel set and dependencies are untouched by 
     "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'", 'CSP byte-identical');
   assert.ok(!/<script(?![^>]*src=)/i.test(pitchPanelHtml) && !/\son\w+="/.test(pitchPanelHtml), 'no inline script or handler');
   assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 34, 'still 34 main channels');
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 47, 'still 47 preload methods');
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 48, 'still 48 preload methods');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');
   // F12 declared lock update: the former "Ready" placeholder became the live, read-only
@@ -678,8 +678,11 @@ test('20. the drawer markup, CSP, channel set and dependencies are untouched by 
   assert.ok(outreachRe.test(htmlSource), 'the workspace is the live Outreach route');
   assert.ok(/aria-disabled="true"[^>]*>[\s\S]*?<span class="nav-label">Ready<\/span>/.test(htmlSource) === false,
     'Ready is no longer a disabled placeholder');
+  // F15 declared update: the Activity view now exists, but it is F15's - the read-only
+  // outreach history - and F11 still added none of it. What F11 must still own is that no
+  // outreach/activity READ surface was smuggled into the pitch drawer block.
+  assert.ok(!/view-activity/.test(F11), 'the F11 block still contains no activity view');
   assert.ok(!/id="view-campaigns?/.test(htmlSource), 'no campaign view was added');
-  assert.ok(!/id="view-activity"/.test(htmlSource), 'no activity view was added');
   assert.ok(!/id="view-ready"/.test(htmlSource), 'no Outreach Ready view was added');
 });
 

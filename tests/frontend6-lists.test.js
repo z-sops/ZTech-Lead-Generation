@@ -591,7 +591,7 @@ function test(name, fn) {
     assert.ok(!/Soon|nav-item-soon|disabled/.test(lists), 'no Soon treatment on the two Lists items');
     // F7 declared lock update: the two Research items went live in F7.
     // F8 declared lock update: the three Intelligence items went live in F8.
-    assert.strictEqual((htmlSource.match(/class="nav-item nav-item-soon"/g) || []).length, 5, 'the other five Soon items remain (F12 enabled the Outreach workspace)');
+    assert.strictEqual((htmlSource.match(/class="nav-item nav-item-soon"/g) || []).length, 4, 'the other four Soon items remain (F12 enabled Outreach, F15 enabled Activity)');
     for (const id of ['view-searches', 'view-segments']) assert.ok(htmlSource.includes(`<section class="view" id="${id}">`));
     assert.ok(rendererSource.includes("if (viewId === 'searches') loadSavedSearches();"));
     assert.ok(rendererSource.includes("if (viewId === 'segments') loadSegments();"));

@@ -1,9 +1,9 @@
 'use strict';
 
 const { clone } = require('../core/objects');
-const { ConflictError, NotFoundError, DuplicateActiveJobError } = require('../core/errors');
+const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { ACTIVE_STATES } = require('../contracts/constants');
-const { packetMeta, normalizePitchListQuery } = require('./contract');
+const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery } = require('./contract');
 
 /** In-memory implementation of the repository contract. Used by tests and dev tools. */
 
@@ -261,6 +261,60 @@ class MemEnrichmentObservations {
   async deleteByLead(leadId) { for (const [id, o] of this.rows) if (o.lead_id === String(leadId)) this.rows.delete(id); }
 }
 
+/* --------------------------- outreach activity (F15) --------------------------- */
+
+/**
+ * Append-only activity ledger. Mirrors SqlActivity exactly: same closed type allowlist,
+ * same newest-first ordering with activity_id as the tie-breaker, same bounded paging,
+ * and - like the SQL version - activity rows survive purgeLead, because a historical
+ * event must not disappear when the lead it referred to is purged.
+ */
+class MemActivity {
+  constructor() { this.rows = new Map(); }
+
+  async append(rec) {
+    if (!ACTIVITY_TYPES.includes(rec.activity_type)) {
+      throw new LiError('VALIDATION_FAILED', 'Invalid activity: activity_type');
+    }
+    this.rows.set(rec.activity_id, {
+      activity_id: rec.activity_id,
+      lead_id: rec.lead_id,
+      pitch_id: rec.pitch_id ?? null,
+      activity_type: rec.activity_type,
+      metadata: clone(rec.metadata || {}),
+      created_at: rec.created_at
+    });
+    return clone(this.rows.get(rec.activity_id));
+  }
+
+  _sorted() {
+    return [...this.rows.values()].sort((a, b) => {
+      if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
+      return a.activity_id < b.activity_id ? 1 : a.activity_id > b.activity_id ? -1 : 0;
+    });
+  }
+
+  async list(query) {
+    const { limit, offset, leadId, pitchId } = normalizeActivityQuery(query);
+    let all = this._sorted();
+    if (leadId) all = all.filter((r) => r.lead_id === leadId);
+    if (pitchId) all = all.filter((r) => r.pitch_id === pitchId);
+    return {
+      rows: clone(all.slice(offset, offset + limit)),
+      total: all.length,
+      limit,
+      offset,
+      leadId,
+      pitchId
+    };
+  }
+
+  async latestForPitch(pitchId, activityType) {
+    const match = this._sorted().find((r) => r.pitch_id === String(pitchId) && r.activity_type === activityType);
+    return match ? clone(match) : null;
+  }
+}
+
 class MemoryStore {
   constructor() {
     this.jobs = new MemJobs();
@@ -270,6 +324,7 @@ class MemoryStore {
     this.segments = new MemSegments();
     this.pitches = new MemPitches();
     this.approvals = new MemApprovals();
+    this.activity = new MemActivity();
     this.enrichmentJobs = new MemEnrichmentJobs();
     this.enrichmentObservations = new MemEnrichmentObservations();
   }

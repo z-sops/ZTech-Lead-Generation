@@ -3,7 +3,7 @@
 const { assertValid, S } = require('./core/validate');
 const { publicError, ForbiddenError } = require('./core/errors');
 const { scrubSecrets } = require('./core/objects');
-const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET } = require('./persistence/contract');
+const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET, ACTIVITY_MAX_LIMIT, ACTIVITY_MAX_OFFSET } = require('./persistence/contract');
 
 /**
  * The six — and only six — A10 Lead Intelligence channels reachable by the renderer.
@@ -19,6 +19,10 @@ const CHANNELS = Object.freeze({
   OUTREACH_APPROVE: 'lead-intel:outreach-approve',
   OUTREACH_GATE: 'lead-intel:outreach-gate',
   OUTREACH_LIST: 'lead-intel:outreach-list',
+  // F15: the ONE read-only activity channel. There is deliberately no activity WRITE
+  // channel: activity rows are produced only by trusted backend transitions, never by
+  // the renderer.
+  OUTREACH_ACTIVITY: 'lead-intel:outreach-activity',
 });
 
 /**
@@ -54,6 +58,22 @@ const INPUT_SCHEMAS = Object.freeze({
     offset: { type: 'integer', minimum: 0, maximum: PITCH_LIST_MAX_OFFSET },
     status: { type: 'string', minLength: 1, maxLength: 40 },
   }),
+  // F15: activity history. Read-only and bounded, exactly like outreach:list. Both
+  // filters are optional but only ONE id may be supplied, so a caller cannot smuggle an
+  // unbounded cross-join; the bounds come from the same contract module so they cannot
+  // drift from the store's own clamp. additionalProperties:false stops a sort field,
+  // ORDER BY or SQL fragment, and there is no field-selection or type filter, so the
+  // renderer can only ask "the next page of the ledger".
+  [CHANNELS.OUTREACH_ACTIVITY]: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      limit: { type: 'integer', minimum: 1, maximum: ACTIVITY_MAX_LIMIT },
+      offset: { type: 'integer', minimum: 0, maximum: ACTIVITY_MAX_OFFSET },
+      leadId: { type: 'string', minLength: 1, maxLength: 100 },
+      pitchId: { type: 'string', minLength: 1, maxLength: 100 },
+    },
+  },
 });
 
 function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = console }) {
@@ -103,6 +123,11 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   // no ordering choice is accepted from the renderer, so the store's fixed
   // `updated_at DESC, pitch_id DESC` ordering is the only order that can be requested.
   handle(CHANNELS.OUTREACH_LIST, (a) => outreach.list({ limit: a.limit, offset: a.offset, status: a.status }));
+  // F15: read-only activity history. Read-only is the point - the renderer has no way to
+  // create, edit or delete an activity row, because no such channel exists.
+  handle(CHANNELS.OUTREACH_ACTIVITY, (a) => outreach.activityList({
+    limit: a.limit, offset: a.offset, leadId: a.leadId, pitchId: a.pitchId
+  }));
 
   return {
     channels: [...registered],

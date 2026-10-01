@@ -215,12 +215,12 @@ function test(name, fn) {
       assert.ok(htmlSource.includes(`<section class="view" id="view-${v}">`));
     }
     assert.ok(!/Soon|nav-item-soon|disabled/.test(group));
-    assert.strictEqual((htmlSource.match(/class="nav-item nav-item-soon"/g) || []).length, 5, 'Campaigns, Activity, Analytics and the rest stay disabled');
+    assert.strictEqual((htmlSource.match(/class="nav-item nav-item-soon"/g) || []).length, 4, 'Campaigns, Analytics and the rest stay disabled (F15 enabled the Activity workspace)');
     // Every other Soon item keeps its disabled, route-free markup. F12 declared lock
     // update: Ready became the live Outreach workspace, so it left this list.
     const nav = between(htmlSource, '<nav class="sidebar-nav"', '</nav>');
     const soonLabels = [...nav.matchAll(/<button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true"[^>]*>[\s\S]*?<span class="nav-label">([^<]+)<\/span>/g)].map((m) => m[1]);
-    assert.deepStrictEqual(soonLabels, ['New', 'Recently Viewed', 'Campaigns', 'Activity', 'Analytics']);
+    assert.deepStrictEqual(soonLabels, ['New', 'Recently Viewed', 'Campaigns', 'Analytics']);
     const routes = [...nav.matchAll(/data-view="([a-z]+)"[^>]*>[\s\S]*?<span class="nav-label">([^<]+)<\/span>/g)].map((m) => [m[1], m[2]]);
     for (const [view, label] of [['opportunities', 'Opportunities'], ['icp', 'ICP'], ['signals', 'Signals']]) {
       assert.deepStrictEqual(routes.filter((r) => r[0] === view), [[view, label]], 'the route is on its own item: ' + label);

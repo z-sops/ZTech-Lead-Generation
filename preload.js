@@ -105,6 +105,9 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
   outreach: Object.freeze({
     approve: (payload) => ipcRenderer.invoke('lead-intel:outreach-approve', payload || {}),
     gate: (payload) => ipcRenderer.invoke('lead-intel:outreach-gate', payload || {}),
-    list: (payload) => ipcRenderer.invoke('lead-intel:outreach-list', payload || {})
+    list: (payload) => ipcRenderer.invoke('lead-intel:outreach-list', payload || {}),
+    // F15: read-only activity history. This is the ONLY activity method: there is no
+    // create/update/delete bridge, so the renderer cannot invent an activity record.
+    activity: (payload) => ipcRenderer.invoke('lead-intel:outreach-activity', payload || {})
   })
 }));

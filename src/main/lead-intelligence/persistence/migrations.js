@@ -169,9 +169,39 @@ CREATE TABLE IF NOT EXISTS li_enrichment_observations (
 CREATE INDEX IF NOT EXISTS li_eobs_by_lead ON li_enrichment_observations (lead_id, field);
 `;
 
+// ZTech lead-intelligence schema, migration 003: outreach activity (F15).
+//
+// One canonical, APPEND-ONLY ledger of outreach events for a lead/pitch. It exists
+// because approval is the only outreach fact that was already stored, while
+// "became ready" and "approval was invalidated" are transitions that CANNOT be
+// reconstructed later: readiness depends on the clock (evidence freshness) and on
+// mutable research/ICP state, and no history of a pitch's previous content exists.
+// So those transitions have to be recorded when they actually happen.
+//
+// Deliberately NARROW. The activity_type CHECK constraint is a closed allowlist of
+// three facts this codebase can prove at a real mutation boundary. There is
+// deliberately NO sent, delivered, opened, clicked, queued, retried or campaign state:
+// nothing in this build sends anything, so such a row could only ever be a lie.
+// There is also no foreign key to leads by design - an activity row is a historical
+// fact and must survive the lead it referred to.
+const MIGRATION_003 = `-- ZTech lead-intelligence schema, migration 003: outreach activity.
+
+CREATE TABLE IF NOT EXISTS li_outreach_activity (
+  activity_id TEXT PRIMARY KEY,
+  lead_id TEXT NOT NULL,
+  pitch_id TEXT,
+  activity_type TEXT NOT NULL CHECK (activity_type IN ('PITCH_APPROVED','OUTREACH_READY','APPROVAL_INVALIDATED')),
+  metadata_json TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS li_activity_by_lead ON li_outreach_activity (lead_id, created_at);
+CREATE INDEX IF NOT EXISTS li_activity_by_pitch ON li_outreach_activity (pitch_id, created_at);
+`;
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
+  Object.freeze({ version: 3, name: '003_outreach_activity.sql', sql: MIGRATION_003 }),
 ]);
 
 module.exports = { MIGRATIONS };

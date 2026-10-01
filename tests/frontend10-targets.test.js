@@ -121,7 +121,7 @@ test('5. no new IPC channel, preload method or delete/get/duplicate path', () =>
   // A10 declared lock update: 41 -> 46 preload invocations (the five approved
   // Lead Intelligence methods). F10 still adds no preload method and main.js
   // still registers exactly 34 literal channels.
-  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 47, 'preload unchanged in size apart from the A10 methods');
+  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 48, 'preload unchanged in size apart from the A10 methods');
   assert.ok(!/targets:(delete|get|duplicate)|deleteTarget|duplicateTarget/.test(mainSource + preloadSource + rendererSource), 'no delete/get/duplicate');
   assert.ok(!/data-action="(delete|duplicate)"/.test(TARGET_JS) && !/>\s*(Delete|Duplicate)\s*</.test(VIEW), 'no Delete or Duplicate control');
 });
