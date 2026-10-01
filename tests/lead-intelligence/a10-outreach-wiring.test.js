@@ -380,7 +380,7 @@ test('A10 runtime: initialises only after AccountStore readiness, on the shared 
   assert.equal(runtime.available, false);
 });
 
-test('A10 runtime: runs the 11 additive li_* migrations on whatsapp.db and changes no ZTech table', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
+test('A10 runtime: runs the 12 additive li_* migrations on whatsapp.db and changes no ZTech table', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
   const SQL = await initSqlJs();
   const db = new SQL.Database();
   db.run('CREATE TABLE numbers (id INTEGER PRIMARY KEY, phone TEXT, title TEXT)');
@@ -395,9 +395,9 @@ test('A10 runtime: runs the 11 additive li_* migrations on whatsapp.db and chang
 
   const tables = tableNames();
   const created = tables.filter((t) => t.startsWith('li_'));
-  assert.equal(LI_TABLES.length, 11, 'eleven additive LI tables are declared');
+  assert.equal(LI_TABLES.length, 12, 'twelve additive LI tables are declared');
   for (const t of LI_TABLES) assert.ok(tables.includes(t), 'missing additive table: ' + t);
-  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 11, 'exactly the eleven li_* tables were added');
+  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 12, 'exactly the twelve li_* tables were added');
 
   // Every pre-existing ZTech table is still present and its data is intact.
   const ztechAfter = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
@@ -409,7 +409,7 @@ test('A10 runtime: runs the 11 additive li_* migrations on whatsapp.db and chang
 
   // Migrations are idempotent: a second init adds nothing.
   const again = await initializeLeadIntelligenceRuntime({ accountStore, logger: SILENT });
-  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 11);
+  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 12);
   await again.shutdown();
 });
 
@@ -473,13 +473,14 @@ function makeIpcHarness(outreach, { trusted = true } = {}) {
   return { handlers, reg };
 }
 
-test('A10 IPC: exactly the six approved channels are registered; email-send is not', () => {
+test('A10 IPC: exactly the seven approved channels are registered; email-send is not', () => {
   const { handlers, reg } = makeIpcHarness({
     generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
     list: async () => ({ rows: [], total: 0, limit: 20, offset: 0, status: null }),
   });
   assert.deepEqual(reg.channels.slice().sort(), [
+    'lead-intel:outreach-activity',
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
     'lead-intel:outreach-list',
@@ -487,7 +488,7 @@ test('A10 IPC: exactly the six approved channels are registered; email-send is n
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.equal(handlers.size, 6);
+  assert.equal(handlers.size, 7); // F15 declared lock update: + the read-only activity channel.
   assert.ok(!handlers.has('lead-intel:email-send'), 'email sending is not registered');
   assert.ok(!reg.channels.includes('lead-intel:email-send'));
   // Nothing beyond the outreach surface is exposed.
@@ -497,6 +498,7 @@ test('A10 IPC: exactly the six approved channels are registered; email-send is n
   // The channel constant itself must stay an exact allowlist, not a lower bound: a
   // seventh channel declared here would be caught even before registration.
   assert.deepEqual(Object.values(OUTREACH_CHANNELS).slice().sort(), [
+    'lead-intel:outreach-activity',
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
     'lead-intel:outreach-list',
@@ -504,7 +506,7 @@ test('A10 IPC: exactly the six approved channels are registered; email-send is n
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 6);
+  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 7); // F15 declared lock update: + activity.
   assert.ok(!Object.values(OUTREACH_CHANNELS).includes('lead-intel:email-send'), 'email-send is not even declared here');
   reg.dispose();
   assert.equal(handlers.size, 0, 'dispose removes every handler');
@@ -622,12 +624,13 @@ test('A10 IPC: the registrar requires a trusted sender and a real outreach servi
 
 // ============================================================ 5. Preload
 
-test('A10 preload: exposes exactly the six approved methods and no email.send', () => {
+test('A10 preload: exposes exactly the seven approved methods and no email.send', () => {
   const source = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
   const invoked = [...source.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((m) => m[1]);
   const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
   // An EXACT allowlist, not a lower bound: a seventh channel, or a swapped one, fails here.
   assert.deepEqual(leadIntel.slice().sort(), [
+    'lead-intel:outreach-activity',
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
     'lead-intel:outreach-list',
@@ -635,7 +638,7 @@ test('A10 preload: exposes exactly the six approved methods and no email.send', 
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.equal(leadIntel.length, 6, 'exactly six Lead Intelligence methods');
+  assert.equal(leadIntel.length, 7, 'exactly seven Lead Intelligence methods (F15 adds the read-only outreach activity channel)');
   assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 
   // The API lives under its own key; the existing appAPI surface is unchanged.
@@ -648,6 +651,68 @@ test('A10 preload: exposes exactly the six approved methods and no email.send', 
   // The renderer still cannot pass a channel name, a URL, a path or a credential.
   assert.ok(!/exposeInMainWorld\([^)]{0,80}ipcRenderer/.test(source), 'ipcRenderer is never exposed directly');
   assert.ok(!/require\(/.test(leadIntelBlock), 'the Lead Intelligence block pulls in nothing');
+});
+
+// ============================================================ 7. Freshness is still enforced
+
+// The guard for the injected clock above. Without this, injecting a fixed clock would look
+// like a way to wave stale evidence through the gate. It must not be: this walks the very
+// same fixture PAST its 30-day window and requires the gate to refuse, with the real code.
+test('A10 freshness guard: the same fixture is refused once its evidence window has passed', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
+  const SQL = await initSqlJs();
+  const db = new SQL.Database();
+  db.run(`CREATE TABLE prospect_research (id TEXT PRIMARY KEY, lead_ref TEXT NOT NULL, provider_id TEXT NOT NULL,
+    phase TEXT NOT NULL, next_attempt_at TEXT, updated_at TEXT NOT NULL, version INTEGER NOT NULL, record_json TEXT NOT NULL)`);
+  const record = round1Record();
+  db.run('INSERT INTO prospect_research VALUES (?,?,?,?,?,?,?,?)', [
+    record.id, record.leadRef, record.providerId, record.phase, record.nextAttemptAt,
+    record.updatedAt, record.version, JSON.stringify(record),
+  ]);
+  db.run('CREATE TABLE numbers (id INTEGER PRIMARY KEY, phone TEXT, title TEXT, website TEXT, email TEXT, address TEXT, qualification TEXT)');
+  db.run('INSERT INTO numbers VALUES (5, ?, ?, ?, ?, ?, ?)', [
+    '+923001234567', 'Acme Bakery', 'https://acme.com', 'hello@acme.com', '12 Road', 'qualified',
+  ]);
+
+  const accountStore = {
+    db,
+    ready: Promise.resolve(),
+    saveDB() {},
+    queryNumbers: async (q) => ({ rows: q && String(q.id) === '5' ? [LEADS[5]] : [], total: 1, limit: 1, offset: 0 }),
+    getCollectedNumbers: async () => [LEADS[5]],
+    listTargets: async () => ({ rows: [] }),
+  };
+
+  // One clock, shared, so the test can move "now" deliberately.
+  const clock = makeClock();
+  const runtime = await initializeLeadIntelligenceRuntime({
+    accountStore,
+    clock,
+    config: {
+      freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
+      outreach: { allowedQualification: ['qualified'] },
+      offer: { sender_name: 'Zee', sender_company: 'ZuniTech', value_proposition: 'We fix audit issues like these.', call_to_action: 'Short call next week?' },
+    },
+    logger: SILENT,
+  });
+
+  const { handlers } = makeIpcHarness(runtime.li.outreach);
+  const generated = await handlers.get('lead-intel:pitch-generate')({}, { leadId: '5' });
+  assert.equal(generated.ok, true, JSON.stringify(generated.error));
+  await handlers.get('lead-intel:outreach-approve')({}, { pitchId: generated.data.pitch_id });
+
+  // Still inside the 30-day window: the same content is allowed.
+  let gate = await handlers.get('lead-intel:outreach-gate')({}, { pitchId: generated.data.pitch_id });
+  assert.equal(gate.data.decision, 'allowed', JSON.stringify(gate.data.reasons));
+
+  // One second past the window: the SAME pitch, SAME approval, now refused - and refused
+  // for the real reason, not because the clock is fake.
+  clock.advance(31 * 24 * 60 * 60 * 1000);
+  gate = await handlers.get('lead-intel:outreach-gate')({}, { pitchId: generated.data.pitch_id });
+  assert.equal(gate.data.decision, 'blocked', 'aged evidence can never be allowed');
+  assert.ok(gate.data.reasons.some((r) => r.code === 'EVIDENCE_FRESH'), 'and it says EVIDENCE_FRESH: ' + JSON.stringify(gate.data.reasons));
+  assert.ok(!gate.data.reasons.some((r) => r.code === 'HUMAN_APPROVAL'), 'the approval itself was not invalidated by age');
+
+  await runtime.shutdown();
 });
 
 // ============================================================ 6. End-to-end
@@ -679,6 +744,16 @@ test('A10 E2E: a real Round-1 record -> mapper -> EvidencePacket -> cited pitch 
   const email = new FakeEmailProvider();
   const runtime = await initializeLeadIntelligenceRuntime({
     accountStore,
+    // Deterministic freshness. This fixture's evidence is captured at CLOCK_ISO and its
+    // 30-day window expires at 2026-10-01T10:00:00Z. Evaluating the gate against the real
+    // wall clock therefore made this test pass or fail purely on the calendar date, which
+    // it did: it started failing the moment that instant passed. Injecting the fixture's
+    // OWN clock means "is this evidence still fresh?" is answered against the data in the
+    // test, forever.
+    //
+    // This does not weaken the freshness rule in any way: the next test proves the very
+    // same setup still blocks with EVIDENCE_FRESH once the clock passes the expiry.
+    clock: makeClock(),
     config: {
       freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
       outreach: { allowedQualification: ['qualified'] },

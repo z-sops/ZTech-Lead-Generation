@@ -40,6 +40,8 @@ const LI_TABLES = Object.freeze([
   'li_segment_members',
   'li_pitch_drafts',
   'li_outreach_approvals',
+  // F15: the append-only outreach activity ledger.
+  'li_outreach_activity',
   'li_enrichment_jobs',
   'li_enrichment_observations',
 ]);
@@ -115,7 +117,7 @@ function createRound1Port(db) {
  * @param {object} [p.logger]
  * @param {object} [p.round1Port]  injected read-only Round-1 port (tests); defaults to the table reader
  */
-async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = null, config = {}, logger = console, round1Port = null }) {
+async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = null, config = {}, logger = console, round1Port = null, clock }) {
   if (!accountStore || typeof accountStore !== 'object') throw new TypeError('accountStore is required');
   // A10 contract: the runtime initialises ONLY after the shared database is open.
   await accountStore.ready;
@@ -136,6 +138,13 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
     round1: port,
     config: { ...config, research: { ...(config.research || {}), mode: 'round1' } },
     logger,
+    // Forwarded only when the caller supplies one, so the production path (main.js passes
+    // no clock) keeps createLeadIntelligence's own `() => new Date()` default and is
+    // byte-for-byte unchanged. This exists because createLeadIntelligence already accepts
+    // an injected clock; without the pass-through a caller had no way to evaluate evidence
+    // freshness against a chosen "now", which made any freshness assertion depend on the
+    // wall clock rather than on the data.
+    ...(clock ? { clock } : {}),
     llmComplete: null,
     // No email provider in this phase: the channel is not registered and no
     // send path exists. OutreachService keeps its EMAIL_DISABLED default.
