@@ -6948,7 +6948,9 @@ function f16ReadyDeliveryNote(delivery) {
 function f16ReadyEmptyRow(message) {
   const tr = f16ReadyEl('tr');
   const td = f16ReadyEl('td', 'ready-empty-cell', message);
-  td.colSpan = 8;
+  // F17 declared lock update: the table now has nine columns, with the Contact column
+  // added after Readiness.
+  td.colSpan = 9;
   tr.appendChild(td);
   return tr;
 }
@@ -6972,6 +6974,10 @@ function f16ReadyRow(item) {
   badge.setAttribute('data-readiness', 'ready');
   readinessTd.appendChild(badge);
   tr.appendChild(readinessTd);
+
+  // F17: factual contact points. This cell reports what EXISTS and what is missing; it
+  // never offers an action, and it cannot affect whether the row is Ready.
+  tr.appendChild(f17ContactCell(item));
 
   tr.appendChild(f16ReadyCell(pitch.subject));
   tr.appendChild(f16ReadyCell(pitch.research_status));
@@ -7033,7 +7039,7 @@ function f16ReadyRender() {
   if (f16ReadyState.error) {
     const tr = f16ReadyEl('tr');
     const td = f16ReadyEl('td', 'ready-empty-cell');
-    td.colSpan = 8;
+    td.colSpan = 9; // F17: nine columns (Contact added after Readiness).
     td.appendChild(f11AlertBox({ code: 'READY_UNAVAILABLE', message: f16ReadyState.error }));
     tr.appendChild(td);
     tbody.replaceChildren(tr);
@@ -7064,7 +7070,7 @@ async function f16ReadyLoad() {
   if (tbody) {
     const loading = f16ReadyEl('tr');
     const cell = f16ReadyEl('td', 'ready-empty-cell', 'Checking the Outreach Gate…');
-    cell.colSpan = 8;
+    cell.colSpan = 9; // F17: nine columns (Contact added after Readiness).
     cell.setAttribute('aria-live', 'polite');
     loading.appendChild(cell);
     tbody.replaceChildren(loading);
@@ -7118,6 +7124,141 @@ function f16ReadyInit() {
   // Loading on navigation, like the Outreach and Activity workspaces. No timer, no polling.
   const nav = document.querySelector('.nav-item[data-view="ready"]');
   if (nav) nav.addEventListener('click', () => f16ReadyLoad());
+}
+
+// === F17 Outreach: factual contact points and channel preparation ===
+//
+// F16 answers "is this prospect Ready?". F17 answers the separate question "what contact
+// information actually exists, and what can be PREPARED from it?".
+//
+// WHERE READINESS COMES FROM - the real product contract, unchanged by F17
+//   Ready queue -> the EXISTING OutreachGate -> channel "email" -> a valid email address is
+//   required (CONTACT_FIELD) -> decision "allowed".
+//   Every row this block receives is therefore ALREADY allowed, and under the current email
+//   gate every one of them carries a valid email. F17 does not decide that and must never
+//   re-decide it: it only decorates an already-selected row with contact facts, and it
+//   cannot add, remove, re-rank or re-shape a row. A prospect with no (or a malformed) email
+//   is excluded by the gate, upstream of here - never by anything below.
+//
+// THREE SEPARATE FACTS, NEVER CONFLATED
+//   readiness      = the gate verdict alone. F17 has no input into it: the backend derives
+//                    contact facts from the already-resolved view only AFTER "allowed" was
+//                    returned, and this block reads only what that response carries.
+//   contactability = whether a contact point is stored and syntactically valid. That is
+//                    what this block renders - including the stored number itself.
+//   delivery capability = provider/config state, reported by the gate and shown in F16's
+//                    own Delivery column. Contactability is NOT delivery capability, and
+//                    the two are never merged into one cell.
+//
+// WHERE THE BACKEND STOPS AND THE UI STARTS
+// The backend returns FACTS ONLY: present / valid / value, an email state of
+// available | missing | invalid, and a whatsapp state of candidate | missing with
+// `verified: false` always. It does not classify mobile vs landline, because AccountStore
+// stores ONE `phone` column with no line-type evidence.
+//
+// This block MAY apply the existing isMobileNumber() heuristic, but only as a visibly
+// labelled candidate - "Mobile candidate (heuristic)". That is a UI interpretation of an
+// unverified number, never a fact, and the "Not verified for WhatsApp" line always sits
+// beneath it.
+//
+// NEVER rendered here: WhatsApp available, verified, registered, reachable or deliverable.
+// There is no verifier in this build, so those statements cannot be true.
+const F17_CONTACT_UNAVAILABLE = '—';
+
+/**
+ * The email line: only ever one of available / missing / invalid.
+ *
+ * "available" is the only state a real Ready row can carry today: the queue is fed by the
+ * existing OutreachGate on channel "email", which blocks any lead without a syntactically
+ * valid address (CONTACT_FIELD). "missing" and "invalid" are therefore DEFENSIVE FALLBACK
+ * states: they render a malformed or unexpected payload honestly instead of flattening it
+ * into a claim, and they do NOT describe reachable product behaviour. No backend rule was
+ * added or relaxed to make them reachable.
+ */
+function f17EmailLine(email) {
+  const state = email && email.state ? email.state : 'missing';
+  if (state === 'available') {
+    return { label: 'Email', value: email.value || F17_CONTACT_UNAVAILABLE, hint: '' };
+  }
+  if (state === 'invalid') {
+    // DEFENSIVE FALLBACK. Deliberately distinct from "No email": the lead HAS an email,
+    // it is just not usable as-is. That distinction already exists in the lead view and
+    // is carried through rather than flattened away. Unreachable from the live gate.
+    return { label: 'Email', value: 'Invalid email on lead', hint: 'present but not a valid address' };
+  }
+  // DEFENSIVE FALLBACK. Also unreachable from the live gate: see the contract note above.
+  return { label: 'Email', value: 'No email', hint: '' };
+}
+
+/**
+ * The WhatsApp line. Conservative by construction: candidate or missing, never verified.
+ *
+ * FACT FIRST: when the backend reports a stored, syntactically valid number
+ * (`channels.whatsapp.contact`, the same value as `contacts.phone.value`), that stored
+ * value is rendered VERBATIM - no reformatting, no country-code guessing, no normalisation.
+ * Only then come the labelled heuristic and the standing caveat, so the row shows WHICH
+ * number is a WhatsApp candidate without ever claiming that it is registered, available,
+ * verified, reachable or deliverable. A phone that is stored but rejected by the
+ * normaliser is not a candidate at all: it stays "No phone number" and the cell states
+ * separately that the stored phone is not a valid number.
+ */
+function f17WhatsappLine(channels) {
+  const wa = channels && channels.whatsapp ? channels.whatsapp : null;
+  const stored = wa && typeof wa.contact === 'string' ? wa.contact : null;
+  if (!wa || wa.state !== 'candidate' || stored === null || stored.trim() === '') {
+    return { label: 'WhatsApp', value: 'No phone number', hint: '' };
+  }
+  // The backend never claims a line type. The renderer MAY apply the existing heuristic,
+  // and when it does the wording must read as a candidate, never as a fact.
+  let candidate = 'Phone candidate';
+  try {
+    if (typeof isMobileNumber === 'function' && isMobileNumber(stored)) {
+      candidate = 'Mobile candidate (heuristic)';
+    }
+  } catch (err) {
+    // Fall back to the neutral wording.
+  }
+  // value = the stored number verbatim (the FACT); note = the labelled heuristic (an
+  // interpretation); hint = the standing caveat. Three different kinds of statement,
+  // rendered in exactly that order.
+  return { label: 'WhatsApp', value: stored, note: candidate, hint: 'Not verified for WhatsApp' };
+}
+
+/**
+ * One channel as a labelled stack: the FACT, then - for a channel with one - the labelled
+ * reading of it, then the caveat. Each line is a different kind of statement and is
+ * rendered in that order, so a reader can always tell the stored value apart from the
+ * heuristic and from the "not verified" caveat.
+ */
+function f17ChannelBlock(line, className) {
+  const wrap = f16ReadyEl('div', className);
+  wrap.appendChild(f16ReadyEl('span', 'f17-channel-label', line.label));
+  wrap.appendChild(f16ReadyEl('div', 'f17-channel-value', line.value));
+  if (line.note) wrap.appendChild(f16ReadyEl('div', 'f17-channel-note', line.note));
+  if (line.hint) wrap.appendChild(f16ReadyEl('div', 'f17-channel-hint', line.hint));
+  return wrap;
+}
+
+/**
+ * The Contact cell. It reports what EXISTS and what is missing - the stored number itself
+ * when one exists - and it never offers an action and never implies anything was sent or
+ * that any channel is available. It reads only the facts the backend attached to this
+ * already-allowed row; it cannot see or change the gate verdict.
+ */
+function f17ContactCell(item) {
+  const td = f16ReadyEl('td', 'col-contact');
+  const contacts = item && item.contacts ? item.contacts : null;
+  if (!contacts) {
+    td.appendChild(f16ReadyEl('span', 'lead-drawer-muted', 'Contact information unavailable'));
+    return td;
+  }
+  td.appendChild(f17ChannelBlock(f17EmailLine(contacts.email), 'f17-channel f17-channel-email'));
+  td.appendChild(f17ChannelBlock(f17WhatsappLine(item.channels), 'f17-channel f17-channel-whatsapp'));
+  // A lead whose phone exists but could not be read stays honest about that too.
+  if (contacts.phone && contacts.phone.present && contacts.phone.valid === false) {
+    td.appendChild(f16ReadyEl('div', 'f17-channel-hint', 'Stored phone is not a valid number'));
+  }
+  return td;
 }
 
 // === F15 Outreach: activity history ===

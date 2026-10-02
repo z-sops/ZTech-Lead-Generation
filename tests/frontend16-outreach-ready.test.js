@@ -41,9 +41,10 @@ let failed = 0;
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 const F16_MARKER = '// === F16 Outreach: the derived Ready queue ===';
-const F15_MARKER = '// === F15 Outreach: activity history ===';
+const F17_MARKER = '// === F17 Outreach: factual contact points and channel preparation ===';
 const f16From = rendererSource.indexOf(F16_MARKER);
-const f15From = rendererSource.indexOf(F15_MARKER);
+// F17 now follows F16, so the F16 slice must stop at F17, not at F15.
+const f15From = rendererSource.indexOf(F17_MARKER);
 assert.ok(f16From > -1, 'the F16 block exists in renderer.js');
 assert.ok(f15From > f16From, 'the F16 block is defined before the F15 block');
 const F16 = rendererSource.slice(f16From, f15From);
@@ -290,8 +291,32 @@ test('5. no send, provider, campaign or scheduling capability exists anywhere in
 test('6. readiness is channel-neutral: no email rule is duplicated in F16', async () => {
   // The service asks the gate for whatever channel it evaluates; F16 does not filter on one.
   const readyMethod = serviceSource.slice(serviceSource.indexOf('async ready(query)'), serviceSource.indexOf('\n  async gate('));
-  assert.ok(!/channel\s*===|channel\s*!==|email|whatsapp/i.test(stripComments(readyMethod)),
-    'the derived query applies no channel condition of its own');
+  // F17 widened this method with contact FACTS, so the words email/whatsapp may appear as
+  // reported fields. What must be absent is any channel COMPARISON: nothing in the
+  // derived query may branch on, filter by, or require a channel.
+  const code = stripComments(readyMethod);
+  for (const banned of [/channel\s*===/, /channel\s*!==/, /\.channel\s*\?/, /if\s*\([^)]*channel/, /return\s+verdict\.decision\s*===/]) {
+    assert.ok(!banned.test(code), 'the derived query applies no channel condition of its own: ' + banned);
+  }
+  // A contact fact may never appear in the row-selection path, which is the part of
+  // ready() above the push.
+  // The row-DECISION path is everything from the gate call up to the verdict guard.
+  // The contact derivation happens after that guard, so it cannot have influenced it.
+  const gateCall = code.indexOf('verdict = await this.gate(');
+  const guardLine = "if (!verdict || verdict.decision !== 'allowed') continue;";
+  const guard = code.indexOf(guardLine);
+  assert.ok(gateCall > -1 && guard > gateCall, 'the guard follows the gate call');
+  assert.ok(code.indexOf(guardLine, guard + guardLine.length) === -1, 'the guard is evaluated exactly once');
+  const decisionPath = code.slice(gateCall, guard);
+  assert.ok(!/email|whatsapp|phone|website|contacts/i.test(decisionPath),
+    'nothing about a contact participates in selecting or skipping a row');
+  // And the derivation itself is pure reporting: it cannot return or set a verdict.
+  // After the guard the only verdict mentions may be the row it is already attached to.
+  const derivation = code.slice(guard + guardLine.length, code.indexOf('rows.push('));
+  assert.ok(!/verdict/.test(derivation), 'the contact derivation never touches the verdict');
+  // And the row itself carries the SAME verdict object it was selected with.
+  assert.ok(/rows\.push\(contact \? \{ pitch: candidate, gate: verdict, lead, \.\.\.contact \} : \{ pitch: candidate, gate: verdict, lead \}\)/.test(code),
+    'the row reports the gate verdict verbatim, in both the contact and no-contact shapes');
   // The renderer reports whatever capability the backend returned, naming the channel.
   assert.ok(/delivery\.channel/.test(F16), 'the workspace names the channel the backend reported');
   assert.ok(!/email/i.test(F16_CODE), 'the F16 block contains no email-specific logic at all');
@@ -310,8 +335,55 @@ test('6. readiness is channel-neutral: no email rule is duplicated in F16', asyn
   });
   await ws.f16ReadyLoad();
   await settle();
-  const deliveryText = cellsOf(ws)[5].textContent;
+  // The Delivery column moved to index 6: F17 inserted Contact at index 2.
+  const deliveryText = cellsOf(ws)[6].textContent;
   assert.ok(/whatsapp/i.test(deliveryText), 'a whatsapp capability is reported, not filtered: ' + deliveryText);
+  // The same row's Contact cell is honest about the absent contact facts: this fixture
+  // carries none, so it says so rather than inventing one.
+  assert.ok(/unavailable/i.test(cellsOf(ws)[2].textContent), 'the Contact cell admits missing facts: ' + cellsOf(ws)[2].textContent);
+});
+
+// F17 decorates an already-selected row with contact facts. That decoration must be
+// incapable of creating, preserving or removing readiness, and it must not have touched
+// F16's paging semantics.
+test('6b. F17 contact decoration cannot influence readiness or pagination', async () => {
+  const readyMethod = serviceSource.slice(serviceSource.indexOf('async ready(query)'), serviceSource.indexOf('\n  async gate('));
+  const code = stripComments(readyMethod);
+  // No contact property is compared, filtered on, or required for a row to be kept.
+  for (const banned of [
+    /(contacts|channels)\.\w+(\.\w+)*\s*(===|!==|==|!=)/,
+    /if\s*\([^)]*(contacts|channels)/,
+    /(contacts|channels)\s*\?\s*[^;]*continue/,
+    /!\s*[^;]*(contacts|channels)[^;]*continue/,
+  ]) {
+    assert.ok(!banned.test(code), 'no contact-driven readiness condition: ' + banned);
+  }
+  // No availability/verification comparison exists at all - whatsapp has no such state,
+  // so no such comparison could ever create readiness.
+  for (const banned of [
+    /whatsapp[\s\S]{0,80}(continue|break|return|decision)/i,
+    /\.(state|verified|available)\s*(===|!==)/,
+    /\bavailable\b\s*(===|!==)/,
+  ]) {
+    assert.ok(!banned.test(code), 'no availability comparison creates readiness: ' + banned);
+  }
+  // The decoration is additive: the row is pushed either way.
+  assert.ok(/rows\.push\(contact \?/.test(code), 'the row is pushed decorated or not, never conditionally on contacts');
+  // A blocked verdict stays excluded, and an allowed verdict stays included, for the SAME
+  // resolved view - the only difference is the verdict.
+  const sameView = () => 'Acme Bakery';
+  const allowedRes = await makeService([{ pitch_id: 'p1' }], () => allowed({ pitch_id: 'p1' }), sameView).service.ready({});
+  const blockedRes = await makeService([{ pitch_id: 'p1' }], () => blockedBy('CONTACT_FIELD'), sameView).service.ready({});
+  assert.strictEqual(allowedRes.rows.length, 1, 'allowed -> included');
+  assert.strictEqual(blockedRes.rows.length, 0, 'blocked -> excluded, whatever the view carries');
+
+  // F16's paging semantics are untouched by the decoration.
+  assert.ok(/const F16_READY_PAGE_SIZE = 10;/.test(F16), 'the page size is unchanged');
+  assert.ok(/const F16_READY_SCAN_SIZE = 50;/.test(F16), 'the scan window is unchanged');
+  assert.ok(/scanLimit: F16_READY_SCAN_SIZE/.test(F16), 'the workspace still sends the same bounded scan window');
+  assert.ok(/F16_READY_SCAN_SIZE/.test(F16) && /cursor - F16_READY_SCAN_SIZE/.test(F16),
+    'Previous still steps back by exactly one scan window');
+  assert.ok(!/f16ReadyState\.total|\btotal\b\s*:/.test(F16), 'no total was introduced by the decoration');
 });
 
 // ============================================================ 7. the workspace
@@ -339,7 +411,11 @@ function loadWorkspace(api) {
   sandbox.f11AlertBox = (err) => { const el = doc.createElement('div'); el.textContent = (err && err.code ? err.code + ': ' : '') + (err && err.message ? err.message : ''); return el; };
   sandbox.f11El = (tag, cls, text) => { const el = doc.createElement(tag); el.className = cls || ''; el.textContent = text === undefined ? '' : String(text); return el; };
   const names = Object.keys(sandbox);
-  const fn = new Function(...names, F16 + '\nreturn { f16ReadyLoad, f16ReadyState, f16ReadyInit, f16ReadyDeliveryNote };');
+  // F16 now calls f17ContactCell for the Contact column, so F16 must be evaluated with
+  // F17 present. The F16-only slices above still stop at the F17 marker, so the
+  // channel-neutrality assertions inspect F16's own code and nothing else.
+  const F17 = rendererSource.slice(f15From, rendererSource.indexOf('// === F15 Outreach: activity history ==='));
+  const fn = new Function(...names, F16 + '\n' + F17 + '\nreturn { f16ReadyLoad, f16ReadyState, f16ReadyInit, f16ReadyDeliveryNote };');
   const loaded = fn.apply(null, names.map((n) => sandbox[n]));
   // Wire the controls exactly as the module does at startup, so the pager buttons in this
   // harness carry the same listeners the real workspace gives them.
@@ -373,18 +449,18 @@ test('7. the workspace renders a ready row factually, with an honest delivery li
   assert.deepStrictEqual(Object.keys(calls[0]).sort(), ['cursor', 'limit', 'scanLimit'],
     'the workspace sends only the three bounded integers');
   const cells = cellsOf(ws);
-  assert.strictEqual(cells.length, 8, 'one cell per declared column');
+  assert.strictEqual(cells.length, 9, 'one cell per declared column (F17 added Contact after Readiness)');
   assert.strictEqual(cells[0].textContent, 'Acme Bakery', 'the lead name comes from the gate-resolved view');
   assert.strictEqual(cells[1].textContent, 'Ready for outreach', 'readiness states the real gate outcome');
-  assert.strictEqual(cells[2].textContent, 'Three fixes for acme.com', 'the subject comes from the pitch');
-  assert.ok(/provider not configured/.test(cells[5].textContent), 'delivery is honest: ' + cells[5].textContent);
+  assert.strictEqual(cells[3].textContent, 'Three fixes for acme.com', 'the subject comes from the pitch');
+  assert.ok(/provider not configured/.test(cells[6].textContent), 'delivery is honest: ' + cells[6].textContent);
   assert.ok(!/sent|queued|scheduled|delivered|contacted/i.test(textOf(ws)), 'nothing claims delivery: ' + textOf(ws));
   // The footer reports only what the backend reported - no invented total.
   const range = ws.doc.getElementById('ready-range').textContent;
   assert.ok(/1 ready/.test(range) && /scanned 7/.test(range) && /more remain/.test(range), 'the footer is truthful: ' + range);
   assert.ok(!/\bof \d+\b/.test(range), 'and states no total: ' + range);
   // The only action opens the lead.
-  const openBtn = cells[7].byTag('button')[0];
+  const openBtn = cells[8].byTag('button')[0]; // F17: Contact inserted at index 7
   assert.strictEqual(openBtn.textContent, 'Open lead', 'the only row action opens the lead');
   openBtn.fire('click');
   assert.deepStrictEqual(ws.opened, ['L1'], 'it reuses the F5 drawer with the stored lead id');

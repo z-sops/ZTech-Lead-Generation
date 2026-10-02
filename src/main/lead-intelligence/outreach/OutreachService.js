@@ -2,10 +2,108 @@
 
 const { newId } = require('../core/ids');
 const { NotFoundError, LiError, ValidationError } = require('../core/errors');
-const { toLeadView } = require('../contracts/leadView');
+const { toLeadView, EMAIL } = require('../contracts/leadView');
+const { normalizeFieldValue } = require('../enrichment/catalog');
 const { generatePitch, editPitch, renderPitchText } = require('./PitchGenerator');
 const { evaluateOutreachGate } = require('./OutreachGate');
 const { normalizeActivityMetadata, normalizeReadyQuery } = require('../persistence/contract');
+
+// === F17: factual contact facts for the derived Ready row ===
+//
+// These helpers report only what the canonical lead view ALREADY asserts, and they run
+// through the EXISTING normalisers rather than re-implementing validation:
+//   - email validity  : leadView.EMAIL, the same regex the Outreach Gate itself uses to
+//                       decide CONTACT_FIELD, so this can never disagree with the gate.
+//   - present-vs-invalid: leadView keeps `email_raw_present` for exactly this case, so a
+//                       malformed stored email stays distinguishable from no email.
+//   - phone / website : catalog.normalizeFieldValue - the same normalisers the enrichment
+//                       catalog uses (INVALID_PHONE / INVALID_DOMAIN_*).
+//
+// WHAT THIS DELIBERATELY DOES NOT DO
+//  - It does NOT classify a number as mobile or landline. AccountStore stores ONE `phone`
+//    column with no mobile/landline field and no line-type evidence, so such a claim
+//    would be an invention. Mobile-vs-landline is a labelled UI heuristic and stays in the
+//    renderer, where the existing isMobileNumber() already lives.
+//  - It does NOT claim anything about WhatsApp, registration, provider configuration or
+//    deliverability. There is no verifier in this build, so none of that is knowable.
+//  - It creates, persists and changes nothing. Pure read model.
+//
+// READINESS vs CONTACTABILITY vs DELIVERY are three separate facts. Readiness is the gate
+// verdict alone. Contactability is what is written here. Delivery capability is the
+// `delivery` block the gate already reports. None of them can influence another.
+//
+// THE REAL PRODUCT CHAIN, which this read model reports but may never alter:
+//   ready() -> this.gate() -> OutreachGate -> channel "email" -> a valid email address is
+//   required (CONTACT_FIELD) -> decision "allowed" -> the row is decorated with contact
+//   facts.
+// So in practice every row returned here carries a valid email. That is the GATE's rule,
+// not this read model's: a lead with no (or a malformed) email is excluded upstream of the
+// decoration below, and no contact fact is ever consulted while selecting a row.
+
+/** { present, valid, value } for one already-validated lead-view string. */
+function contactFact(rawValue, isValid) {
+  const present = typeof rawValue === 'string' && rawValue.trim().length > 0;
+  if (!present) return { present: false, valid: null, value: null };
+  const valid = isValid === true;
+  // A rejected value is never re-surfaced: the caller gets the FLAG, not the bad string,
+  // because leadView already refused to accept it as a contact value.
+  return { present: true, valid, value: valid ? rawValue : null };
+}
+
+/** Run the existing catalog normaliser; it already returns { ok } for us. */
+function catalogAccepts(field, value) {
+  try {
+    return normalizeFieldValue(field, value).ok === true;
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * The factual contact/channel read model for ONE lead view. Pure: no store access, no
+ * network, no provider lookup.
+ *
+ * In practice every view reaching here belongs to an ALREADY-ALLOWED row, so under the
+ * current email gate `email.state` is "available". The "missing" / "invalid" states are
+ * DEFENSIVE reporting for a malformed or unexpected payload - they are not reachable
+ * product states today, and nothing here may be changed to make them reachable (that would
+ * mean weakening the gate).
+ *
+ * @param {object} view           a leadView (the gate already resolved one)
+ * @param {boolean} rawEmailPresent leadView's `email_raw_present`
+ */
+function contactFactsFromView(view, rawEmailPresent) {
+  const v = view && typeof view === 'object' ? view : {};
+  const emailValid = typeof v.email === 'string' && EMAIL.test(v.email.trim());
+  const email = contactFact(v.email, emailValid);
+  // When leadView rejected the stored email but knows one was there, this is INVALID and
+  // not MISSING - that distinction already exists in the view, and is only carried through.
+  const emailState = !email.present
+    ? (rawEmailPresent === true ? 'invalid' : 'missing')
+    : (email.valid === true ? 'available' : 'invalid');
+  const phone = contactFact(v.phone, catalogAccepts('company.phone', v.phone));
+  const website = contactFact(v.website, catalogAccepts('company.website', v.website));
+  return {
+    contacts: {
+      email: { ...email, state: emailState },
+      phone,
+      website
+    },
+    channels: {
+      // "available" means ONLY: a syntactically valid contact email exists. It does NOT
+      // mean a provider is configured, that sending is enabled, or that it is deliverable.
+      email: { state: emailState, contact: email.valid === true ? email.value : null, providerConfigured: null },
+      // Conservative by construction. A phone is at most a CANDIDATE. With no verifier in
+      // this build `verified` can never be true and WhatsApp has no `available` state.
+      whatsapp: {
+        state: phone.valid === true ? 'candidate' : 'missing',
+        contact: phone.valid === true ? phone.value : null,
+        verified: false,
+        verifiedSource: null
+      }
+    }
+  };
+}
 
 /**
  * OutreachService — pitch drafts, human approval, gate evaluation and (optional,
@@ -196,16 +294,24 @@ class OutreachService {
       }
       if (!verdict || verdict.decision !== 'allowed') continue;
       let lead = { id: candidate.lead_id === undefined ? null : candidate.lead_id, name: null };
+      let contact = null;
       try {
         // The lead identity the gate ALREADY resolved for its own check. No extra
         // enrichment is performed and no field is invented: `name` stays null when the
         // lead carries no business name.
         const ctx = await this.contexts.getContext(candidate.lead_id, { targetId: candidate.target_id ?? undefined });
-        if (ctx && ctx.view && typeof ctx.view.name === 'string') lead = { ...lead, name: ctx.view.name };
+        if (ctx && ctx.view) {
+          if (typeof ctx.view.name === 'string') lead = { ...lead, name: ctx.view.name };
+          // F17: the SAME resolved view yields the factual contact facts. This is a
+          // widening of a view we already read, not a second AccountStore lookup, and it
+          // cannot affect readiness - `verdict.decision === 'allowed'` above already
+          // decided this row, before any contact data was consulted.
+          contact = contactFactsFromView(ctx.view, ctx.view.email_raw_present);
+        }
       } catch (err) {
         // Keep the honest lead reference with no name.
       }
-      rows.push({ pitch: candidate, gate: verdict, lead });
+      rows.push(contact ? { pitch: candidate, gate: verdict, lead, ...contact } : { pitch: candidate, gate: verdict, lead });
     }
 
     const nextCursor = cursor + scanned;

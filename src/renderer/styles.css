@@ -5580,3 +5580,54 @@ textarea {
     flex-direction: column;
   }
 }
+
+/* ZTech Frontend 2.0 - F17: factual contact points in the Ready workspace.
+  *
+  * Built like every other block here: existing `data-table`, existing `lists-*` chrome,
+  * and only tokens F1-F16 already define. No new colour, shadow or radius language.
+  *
+  * Each channel is a small labelled stack - the FACT first, then the caveat - so the
+  * distinction between "a contact exists" and "this channel is actually available" is
+  * visible in the layout itself rather than only in the wording.
+  */
+
+.ready-table .col-contact { width: 230px; }
+
+.f17-channel {
+  margin-bottom: 6px;
+}
+
+.f17-channel:last-child {
+  margin-bottom: 0;
+}
+
+.f17-channel-label {
+  display: block;
+  font-size: var(--font-11);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.f17-channel-value {
+  font-size: var(--font-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+/* The labelled reading of the stored value - e.g. "Mobile candidate (heuristic)". It is an
+   interpretation OF the fact above it, never the fact itself, so it carries the same muted
+   tokens as the caveat and always sits between the value and the hint. */
+.f17-channel-note {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* The caveat line. Deliberately muted: "not verified", "present but not valid" and
+   "no email" are qualifications on a fact, never states of their own. */
+.f17-channel-hint {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
