@@ -610,7 +610,8 @@ test('21. the IPC channel set and dependencies are unchanged', () => {
   assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 34, '34 IPC channels');
   // A10 declared lock update: 41 -> 46 preload invocations (the five approved
   // Lead Intelligence methods). The F5 block itself still performs no I/O.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 49, '49 preload invocations');
+  // F18 declared lock update: 49 -> 50, the single read-only prepare method.
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 50, '50 preload invocations');
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'the F5 block performs no I/O');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);

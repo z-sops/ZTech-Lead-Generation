@@ -362,6 +362,124 @@ class OutreachService {
     };
   }
 
+  // === F18: outreach preparation (review only — nothing is sent) ===
+  //
+  // Preparation is a DERIVED PREVIEW for ONE already-ready pitch. It is not a state, not a
+  // column and not a write: it reuses exactly three things that already exist and adds
+  // nothing.
+  //   - the EXISTING gate verdict, re-evaluated right now by this.gate() on the same
+  //     channel the Ready queue uses. A pitch the gate no longer allows cannot be
+  //     prepared, whatever its contacts look like - contact data can never manufacture
+  //     access, only narrow it.
+  //   - the EXISTING F17 contact facts (contactFactsFromView - the same read model the
+  //     Ready rows carry). No second AccountStore lookup: the view comes from the same
+  //     contexts.getContext the gate already resolves.
+  //   - the EXISTING canonical pitch text (PitchGenerator.renderPitchText) - the same
+  //     transformation the disabled send path uses. Nothing new is composed here.
+  //
+  // READINESS vs PREPARATION CHANNEL - two separate decisions, always in this order:
+  //   1. READINESS: this.gate({ pitchId }) evaluates the EXISTING OutreachGate on its
+  //      default channel ("email"). OutreachGate is the only readiness decider in this
+  //      build and is NOT redesigned or re-parameterised here: WhatsApp contact
+  //      availability has no vote in it, cannot create an allowed verdict, and cannot
+  //      weaken any of its checks.
+  //   2. CHANNEL: only AFTER the verdict is "allowed" does preparation consult the F17
+  //      contact facts to ask whether the requested contact channel exists. Contact data
+  //      can only NARROW what preparation offers - never widen what the gate allows.
+  // A WhatsApp candidate can therefore be prepared only for a pitch that is already Ready
+  // under the product's readiness contract, and `readiness` below is that same
+  // email-channel gate verdict carried verbatim - never a WhatsApp-derived readiness.
+  //
+  // The returned shape is CHANNEL-NEUTRAL on purpose, so a later email adapter, WhatsApp
+  // adapter or MCP surface can consume it without redesigning the Ready queue or F17:
+  //   { leadId, pitchId, channel, leadName, recipient, content, readiness, contactFacts }
+  // `recipient` IS the F17 channel object, verbatim. For WhatsApp that means
+  // { state: 'candidate', contact, verified: false, verifiedSource: null }: preparation
+  // never upgrades a stored phone into a verified or available WhatsApp number.
+  //
+  // This method writes nothing, sends nothing, schedules nothing and records no activity.
+  // The only errors it raises itself are honest refusals: NOT_READY when the gate does
+  // not currently allow the pitch, CHANNEL_UNAVAILABLE when the chosen channel has no
+  // valid contact point, CONTACT_FACTS_UNAVAILABLE when the context resolves without a
+  // usable view, and VALIDATION_FAILED for an unknown channel. A genuine internal
+  // failure in a store read is never converted into one of those - it propagates as
+  // itself, so the caller is never told a working pipeline "has no contact facts".
+  async prepare({ pitchId, channel }) {
+    if (channel !== 'email' && channel !== 'whatsapp') {
+      throw new ValidationError('unknown preparation channel', [{ path: '$.channel', message: 'channel must be "email" or "whatsapp"' }]);
+    }
+    const pitch = await this.get(pitchId);
+    // Readiness is re-checked by the EXISTING gate, exactly as the Ready queue checked
+    // it. A blocked pitch cannot reach preparation even with perfect contact data.
+    const verdict = await this.gate({ pitchId });
+    if (!verdict || verdict.decision !== 'allowed') {
+      throw new LiError('NOT_READY', 'Only a pitch the Outreach Gate currently allows can be prepared.');
+    }
+    // The context read is deliberately NOT wrapped in a swallowing catch. The gate just
+    // resolved the SAME context successfully, so a failure here is a genuine internal
+    // failure (a store error, a lead that vanished between the two reads, a programming
+    // error) and it must surface as itself: NotFoundError, the store's typed error, or an
+    // unknown error the IPC boundary already renders as INTERNAL_ERROR. Masking it as
+    // "no contact facts" would fabricate a wrong, reassuring refusal.
+    const ctx = await this.contexts.getContext(pitch.lead_id, { targetId: pitch.target_id ?? undefined });
+    let facts = null;
+    let leadName = null;
+    if (ctx && ctx.view) {
+      // The SAME resolved view the gate used - no extra enrichment, no second lookup.
+      if (typeof ctx.view.name === 'string') leadName = ctx.view.name;
+      facts = contactFactsFromView(ctx.view, ctx.view.email_raw_present);
+    }
+    if (!facts) {
+      // Expected absence ONLY: the context resolved but carries no usable view. A context
+      // read FAILURE never reaches this line (see above). Nothing is logged here, so no
+      // contact value can ever reach a log through preparation.
+      throw new LiError('CONTACT_FACTS_UNAVAILABLE', 'The stored contact facts for this lead could not be read.');
+    }
+    const recipient = facts.channels[channel];
+    const available = channel === 'email'
+      ? facts.channels.email.state === 'available'
+      : facts.channels.whatsapp.state === 'candidate';
+    if (!available) {
+      // Honest, specific refusals. A channel is never simulated and never downgraded to
+      // a maybe: without a valid contact point there is nothing to prepare.
+      const reason = channel === 'email'
+        ? (facts.contacts.email.state === 'invalid'
+          ? 'The stored email address is not a valid address.'
+          : 'No valid email address is stored for this lead.')
+        : (facts.contacts.phone.present === true
+          ? 'The stored phone number is not a valid number.'
+          : 'No phone number is stored for this lead.');
+      throw new LiError('CHANNEL_UNAVAILABLE', reason);
+    }
+    return {
+      leadId: pitch.lead_id,
+      pitchId: pitch.pitch_id,
+      channel,
+      // The business name the gate's own view already carries, or null. Read-only
+      // convenience so consumers never need a second lookup; never invented.
+      leadName: leadName,
+      // The F17 channel shape, verbatim. providerConfigured stays null for email: no
+      // provider configuration is claimed. WhatsApp stays candidate/unverified.
+      recipient,
+      // The existing canonical pitch text. For email this IS the body. For WhatsApp no
+      // transformation exists in this build, so the same text is the message SOURCE and
+      // transformationNote says so plainly.
+      content: {
+        subject: pitch.subject,
+        body: renderPitchText(pitch),
+        bodySource: 'renderPitchText',
+        evidenceReferences: Array.isArray(pitch.evidenceReferences) ? pitch.evidenceReferences : [],
+        transformationNote: channel === 'whatsapp'
+          ? 'No WhatsApp-specific message transformation exists in this build. The canonical pitch text is shown unchanged as the message source.'
+          : null
+      },
+      // The same verdict the Ready queue reports, carried verbatim. Preparation never
+      // re-decides readiness and can never influence it.
+      readiness: verdict,
+      contactFacts: facts
+    };
+  }
+
   /**
    * Human-triggered send of ONE approved pitch. Only available when email is enabled
    * in config AND a provider is configured. Re-runs the gate right before sending.

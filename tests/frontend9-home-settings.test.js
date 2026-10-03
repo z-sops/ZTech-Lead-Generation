@@ -216,7 +216,8 @@ test('11. the settings contract is unchanged', () => {
   // A10 declared lock update: 41 -> 46 preload invocations. F9 itself still adds
   // no preload method; the increase is the five approved Lead Intelligence
   // methods added by A10.
-  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 49, 'A10 adds the eight Lead Intelligence preload methods');
+  // F18 declared lock update: 49 -> 50, the single read-only prepare method.
+  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 50, 'A10..F18 add the nine Lead Intelligence preload methods');
   assert.ok(vaultSource.includes("const CREDENTIAL_FIELDS = ['apiKey', 'taskKey'];"), 'credentialVault untouched');
   // The existing save / clear / test handlers keep their payloads.
   assert.ok(/apiKey: document\.getElementById\('settings-apikey'\)\.value\.trim\(\),\s*taskKey: document\.getElementById\('settings-task-key'\)\.value\.trim\(\),\s*proxyUrl: document\.getElementById\('settings-proxy-url'\)\.value\.trim\(\),\s*research: collectResearchSettings\(\)/.test(rendererSource),

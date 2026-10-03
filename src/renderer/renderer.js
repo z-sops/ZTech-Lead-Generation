@@ -6987,7 +6987,8 @@ function f16ReadyRow(item) {
   tr.appendChild(delivery);
   tr.appendChild(f16ReadyCell(f16ReadyDate(pitch.updated_at)));
 
-  // The only action: open the existing F5 lead drawer. No outbound control.
+  // The actions: open the existing F5 lead drawer, and (F18) open the read-only
+  // preparation review for THIS pitch. No outbound control of any other kind.
   const actions = f16ReadyEl('td', 'col-actions');
   const hasLead = lead.id !== undefined && lead.id !== null;
   if (hasLead && typeof openLeadDetail === 'function') {
@@ -6998,6 +6999,13 @@ function f16ReadyRow(item) {
     actions.appendChild(open);
   } else {
     actions.appendChild(f16ReadyEl('span', 'lead-drawer-muted', 'No lead reference'));
+  }
+  if (pitch.pitch_id && typeof f18OpenPrepare === 'function') {
+    const prepare = f11El('button', 'btn btn-sm btn-secondary', 'Prepare outreach');
+    prepare.type = 'button';
+    prepare.setAttribute('data-prepare-pitch-id', String(pitch.pitch_id));
+    prepare.addEventListener('click', () => f18OpenPrepare(String(pitch.pitch_id)));
+    actions.appendChild(prepare);
   }
   tr.appendChild(actions);
   return tr;
@@ -7259,6 +7267,269 @@ function f17ContactCell(item) {
     td.appendChild(f16ReadyEl('div', 'f17-channel-hint', 'Stored phone is not a valid number'));
   }
   return td;
+}
+
+// === F18 Outreach: preparation review (read-only preview, nothing is sent) ===
+//
+// F16 answers "is this prospect Ready?" and F17 reports what contact facts exist. F18 adds
+// the ONE review surface between them and the (disabled) send path: a preparation of ONE
+// ready pitch on ONE factual channel, derived entirely by the backend.
+//
+// THE CONTRACT THIS BLOCK KEEPS
+//   - Readiness is never re-decided here. The row was already allowed by the existing
+//     gate, and every preview re-carries that verdict verbatim (`readiness`).
+//   - The channel is a presentation choice made AFTER readiness. A channel without a
+//     factual contact point is refused by the backend and shown as an honest refusal -
+//     never simulated, never downgraded.
+//   - WhatsApp is always a CANDIDATE: "Not verified for WhatsApp" is always shown, and
+//     no registration, reachability or deliverability is ever claimed.
+//   - Switching Email -> WhatsApp -> Email is read-only and deterministic: each switch is
+//     a fresh read-only prepare call for the same pitch; nothing accumulates.
+//   - NO SEND BUTTON. No send, schedule, queue, retry, launch or campaign control exists
+//     in this block, because no such capability exists in this build.
+//   - NO ACTIVITY WRITE. Opening, reading, switching and closing write nothing.
+const F18_PREPARE_UNAVAILABLE = '\u2014';
+
+let f18PrepareSeq = 0;
+const f18PrepareState = { open: false, pitchId: null, channel: 'email', loading: false, data: null, error: null };
+
+function f18PrepareEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+/** Availability of BOTH channels, read from the contactFacts any preview carries. */
+function f18ChannelAvailability(data) {
+  const channels = data && data.contactFacts && data.contactFacts.channels ? data.contactFacts.channels : null;
+  return {
+    email: Boolean(channels && channels.email && channels.email.state === 'available'),
+    whatsapp: Boolean(channels && channels.whatsapp && channels.whatsapp.state === 'candidate'),
+  };
+}
+
+function f18PrepareOverlay() { return document.getElementById('f18-prepare-overlay'); }
+
+function f18PrepareRender() {
+  let overlay = f18PrepareOverlay();
+  if (!f18PrepareState.open) {
+    if (overlay) overlay.remove();
+    return;
+  }
+  if (!overlay) {
+    overlay = f18PrepareEl('div', 'f18-prepare-overlay');
+    overlay.id = 'f18-prepare-overlay';
+    const panel = f18PrepareEl('div', 'f18-prepare-panel');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', 'Prepare outreach');
+    const header = f18PrepareEl('div', 'f18-prepare-header');
+    header.id = 'f18-prepare-header';
+    const body = f18PrepareEl('div', 'f18-prepare-body');
+    body.id = 'f18-prepare-body';
+    const footer = f18PrepareEl('div', 'f18-prepare-footer');
+    footer.id = 'f18-prepare-footer';
+    panel.appendChild(header);
+    panel.appendChild(body);
+    panel.appendChild(footer);
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) f18ClosePrepare(); });
+    document.body.appendChild(overlay);
+  }
+  f18PrepareRenderHeader();
+  f18PrepareRenderBody();
+  f18PrepareRenderFooter();
+}
+
+function f18PrepareRenderHeader() {
+  const header = document.getElementById('f18-prepare-header');
+  if (!header) return;
+  const data = f18PrepareState.data;
+  const heading = f18PrepareEl('div', 'f18-prepare-heading');
+  const title = f18PrepareEl('h3', 'f18-prepare-title', 'Prepare outreach');
+  title.id = 'f18-prepare-title';
+  heading.appendChild(title);
+  const sub = data && data.leadName ? data.leadName : (f18PrepareState.pitchId || F18_PREPARE_UNAVAILABLE);
+  heading.appendChild(f18PrepareEl('div', 'f18-prepare-lead', sub));
+  if (data && data.readiness && data.readiness.decision === 'allowed') {
+    const badge = f11Status('Ready for outreach', 'ok');
+    badge.setAttribute('data-readiness', 'ready');
+    heading.appendChild(badge);
+  }
+  header.replaceChildren(heading);
+  const close = f11El('button', 'btn btn-sm btn-secondary', 'Close');
+  close.id = 'f18-prepare-close';
+  close.type = 'button';
+  close.setAttribute('aria-label', 'Close preparation');
+  close.addEventListener('click', () => f18ClosePrepare());
+  header.appendChild(close);
+}
+
+function f18PrepareRenderBody() {
+  const body = document.getElementById('f18-prepare-body');
+  if (!body) return;
+  const { data, error, loading, channel } = f18PrepareState;
+  body.replaceChildren();
+
+  // Channel controls come first. Availability for BOTH channels is read from the
+  // contactFacts the current preview carries; without a preview both stay enabled and a
+  // refusal is shown honestly in the panel instead.
+  const avail = f18ChannelAvailability(data);
+  const tabs = f18PrepareEl('div', 'f18-prepare-channels');
+  tabs.setAttribute('role', 'tablist');
+  for (const [id, label] of [['email', 'Email'], ['whatsapp', 'WhatsApp']]) {
+    const btn = f11El('button', 'btn btn-sm f18-prepare-channel' + (channel === id ? ' is-active' : ''), label);
+    btn.type = 'button';
+    btn.id = 'f18-prepare-channel-' + id;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', channel === id ? 'true' : 'false');
+    btn.setAttribute('data-channel', id);
+    if (data && !avail[id]) {
+      btn.disabled = true;
+      btn.setAttribute('title', id === 'email' ? 'No valid email is stored for this lead.' : 'The stored phone is not available for WhatsApp.');
+    }
+    btn.addEventListener('click', () => f18SetChannel(id));
+    tabs.appendChild(btn);
+  }
+  body.appendChild(tabs);
+  if (data) {
+    const hints = [];
+    if (!avail.email) hints.push('Email unavailable: no valid email address is stored.');
+    if (!avail.whatsapp) hints.push('WhatsApp unavailable: no stored phone can be offered as a candidate.');
+    if (hints.length) {
+      const note = f18PrepareEl('div', 'f18-prepare-unavailable');
+      for (const h of hints) note.appendChild(f18PrepareEl('div', 'f18-prepare-hint', h));
+      body.appendChild(note);
+    }
+  }
+
+  if (loading) {
+    const box = f18PrepareEl('div', 'f18-prepare-state', 'Preparing the review\u2026');
+    box.setAttribute('aria-live', 'polite');
+    body.appendChild(box);
+    return;
+  }
+  if (error) {
+    body.appendChild(f11AlertBox(error));
+    return;
+  }
+  if (!data) return;
+
+  // Recipient: the factual stored value, verbatim. WhatsApp always carries the caveat.
+  const recipient = data.recipient || {};
+  const rec = f18PrepareEl('div', 'f18-prepare-recipient');
+  rec.appendChild(f18PrepareEl('span', 'f18-prepare-label', channel === 'email' ? 'To (email)' : 'To (WhatsApp candidate)'));
+  rec.appendChild(f18PrepareEl('div', 'f18-prepare-value f18-prepare-to', recipient.contact || F18_PREPARE_UNAVAILABLE));
+  if (channel === 'whatsapp') {
+    rec.appendChild(f18PrepareEl('div', 'f18-prepare-hint', 'WhatsApp candidate \u00b7 Not verified for WhatsApp'));
+  }
+  body.appendChild(rec);
+
+  // Content: the canonical pitch text. For WhatsApp the note says plainly that no
+  // transformation exists and the source is shown unchanged. Nothing is invented here.
+  const content = data.content || {};
+  const contentBox = f18PrepareEl('div', 'f18-prepare-content');
+  contentBox.appendChild(f18PrepareEl('span', 'f18-prepare-label', 'Subject'));
+  contentBox.appendChild(f18PrepareEl('div', 'f18-prepare-value', content.subject || F18_PREPARE_UNAVAILABLE));
+  contentBox.appendChild(f18PrepareEl('span', 'f18-prepare-label', channel === 'email' ? 'Body' : 'Message source (unchanged pitch text)'));
+  const pre = f18PrepareEl('div', 'f18-prepare-text');
+  pre.textContent = content.body || '';
+  contentBox.appendChild(pre);
+  if (content.transformationNote) {
+    contentBox.appendChild(f18PrepareEl('div', 'f18-prepare-hint', content.transformationNote));
+  }
+  const refs = Array.isArray(content.evidenceReferences) ? content.evidenceReferences : [];
+  contentBox.appendChild(f18PrepareEl('span', 'f18-prepare-label', 'Evidence references'));
+  if (refs.length === 0) {
+    contentBox.appendChild(f18PrepareEl('div', 'f18-prepare-hint', 'This pitch carries no evidence references.'));
+  } else {
+    const list = f18PrepareEl('ul', 'f18-prepare-refs');
+    for (const r of refs) list.appendChild(f18PrepareEl('li', null, typeof r === 'string' ? r : JSON.stringify(r)));
+    contentBox.appendChild(list);
+  }
+  body.appendChild(contentBox);
+
+  // The standing boundary line. There is no send control anywhere in this panel.
+  body.appendChild(f18PrepareEl('div', 'f18-prepare-boundary',
+    'Review only \u00b7 nothing is sent, queued or recorded \u00b7 this build has no sending provider'));
+}
+
+function f18PrepareRenderFooter() {
+  const footer = document.getElementById('f18-prepare-footer');
+  if (!footer) return;
+  footer.replaceChildren();
+  const back = f11El('button', 'btn btn-sm btn-secondary', 'Back to Ready');
+  back.type = 'button';
+  back.addEventListener('click', () => f18ClosePrepare());
+  footer.appendChild(back);
+}
+
+async function f18PrepareLoad() {
+  const seq = ++f18PrepareSeq;
+  const api = f11LeadIntel();
+  if (!api || !api.outreach || typeof api.outreach.prepare !== 'function') {
+    f18PrepareState.loading = false;
+    f18PrepareState.error = { code: 'PREPARE_UNAVAILABLE', message: 'Preparation is not available in this session.' };
+    f18PrepareRender();
+    return;
+  }
+  f18PrepareState.loading = true;
+  f18PrepareState.error = null;
+  f18PrepareRender();
+  let data;
+  try {
+    data = f11Unwrap(await api.outreach.prepare({ pitchId: f18PrepareState.pitchId, channel: f18PrepareState.channel }));
+  } catch (e) {
+    if (seq !== f18PrepareSeq) return;
+    f18PrepareState.loading = false;
+    f18PrepareState.data = null;
+    f18PrepareState.error = { code: (e && e.code) || 'ERROR', message: (e && e.message) || 'The preparation could not be read.' };
+    f18PrepareRender();
+    return;
+  }
+  if (seq !== f18PrepareSeq) return;
+  f18PrepareState.loading = false;
+  f18PrepareState.data = data;
+  f18PrepareRender();
+}
+
+function f18SetChannel(channel) {
+  if (channel !== 'email' && channel !== 'whatsapp') return;
+  if (f18PrepareState.channel === channel && f18PrepareState.data) return;
+  f18PrepareState.channel = channel;
+  f18PrepareLoad();
+}
+
+function f18OpenPrepare(pitchId) {
+  f18PrepareState.open = true;
+  f18PrepareState.pitchId = String(pitchId);
+  f18PrepareState.channel = 'email';
+  f18PrepareState.data = null;
+  f18PrepareState.error = null;
+  f18PrepareState.loading = false;
+  f18PrepareRender();
+  f18PrepareLoad();
+}
+
+function f18ClosePrepare() {
+  f18PrepareState.open = false;
+  f18PrepareState.pitchId = null;
+  f18PrepareState.data = null;
+  f18PrepareState.error = null;
+  f18PrepareState.loading = false;
+  f18PrepareSeq++; // a late response for a closed panel must not render
+  f18PrepareRender();
+}
+
+function f18PrepareInit() {
+  // Escape closes the review. No timer, no polling, no write of any kind.
+  // The guard keeps bare test doubles (no document listeners) loadable.
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('keydown', (e) => {
+      if (e && e.key === 'Escape' && f18PrepareState.open) f18ClosePrepare();
+    });
+  }
 }
 
 // === F15 Outreach: activity history ===
@@ -7918,3 +8189,4 @@ f12OutreachInit();
 f15ActivityInit();
 // F16: the Ready queue's controls, at the end of the module for the same TDZ reason.
 f16ReadyInit();
+f18PrepareInit();

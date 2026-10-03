@@ -6,7 +6,9 @@ const { scrubSecrets } = require('./core/objects');
 const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET, ACTIVITY_MAX_LIMIT, ACTIVITY_MAX_OFFSET, READY_PAGE_MAX_LIMIT, READY_SCAN_MAX } = require('./persistence/contract');
 
 /**
- * The six — and only six — A10 Lead Intelligence channels reachable by the renderer.
+ * The Lead Intelligence channels reachable by the renderer. Every one of them is a
+ * read or an explicit, human-triggered transition; there is no send, schedule, queue,
+ * provider or campaign channel here.
  *
  * `lead-intel:email-send` is deliberately NOT here. The email provider stays
  * abstract in this phase, so no send path exists to register: OutreachService
@@ -26,6 +28,13 @@ const CHANNELS = Object.freeze({
   // F16: the derived Ready queue. Read-only like every other channel here: there is no
   // ready write, no send channel and no provider channel.
   OUTREACH_READY: 'lead-intel:outreach-ready',
+  // F18: the ONE read-only preparation channel. It derives a channel-neutral preview for
+  // ONE pitch from data that already exists (the gate verdict, the F17 contact facts and
+  // the canonical pitch text). It writes nothing, sends nothing and records no activity:
+  // there is deliberately no prepare-write channel and no channel choice beyond the two
+  // factual ones, so the renderer can never ask for a channel the contact facts do not
+  // support.
+  OUTREACH_PREPARE: 'lead-intel:outreach-prepare',
 });
 
 /**
@@ -91,6 +100,15 @@ const INPUT_SCHEMAS = Object.freeze({
       scanLimit: { type: 'integer', minimum: 1, maximum: READY_SCAN_MAX },
     },
   },
+  // F18: preparation for ONE pitch, on ONE factual channel. The channel is a closed
+  // enum (the renderer cannot invent a third channel or pass a provider name) and
+  // additionalProperties:false means a payload can carry nothing else - no recipient
+  // override, no body override, no path, no credential. The recipient always comes from
+  // the stored contact facts in the main process, never from the caller.
+  [CHANNELS.OUTREACH_PREPARE]: obj({
+    pitchId,
+    channel: { type: 'string', enum: ['email', 'whatsapp'] },
+  }, ['pitchId', 'channel']),
 });
 
 function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = console }) {
@@ -148,6 +166,9 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   // F16: read-only. The renderer can ask "what is ready right now?" and nothing else: it
   // cannot write readiness, cannot trigger a send, and cannot reach a provider.
   handle(CHANNELS.OUTREACH_READY, (a) => outreach.ready({ cursor: a.cursor, limit: a.limit, scanLimit: a.scanLimit }));
+  // F18: read-only preparation of ONE ready pitch on ONE factual channel. The response is
+  // a preview derived from stored data; nothing is sent, queued or recorded.
+  handle(CHANNELS.OUTREACH_PREPARE, (a) => outreach.prepare({ pitchId: a.pitchId, channel: a.channel }));
 
   return {
     channels: [...registered],

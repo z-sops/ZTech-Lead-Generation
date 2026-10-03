@@ -664,7 +664,8 @@ test('20. the drawer markup, CSP, channel set and dependencies are untouched by 
     "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'", 'CSP byte-identical');
   assert.ok(!/<script(?![^>]*src=)/i.test(pitchPanelHtml) && !/\son\w+="/.test(pitchPanelHtml), 'no inline script or handler');
   assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 34, 'still 34 main channels');
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 49, 'still 49 preload methods');
+  // F18 declared lock update: 49 -> 50, the single read-only prepare method.
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 50, 'still 50 preload methods');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');
   // F12 declared lock update: the former "Ready" placeholder became the live, read-only

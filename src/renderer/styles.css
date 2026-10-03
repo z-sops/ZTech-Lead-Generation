@@ -692,6 +692,141 @@ textarea {
 }
 
 /* Lead Detail overlay (B3) */
+
+/* === F18 Outreach: preparation review (read-only) ===
+   The same overlay language as the B3 lead-detail modal above: a full-screen backdrop, one
+   centred panel, tokens throughout, no new visual language and no external asset. This
+   block sits beside the B3 modal rules on purpose: it is a sibling overlay, and keeping it
+   here leaves every later phase's stylesheet region exactly as that phase pinned it. */
+.f18-prepare-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-overlay);
+}
+
+.f18-prepare-overlay[hidden] {
+  display: none;
+}
+
+.f18-prepare-panel {
+  width: 640px;
+  max-width: calc(100% - 48px);
+  max-height: calc(100% - 96px);
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.f18-prepare-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.f18-prepare-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.f18-prepare-title {
+  margin: 0;
+  font-size: var(--font-16);
+  color: var(--text-1);
+}
+
+.f18-prepare-lead {
+  font-size: var(--font-13);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.f18-prepare-body {
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.f18-prepare-channels {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.f18-prepare-channel.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.f18-prepare-label {
+  display: block;
+  font-size: var(--font-11);
+  color: var(--text-2);
+  margin-bottom: var(--space-1);
+}
+
+.f18-prepare-value {
+  font-size: var(--font-13);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.f18-prepare-to {
+  font-weight: 600;
+}
+
+.f18-prepare-text {
+  white-space: pre-wrap;
+  font-size: var(--font-13);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.f18-prepare-refs {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-13);
+  color: var(--text-1);
+}
+
+.f18-prepare-hint,
+.f18-prepare-unavailable {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.f18-prepare-boundary {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+.f18-prepare-state {
+  font-size: var(--font-13);
+  color: var(--text-2);
+}
+
+.f18-prepare-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--border);
+}
 /* ==========================================================================
    Frontend 2.0 F2 — workspace chrome (sidebar + top bar).
 

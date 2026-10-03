@@ -112,6 +112,11 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     // F16: the derived Ready queue. Read-only: it reports what the existing OutreachGate
     // currently allows. There is no send, schedule or provider method anywhere on this
     // bridge, and readiness is derived, never written.
-    ready: (payload) => ipcRenderer.invoke('lead-intel:outreach-ready', payload || {})
+    ready: (payload) => ipcRenderer.invoke('lead-intel:outreach-ready', payload || {}),
+    // F18: read-only preparation of ONE ready pitch on ONE factual channel. The payload
+    // is exactly { pitchId, channel }; the recipient always comes from the stored contact
+    // facts in the main process. This is a preview read: nothing is sent, queued,
+    // scheduled or recorded, and no provider is reachable through it.
+    prepare: (payload) => ipcRenderer.invoke('lead-intel:outreach-prepare', payload || {})
   })
 }));

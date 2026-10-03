@@ -57,11 +57,17 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\
 
 const F17_MARKER = '// === F17 Outreach: factual contact points and channel preparation ===';
 const F15_MARKER = '// === F15 Outreach: activity history ===';
+// F18 declared lock update: F18's own preparation block now sits between F17 and F15, so
+// the F17 region is bounded by the F18 marker instead of the F15 marker. F17's own
+// assertions are unchanged; the F18 block is pinned by the F18 suite.
+const F18_MARKER = '// === F18 Outreach: preparation review';
 const f17From = rendererSource.indexOf(F17_MARKER);
+const f18From = rendererSource.indexOf(F18_MARKER);
 const f15From = rendererSource.indexOf(F15_MARKER);
 assert.ok(f17From > -1, 'the F17 block exists in renderer.js');
-assert.ok(f15From > f17From, 'the F17 block is defined before the F15 block');
-const F17 = rendererSource.slice(f17From, f15From);
+assert.ok(f18From > f17From, 'the F18 block is defined after the F17 block');
+assert.ok(f15From > f18From, 'the F15 block is defined after the F18 block');
+const F17 = rendererSource.slice(f17From, f18From);
 const F17_CODE = stripComments(F17);
 
 // ============================================================ real runtime fixtures
@@ -552,14 +558,19 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   // F17 is a widening of the existing F16 response: the gate itself is untouched.
   assert.ok(!/contacts|channels\.whatsapp/.test(fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachGate.js'), 'utf8')),
     'the gate was not widened');
-  const readySchema = ipcSource.slice(ipcSource.indexOf('[CHANNELS.OUTREACH_READY]'), ipcSource.indexOf('});', ipcSource.indexOf('[CHANNELS.OUTREACH_READY]')));
+  // F18 declared lock update: the prepare schema now follows the ready schema, so the
+  // slice is bounded by the F18 block instead of the next '});' (which used to be the
+  // schema-map terminator). The assertions below are unchanged.
+  const readyStart = ipcSource.indexOf('[CHANNELS.OUTREACH_READY]');
+  const readySchema = ipcSource.slice(readyStart, ipcSource.indexOf('// F18:', readyStart));
   assert.ok(!/contact/i.test(readySchema), 'no contact property was added to the ready schema');
   assert.ok(/additionalProperties:\s*false/.test(readySchema), 'the ready schema is still additionalProperties:false');
   assert.ok(/READY_SCAN_MAX/.test(readySchema) && /READY_PAGE_MAX_LIMIT/.test(readySchema), 'its bounds are unchanged');
   const start = preloadSource.indexOf('outreach: Object.freeze({');
   const bridge = stripComments(preloadSource.slice(start, preloadSource.indexOf('}))', start)));
   const methods = [...bridge.matchAll(/(\w+):\s*\(/g)].map((m) => m[1]);
-  assert.deepStrictEqual(methods.sort(), ['activity', 'approve', 'gate', 'list', 'ready'], 'F17 added no preload method');
+  // F18 declared lock update: + the single read-only prepare method.
+  assert.deepStrictEqual(methods.sort(), ['activity', 'approve', 'gate', 'list', 'prepare', 'ready'], 'F17 added no preload method of its own; F18 adds exactly prepare');
   for (const forbidden of [/contact/i, /send/i, /schedule/i, /whatsapp/i, /verify/i]) {
     assert.ok(!forbidden.test(bridge), 'no preload method for ' + forbidden);
   }

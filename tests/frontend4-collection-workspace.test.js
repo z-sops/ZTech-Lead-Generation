@@ -332,7 +332,8 @@ test('15. no backend, preload or dependency surface changed', () => {
   // A10 declared lock update: 41 -> 46 preload invocations (the five approved
   // Lead Intelligence methods). main.js still registers exactly 34 literal
   // channels; the lead-intel:* channels come from their own scoped registrar.
-  assert.strictEqual(invokes, 49, 'the preload surface is 49 channels');
+  // F18 declared lock update: 49 -> 50, the single read-only prepare method.
+  assert.strictEqual(invokes, 50, 'the preload surface is 50 channels');
   const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(htmlSource);
   assert.strictEqual(csp[1],
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",
