@@ -106,18 +106,54 @@ function packetMeta(packet) {
 // event type may only be listed here if this codebase can prove it happened at a real
 // mutation boundary.
 //
-// There is intentionally no EMAIL_SENT, EMAIL_DELIVERED, EMAIL_OPENED, EMAIL_CLICKED,
-// WHATSAPP_SENT, CALL_PLACED or CAMPAIGN_STARTED. Nothing in this build sends anything,
-// so persisting such a row would be fabrication. A future channel earns its type here,
-// with the evidence that it really happened.
-const ACTIVITY_TYPES = Object.freeze(['PITCH_APPROVED', 'OUTREACH_READY', 'APPROVAL_INVALIDATED']);
+// F19 adds the four SEND-BOUNDARY events. They are named CHANNEL-NEUTRALLY on purpose -
+// exactly like the F18 preparation shape - because the channel is a fact recorded in
+// metadata, not part of the event's identity. A later WhatsApp send therefore records the
+// SAME four types with channel "whatsapp" and needs no further schema change.
+//
+//   OUTREACH_SEND_BLOCKED    a human asked to send and ZTech refused BEFORE contacting a
+//                            provider (gate not allowed, nothing configured, or the
+//                            message failed validation).
+//   OUTREACH_SEND_ATTEMPTED  a provider WAS called. Written BEFORE the call so a crash
+//                            mid-send leaves proof of contact rather than silence.
+//   OUTREACH_SEND_ACCEPTED   the provider returned its own message id.
+//   OUTREACH_SEND_FAILED     the provider refused, or the call failed.
+//
+// There is STILL intentionally no DELIVERED, OPENED, CLICKED, BOUNCED or QUEUED type.
+// A provider accepting a message does not prove it arrived, and nothing in this build
+// observes an inbox, so such a row could only ever be fabrication. Those facts stay
+// 'unknown' forever unless a real observer exists to report them. CALL_PLACED and
+// CAMPAIGN_STARTED remain absent for the same reason.
+const ACTIVITY_TYPES = Object.freeze([
+  'PITCH_APPROVED',
+  'OUTREACH_READY',
+  'APPROVAL_INVALIDATED',
+  'OUTREACH_SEND_BLOCKED',
+  'OUTREACH_SEND_ATTEMPTED',
+  'OUTREACH_SEND_ACCEPTED',
+  'OUTREACH_SEND_FAILED'
+]);
 const ACTIVITY_DEFAULT_LIMIT = 20;
 const ACTIVITY_MAX_LIMIT = 100;
 const ACTIVITY_MAX_OFFSET = 100000;
 // Metadata is a CLOSED set of scalar facts about the event, not a place to put anything.
 // Keys are matched exactly and every value must be a string, so no nested object, array,
 // credential, provider payload or evidence packet can ever be smuggled into the row.
-const ACTIVITY_METADATA_KEYS = Object.freeze(['approvedBy', 'contentHash', 'reason']);
+//
+// F19 adds five send keys. Note what is deliberately ABSENT: there is no `to`, `recipient`,
+// `email`, `phone`, `body`, `text` or `subject` key. The recipient address is personal
+// data and the pitch body is already recoverable from the pitch itself, so neither is
+// duplicated into the ledger - the row links to the lead and pitch instead.
+const ACTIVITY_METADATA_KEYS = Object.freeze([
+  'approvedBy',
+  'contentHash',
+  'reason',
+  'channel',
+  'providerId',
+  'providerMessageId',
+  'idempotencyKey',
+  'failureCode'
+]);
 const ACTIVITY_METADATA_MAX_LENGTH = 200;
 
 /**
@@ -147,6 +183,93 @@ function normalizeActivityMetadata(value) {
  * one pitch. A caller can never ask for the whole ledger, because limit is capped.
  */
 function normalizeActivityQuery(query) {
+  const q = query && typeof query === 'object' && !Array.isArray(query) ? query : {};
+  const clampInt = (value, fallback, max) => {
+    if (value === undefined || value === null) return fallback;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0) return fallback;
+    return Math.min(n, max);
+  };
+  const limit = clampInt(q.limit, ACTIVITY_DEFAULT_LIMIT, ACTIVITY_MAX_LIMIT) || ACTIVITY_DEFAULT_LIMIT;
+  const offset = clampInt(q.offset, 0, ACTIVITY_MAX_OFFSET);
+  const leadId = typeof q.leadId === 'string' && q.leadId ? q.leadId : null;
+  const pitchId = typeof q.pitchId === 'string' && q.pitchId ? q.pitchId : null;
+  return { limit, offset, leadId, pitchId };
+}
+
+// === F19: the send ledger ===
+
+// The CLOSED set of send states. Each one is a fact provable at the send boundary.
+// Note what is absent: there is no `delivered`, `opened`, `clicked`, `bounced` or
+// `queued`. A provider acknowledgement proves only that the provider accepted the
+// message; it does not prove arrival, and this build observes no inbox.
+const SEND_STATES = Object.freeze(['attempted', 'accepted', 'failed', 'blocked']);
+
+// F19 ships ONE channel. The table is channel-shaped (not email-shaped) so F20 can add
+// 'whatsapp' as data rather than as a schema change, but the allowlist stays CLOSED: an
+// unproven channel cannot be written.
+const SEND_CHANNELS = Object.freeze(['email']);
+
+// Bounds a provider's own identifier may occupy. A provider message id is remote text, so
+// it is length-capped before it can ever reach a row, a log or the renderer.
+const SEND_PROVIDER_ID_MAX_LENGTH = 200;
+const SEND_FAILURE_MESSAGE_MAX_LENGTH = 200;
+
+/**
+ * The idempotency key for one send.
+ *
+ * Derived ONLY from facts that identify WHAT is being sent - channel, pitch and the exact
+ * approved content hash. It deliberately contains no timestamp, counter, random id or
+ * attempt number, because any of those would produce a different key on a retry and defeat
+ * the guarantee entirely. The same approved content therefore always maps to the same key,
+ * and the database's partial unique index (one ACCEPTED per key) does the rest.
+ */
+function sendIdempotencyKey({ channel, pitchId, contentHash }) {
+  return require('crypto')
+    .createHash('sha256')
+    .update(`ztech-outreach-send ${String(channel)} ${String(pitchId)} ${String(contentHash)}`)
+    .digest('hex');
+}
+
+/**
+ * Validate one send-state transition record before it reaches the store.
+ * Returns { ok, value } or { ok:false, error }. Remote provider text is never copied into
+ * failure_message - only ZTech's own code is recorded - so no provider payload, address
+ * or credential can leak into a row or a log through this path.
+ */
+function normalizeSendRecord(rec) {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) {
+    return { ok: false, error: 'Invalid send record' };
+  }
+  if (!SEND_CHANNELS.includes(rec.channel)) return { ok: false, error: 'Invalid send: channel' };
+  if (!SEND_STATES.includes(rec.state)) return { ok: false, error: 'Invalid send: state' };
+  const str = (v) => (v === undefined || v === null ? null : String(v));
+  const providerId = str(rec.provider_id);
+  const providerMessageId = str(rec.provider_message_id);
+  const failureCode = str(rec.failure_code);
+  const failureMessage = str(rec.failure_message);
+  if (providerId && providerId.length > SEND_PROVIDER_ID_MAX_LENGTH) return { ok: false, error: 'Invalid send: provider_id' };
+  if (providerMessageId && providerMessageId.length > SEND_PROVIDER_ID_MAX_LENGTH) return { ok: false, error: 'Invalid send: provider_message_id' };
+  if (failureCode && failureCode.length > SEND_PROVIDER_ID_MAX_LENGTH) return { ok: false, error: 'Invalid send: failure_code' };
+  if (failureMessage && failureMessage.length > SEND_FAILURE_MESSAGE_MAX_LENGTH) return { ok: false, error: 'Invalid send: failure_message' };
+  return {
+    ok: true,
+    value: {
+      channel: rec.channel,
+      state: rec.state,
+      provider_id: providerId,
+      provider_message_id: providerMessageId,
+      failure_code: failureCode,
+      failure_message: failureMessage
+    }
+  };
+}
+
+/**
+ * Bounded read query for the send ledger, mirroring normalizeActivityQuery: a caller can
+ * never ask for the whole ledger, because limit is capped.
+ */
+function normalizeSendQuery(query) {
   const q = query && typeof query === 'object' && !Array.isArray(query) ? query : {};
   const clampInt = (value, fallback, max) => {
     if (value === undefined || value === null) return fallback;
@@ -218,6 +341,14 @@ module.exports = {
   ACTIVITY_MAX_OFFSET,
   normalizeActivityMetadata,
   normalizeActivityQuery,
+
+  SEND_STATES,
+  SEND_CHANNELS,
+  SEND_PROVIDER_ID_MAX_LENGTH,
+  SEND_FAILURE_MESSAGE_MAX_LENGTH,
+  sendIdempotencyKey,
+  normalizeSendRecord,
+  normalizeSendQuery,
   READY_PAGE_DEFAULT_LIMIT,
   READY_PAGE_MAX_LIMIT,
   READY_SCAN_DEFAULT,

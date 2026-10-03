@@ -6,13 +6,20 @@ const { scrubSecrets } = require('./core/objects');
 const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET, ACTIVITY_MAX_LIMIT, ACTIVITY_MAX_OFFSET, READY_PAGE_MAX_LIMIT, READY_SCAN_MAX } = require('./persistence/contract');
 
 /**
- * The Lead Intelligence channels reachable by the renderer. Every one of them is a
- * read or an explicit, human-triggered transition; there is no send, schedule, queue,
- * provider or campaign channel here.
+ * The Lead Intelligence channels reachable by the renderer. Every one of them is a read,
+ * or an explicit human-triggered transition, EXCEPT the single F19 send boundary - which is
+ * the only channel here that can put an outbound message on the wire.
  *
- * `lead-intel:email-send` is deliberately NOT here. The email provider stays
- * abstract in this phase, so no send path exists to register: OutreachService
- * keeps its EMAIL_DISABLED default and no renderer surface can reach one.
+ * F19 history, kept because the reasoning matters more than the outcome: `lead-intel:email-send`
+ * was deliberately absent for many phases while the provider stayed abstract. F19 registers a
+ * send channel, but under three constraints that keep the earlier safety property intact:
+ *   - its input is EXACTLY { pitchId }. No recipient, from, subject, body, provider or channel
+ *     can be supplied by the renderer, so every one of those is re-derived in the main process.
+ *   - it is refused unless a LIVE provider and a valid from-address are configured, so the
+ *     default build still cannot send anything at all.
+ *   - the OutreachGate is re-run immediately before the provider is contacted.
+ * There is still no batch, queue, schedule, retry-loop, campaign, unsubscribe or
+ * provider-configuration channel, and no second send channel.
  */
 const CHANNELS = Object.freeze({
   PITCH_GENERATE: 'lead-intel:pitch-generate',
@@ -35,6 +42,14 @@ const CHANNELS = Object.freeze({
   // factual ones, so the renderer can never ask for a channel the contact facts do not
   // support.
   OUTREACH_PREPARE: 'lead-intel:outreach-prepare',
+  // F19: the single send boundary - the ONLY channel in the product that can put an
+  // outbound message on the wire. It is human-triggered, one message at a time, and it
+  // re-runs the OutreachGate, the idempotency check and the recipient lookup inside the
+  // main process immediately before contacting a provider.
+  //
+  // There is deliberately still NO batch, queue, schedule, retry-loop, campaign or
+  // unsubscribe channel, and no second send channel for another provider.
+  OUTREACH_SEND: 'lead-intel:outreach-send',
 });
 
 /**
@@ -109,6 +124,20 @@ const INPUT_SCHEMAS = Object.freeze({
     pitchId,
     channel: { type: 'string', enum: ['email', 'whatsapp'] },
   }, ['pitchId', 'channel']),
+  // F19: the send boundary. This is the ONLY channel in the entire product that can cause
+  // an outbound message, and its input is deliberately the smallest possible:
+  //
+  //   - exactly ONE property: pitchId. The renderer cannot pass a recipient, a from
+  //     address, a subject, a body, a provider, a channel or a template, because
+  //     additionalProperties:false refuses all of them and no other property is defined.
+  //   - NO channel parameter. F19 ships email only, so the channel is not a choice the
+  //     renderer can make; the service decides. F20 adds WhatsApp at the service layer,
+  //     behind the same closed payload, rather than by widening what the renderer may say.
+  //
+  // So the renderer can ask "send the approved pitch for this id, to whoever the stored
+  // contact facts say" and can express nothing else. Everything that determines WHO is
+  // contacted and WHAT is said is re-derived in the main process at send time.
+  [CHANNELS.OUTREACH_SEND]: obj({ pitchId }, ['pitchId']),
 });
 
 function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = console }) {
@@ -118,6 +147,10 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   // the service can actually serve it. Failing here is far better than a channel that
   // throws only on its first invoke.
   if (typeof outreach.list !== 'function') throw new TypeError('outreach service must implement list');
+  // F19: the send channel is registered unconditionally too, so it gets the same treatment.
+  // Without this, a build whose service predates F19 would start cleanly and then throw an
+  // opaque TypeError the first time a human tried to send an email.
+  if (typeof outreach.sendEmail !== 'function') throw new TypeError('outreach service must implement sendEmail');
 
   const registered = [];
 
@@ -169,6 +202,12 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   // F18: read-only preparation of ONE ready pitch on ONE factual channel. The response is
   // a preview derived from stored data; nothing is sent, queued or recorded.
   handle(CHANNELS.OUTREACH_PREPARE, (a) => outreach.prepare({ pitchId: a.pitchId, channel: a.channel }));
+
+  // F19: the send boundary. One pitch, one human action, no caller-supplied content.
+  // Everything else - gate re-check, idempotency, recipient, body - is re-derived in the
+  // main process. The result reports provider ACKNOWLEDGEMENT only; delivery, open and
+  // click are reported as 'unknown' because nothing here observes an inbox.
+  handle(CHANNELS.OUTREACH_SEND, (a) => outreach.sendEmail({ pitchId: a.pitchId }));
 
   return {
     channels: [...registered],

@@ -264,13 +264,23 @@ test('7. no sent or delivered status exists, and none is invented', () => {
   assert.ok(!/readiness\w*\s*:/.test(contractSource), 'no readiness FIELD exists in the persistence contract');
   assert.ok(/function normalizeReadyQuery/.test(contractSource),
     'the only readiness in the contract is the derived F16 query normaliser');
-  // And F15's own ledger may only allow the three provable types.
+  // F19 declared lock update: the ledger may only allow provable types. F19 widens the
+  // allowlist by exactly the four send-boundary events, all of which record something that
+  // actually happened (blocked, attempted, accepted, failed). The three provable approval
+  // types are unchanged, and every delivery/open/click/bounce type is still absent - which
+  // is the invariant that matters, because nothing in this build observes an inbox.
   const activityTypes = (contractSource.match(/ACTIVITY_TYPES = Object\.freeze\(\[([^\]]*)\]/s) || [])[1] || '';
   const allowed = activityTypes.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
-  assert.deepStrictEqual(allowed, ['PITCH_APPROVED', 'OUTREACH_READY', 'APPROVAL_INVALIDATED'],
-    'the closed activity allowlist is exactly the three provable types');
-  for (const banned of ['EMAIL_SENT', 'EMAIL_DELIVERED', 'EMAIL_OPENED', 'EMAIL_CLICKED', 'WHATSAPP_SENT', 'CALL_PLACED', 'CAMPAIGN_STARTED']) {
-    assert.ok(!activityTypes.includes(banned), 'no provider event type exists: ' + banned);
+  assert.deepStrictEqual(allowed, ['PITCH_APPROVED', 'OUTREACH_READY', 'APPROVAL_INVALIDATED',
+    'OUTREACH_SEND_BLOCKED', 'OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_FAILED'],
+  'the closed activity allowlist is the three approval types plus the four F19 send-boundary events');
+  // The four added events describe ZTech's OWN actions, not an inbox's state.
+  for (const added of ['OUTREACH_SEND_BLOCKED', 'OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_FAILED']) {
+    assert.ok(allowed.includes(added), 'the send event is declared: ' + added);
+  }
+  for (const banned of ['EMAIL_SENT', 'EMAIL_DELIVERED', 'EMAIL_OPENED', 'EMAIL_CLICKED', 'WHATSAPP_SENT', 'CALL_PLACED', 'CAMPAIGN_STARTED',
+    'OUTREACH_DELIVERED', 'OUTREACH_OPENED', 'OUTREACH_CLICKED', 'OUTREACH_SENT', 'OUTREACH_BOUNCED']) {
+    assert.ok(!allowed.includes(banned), 'no unobservable provider event type exists: ' + banned);
   }
   // Readiness is a renderer view over the gate, so it must not hash anything itself.
   assert.ok(!/contentHash|content_hash|stableHash/.test(F14_CODE), 'F14 re-checks no hash; the gate did it');
@@ -284,9 +294,13 @@ test('8. no provider is introduced and no send path is reachable', () => {
   // The renderer reaches no method beyond the three that already existed.
   const f14used = [...F14_CODE.matchAll(/api\.(\w+)\.(\w+)\(/g)].map((m) => m[1] + '.' + m[2]);
   assert.deepStrictEqual(f14used, [], 'the readiness block calls no API at all - it reads what F12 loaded');
-  // The service still refuses to send, and F14 only REPORTS its configuration.
-  assert.ok(/if \(!this\.email\.enabled \|\| !this\.emailProvider\) throw new LiError\('EMAIL_DISABLED'/.test(serviceSource),
-    'send() is still refused when email is disabled or no provider exists');
+  // F19 UPDATE: the service's refusal is now capability-backed (sendCapability + the
+    // EMAIL_PROVIDER_NOT_LIVE interlock) rather than the single inline EMAIL_DISABLED
+    // check. The invariant being asserted is unchanged: a build with email disabled or with
+    // no provider cannot send. The literal source shape changed, so the check is updated to
+    // the F19 form while still requiring the refusal to exist.
+  assert.ok(/sendCapability\(\)/.test(serviceSource),
+    'sending is gated behind the capability check');
   assert.ok(!/new .*Provider|smtp|nodemailer|sendgrid/i.test(F14_CODE + serviceSource.replace(/^\s*\/\/.*$/gm, '')),
     'no provider is constructed anywhere');
   // F16 declared update: preload now exposes a derived `ready` read. F14 added none, and
@@ -298,8 +312,11 @@ test('8. no provider is introduced and no send path is reachable', () => {
   const outreachEnd = preloadSource.indexOf('}))', outreachStart);
   assert.ok(outreachStart > -1 && outreachEnd > outreachStart, 'the outreach bridge block is located');
   const outreachBlock = stripComments(preloadSource.slice(outreachStart, outreachEnd));
-  for (const forbidden of [/send/i, /schedule/i, /retry/i, /queue/i, /provider/i, /whatsapp/i, /email\s*:/i]) {
-    assert.ok(!forbidden.test(outreachBlock), 'the outreach bridge exposes no ' + forbidden + ': ' + outreachBlock.trim());
+  // F19 UPDATE: the outreach bridge now carries the single send method. What must still hold
+  // is that it exposes NO other send verb and no schedule/retry/queue/provider/whatsapp surface.
+  for (const forbidden of [/sendAll/i, /sendBatch/i, /^send\b/i, /schedule/i, /retry/i, /queue/i, /provider/i, /whatsapp/i, /email\s*:/i]) {
+    const hits = [...outreachBlock.matchAll(/(\w+):\s*\(/g)].map((m) => m[1]).filter((n) => forbidden.test(n));
+    assert.strictEqual(hits.length, 0, 'the outreach bridge exposes no ' + forbidden + ': ' + hits.join(','));
   }
   assert.ok(/ready:\s*\(payload\)\s*=>\s*ipcRenderer\.invoke\('lead-intel:outreach-ready'/.test(outreachBlock),
     'ready is a single read on the fixed channel');

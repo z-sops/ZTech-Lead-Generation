@@ -550,7 +550,9 @@ test('R-H. no rendered Ready text claims a WhatsApp state beyond candidate/unver
 
 test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const versions = migrationsSource.match(/Object\.freeze\(\{ version: (\d+), name: '([^']+)'/g).map((s) => s.match(/version: (\d+)/)[1]);
-  assert.deepStrictEqual(versions, ['1', '2', '3'], 'F17 added no migration: ' + versions.join(','));
+  // F19 declared lock update: migration 004 exists legitimately, so versions are 1-4. The
+  // banned-token check below is what actually protects F17's no-schema-change property.
+  assert.deepStrictEqual(versions, ['1', '2', '3', '4'], 'F17 added no migration: ' + versions.join(','));
   for (const banned of [/contact/i, /channel/i, /whatsapp/i, /outbox/i, /queue/i]) {
     assert.ok(!new RegExp('CREATE TABLE IF NOT EXISTS (li_)?\\w*' + banned.source, 'i').test(migrationsSource),
       'no ' + banned + ' table was migrated');
@@ -570,9 +572,17 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const bridge = stripComments(preloadSource.slice(start, preloadSource.indexOf('}))', start)));
   const methods = [...bridge.matchAll(/(\w+):\s*\(/g)].map((m) => m[1]);
   // F18 declared lock update: + the single read-only prepare method.
-  assert.deepStrictEqual(methods.sort(), ['activity', 'approve', 'gate', 'list', 'prepare', 'ready'], 'F17 added no preload method of its own; F18 adds exactly prepare');
-  for (const forbidden of [/contact/i, /send/i, /schedule/i, /whatsapp/i, /verify/i]) {
+  // F19 declared lock update: + the single send boundary (outreachSend).
+  assert.deepStrictEqual(methods.sort(), ['activity', 'approve', 'gate', 'list', 'outreachSend', 'prepare', 'ready'],
+    'F17 added no preload method of its own; F18 adds exactly prepare, F19 exactly outreachSend');
+  for (const forbidden of [/contact/i, /schedule/i, /whatsapp/i, /verify/i]) {
     assert.ok(!forbidden.test(bridge), 'no preload method for ' + forbidden);
+  }
+  // F17's own "no send method" property is preserved: outreachSend is the single F19 send
+  // method, it is declared once, and there is no send verb that F17 could have introduced.
+  assert.strictEqual([...bridge.matchAll(/outreachSend\s*:/g)].length, 1, 'the send method is declared exactly once');
+  for (const forbidden of [/^send\b/i, /sendAll/i, /sendBatch/i, /sendContact/i]) {
+    assert.ok(!forbidden.test(bridge), 'no F17-style send method for ' + forbidden);
   }
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');

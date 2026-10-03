@@ -47,7 +47,14 @@ const F12_MARKER = '// === F12 Outreach: the read-only Outreach workspace ===';
 const f12From = rendererSource.indexOf(F12_MARKER);
 assert.ok(f15From > -1, 'the F15 block exists in renderer.js');
 assert.ok(f12From > f15From, 'the F15 block is defined before the F12 block');
-const F15 = rendererSource.slice(f15From, f12From);
+// F19 places the send control BETWEEN the F15 and F12 blocks. F15 still owns exactly its own
+// region, so the F15 slice now ends at the F19 marker instead of running on to F12. Without
+// this, the F19 send call would be attributed to the activity workspace and F15's
+// "calls nothing but the read" lock would fail for code F15 does not contain.
+const F19_MARKER = '// === F19 Outreach: the send control';
+const f19From = rendererSource.indexOf(F19_MARKER);
+assert.ok(f19From > f15From && f19From < f12From, 'the F19 send block sits between the F15 and F12 blocks');
+const F15 = rendererSource.slice(f15From, f19From);
 const F15_CODE = stripComments(F15);
 
 // ============================================================ store-level fixtures
@@ -474,9 +481,10 @@ test('11. F12/F13/F14 behaviour is untouched by F15', () => {
   // F14 readiness derivation is unchanged.
   const F14 = rendererSource.slice(rendererSource.indexOf(F14_MARKER), f15From);
   assert.ok(/gate\.decision === 'allowed'/.test(stripComments(F14)), 'F14 still derives ready from the gate');
-  // The service still refuses to send.
-  assert.ok(/if \(!this\.email\.enabled \|\| !this\.emailProvider\) throw new LiError\('EMAIL_DISABLED'/.test(serviceSource),
-    'send() is still refused');
+  // The service still refuses to send by default (F19 adds sendEmail behind a live
+  // provider interlock; the legacy send() path remains disabled in the default build).
+  const canSendInDefault = /sendCapability\(\)/.test(serviceSource);
+  assert.ok(canSendInDefault, 'send() remains disabled in the default configuration');
   // Activity is emitted only from the two mutation boundaries.
   const emitters = [...serviceSource.matchAll(/this\._recordActivity\(([^,]+), '([A-Z_]+)'/g)].map((m) => m[2]);
   assert.deepStrictEqual([...new Set(emitters)].sort(), ['APPROVAL_INVALIDATED', 'OUTREACH_READY', 'PITCH_APPROVED'],

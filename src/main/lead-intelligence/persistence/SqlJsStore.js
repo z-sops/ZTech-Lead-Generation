@@ -2,7 +2,7 @@
 
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { MIGRATIONS } = require('./migrations');
-const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery } = require('./contract');
+const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
 /**
  * SqlJsStore — repository contract on top of ZTech's EXISTING sql.js Database.
@@ -56,6 +56,7 @@ class SqlJsStore {
     this.pitches = new SqlPitches(this);
     this.approvals = new SqlApprovals(this);
     this.activity = new SqlActivity(this);
+    this.sends = new SqlSends(this);
     this.enrichmentJobs = new SqlEnrichmentJobs(this);
     this.enrichmentObservations = new SqlEnrichmentObservations(this);
   }
@@ -540,6 +541,146 @@ class SqlActivity {
       'SELECT activity_id, lead_id, pitch_id, activity_type, metadata_json, created_at FROM li_outreach_activity WHERE pitch_id = ? AND activity_type = ? ORDER BY created_at DESC, activity_id DESC LIMIT 1',
       [String(pitchId), activityType]);
     return this._from(r);
+  }
+}
+
+/* ------------------------------ sends (F19) ------------------------------ */
+
+/**
+ * F19: the send ledger - one row per send ATTEMPT, and the place the idempotency
+ * guarantee actually lives.
+ *
+ * `record` writes the 'attempted' row BEFORE the provider is called, so a crash mid-send
+ * still leaves durable proof that the provider was reached. `accept` then moves that row to
+ * 'accepted', and `fail` moves it to 'failed' with ZTech's own failure code.
+ *
+ * The uniqueness rule is enforced by the DATABASE (li_sends_one_accepted, a partial unique
+ * index over state='accepted'), not by a read-then-write check here. A check-then-act race
+ * would let two concurrent sends both observe "not yet accepted" and both put a message on
+ * the wire; the unique index makes the second write fail instead. `accept` therefore
+ * translates that constraint violation into a typed ALREADY_ACCEPTED signal so the caller
+ * can report an honest idempotent replay rather than a crash.
+ *
+ * Like the activity ledger, send rows deliberately SURVIVE purgeLead: a historical fact
+ * about a real send must not vanish when the lead it referred to is removed.
+ */
+class SqlSends {
+  constructor(s) { this.s = s; }
+
+  _from(r) {
+    if (!r) return null;
+    return {
+      send_id: r.send_id,
+      lead_id: r.lead_id,
+      pitch_id: r.pitch_id,
+      channel: r.channel,
+      content_hash: r.content_hash,
+      idempotency_key: r.idempotency_key,
+      state: r.state,
+      provider_id: r.provider_id === undefined ? null : r.provider_id,
+      provider_message_id: r.provider_message_id === undefined ? null : r.provider_message_id,
+      failure_code: r.failure_code === undefined ? null : r.failure_code,
+      failure_message: r.failure_message === undefined ? null : r.failure_message,
+      created_at: r.created_at,
+      updated_at: r.updated_at
+    };
+  }
+
+  /** The already-accepted send for this key, or null. This is the replay lookup. */
+  async findAccepted(idempotencyKey) {
+    return this._from(row(this.s.db,
+      "SELECT * FROM li_outreach_sends WHERE idempotency_key = ? AND state = 'accepted' LIMIT 1",
+      [String(idempotencyKey)]));
+  }
+
+  /**
+   * Write the 'attempted' row. Called BEFORE provider contact so the attempt itself is
+   * durable. Refuses a state other than 'attempted', so a caller cannot smuggle in an
+   * 'accepted' row without the provider ever having been called.
+   */
+  async record(rec) {
+    const n = normalizeSendRecord(rec);
+    if (!n.ok) throw new LiError('VALIDATION_FAILED', n.error);
+    if (n.value.state !== 'attempted') {
+      throw new LiError('VALIDATION_FAILED', 'A send attempt must be recorded as attempted before it can change state');
+    }
+    await this.s.tx(() => this.s.db.run(
+      'INSERT INTO li_outreach_sends (send_id, lead_id, pitch_id, channel, content_hash, idempotency_key, state, provider_id, provider_message_id, failure_code, failure_message, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [rec.send_id, rec.lead_id, rec.pitch_id, n.value.channel, rec.content_hash, rec.idempotency_key, 'attempted',
+        n.value.provider_id, n.value.provider_message_id, null, null, rec.created_at, rec.updated_at]
+    ));
+    return this.get(rec.send_id);
+  }
+
+  /**
+   * Move an attempt to 'accepted'. Returns { ok:true, row } on success, or
+   * { ok:false, code:'ALREADY_ACCEPTED', row } when another attempt already won the key.
+   */
+  async accept({ sendId, providerId, providerMessageId, at }) {
+    const existing = await this.findAcceptedBySend(sendId);
+    if (existing) return { ok: true, row: existing };
+    try {
+      await this.s.tx(() => this.s.db.run(
+        "UPDATE li_outreach_sends SET state = 'accepted', provider_id = ?, provider_message_id = ?, updated_at = ? WHERE send_id = ? AND state = 'attempted'",
+        [providerId === undefined ? null : providerId, providerMessageId === undefined ? null : providerMessageId, at, String(sendId)]
+      ));
+    } catch (err) {
+      // The partial unique index refused a second accepted row for this key: a concurrent
+      // send already won. That is an idempotent replay, not a failure.
+      const winner = await this.findAcceptedForSendOfKey(sendId);
+      if (winner) return { ok: false, code: 'ALREADY_ACCEPTED', row: winner };
+      throw err;
+    }
+    return { ok: true, row: await this.get(sendId) };
+  }
+
+  /** Move an attempt to 'failed'. failure_code is ZTech's own code; no remote text. */
+  async fail({ sendId, failureCode, failureMessage, at }) {
+    await this.s.tx(() => this.s.db.run(
+      "UPDATE li_outreach_sends SET state = 'failed', failure_code = ?, failure_message = ?, updated_at = ? WHERE send_id = ? AND state = 'attempted'",
+      [failureCode === undefined ? null : failureCode, failureMessage === undefined ? null : failureMessage, at, String(sendId)]
+    ));
+    return this.get(sendId);
+  }
+
+  /** Move an attempt to 'blocked'. Used when the refusal happens before provider contact. */
+  async block({ sendId, failureCode, failureMessage, at }) {
+    await this.s.tx(() => this.s.db.run(
+      "UPDATE li_outreach_sends SET state = 'blocked', failure_code = ?, failure_message = ?, updated_at = ? WHERE send_id = ? AND state = 'attempted'",
+      [failureCode === undefined ? null : failureCode, failureMessage === undefined ? null : failureMessage, at, String(sendId)]
+    ));
+    return this.get(sendId);
+  }
+
+  async findAcceptedBySend(sendId) {
+    const r = row(this.s.db, "SELECT * FROM li_outreach_sends WHERE send_id = ? AND state = 'accepted' LIMIT 1", [String(sendId)]);
+    return this._from(r);
+  }
+
+  async findAcceptedForSendOfKey(sendId) {
+    const r = row(this.s.db,
+      "SELECT accepted.* FROM li_outreach_sends AS accepted JOIN li_outreach_sends AS mine ON mine.idempotency_key = accepted.idempotency_key AND accepted.state = 'accepted' WHERE mine.send_id = ? LIMIT 1",
+      [String(sendId)]);
+    return this._from(r);
+  }
+
+  async get(sendId) {
+    return this._from(row(this.s.db, 'SELECT * FROM li_outreach_sends WHERE send_id = ?', [String(sendId)]));
+  }
+
+  /** Newest-first, bounded. Mirrors the activity ledger's read contract. */
+  async list(query) {
+    const { limit, offset, leadId, pitchId } = normalizeSendQuery(query);
+    const where = [];
+    const params = [];
+    if (leadId) { where.push('lead_id = ?'); params.push(leadId); }
+    if (pitchId) { where.push('pitch_id = ?'); params.push(pitchId); }
+    const clause = where.length ? ' WHERE ' + where.join(' AND ') : '';
+    const total = row(this.s.db, `SELECT COUNT(*) AS c FROM li_outreach_sends${clause}`, params);
+    const page = rows(this.s.db,
+      `SELECT * FROM li_outreach_sends${clause} ORDER BY created_at DESC, send_id DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]);
+    return { rows: page.map((r) => this._from(r)), total: total ? total.c : 0, limit, offset };
   }
 }
 

@@ -44,6 +44,9 @@ const LI_TABLES = Object.freeze([
   'li_outreach_activity',
   'li_enrichment_jobs',
   'li_enrichment_observations',
+  // F19: the outbound send ledger. At most one accepted row per idempotency key, so the
+  // same approved content can never be accepted twice.
+  'li_outreach_sends',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';

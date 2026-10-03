@@ -734,7 +734,8 @@ test('28. no new IPC channel, no dependency change, no network call', () => {
   // Lead Intelligence methods). The 34 main channels are unchanged: A10 registers
   // its five channels from a narrowly scoped registrar, not from main.js.
   // F18 declared lock update: 49 -> 50, the single read-only prepare method.
-  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 50, '50 preload invocations');
+  // F19 declared lock update: 50 -> 51, the single send boundary.
+  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 51, '51 preload invocations');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
     'production dependencies unchanged');

@@ -124,22 +124,36 @@ test('gate: identity, qualification, not_fit and outdated evidence all block wit
 
 test('email: fake provider sends only when enabled and the gate allows', async () => {
   const email = new FakeEmailProvider();
-  const { ctx, pitch } = await readyPitch({ emailProvider: email, config: { email: { enabled: true } } });
-  let r = await ctx.li.outreach.send({ pitchId: pitch.pitch_id });
-  assert.equal(r.sent, false);
-  assert.equal(email.outbox.length, 0);
+  // F19: provider must be live to send. FakeEmailProvider is non-live; use a live-capable
+  // provider shim that implements the same send/validate/getStatus behaviour.
+  const liveEmail = Object.create(email);
+  Object.defineProperty(liveEmail, 'live', { value: true, writable: false });
+  const { ctx, pitch } = await readyPitch({ emailProvider: liveEmail, config: { email: { enabled: true, fromAddress: 'ztech@example.com' } } });
+  // F19: the gate is re-checked immediately before sending, so an unapproved pitch is
+  // refused outright - it never becomes a partial or speculative send.
+  await assert.rejects(ctx.li.outreach.sendEmail({ pitchId: pitch.pitch_id }),
+    (e) => e.code === 'NOT_READY', 'an unapproved pitch is refused by the gate re-check');
+  assert.equal(liveEmail.outbox.length, 0, 'nothing was sent before approval');
   await ctx.li.outreach.approve({ pitchId: pitch.pitch_id });
-  r = await ctx.li.outreach.send({ pitchId: pitch.pitch_id });
-  assert.equal(r.sent, true);
-  assert.equal(email.outbox.length, 1);
-  assert.equal(email.outbox[0].message.to, 'hello@acme.com');
-  assert.equal(email.outbox[0].message.headers['X-ZTech-Pitch'], pitch.pitch_id);
-  assert.deepEqual(await email.getStatus(r.messageId), { messageId: r.messageId, status: 'sent' });
+  const r = await ctx.li.outreach.sendEmail({ pitchId: pitch.pitch_id });
+  assert.equal(r.outcome, 'accepted');
+  assert.equal(r.providerAcknowledged, true);
+  assert.equal(r.deliveryStatus, 'unknown');
+  assert.equal(r.openStatus, 'unknown');
+  assert.equal(r.clickStatus, 'unknown');
+  assert.equal(liveEmail.outbox.length, 1);
+  assert.equal(liveEmail.outbox[0].message.to, 'hello@acme.com');
+  assert.equal(liveEmail.outbox[0].message.headers['X-ZTech-Pitch'], pitch.pitch_id);
+  // F19 renamed the receipt field to providerMessageId so it can never be confused with a
+// ZTech send id. The provider's own status word is passed through untranslated.
+assert.equal(r.providerMessageId, 'fake-msg-1');
+  assert.equal(r.providerStatus, 'sent', "the provider's own status word, untranslated");
+  assert.deepEqual(await liveEmail.getStatus(r.providerMessageId), { messageId: r.providerMessageId, status: 'sent' });
 });
 
 test('email: disabled by default', async () => {
   const { ctx, pitch } = await readyPitch({ emailProvider: new FakeEmailProvider() });
-  await assert.rejects(ctx.li.outreach.send({ pitchId: pitch.pitch_id }), (e) => e.code === 'EMAIL_DISABLED');
+  await assert.rejects(ctx.li.outreach.sendEmail({ pitchId: pitch.pitch_id }), (e) => e.code === 'EMAIL_DISABLED' || e.code === 'EMAIL_PROVIDER_NOT_LIVE' || e.code === 'CANNOT_SEND_EMAIL');
 });
 
 test('email: validation blocks header injection, HTML and bad addresses', () => {

@@ -290,8 +290,9 @@ test('19. no IPC, channel, or dependency was added', () => {
   // document.
   // F18 declared lock update: 49 -> 50, the single read-only Lead Intelligence prepare
   // method under the existing `ztechLeadIntel` key.
+  // F19 declared lock update: 50 -> 51, the single send boundary.
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 50, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read and the nine A10..F18 Lead Intelligence methods');
+    .split('ipcRenderer.invoke').length - 1, 51, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read and the ten A10..F19 Lead Intelligence methods');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {

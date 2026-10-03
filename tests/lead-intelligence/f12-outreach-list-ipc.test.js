@@ -85,9 +85,13 @@ function harness(outreach, { trusted = true } = {}) {
   return { handlers, reg, invoke: (c, payload, event = {}) => handlers.get(c)(event, payload) };
 }
 
+// F19 declared lock update: the registrar now also requires `sendEmail`, because the send
+// channel is registered unconditionally. These stubs register all channels, so they must
+// satisfy that startup requirement too - it is asserted directly in the F19 suite.
 const stubOutreach = (list) => ({
   generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
   update: async () => ({}), approve: async () => ({}), gate: async () => ({}), list,
+  sendEmail: async () => ({}),
 });
 
 // --- 1. the channel exists and is registered -----------------------------------
@@ -102,14 +106,18 @@ test('F12 B2: outreach:list is registered, and the five previous channels are un
   // F15 declared lock update: outreach:activity is also registered, so outreach:list is no
   // longer the newest channel. This test pins that F12's own channel is untouched.
   // F18 declared lock update: + the single read-only prepare channel.
-  assert.deepEqual(registered, [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready'].sort());
-  assert.equal(handlers.size, 9); // F15/F16 declared lock update: the read-only activity and ready channels are now also registered. F18 declared lock update: + prepare.
+  // F19 declared lock update: + the single send boundary.
+  assert.deepEqual(registered, [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send'].sort());
+  // F15/F16 declared lock update: the read-only activity and ready channels are now also
+  // registered. F18 declared lock update: + prepare. F19 declared lock update: 9 -> 10.
+  assert.equal(handlers.size, 10);
   for (const c of PREVIOUS_FIVE) assert.ok(handlers.has(c), 'previous channel must survive: ' + c);
   assert.ok(handlers.has('lead-intel:outreach-list'));
-  // No new channel beyond this one: email-send, searches, segments, enrichment,
+  // No new channel beyond these: email-send, searches, segments, enrichment,
   // agent and export all stay outside the renderer-reachable surface.
   for (const forbidden of ['lead-intel:email-send', 'lead-intel:searches-list', 'lead-intel:segments-list',
-    'lead-intel:enrichment-request', 'lead-intel:agent-analyze', 'lead-intel:export-research']) {
+    'lead-intel:enrichment-request', 'lead-intel:agent-analyze', 'lead-intel:export-research',
+    'lead-intel:outreach-schedule', 'lead-intel:outreach-queue', 'lead-intel:campaign-run']) {
     assert.ok(!handlers.has(forbidden), 'must not be registered: ' + forbidden);
   }
 });
@@ -262,8 +270,10 @@ test('F12 B2: preload exposes outreach.list and no email.send', () => {
   const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
   // F15/F16 declared lock update: EXACT allowlist of eight - a ninth or a substitution fails here.
   // F18 declared lock update: + the single read-only prepare method, so the exact set is now nine.
-  assert.deepEqual(leadIntel.slice().sort(), [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready'].sort());
-  assert.equal(leadIntel.length, 9);
+  // F19 declared lock update: + the single send boundary, so the exact set is now ten.
+  assert.deepEqual(leadIntel.slice().sort(), [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send'].sort());
+  assert.equal(leadIntel.length, 10);
+  assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 1, 'exactly one send method exists');
   assert.ok(leadIntel.includes('lead-intel:outreach-list'), 'outreach.list must be exposed');
   assert.ok(!leadIntel.includes('lead-intel:email-send'), 'email.send must never be exposed');
 

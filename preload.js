@@ -117,6 +117,22 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     // is exactly { pitchId, channel }; the recipient always comes from the stored contact
     // facts in the main process. This is a preview read: nothing is sent, queued,
     // scheduled or recorded, and no provider is reachable through it.
-    prepare: (payload) => ipcRenderer.invoke('lead-intel:outreach-prepare', payload || {})
+    prepare: (payload) => ipcRenderer.invoke('lead-intel:outreach-prepare', payload || {}),
+    // F19: the send boundary. This is the ONLY method on this bridge that can cause an
+    // outbound message to leave the process, and its payload is EXACTLY { pitchId }.
+    //
+    // The renderer cannot supply a recipient, a from-address, a subject, a body, a
+    // provider, a channel or a template: the IPC schema admits only pitchId, and
+    // everything else is re-derived in the main process from the stored contact facts,
+    // the configured from-address and the canonical pitch text. The OutreachGate is
+    // re-checked there immediately before a provider is contacted, and the same approved
+    // content can never be accepted twice.
+    //
+    // The resolved value reports provider ACKNOWLEDGEMENT only. `providerAcknowledged` is
+    // the single fact about the outside world; `deliveryStatus`, `openStatus` and
+    // `clickStatus` are always 'unknown', never true and never false, because nothing in
+    // this build observes an inbox. There is deliberately no sendAll, sendBatch, schedule,
+    // queue or campaign method anywhere on this bridge.
+    outreachSend: (payload) => ipcRenderer.invoke('lead-intel:outreach-send', payload || {})
   })
 }));

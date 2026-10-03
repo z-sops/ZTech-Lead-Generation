@@ -421,7 +421,10 @@ let initSqlJs = null;
 try { initSqlJs = require('sql.js'); } catch { initSqlJs = null; }
 const skip = initSqlJs ? false : 'sql.js not installed';
 
-test('sqljs: upgrading a v1 database applies migration 002 only', { skip }, async () => {
+// F19 declared lock update: migration 004 legitimately exists, so a v1 database now applies
+// 002, 003 and 004. The point being asserted is that pre-existing rows survive every upgrade
+// and that the upgrade is ordered and complete, not the specific count.
+test('sqljs: upgrading a v1 database applies every later migration in order, preserving existing rows', { skip }, async () => {
   const { SqlJsStore } = require('../../src/main/lead-intelligence/persistence/SqlJsStore');
   const { MIGRATIONS } = require('../../src/main/lead-intelligence/persistence/migrations');
   const SQL = await initSqlJs();
@@ -431,8 +434,9 @@ test('sqljs: upgrading a v1 database applies migration 002 only', { skip }, asyn
   db.run("INSERT INTO li_saved_searches VALUES ('srch_keep','Keep','{\"filter\":{}}','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')");
   const store = new SqlJsStore({ db, persist: () => {}, logger: { warn() {} } });
   await store.migrate();
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations ORDER BY version')[0].values, [[1], [2], [3]]);
-  assert.equal((await store.savedSearches.get('srch_keep')).name, 'Keep');
+  const expected = MIGRATIONS.map((m) => [m.version]);
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations ORDER BY version')[0].values, expected);
+  assert.equal((await store.savedSearches.get('srch_keep')).name, 'Keep', 'the pre-existing row survived every migration');
 });
 
 test('sqljs: enrichment persists, dedupes, enforces one active job, and resumes from saved bytes', { skip }, async () => {

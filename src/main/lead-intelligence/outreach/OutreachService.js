@@ -2,11 +2,12 @@
 
 const { newId } = require('../core/ids');
 const { NotFoundError, LiError, ValidationError } = require('../core/errors');
-const { toLeadView, EMAIL } = require('../contracts/leadView');
+const { EMAIL } = require('../contracts/leadView');
 const { normalizeFieldValue } = require('../enrichment/catalog');
 const { generatePitch, editPitch, renderPitchText } = require('./PitchGenerator');
 const { evaluateOutreachGate } = require('./OutreachGate');
-const { normalizeActivityMetadata, normalizeReadyQuery } = require('../persistence/contract');
+const { normalizeActivityMetadata, normalizeReadyQuery, sendIdempotencyKey } = require('../persistence/contract');
+const { evaluateSendCapability } = require('./email/sendConfig');
 
 // === F17: factual contact facts for the derived Ready row ===
 //
@@ -347,17 +348,36 @@ class OutreachService {
     // F14: report the DELIVERY capability alongside the gate decision, so a caller can
     // say honestly whether an allowed pitch could actually be delivered.
     //
-    // This adds no state and no new capability. Both booleans are read from the
-    // configuration this service was constructed with: `this.email.enabled` and whether
-    // an email provider was ever supplied. No provider is created, required or enabled
-    // here, and no send path is added - `send()` is still refused unless both are true,
-    // which in this build they never are. The gate verdict itself is returned unchanged.
+    // F19 sharpened this. It used to report `providerConfigured: this.emailProvider !== null`,
+    // which was true even for a simulated test provider and so overstated readiness. It now
+    // delegates to the SAME evaluateSendCapability() the send boundary itself uses, so the
+    // block can never disagree with whether a send would actually be permitted. `canSend` is
+    // the one flag a renderer should gate a send control on; `code`/`message` say exactly
+    // which configuration gap is responsible.
+    //
+    // This still adds no state and no capability: the verdict is pure configuration, no
+    // provider is created or contacted, and the gate decision itself is returned unchanged.
+    const capability = evaluateSendCapability({
+      enabled: this.email.enabled,
+      provider: this.emailProvider,
+      fromAddress: this.email.fromAddress
+    });
     return {
       ...gate,
       delivery: {
         channel,
         emailEnabled: this.email.enabled === true,
-        providerConfigured: this.emailProvider !== null && this.emailProvider !== undefined
+        providerConfigured: this.emailProvider !== null && this.emailProvider !== undefined,
+        // F19: honest send capability.
+        canSend: capability.canSend,
+        blockedCode: capability.code,
+        blockedMessage: capability.message,
+        providerId: capability.providerId,
+        providerLive: capability.providerLive,
+        // Never claimed here, and never derivable from a gate verdict.
+        deliveryStatus: 'unknown',
+        openStatus: 'unknown',
+        clickStatus: 'unknown'
       }
     };
   }
@@ -483,19 +503,242 @@ class OutreachService {
   /**
    * Human-triggered send of ONE approved pitch. Only available when email is enabled
    * in config AND a provider is configured. Re-runs the gate right before sending.
+   *
+   * F19 SUPERSEDES THIS METHOD. It is retained only as a deprecated alias for
+   * sendEmail() so any pre-F19 caller keeps working, and it is deliberately thin: the real
+   * boundary, with the gate re-check, idempotency, the durable attempt record and the
+   * honest acknowledgement-only result, is sendEmail(). New code must call that.
+   *
+   * @deprecated use sendEmail()
    */
   async send({ pitchId }) {
-    if (!this.email.enabled || !this.emailProvider) throw new LiError('EMAIL_DISABLED', 'Email sending is not enabled');
-    const gate = await this.gate({ pitchId, channel: 'email' });
-    if (gate.decision !== 'allowed') return { sent: false, gate };
+    return this.sendEmail({ pitchId });
+  }
+
+  // === F19: the email send boundary ===
+  //
+  // This is the ONE place in the product where an outbound message is authorised. It is
+  // human-triggered and single-message: there is no batch, no queue, no scheduler, no retry
+  // loop and no auto-send anywhere in this method or its callees.
+  //
+  // THE ORDER OF THE STEPS IS THE SAFETY PROPERTY, and it is not incidental:
+  //   1. capability   - can this product send AT ALL? (enabled, live provider, from-address)
+  //   2. pitch        - does it exist?
+  //   3. GATE RE-CHECK- re-run the EXISTING OutreachGate immediately before sending. This is
+  //                     the same gate the Ready queue and F18 preparation used, re-evaluated
+  //                     at the last possible moment, so evidence that expired, an approval
+  //                     that was invalidated, or an edit made while the panel sat open all
+  //                     block the send. A pitch being Ready ten minutes ago proves nothing.
+  //   4. idempotency  - has THIS EXACT content already been accepted? If so, replay the
+  //                     recorded outcome and contact nobody. Same content = same key,
+  //                     derived from the content hash, never from a timestamp or counter.
+  //   5. recipient    - re-read from the stored contact facts, never from the caller.
+  //   6. validate     - the provider's own message validation, before any provider contact.
+  //   7. RECORD       - persist an 'attempted' send row and an OUTREACH_SEND_ATTEMPTED
+  //                     activity BEFORE calling the provider. If the process dies mid-call,
+  //                     the ledger still proves the provider was reached, instead of
+  //                     silently losing a real-world side effect.
+  //   8. provider     - the only call that can touch the outside world.
+  //   9. settle       - 'accepted' or 'failed', each with its own activity event.
+  //
+  // WHAT THE RESULT IS ALLOWED TO SAY. A provider returning a message id proves it accepted
+  // the message. It does NOT prove the message arrived, was opened, or was clicked, and this
+  // build observes no inbox. So the result reports `providerAcknowledged: true` alongside
+  // explicit `deliveryStatus / openStatus / clickStatus: 'unknown'`. Those three are the
+  // string 'unknown' and never false: "not delivered" is itself a claim ZTech cannot make.
+  // There is no `delivered: false` anywhere in this method, because there is no observer
+  // that could support it.
+  async sendEmail({ pitchId }) {
+    // (1) Capability. Refused before anything is read or written beyond the refusal itself.
+    const capability = this.sendCapability();
+    if (!capability.canSend) {
+      // A disabled or unconfigured provider is a refusal a human asked for and did not get,
+      // so it IS an event worth recording. It records no provider id and no message id,
+      // because no provider was contacted.
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: capability.message, channel: 'email' });
+      throw new LiError(capability.code, capability.message);
+    }
+
+    // (2) Existence. A missing pitch is not a gate decision, so it is not recorded as one.
     const pitch = await this.get(pitchId);
-    const raw = await this.leadSource.getLead(pitch.lead_id);
-    const view = toLeadView(raw, this.fieldMap);
-    const message = { to: view.email, from: this.email.fromAddress, subject: pitch.subject, text: renderPitchText(pitch), headers: { 'X-ZTech-Pitch': pitch.pitch_id } };
-    const v = this.emailProvider.validate(message);
-    if (!v.valid) throw new ValidationError('email message is invalid', v.errors.map((e) => ({ path: `$.${e.field}`, message: e.message })));
-    const r = await this.emailProvider.send(message);
-    return { sent: true, messageId: r.messageId, status: r.status, gate };
+
+    // (3) THE RE-CHECK. Same gate, same channel, same rules as every other readiness path.
+    const verdict = await this.gate({ pitchId, channel: 'email' });
+    if (!verdict || verdict.decision !== 'allowed') {
+      const first = verdict && Array.isArray(verdict.reasons) && verdict.reasons.length ? verdict.reasons[0] : null;
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', {
+        reason: first ? first.message : 'The Outreach Gate does not allow this pitch right now.',
+        channel: 'email',
+        contentHash: pitch.content_hash
+      });
+      throw new LiError('NOT_READY', 'The Outreach Gate does not allow this pitch right now.');
+    }
+
+    // (4) IDEMPOTENCY, checked against the content that was just gate-approved. A replay
+    // contacts nobody: it returns the recorded provider outcome and says so.
+    const idempotencyKey = sendIdempotencyKey({ channel: 'email', pitchId: pitch.pitch_id, contentHash: pitch.content_hash });
+    const already = await this.store.sends.findAccepted(idempotencyKey);
+    if (already) return this._sendResult({ pitch, outcome: 'replayed', send: already, gate: verdict });
+
+    // (5) Recipient from the STORED contact facts. The caller cannot supply one: the IPC
+    // schema admits only { pitchId }.
+    const ctx = await this.contexts.getContext(pitch.lead_id, { targetId: pitch.target_id ?? undefined });
+    const facts = ctx && ctx.view ? contactFactsFromView(ctx.view, ctx.view.email_raw_present) : null;
+    if (!facts || facts.channels.email.state !== 'available' || !facts.channels.email.contact) {
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', {
+        reason: 'No valid email address is stored for this lead.',
+        channel: 'email',
+        contentHash: pitch.content_hash
+      });
+      throw new LiError('CHANNEL_UNAVAILABLE', 'No valid email address is stored for this lead.');
+    }
+
+    // (6) Provider validation, before any provider contact.
+    const message = {
+      to: facts.channels.email.contact,
+      from: capability.fromAddress,
+      subject: pitch.subject,
+      text: renderPitchText(pitch),
+      headers: {
+        'X-ZTech-Pitch': pitch.pitch_id,
+        // The idempotency key travels WITH the message, so a provider that supports
+        // de-duplication can recognise a retry ZTech itself would treat as a replay.
+        'X-ZTech-Send-Key': idempotencyKey
+      }
+    };
+    const valid = this.emailProvider.validate(message);
+    if (!valid || valid.valid !== true) {
+      const detail = Array.isArray(valid && valid.errors) && valid.errors.length ? valid.errors[0].message : 'the message is invalid';
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', {
+        reason: `The email message did not validate: ${detail}`,
+        channel: 'email',
+        contentHash: pitch.content_hash
+      });
+      throw new ValidationError('email message is invalid',
+        (valid && valid.errors ? valid.errors : []).map((e) => ({ path: `$.${e.field}`, message: e.message })));
+    }
+
+    // (7) THE DURABLE ATTEMPT, written BEFORE the provider is touched.
+    const sendId = newId('send');
+    const now = this.clock().toISOString();
+    await this.store.sends.record({
+      send_id: sendId,
+      lead_id: pitch.lead_id,
+      pitch_id: pitch.pitch_id,
+      channel: 'email',
+      content_hash: pitch.content_hash,
+      idempotency_key: idempotencyKey,
+      state: 'attempted',
+      provider_id: capability.providerId,
+      created_at: now,
+      updated_at: now
+    });
+    await this._recordSendEvent(pitchId, 'OUTREACH_SEND_ATTEMPTED', {
+      channel: 'email',
+      contentHash: pitch.content_hash,
+      providerId: capability.providerId,
+      idempotencyKey
+    });
+
+    // (8) The only call that can reach the outside world.
+    let receipt;
+    try {
+      receipt = await this.emailProvider.send(message);
+    } catch (err) {
+      // (9a) Failure. Record ZTech's own code and a ZTech-authored message; the provider's
+      // own text is deliberately NOT copied into the row, a log or the renderer.
+      const at = this.clock().toISOString();
+      const code = err && err.code ? String(err.code) : 'EMAIL_SEND_FAILED';
+      const safe = err instanceof LiError ? err.message : 'The email provider could not accept the message.';
+      await this.store.sends.fail({ sendId, failureCode: code, failureMessage: safe, at });
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_FAILED', {
+        channel: 'email', contentHash: pitch.content_hash, providerId: capability.providerId,
+        idempotencyKey, failureCode: code, reason: safe
+      });
+      if (err instanceof LiError) throw err;
+      throw new LiError(code, safe);
+    }
+
+    // (9b) Acknowledgement. Recorded as ACCEPTED - never as delivered, opened or clicked.
+    const at = this.clock().toISOString();
+    const settled = await this.store.sends.accept({
+      sendId,
+      providerId: capability.providerId,
+      providerMessageId: receipt && receipt.messageId ? String(receipt.messageId) : null,
+      at
+    });
+    const winner = settled && settled.ok === false ? settled.row : await this.store.sends.get(sendId);
+    if (settled && settled.ok === false) {
+      // A concurrent send won this key. Report the winner's outcome rather than pretending
+      // this attempt was the one that got through.
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_ACCEPTED', {
+        channel: 'email', contentHash: pitch.content_hash, providerId: capability.providerId,
+        idempotencyKey, providerMessageId: winner.provider_message_id
+      });
+      return this._sendResult({ pitch, outcome: 'replayed', send: winner, gate: verdict });
+    }
+    await this._recordSendEvent(pitchId, 'OUTREACH_SEND_ACCEPTED', {
+      channel: 'email', contentHash: pitch.content_hash, providerId: capability.providerId,
+      idempotencyKey, providerMessageId: winner.provider_message_id
+    });
+    return this._sendResult({ pitch, outcome: 'accepted', send: winner, gate: verdict, providerStatus: receipt && receipt.status });
+  }
+
+  /**
+   * The honest send result. `providerAcknowledged` is the ONLY true fact about the outside
+   * world here, and the three delivery facts are explicitly 'unknown' - never false, because
+   * ZTech has no observer that could support either answer.
+   */
+  _sendResult({ pitch, outcome, send, gate, providerStatus = null }) {
+    return {
+      outcome, // 'accepted' | 'replayed' - never 'delivered'
+      channel: 'email',
+      pitchId: pitch.pitch_id,
+      leadId: pitch.lead_id,
+      contentHash: pitch.content_hash,
+      idempotencyKey: send.idempotency_key,
+      sendId: send.send_id,
+      providerId: send.provider_id,
+      providerMessageId: send.provider_message_id,
+      // The provider's OWN status word, passed through untranslated and un-interpreted.
+      providerStatus: providerStatus === null ? null : String(providerStatus),
+      // The single truthful claim about the outside world.
+      providerAcknowledged: send.state === 'accepted',
+      // Explicitly unknown. Not false: nothing observes an inbox, a read receipt or a
+      // click, so reporting false would itself be a fabricated observation.
+      deliveryStatus: 'unknown',
+      openStatus: 'unknown',
+      clickStatus: 'unknown',
+      gate
+    };
+  }
+
+  /** F19: the current, honest email-send capability verdict. Read-only, no side effects. */
+  sendCapability() {
+    return evaluateSendCapability({
+      enabled: this.email.enabled,
+      provider: this.emailProvider,
+      fromAddress: this.email.fromAddress
+    });
+  }
+
+  /**
+   * Record one send-boundary activity event.
+   *
+   * Unlike _recordActivity, which requires a pitch object, this one is called at refusal
+   * points where the pitch may not have been loaded yet (the capability check runs first).
+   * A missing pitch simply yields no row - recording a send event for a pitch that does not
+   * exist would be inventing history.
+   */
+  async _recordSendEvent(pitchId, type, metadata) {
+    let pitch = null;
+    try {
+      pitch = await this.store.pitches.get(pitchId);
+    } catch (err) {
+      return null;
+    }
+    if (!pitch) return null;
+    return this._recordActivity(pitch, type, metadata);
   }
 }
 

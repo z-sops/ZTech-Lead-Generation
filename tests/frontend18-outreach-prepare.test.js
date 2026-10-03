@@ -449,7 +449,13 @@ function ipcHarness(outreach, { trusted = true } = {}) {
   return { handlers, reg, invoke: (c, payload, event = {}) => handlers.get(c)(event, payload) };
 }
 
-test('I1. the prepare channel is registered with the other Lead Intelligence channels - and email-send is not', async () => {
+// F19 UPDATE. F18 originally asserted there was NO send channel at all. F19 deliberately
+// supersedes exactly that one claim by adding the single send boundary
+// `lead-intel:outreach-send`, and this assertion is updated to match honestly rather than
+// deleted. Everything else F18 locked is preserved and still asserted below: the old
+// `lead-intel:email-send` name is still absent, and there is still no schedule, queue,
+// retry, campaign or batch channel.
+test('I1. the prepare channel and the single F19 send boundary are registered - and no queue/schedule/campaign channel', async () => {
   const { li } = makeRuntime({ L1: lead({}) });
   const { reg, handlers } = ipcHarness(li.outreach);
   assert.deepStrictEqual(reg.channels.slice().sort(), [
@@ -459,14 +465,18 @@ test('I1. the prepare channel is registered with the other Lead Intelligence cha
     'lead-intel:outreach-list',
     'lead-intel:outreach-prepare',
     'lead-intel:outreach-ready',
+    'lead-intel:outreach-send',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.strictEqual(handlers.size, 9, 'exactly nine channels are registered');
-  assert.ok(!handlers.has('lead-intel:email-send'), 'no send channel exists');
+  assert.strictEqual(handlers.size, 10, 'exactly ten channels are registered');
+  // The one and only outbound channel, and it takes only { pitchId }.
+  assert.ok(handlers.has('lead-intel:outreach-send'), 'the F19 send boundary exists');
+  assert.ok(!handlers.has('lead-intel:email-send'), 'the old pre-F19 send channel name is still absent');
   for (const forbidden of ['lead-intel:email-send', 'lead-intel:outreach-schedule', 'lead-intel:outreach-queue',
-    'lead-intel:outreach-retry', 'lead-intel:campaign-run', 'lead-intel:outreach-send']) {
+    'lead-intel:outreach-retry', 'lead-intel:campaign-run', 'lead-intel:outreach-send-all',
+    'lead-intel:outreach-send-batch', 'lead-intel:outreach-unsubscribe']) {
     assert.ok(!handlers.has(forbidden), 'must not be registered: ' + forbidden);
   }
 });
@@ -523,27 +533,42 @@ test('S1. the prepare body writes, sends, queues, schedules, retries and reaches
   assert.ok(!/gate\(\{[^}]*channel/.test(PREPARE_BODY), 'the gate channel is not overridden by the caller');
 });
 
-test('S2. the CHANNELS constant is an exact frozen allowlist of nine - no send, queue or campaign channel', () => {
+// F19 UPDATE: nine -> ten channels. The frozen allowlist still holds, still admits no
+// second provider surface, and still forbids every queue/schedule/retry/campaign channel.
+// The one name F18 used to forbid outright is now present, because it IS the F19 boundary.
+test('S2. the CHANNELS constant is an exact frozen allowlist of ten - exactly one send channel, no queue or campaign', () => {
   const block = ipcSource.slice(ipcSource.indexOf('const CHANNELS = Object.freeze({'), ipcSource.indexOf('}));'));
   assert.ok(/Object\.freeze\(\{/.test(block), 'the channel set is frozen');
   const values = [...block.matchAll(/'([^']+)'/g)].map((m) => m[1]).filter((v) => v.startsWith('lead-intel:'));
-  assert.strictEqual(values.length, 9, 'exactly nine channels are declared');
+  assert.strictEqual(values.length, 10, 'exactly ten channels are declared');
   assert.ok(values.includes('lead-intel:outreach-prepare'), 'the prepare channel is declared');
+  assert.strictEqual(values.filter((v) => /send/i.test(v)).length, 1, 'exactly ONE send channel exists');
+  assert.ok(values.includes('lead-intel:outreach-send'), 'and it is the F19 send boundary');
   for (const v of values) {
-    assert.ok(!/send|schedule|queue|retry|campaign/i.test(v), 'no dangerous channel name: ' + v);
+    assert.ok(!/schedule|queue|retry|campaign|batch|unsubscribe/i.test(v), 'no dangerous channel name: ' + v);
   }
   assert.ok(!values.includes('lead-intel:email-send'), 'email-send is still not declared');
 });
 
-test('S3. the preload bridge adds exactly one read-only prepare method and nothing else', () => {
+// F19 UPDATE: nine -> ten methods. The bridge still exposes no batch/queue/schedule/retry/
+// campaign method; the single addition is `outreachSend`, which is the F19 send boundary and
+// is still constrained to exactly { pitchId } by its own IPC schema (asserted in the F19 suite).
+test('S3. the preload bridge adds exactly one read-only prepare method plus the single F19 send method', () => {
   const start = preloadSource.indexOf("exposeInMainWorld('ztechLeadIntel'");
   const bridge = stripComments(preloadSource.slice(start));
   const methods = [...bridge.matchAll(/(\w+):\s*\((?:payload|payload \|\| \{\})\)\s*=>\s*ipcRenderer\.invoke/g)].map((m) => m[1]);
   assert.ok(methods.includes('prepare'), 'the bridge exposes prepare');
-  assert.strictEqual(methods.length, 9, 'exactly nine Lead Intelligence methods: ' + methods.join(','));
+  assert.ok(methods.includes('outreachSend'), 'the bridge exposes the single send boundary');
+  assert.strictEqual(methods.length, 10, 'exactly ten Lead Intelligence methods: ' + methods.join(','));
   assert.strictEqual([...bridge.matchAll(/\bprepare\s*:/g)].length, 1, 'prepare is declared exactly once');
-  assert.ok(/lead-intel:outreach-prepare/.test(bridge), 'it invokes only the fixed channel');
-  for (const banned of [/\bsend\b/i, /\bschedule\b/i, /\bqueue\b/i, /\bretry\b/i, /\bcampaign\b/i, /\bverify\b/i]) {
+  assert.strictEqual([...bridge.matchAll(/\boutreachSend\s*:/g)].length, 1, 'outreachSend is declared exactly once');
+  assert.ok(/lead-intel:outreach-prepare/.test(bridge), 'prepare invokes only its fixed channel');
+  assert.ok(/lead-intel:outreach-send/.test(bridge), 'outreachSend invokes only its fixed channel');
+  // Still no outbound verb other than the one send method.
+  assert.strictEqual((stripComments(preloadSource).match(/lead-intel:outreach-send/g) || []).length, 1,
+    'the send channel is referenced exactly once, so no second send path can be added silently');
+  for (const banned of [/\bschedule\b/i, /\bqueue\b/i, /\bretry\b/i, /\bcampaign\b/i, /\bverify\b/i,
+    /sendAll/i, /sendBatch/i]) {
     assert.ok(!banned.test(bridge), 'no bridge method for: ' + banned);
   }
   assert.ok(!/exposeInMainWorld\([^)]{0,80}ipcRenderer/.test(preloadSource), 'ipcRenderer is never exposed directly');
@@ -558,8 +583,19 @@ test('S3. the preload bridge adds exactly one read-only prepare method and nothi
 
 const R18_MARKER = '// === F18 Outreach: preparation review';
 const R15_MARKER = '// === F15 Outreach: activity history ===';
+const R19_MARKER = '// === F19 Outreach: the send control';
+const R12_MARKER = '// === F12 Outreach:';
 const F18_RENDERER = rendererSource.slice(rendererSource.indexOf(R18_MARKER), rendererSource.indexOf(R15_MARKER));
 assert.ok(F18_RENDERER.length > 500, 'the F18 renderer block is located');
+
+// F19 owns the send control, and it lives OUTSIDE the F18 slice on purpose: the F18 review
+// body stays a read-only preview and its hygiene checks (R6) must keep seeing a region with
+// no send call in it. The F18 FOOTER does render the control, so this harness has to load
+// both regions together - otherwise f18PrepareRenderFooter cannot resolve the f19* symbols.
+// The F18 slice above stays byte-identical to F18's own review-only region.
+const F19_RENDERER = rendererSource.slice(rendererSource.indexOf(R19_MARKER), rendererSource.indexOf(R12_MARKER));
+assert.ok(F19_RENDERER.length > 500, 'the F19 renderer block is located, after the F15 block');
+assert.ok(rendererSource.indexOf(R19_MARKER) > rendererSource.indexOf(R15_MARKER), 'F19 does not interleave into the F18 slice');
 
 function makeDoc18() {
   const listeners = new WeakMap();
@@ -631,7 +667,8 @@ function loadPrepare(api) {
   sandbox.f11AlertBox = (err) => { const el = doc.createElement('div'); el.textContent = (err && err.code ? err.code + ': ' : '') + (err && err.message ? err.message : ''); return el; };
   sandbox.f11El = (tag, cls, text) => { const el = doc.createElement(tag); el.className = cls || ''; el.textContent = text === undefined ? '' : String(text); return el; };
   const names = Object.keys(sandbox);
-  const fn = new Function(...names, F18_RENDERER + '\nreturn { f18OpenPrepare, f18ClosePrepare, f18SetChannel, f18PrepareLoad, f18PrepareState, f18PrepareInit, f18ChannelAvailability };');
+  const fn = new Function(...names, F18_RENDERER + '\n' + F19_RENDERER +
+    '\nreturn { f18OpenPrepare, f18ClosePrepare, f18SetChannel, f18PrepareLoad, f18PrepareState, f18PrepareInit, f18ChannelAvailability, f18PrepareRenderFooter, f19SendState, f19ResetSend, f19OpenSendConfirm, f19ConfirmSend };');
   const loaded = fn.apply(null, names.map((n) => sandbox[n]));
   loaded.doc = doc;
   return loaded;

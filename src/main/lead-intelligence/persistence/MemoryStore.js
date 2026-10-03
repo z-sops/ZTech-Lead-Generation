@@ -3,7 +3,7 @@
 const { clone } = require('../core/objects');
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { ACTIVE_STATES } = require('../contracts/constants');
-const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery } = require('./contract');
+const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
 /** In-memory implementation of the repository contract. Used by tests and dev tools. */
 
@@ -315,6 +315,111 @@ class MemActivity {
   }
 }
 
+/* ------------------------------ sends (F19) ------------------------------ */
+
+/**
+ * F19 in-memory send ledger. Mirrors SqlSends exactly: the same closed channel/state
+ * allowlists, the same `record` -> `accept`/`fail`/`block` lifecycle, the same refusal to
+ * record anything but 'attempted' up front, and the same at-most-one-ACCEPTED-per-key rule
+ * - here enforced with a scan because an in-memory Map has no partial unique index.
+ *
+ * It reproduces the SQL rule's INTENT rather than its mechanism, and returns the same
+ * ALREADY_ACCEPTED signal so a caller cannot tell the two stores apart.
+ */
+class MemSends {
+  constructor() { this.rows = new Map(); }
+
+  _acceptedForKey(key) {
+    for (const r of this.rows.values()) if (r.idempotency_key === key && r.state === 'accepted') return r;
+    return null;
+  }
+
+  async findAccepted(idempotencyKey) {
+    const match = this._acceptedForKey(String(idempotencyKey));
+    return match ? clone(match) : null;
+  }
+
+  async record(rec) {
+    const n = normalizeSendRecord(rec);
+    if (!n.ok) throw new LiError('VALIDATION_FAILED', n.error);
+    if (n.value.state !== 'attempted') {
+      throw new LiError('VALIDATION_FAILED', 'A send attempt must be recorded as attempted before it can change state');
+    }
+    this.rows.set(rec.send_id, {
+      send_id: rec.send_id,
+      lead_id: rec.lead_id,
+      pitch_id: rec.pitch_id,
+      channel: n.value.channel,
+      content_hash: rec.content_hash,
+      idempotency_key: rec.idempotency_key,
+      state: 'attempted',
+      provider_id: n.value.provider_id,
+      provider_message_id: n.value.provider_message_id,
+      failure_code: null,
+      failure_message: null,
+      created_at: rec.created_at,
+      updated_at: rec.updated_at
+    });
+    return clone(this.rows.get(rec.send_id));
+  }
+
+  async accept({ sendId, providerId, providerMessageId, at }) {
+    const current = this.rows.get(String(sendId));
+    if (!current) return { ok: true, row: null };
+    const winner = this._acceptedForKey(current.idempotency_key);
+    if (winner && winner.send_id !== String(sendId)) return { ok: false, code: 'ALREADY_ACCEPTED', row: clone(winner) };
+    if (current.state === 'attempted') {
+      current.state = 'accepted';
+      current.provider_id = providerId === undefined ? null : providerId;
+      current.provider_message_id = providerMessageId === undefined ? null : providerMessageId;
+      current.updated_at = at;
+    }
+    return { ok: true, row: clone(current) };
+  }
+
+  async fail({ sendId, failureCode, failureMessage, at }) {
+    const current = this.rows.get(String(sendId));
+    if (current && current.state === 'attempted') {
+      current.state = 'failed';
+      current.failure_code = failureCode === undefined ? null : failureCode;
+      current.failure_message = failureMessage === undefined ? null : failureMessage;
+      current.updated_at = at;
+    }
+    return current ? clone(current) : null;
+  }
+
+  async block({ sendId, failureCode, failureMessage, at }) {
+    const current = this.rows.get(String(sendId));
+    if (current && current.state === 'attempted') {
+      current.state = 'blocked';
+      current.failure_code = failureCode === undefined ? null : failureCode;
+      current.failure_message = failureMessage === undefined ? null : failureMessage;
+      current.updated_at = at;
+    }
+    return current ? clone(current) : null;
+  }
+
+  async get(sendId) {
+    const r = this.rows.get(String(sendId));
+    return r ? clone(r) : null;
+  }
+
+  _sorted() {
+    return [...this.rows.values()].sort((a, b) => {
+      if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
+      return a.send_id < b.send_id ? 1 : a.send_id > b.send_id ? -1 : 0;
+    });
+  }
+
+  async list(query) {
+    const { limit, offset, leadId, pitchId } = normalizeSendQuery(query);
+    let all = this._sorted();
+    if (leadId) all = all.filter((r) => r.lead_id === leadId);
+    if (pitchId) all = all.filter((r) => r.pitch_id === pitchId);
+    return { rows: all.slice(offset, offset + limit).map((r) => clone(r)), total: all.length, limit, offset };
+  }
+}
+
 class MemoryStore {
   constructor() {
     this.jobs = new MemJobs();
@@ -325,6 +430,7 @@ class MemoryStore {
     this.pitches = new MemPitches();
     this.approvals = new MemApprovals();
     this.activity = new MemActivity();
+    this.sends = new MemSends();
     this.enrichmentJobs = new MemEnrichmentJobs();
     this.enrichmentObservations = new MemEnrichmentObservations();
   }

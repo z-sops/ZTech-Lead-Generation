@@ -7450,7 +7450,8 @@ function f18PrepareRenderBody() {
   }
   body.appendChild(contentBox);
 
-  // The standing boundary line. There is no send control anywhere in this panel.
+  // The standing boundary line. This BODY is a read-only preview and never contains a send
+  // control: any action F19 adds lives in the panel FOOTER, below.
   body.appendChild(f18PrepareEl('div', 'f18-prepare-boundary',
     'Review only \u00b7 nothing is sent, queued or recorded \u00b7 this build has no sending provider'));
 }
@@ -7459,9 +7460,68 @@ function f18PrepareRenderFooter() {
   const footer = document.getElementById('f18-prepare-footer');
   if (!footer) return;
   footer.replaceChildren();
+  // === F19: the send control lives in the FOOTER, never in the read-only review body above.
+  //
+  // The body stays exactly as F18 defined it: a preview. The footer is where a human acts.
+  // Two properties are deliberate:
+  //
+  //  1. The control appears ONLY when the backend said it can send. The capability verdict
+  //     comes from `sendCapability()` in the main process and is reported through the gate's
+  //     `delivery` block. The renderer does not compute it, and it cannot be overridden from
+  //     here - so with no live provider configured there is literally nothing to click.
+  //  2. It is Email only. The WhatsApp tab is a candidate preview with no provider behind it,
+  //     so no control is offered for it.
+  const data = f18PrepareState.data;
+  const verdict = data && data.readiness;
+  const delivery = verdict && verdict.delivery;
+  const canSend = Boolean(delivery && delivery.canSend) && f18PrepareState.channel === 'email';
+  // A result from another pitch must never be shown against this one.
+  const result = f19SendState.forPitchId === (data && data.pitchId) ? f19SendState.result : null;
+  const sendError = f19SendState.forPitchId === (data && data.pitchId) ? f19SendState.error : null;
+
+  if (sendError) {
+    // The refusal stays on screen while the control returns, so a human who has just fixed
+    // the configuration (enabled sending, configured a live provider) can act immediately
+    // without reopening the panel. The error text is never cleared by that.
+    footer.appendChild(f11AlertBox(sendError));
+  } else if (result) {
+    footer.appendChild(f11El('span', 'f19-send-result', f19SendResultCopy(result)));
+    // The three unobservable facts, shown as unobservable. Not as false, not as true.
+    footer.appendChild(f11El('span', 'f19-send-unknown',
+      `Delivery ${result.deliveryStatus} \u00b7 opened ${result.openStatus} \u00b7 clicked ${result.clickStatus}`));
+  }
+  if (f19SendState.busy) {
+    footer.appendChild(f11Status('Contacting the email provider\u2026', 'busy'));
+  } else if (canSend && f19SendState.armed) {
+    // The confirmation step. It restates the stored recipient and the subject so the human
+    // can verify who is about to be contacted, and it is the only path to the provider.
+    footer.appendChild(f11El('span', 'f19-send-confirm-text',
+      `Send "${data.content.subject}" to ${data.recipient.contact}?`));
+    const confirm = f11El('button', 'btn btn-sm btn-danger', 'Yes, send it');
+    confirm.type = 'button';
+    confirm.addEventListener('click', () => f19ConfirmSend());
+    footer.appendChild(confirm);
+    const cancel = f11El('button', 'btn btn-sm btn-secondary', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => { f19ResetSend(); f18PrepareRenderFooter(); });
+    footer.appendChild(cancel);
+  } else if (canSend && !result) {
+    // No control once this pitch has a result. The service would refuse a second send of the
+    // same content as a replay anyway, so offering it again would only invite a click whose
+    // honest answer is "nothing was sent again".
+    const send = f11El('button', 'btn btn-sm btn-primary', 'Send this email');
+    send.type = 'button';
+    send.addEventListener('click', () => f19OpenSendConfirm());
+    footer.appendChild(send);
+  } else if (delivery && !delivery.canSend && delivery.blockedMessage) {
+    // The honest reason the control is absent: the backend's own refusal text, carried
+    // verbatim from evaluateSendCapability(), not a renderer explanation.
+    footer.appendChild(f11El('span', 'f19-send-blocked', delivery.blockedMessage));
+  }
+
   const back = f11El('button', 'btn btn-sm btn-secondary', 'Back to Ready');
   back.type = 'button';
-  back.addEventListener('click', () => f18ClosePrepare());
+  back.addEventListener('click', () => { f19ResetSend(); f18ClosePrepare(); });
   footer.appendChild(back);
 }
 
@@ -7474,6 +7534,9 @@ async function f18PrepareLoad() {
     f18PrepareRender();
     return;
   }
+  // F19: re-preparing re-reads the backend truth, so an armed confirmation and any prior
+  // result are dropped. Nothing rendered from an older read survives a newer one.
+  f19ResetSend();
   f18PrepareState.loading = true;
   f18PrepareState.error = null;
   f18PrepareRender();
@@ -7518,6 +7581,7 @@ function f18ClosePrepare() {
   f18PrepareState.data = null;
   f18PrepareState.error = null;
   f18PrepareState.loading = false;
+  f19ResetSend(); // F19: no armed confirmation or stale result can survive the panel closing
   f18PrepareSeq++; // a late response for a closed panel must not render
   f18PrepareRender();
 }
@@ -7734,6 +7798,107 @@ function f15ActivityInit() {
   // Loading on navigation, exactly like the Outreach workspace. No timer, no polling.
   const nav = document.querySelector('.nav-item[data-view="activity"]');
   if (nav) nav.addEventListener('click', () => f15ActivityLoad());
+}
+
+// === F19 Outreach: the send control (human-triggered, one message) ===
+//
+// This is the only block in the renderer that can cause an outbound message. It is placed
+// AFTER the F15 marker so that the F15/F16/F17/F18 region slices used by their own suites stay
+// byte-identical, and it only ever extends the F18 footer - the F18 review body above is
+// untouched.
+//
+// WHAT THE RENDERER IS ALLOWED TO DECIDE
+//  - That a human asked for this. That is the entire capability. `f19SendConfirm` invokes
+//    `api.outreach.outreachSend({ pitchId })` and NOTHING else: no recipient, from, subject, body,
+//    provider or channel can be supplied from here. The IPC schema admits exactly `pitchId`
+//    with additionalProperties:false, so the renderer cannot even express a recipient.
+//
+// WHAT THE RENDERER IS NOT ALLOWED TO DO
+//  - Decide readiness. It cannot: the service re-runs the OutreachGate immediately before the
+//    provider is contacted, so a stale or edited pitch is refused in the main process no matter
+//    what this block renders.
+//  - Claim delivery. The result carries `providerAcknowledged` and three 'unknown' statuses,
+//    and this block renders exactly those. There is deliberately no code path here that can
+//    display the word "delivered", "opened" or "clicked", because no observer exists to
+//    support any of them.
+//  - Batch, schedule, queue or retry. This block sends ONE message for ONE pitch id, once per
+//    explicit confirmation, and contains no loop, timer or queue.
+//
+// The confirmation step is not decoration. The first click arms a confirm state that spells
+// out the factual recipient and subject; only the second click contacts anything. A single
+// accidental click cannot mail a prospect.
+
+const f19SendState = { armed: false, busy: false, result: null, error: null, forPitchId: null };
+
+function f19ResetSend() {
+  f19SendState.armed = false;
+  f19SendState.busy = false;
+  f19SendState.result = null;
+  f19SendState.error = null;
+  f19SendState.forPitchId = null;
+}
+
+/** First click: arm, and restate the facts so the human can check them. */
+function f19OpenSendConfirm() {
+  const data = f18PrepareState.data;
+  if (!data) return;
+  // Re-arming for a different pitch (or a different channel) always starts clean, so a
+  // confirmation can never be carried across from an earlier panel.
+  if (f19SendState.forPitchId !== data.pitchId || f18PrepareState.channel !== 'email') f19ResetSend();
+  // Recorded up front: the footer only renders a result that belongs to the pitch on screen.
+  f19SendState.forPitchId = data.pitchId;
+  f19SendState.armed = true;
+  f18PrepareRenderFooter();
+}
+
+/** Second click: the only call in this block that reaches the send boundary. */
+async function f19ConfirmSend() {
+  const data = f18PrepareState.data;
+  const pitchId = data ? data.pitchId : null;
+  if (!pitchId || f19SendState.busy) return;
+  const api = f11LeadIntel();
+  if (!api || !api.outreach || typeof api.outreach.outreachSend !== 'function') {
+    f19SendState.error = { code: 'SEND_UNAVAILABLE', message: 'Sending is not available in this session.' };
+    f18PrepareRenderFooter();
+    return;
+  }
+  f19SendState.busy = true;
+  f19SendState.error = null;
+  f18PrepareRenderFooter();
+  let result;
+  try {
+    // EXACTLY { pitchId }. Nothing else crosses this line.
+    result = f11Unwrap(await api.outreach.outreachSend({ pitchId }));
+  } catch (e) {
+    if (f18PrepareState.pitchId !== pitchId) return;
+    f19SendState.busy = false;
+    f19SendState.armed = false;
+    f19SendState.error = { code: (e && e.code) || 'ERROR', message: (e && e.message) || 'The message could not be sent.' };
+    f18PrepareRenderFooter();
+    return;
+  }
+  // A response for a panel that has since closed or changed must not paint over the new state.
+  if (f18PrepareState.pitchId !== pitchId) return;
+  f19SendState.busy = false;
+  f19SendState.armed = false;
+  f19SendState.result = result;
+  f18PrepareRenderFooter();
+}
+
+/**
+ * The honest outcome line. `providerAcknowledged` is the only claim about the outside world;
+ * the three delivery facts are always 'unknown' and are rendered as such. A refusal is
+ * rendered as a refusal - never softened into a "probably sent".
+ */
+function f19SendResultCopy(result) {
+  if (!result) return null;
+  if (result.outcome === 'replayed') {
+    return 'This exact content was already accepted by the provider, so nobody was contacted again.';
+  }
+  if (result.outcome === 'accepted' && result.providerAcknowledged === true) {
+    return 'The email provider accepted this message for delivery.';
+  }
+  return 'The send boundary returned no acceptance, so nothing is claimed.';
 }
 
 // === F12 Outreach: the read-only Outreach workspace ===

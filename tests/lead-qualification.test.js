@@ -718,8 +718,9 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // read-only outreach activity channel. No email-send channel exists, and no activity
     // WRITE channel exists either. F18 declared lock update: 50 -> 51, the single
     // read-only outreach prepare channel.
-    assert.strictEqual(channels.length, 51, 'exactly 51 channels');
-    assert.strictEqual(new Set(channels).size, 51, 'no duplicate channel names');
+    // F19 declared lock update: 51 -> 52, the single outreach send boundary.
+    assert.strictEqual(channels.length, 52, 'exactly 52 channels');
+    assert.strictEqual(new Set(channels).size, 52, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1420,9 +1421,10 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
     // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
     // F8 declared lock update: 41 -> 42, intelligence:icp.
-    // F15 declared lock update: 48 -> 49, adding the single read-only outreach activity channel.
-    // F18 declared lock update: 50 -> 51, adding the single read-only outreach prepare channel.
-    assert.strictEqual(allChannels().length, 51, 'exactly 51 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read)');
+// F15 declared lock update: 48 -> 49, adding the single read-only outreach activity channel.
+  // F18 declared lock update: 50 -> 51, adding the single read-only outreach prepare channel.
+  // F19 declared lock update: 51 -> 52, adding the single outreach send boundary.
+  assert.strictEqual(allChannels().length, 52, 'exactly 52 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

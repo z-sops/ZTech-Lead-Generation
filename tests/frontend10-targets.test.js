@@ -122,7 +122,9 @@ test('5. no new IPC channel, preload method or delete/get/duplicate path', () =>
   // Lead Intelligence methods). F10 still adds no preload method and main.js
   // still registers exactly 34 literal channels.
   // F18 declared lock update: 49 -> 50, the single read-only prepare method.
-  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 50, 'preload unchanged in size apart from the A10..F18 Lead Intelligence methods');
+  // F19 declared lock update: 50 -> 51, the single send boundary. F10 still adds no
+  // preload method and main.js still registers the same literal channels.
+  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 51, 'preload unchanged in size apart from the A10..F19 Lead Intelligence methods');
   assert.ok(!/targets:(delete|get|duplicate)|deleteTarget|duplicateTarget/.test(mainSource + preloadSource + rendererSource), 'no delete/get/duplicate');
   assert.ok(!/data-action="(delete|duplicate)"/.test(TARGET_JS) && !/>\s*(Delete|Duplicate)\s*</.test(VIEW), 'no Delete or Duplicate control');
 });

@@ -9,10 +9,21 @@ const { LiError } = require('../../core/errors');
  *
  * interface EmailProvider {
  *   id: string
+ *   live: boolean   // does this provider actually reach a real mail service?
  *   validate(message): { valid: boolean, errors: {field, message}[] }
  *   send(message): Promise<{ messageId: string, status: 'queued'|'sent' }>
  *   getStatus(messageId): Promise<{ messageId, status: 'queued'|'sent'|'delivered'|'bounced'|'failed'|'unknown' }>
  * }
+ *
+ * `live` is F19's safety interlock. It is FALSE on this base class and on every in-memory
+ * double, so a test or simulated provider cannot be wired into the send boundary by
+ * accident: evaluateSendCapability() refuses anything that is not live. A real adapter must
+ * opt in deliberately, by overriding `live`, and its `id` then appears in the activity
+ * ledger - so every send row names the provider that actually accepted it.
+ *
+ * `send()` returning only `messageId` + `status` is deliberate and load-bearing: a provider
+ * acknowledgement is NOT a delivery receipt. Adapters must never translate their own
+ * acceptance into delivered / opened / clicked, and ZTech never infers it.
  *
  * message: { to, from, subject, text, headers? }  — plain text only (no HTML rendering).
  */
@@ -43,6 +54,8 @@ function validateEmailMessage(m) {
 
 class EmailProvider {
   get id() { return 'abstract'; }
+  /** F19: false by default, so nothing becomes sendable without an explicit override. */
+  get live() { return false; }
   validate(message) { return validateEmailMessage(message); }
   async send() { throw new LiError('EMAIL_PROVIDER_NOT_CONFIGURED', 'No email provider is configured'); }
   async getStatus(messageId) { return { messageId, status: 'unknown' }; }

@@ -516,8 +516,14 @@ test('8. preload is read-only, Campaigns stays disabled, and F12-F15 are untouch
   const end = preloadSource.indexOf('}))', start);
   const block = stripComments(preloadSource.slice(start, end));
   assert.ok(/ready:\s*\(payload\)\s*=>\s*ipcRenderer\.invoke\('lead-intel:outreach-ready'/.test(block), 'ready is a single read');
-  for (const forbidden of [/send/i, /schedule/i, /retry/i, /queue/i, /provider/i, /whatsapp/i, /email\s*:/i]) {
-    assert.ok(!forbidden.test(block), 'the outreach bridge exposes no ' + forbidden);
+  for (const forbidden of [/^send\b/i, /sendAll/i, /sendBatch/i, /schedule/i, /retry/i, /queue/i, /campaign/i, /bulk/i, /provider/i, /whatsapp/i, /email\s*:/i]) {
+    // Allow the single F19 outreachSend method. Do NOT allow 'send' as a standalone
+    // method name, and do NOT allow any other send-prefixed method.
+    const hits = [...block.matchAll(/(\w+):\s*\(/g)].map((m) => m[1]).filter((m) => {
+      if (m === 'outreachSend') return false;
+      return forbidden.test(m);
+    });
+    assert.strictEqual(hits.length, 0, 'the outreach bridge exposes no ' + forbidden);
   }
   assert.ok(!/lead-intel:email-send/.test(preloadSource), 'still no email-send channel');
   // Exactly one new channel, read-only, strictly bounded.
@@ -555,7 +561,7 @@ test('9. no new persisted ready status, flag or table exists', () => {
     ['draft', 'insufficient_evidence', 'needs_revision'], 'no ready status was added to the pitch model');
   const migrations = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'migrations.js'), 'utf8');
   const version = migrations.match(/Object\.freeze\(\{ version: (\d+), name: '([^']+)'/g).map((s) => s.match(/version: (\d+)/)[1]);
-  assert.deepStrictEqual(version, ['1', '2', '3'], 'F16 added no migration: ' + version.join(','));
+  assert.deepStrictEqual(version, ['1', '2', '3', '4'], 'F16 added no migration: ' + version.join(','));
   // Schema-scoped, not prose-scoped: F15's migration comment legitimately discusses
   // "readiness", so the claim is that no TABLE or COLUMN is named ready.
   const created = [...migrations.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]);
