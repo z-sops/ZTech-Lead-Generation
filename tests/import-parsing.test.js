@@ -46,8 +46,9 @@ function extractFunction(src, name) {
   throw new Error('unbalanced braces for function: ' + name);
 }
 
-const IMPORT_FUNCTIONS = ['splitImportLines', 'isValidImportPhoneLine', 'buildImportBatch'];
-const importSource = IMPORT_FUNCTIONS.map(name => extractFunction(source, name)).join('\n');
+const IMPORT_FUNCTIONS = ['splitImportLines', 'isValidImportPhoneLine', 'splitImportCsvRow', 'importHeaderMap', 'buildImportBatch'];
+const importConsts = source.slice(source.indexOf('const IMPORT_HEADER_ALIASES'), source.indexOf('function splitImportCsvRow('));
+const importSource = importConsts + '\n' + IMPORT_FUNCTIONS.map(name => extractFunction(source, name)).join('\n');
 const importLogic = new Function(
   importSource +
     '\nreturn { splitImportLines: splitImportLines, isValidImportPhoneLine: isValidImportPhoneLine, buildImportBatch: buildImportBatch };'
@@ -137,6 +138,44 @@ test('import handler uses batch builder and reports skipped count', () => {
   assert.ok(!source.includes('split(/\\r?\\n/)'), 'legacy LF/CRLF-only split must be gone');
   assert.ok(source.includes('Skipped'), 'zero-valid path must report skipped invalid lines');
   assert.ok(source.includes('ignored'), 'partial import must report skipped invalid lines');
+});
+
+
+test('CSV with a header carries name, website, email and address next to the phone', () => {
+  const batch = importLogic.buildImportBatch(
+    'Name,Phone,Website,Email,Address\r\n' +
+    'Acme Bakery,+923001234567,https://www.acmebakery.pk,info@acmebakery.pk,Karachi\r\n' +
+    '"Khan, Sons & Co",0300 7654321,khansons.com,,\r\n' +
+    'No Phone Ltd,,nophone.com,,\r\n'
+  );
+  assert.deepStrictEqual(batch.valid, ['+923001234567', '0300 7654321']);
+  assert.strictEqual(batch.invalid, 1);
+  assert.deepStrictEqual(batch.rows[0], { phone: '+923001234567', title: 'Acme Bakery', website: 'https://www.acmebakery.pk', email: 'info@acmebakery.pk', address: 'Karachi' });
+  assert.deepStrictEqual(batch.rows[1], { phone: '0300 7654321', title: 'Khan, Sons & Co', website: 'khansons.com' });
+});
+
+test('CSV header aliases and a BOM are recognised; columns may be in any order', () => {
+  const batch = importLogic.buildImportBatch('﻿website;company;mobile\nacme.pk;Acme;+923001112223\n');
+  assert.deepStrictEqual(batch.rows, [{ phone: '+923001112223', title: 'Acme', website: 'acme.pk' }]);
+});
+
+test('a phone-only file is unchanged and every row carries only the phone', () => {
+  const batch = importLogic.buildImportBatch('+66812345678\n0812345678\ncall me');
+  assert.deepStrictEqual(batch.valid, ['+66812345678', '0812345678']);
+  assert.deepStrictEqual(batch.rows, [{ phone: '+66812345678' }, { phone: '0812345678' }]);
+  assert.strictEqual(batch.invalid, 1);
+});
+
+test('a CSV without a phone column is not treated as a header', () => {
+  const batch = importLogic.buildImportBatch('name,website\nAcme,acme.pk\n');
+  assert.strictEqual(batch.valid.length, 0);
+  assert.strictEqual(batch.invalid, 2);
+});
+
+test('imported fields are bounded to what the main-process validator accepts', () => {
+  const long = 'x'.repeat(900);
+  const batch = importLogic.buildImportBatch('phone,name\n+923001234567,' + long + '\n');
+  assert.strictEqual(batch.rows[0].title.length, 500);
 });
 
 console.log('');

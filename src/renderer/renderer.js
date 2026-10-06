@@ -3543,16 +3543,89 @@ function isValidImportPhoneLine(line) {
   return value.replace(/\D/g, '').length >= 5;
 }
 
+// A CSV with a header row may carry the business identity next to the phone, so an
+// imported lead can be researched (Zuni-SEO and Opportunity Intelligence both need a
+// business name). Recognised headers (case-insensitive): phone/mobile/number/whatsapp,
+// name/title/business/company, website/url/site/domain, email, address. A file without
+// a header with a phone column is the original one-phone-per-line format, unchanged.
+const IMPORT_HEADER_ALIASES = {
+  phone: ['phone', 'phone number', 'mobile', 'number', 'whatsapp', 'tel', 'telephone'],
+  title: ['name', 'title', 'business', 'business name', 'company', 'company name'],
+  website: ['website', 'url', 'site', 'domain', 'web'],
+  email: ['email', 'e-mail', 'mail'],
+  address: ['address', 'location', 'city']
+};
+const IMPORT_FIELD_MAX = 500;
+
+function splitImportCsvRow(line, delimiter) {
+  const cells = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i += 1; }
+      else if (ch === '"') quoted = false;
+      else cur += ch;
+    } else if (ch === '"' && cur.trim() === '') {
+      quoted = true;
+      cur = '';
+    } else if (ch === delimiter) {
+      cells.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+function importHeaderMap(line) {
+  const delimiter = line.includes('\t') ? '\t' : (line.includes(';') && !line.includes(',') ? ';' : ',');
+  const cells = splitImportCsvRow(line.replace(/^﻿/, ''), delimiter).map((c) => c.toLowerCase().trim());
+  const map = {};
+  cells.forEach((cell, idx) => {
+    for (const [field, aliases] of Object.entries(IMPORT_HEADER_ALIASES)) {
+      if (map[field] === undefined && aliases.includes(cell)) map[field] = idx;
+    }
+  });
+  return map.phone === undefined ? null : { map, delimiter };
+}
+
 function buildImportBatch(text) {
   const valid = [];
+  const rows = [];
   let invalid = 0;
-  for (const raw of splitImportLines(text)) {
+  const lines = splitImportLines(text);
+  const firstIdx = lines.findIndex((l) => l.trim() !== '');
+  const header = firstIdx === -1 ? null : importHeaderMap(lines[firstIdx]);
+  if (header) {
+    const cap = (v) => (typeof v === 'string' ? v.trim().slice(0, IMPORT_FIELD_MAX) : '');
+    for (const raw of lines.slice(firstIdx + 1)) {
+      if (!raw.trim()) continue;
+      const cells = splitImportCsvRow(raw, header.delimiter);
+      const phone = cap(cells[header.map.phone]);
+      if (!isValidImportPhoneLine(phone)) { invalid += 1; continue; }
+      valid.push(phone);
+      const row = { phone };
+      for (const field of ['title', 'website', 'email', 'address']) {
+        if (header.map[field] !== undefined) {
+          const value = cap(cells[header.map[field]]);
+          if (value) row[field] = value;
+        }
+      }
+      rows.push(row);
+    }
+    return { valid, invalid, rows };
+  }
+  for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
-    if (isValidImportPhoneLine(line)) valid.push(line);
+    if (isValidImportPhoneLine(line)) { valid.push(line); rows.push({ phone: line }); }
     else invalid += 1;
   }
-  return { valid, invalid };
+  return { valid, invalid, rows };
 }
 
 document.getElementById('btn-import-numbers').addEventListener('click', () => {
@@ -3563,14 +3636,20 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
       const file = input.files[0];
       if (!file) return;
       const text = await file.text();
-      const { valid, invalid } = buildImportBatch(text);
+      const { valid, invalid, rows } = buildImportBatch(text);
       if (!valid.length) {
         toast(invalid > 0 ? `No valid phone numbers in the file (skipped ${invalid} invalid rows)` : 'No valid phone numbers in the file', 'error');
         return;
       }
-      const numbers = valid.map((phone) => ({
+      // Identity columns travel only when the file supplied them; a phone already in the
+      // library only has its EMPTY fields filled (the store's existing merge rule).
+      const numbers = rows.map((row) => ({
         id: crypto.randomUUID(),
-        phone,
+        phone: row.phone,
+        title: row.title || '',
+        website: row.website || '',
+        email: row.email || '',
+        address: row.address || '',
         source: '手动导入',
         keyword: '',
         status: 'pending',
