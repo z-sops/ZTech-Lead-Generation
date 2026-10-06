@@ -1189,6 +1189,8 @@ async function loadSettingsWorkspace() {
   refreshResearchHealth();
   // I3/I4: Opportunity Intelligence service + provider keys (booleans only).
   loadOiSettings();
+  // F26: Business profile, Email and WhatsApp (booleans and plain states only).
+  loadOutreachSettings();
   const engine = document.getElementById('settings-storage-engine');
   try {
     const storage = await window.appAPI.collector.storageStatus();
@@ -1206,6 +1208,178 @@ for (const jump of document.querySelectorAll('[data-settings-jump]')) {
     const group = document.getElementById(`settings-group-${jump.dataset.settingsJump}`);
     if (group) group.scrollIntoView({ block: 'start' });
   });
+}
+
+// === F26 Outreach settings ===
+// Business profile, Email (Resend) and WhatsApp (Meta). Keys are WRITE-ONLY: a key typed
+// here is sent once to main, which seals it, and the field is emptied whatever happens.
+// Main answers with booleans (stored / readable), the plain verification state, the time
+// of the last check and the send capability verdict - never a key, never a raw provider
+// response. Verification runs only when the user presses Check; nothing here polls.
+// Every value is set with textContent or an input's value.
+
+const OUTREACH_FIELDS = {
+  business: ['representativeName', 'companyName', 'valueProposition', 'callToAction'],
+  email: ['fromName', 'domain', 'fromAddress', 'replyTo', 'signature'],
+  whatsapp: ['fromNumber', 'phoneNumberId', 'businessAccountId'],
+};
+const OUTREACH_VERIFY_TEXT = { unknown: 'Not checked', pending: 'Pending', verified: 'Verified', failed: 'Failed' };
+const OUTREACH_VERIFY_TONE = { unknown: 'unknown', pending: 'unknown', verified: 'stored', failed: 'missing' };
+
+function outreachSettingsApi() {
+  return typeof window !== 'undefined' && window.appAPI && window.appAPI.outreachSettings
+    ? window.appAPI.outreachSettings
+    : null;
+}
+
+function outreachUnwrap(res) {
+  if (res && res.ok === true) return res.data && typeof res.data === 'object' ? res.data : {};
+  const msg = res && res.error && typeof res.error.message === 'string' && res.error.message ? res.error.message : 'The request failed.';
+  throw new Error(msg);
+}
+
+function outreachChip(id, text, tone) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.dataset.state = tone;
+}
+
+function outreachNote(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text || '';
+}
+
+function outreachFill(section, values) {
+  const v = values && typeof values === 'object' ? values : {};
+  for (const f of OUTREACH_FIELDS[section]) {
+    const el = document.getElementById(`outreach-${section}-${f}`);
+    if (el && document.activeElement !== el) el.value = typeof v[f] === 'string' ? v[f] : '';
+  }
+  if (section !== 'business') {
+    const box = document.getElementById(`outreach-${section}-enabled`);
+    if (box) box.checked = v.enabled === true;
+  }
+}
+
+function outreachRead(section) {
+  const out = {};
+  for (const f of OUTREACH_FIELDS[section]) {
+    const el = document.getElementById(`outreach-${section}-${f}`);
+    out[f] = el && typeof el.value === 'string' ? el.value : '';
+  }
+  if (section !== 'business') {
+    const box = document.getElementById(`outreach-${section}-enabled`);
+    out.enabled = Boolean(box && box.checked);
+  }
+  return out;
+}
+
+function outreachCheckedText(checkedAt) {
+  if (typeof checkedAt !== 'string' || checkedAt === '') return 'Never checked.';
+  const d = new Date(checkedAt);
+  return Number.isNaN(d.getTime()) ? 'Never checked.' : `Last checked ${d.toLocaleString()}.`;
+}
+
+function renderOutreachChannel(section, c) {
+  const ch = c && typeof c === 'object' ? c : {};
+  outreachFill(section, ch);
+  const key = !ch.keyStored ? ['Not set', 'unknown'] : (ch.keyReadable === false ? ['Unreadable', 'missing'] : ['Stored', 'stored']);
+  outreachChip(`outreach-${section}-key-state`, key[0], key[1]);
+  const clear = document.getElementById(`btn-outreach-${section}-clear-key`);
+  if (clear) clear.disabled = ch.keyStored !== true;
+  const ver = ch.verification && typeof ch.verification === 'object' ? ch.verification : {};
+  const st = OUTREACH_VERIFY_TEXT[ver.status] ? ver.status : 'unknown';
+  outreachChip(`outreach-${section}-verify-state`, OUTREACH_VERIFY_TEXT[st], OUTREACH_VERIFY_TONE[st]);
+  outreachNote(`outreach-${section}-verify-checked`, outreachCheckedText(ver.checkedAt));
+  const cap = ch.capability && typeof ch.capability === 'object' ? ch.capability : {};
+  outreachChip(`outreach-${section}-capability`, cap.canSend === true ? 'Ready to send' : 'Not ready', cap.canSend === true ? 'stored' : 'missing');
+  outreachNote(`outreach-${section}-capability-message`, cap.canSend === true ? 'Approved pitches can be sent on this channel.' : (typeof cap.message === 'string' ? cap.message : ''));
+  if (section === 'whatsapp') {
+    outreachChip('outreach-whatsapp-templates', ch.templates === 'supported' ? 'Supported' : 'Not supported yet', 'unknown');
+  }
+}
+
+function renderOutreachSettings(data) {
+  const d = data && typeof data === 'object' ? data : {};
+  outreachFill('business', d.business);
+  renderOutreachChannel('email', d.email);
+  renderOutreachChannel('whatsapp', d.whatsapp);
+}
+
+async function loadOutreachSettings() {
+  const api = outreachSettingsApi();
+  if (!api) {
+    for (const s of ['email', 'whatsapp']) outreachChip(`outreach-${s}-capability`, 'Unavailable', 'missing');
+    return null;
+  }
+  try {
+    const data = outreachUnwrap(await api.status());
+    renderOutreachSettings(data);
+    return data;
+  } catch (err) {
+    for (const s of ['email', 'whatsapp']) {
+      outreachChip(`outreach-${s}-capability`, 'Unavailable', 'missing');
+      outreachNote(`outreach-${s}-capability-message`, (err && err.message) || 'Outreach settings could not be loaded.');
+    }
+    return null;
+  }
+}
+
+async function outreachRun(section, button, call, okText) {
+  const btn = document.getElementById(button);
+  if (btn) btn.disabled = true;
+  try {
+    const data = outreachUnwrap(await call());
+    outreachNote(`outreach-${section}-status`, okText(data));
+  } catch (err) {
+    const msg = (err && err.message) || 'The change was not saved.';
+    outreachNote(`outreach-${section}-status`, msg);
+    toast(msg, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  await loadOutreachSettings();
+}
+
+function saveOutreachSection(section) {
+  const api = outreachSettingsApi();
+  if (!api) return null;
+  const method = { business: 'saveBusiness', email: 'saveEmail', whatsapp: 'saveWhatsApp' }[section];
+  const label = { business: 'Business profile', email: 'Email settings', whatsapp: 'WhatsApp settings' }[section];
+  return outreachRun(section, `btn-outreach-save-${section}`, () => api[method](outreachRead(section)), () => `${label} saved.`);
+}
+
+async function saveOutreachKey(section) {
+  const api = outreachSettingsApi();
+  const input = document.getElementById(`outreach-${section}-key`);
+  if (!api || !input) return;
+  const key = input.value.trim();
+  // Write-only: the field never keeps the value, saved or not.
+  input.value = '';
+  if (key === '') return;
+  await outreachRun(section, `btn-outreach-${section}-save-key`, () => api.setKey(section, key), () => 'Key saved.');
+}
+
+function clearOutreachKey(section) {
+  const api = outreachSettingsApi();
+  if (!api) return null;
+  return outreachRun(section, `btn-outreach-${section}-clear-key`, () => api.clearKey(section), () => 'Key cleared.');
+}
+
+function verifyOutreach(section) {
+  const api = outreachSettingsApi();
+  if (!api) return null;
+  return outreachRun(section, `btn-outreach-${section}-verify`, () => api.verify(section),
+    (r) => (r && typeof r.message === 'string' && r.message ? r.message : 'Check finished.'));
+}
+
+document.getElementById('btn-outreach-save-business').addEventListener('click', safeAsync(() => saveOutreachSection('business')));
+for (const section of ['email', 'whatsapp']) {
+  document.getElementById(`btn-outreach-save-${section}`).addEventListener('click', safeAsync(() => saveOutreachSection(section)));
+  document.getElementById(`btn-outreach-${section}-save-key`).addEventListener('click', safeAsync(() => saveOutreachKey(section)));
+  document.getElementById(`btn-outreach-${section}-clear-key`).addEventListener('click', safeAsync(() => clearOutreachKey(section)));
+  document.getElementById(`btn-outreach-${section}-verify`).addEventListener('click', safeAsync(() => verifyOutreach(section)));
 }
 
 // === I3/I4 Opportunity Intelligence settings ===

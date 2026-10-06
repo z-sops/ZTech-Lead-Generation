@@ -122,7 +122,7 @@ test('3. email settings land on the keys readResendConfig reads; capability walk
   assert.strictEqual(store.get('settings').emailEnabled, true);
   let st = (await call(CH.STATUS, {})).data;
   assert.strictEqual(st.email.capability.code, resend.RESEND_REFUSALS.CREDENTIAL_MISSING, 'enabled does not bypass the verdict');
-  await call(CH.SET_KEY, { provider: 'resend', key: RKEY });
+  await call(CH.SET_KEY, { channel: 'email', key: RKEY });
   st = (await call(CH.STATUS, {})).data;
   assert.strictEqual(st.email.keyStored, true);
   assert.strictEqual(st.email.capability.code, resend.RESEND_REFUSALS.DOMAIN_NOT_VERIFIED);
@@ -156,7 +156,7 @@ test('5. WhatsApp settings land on the keys readWhatsAppConfig reads; the number
   assert.strictEqual(cfg.phoneNumberId, '123456789012345');
   assert.strictEqual(cfg.accountConfigured, true);
   assert.strictEqual(cfg.providerSelected, true);
-  await call(CH.SET_KEY, { provider: 'meta-cloud', key: MKEY });
+  await call(CH.SET_KEY, { channel: 'whatsapp', key: MKEY });
   const st = (await call(CH.STATUS, {})).data;
   assert.strictEqual(st.whatsapp.capability.code, wa.WHATSAPP_REFUSALS.NUMBER_NOT_VERIFIED);
   for (const bad of [{ ...GOOD_WA, fromNumber: '0300 1234567 (0)' }, { ...GOOD_WA, fromNumber: '+44 (0)20 7123 4567' }, { ...GOOD_WA, phoneNumberId: 'abc' }, { ...GOOD_WA, businessAccountId: '12-34' }]) {
@@ -166,18 +166,18 @@ test('5. WhatsApp settings land on the keys readWhatsAppConfig reads; the number
 
 test('6. keys: sealed at rest, never returned, refused without a secure keystore, cleared on request', async () => {
   const { call, store, calls } = setup();
-  assert.deepStrictEqual((await call(CH.SET_KEY, { provider: 'resend', key: RKEY })).data, { ok: true, stored: true });
-  assert.deepStrictEqual((await call(CH.SET_KEY, { provider: 'meta-cloud', key: MKEY })).data, { ok: true, stored: true });
+  assert.deepStrictEqual((await call(CH.SET_KEY, { channel: 'email', key: RKEY })).data, { ok: true, stored: true });
+  assert.deepStrictEqual((await call(CH.SET_KEY, { channel: 'whatsapp', key: MKEY })).data, { ok: true, stored: true });
   assert.ok(store.get('providers').resend.credentials.apiKey.startsWith('enc:v1:'));
   assert.ok(store.get('providers')['meta-cloud'].credentials.apiKey.startsWith('enc:v1:'));
   assert.ok(!JSON.stringify(store.data).includes(RKEY) && !JSON.stringify(store.data).includes(MKEY));
-  for (const bad of ['short', 'has space key-123', 'x'.repeat(2049)]) assert.strictEqual((await call(CH.SET_KEY, { provider: 'resend', key: bad })).ok, false);
-  assert.strictEqual((await call(CH.SET_KEY, { provider: 'coreclaw', key: RKEY })).ok, false, 'only the two outreach providers');
-  await call(CH.CLEAR_KEY, { provider: 'resend' });
+  for (const bad of ['short', 'has space key-123', 'x'.repeat(2049)]) assert.strictEqual((await call(CH.SET_KEY, { channel: 'email', key: bad })).ok, false);
+  assert.strictEqual((await call(CH.SET_KEY, { channel: 'coreclaw', key: RKEY })).ok, false, 'only the two outreach providers');
+  await call(CH.CLEAR_KEY, { channel: 'email' });
   assert.strictEqual(resend.readResendConfig(store).keyConfigured, false);
   for (const opts of [{ available: false }, { backend: 'basic_text' }]) {
     const t = setup({ ss: safeStorage(opts) });
-    const r = await t.call(CH.SET_KEY, { provider: 'resend', key: RKEY });
+    const r = await t.call(CH.SET_KEY, { channel: 'email', key: RKEY });
     assert.strictEqual(r.ok, false);
     assert.strictEqual(r.error.code, 'OUTREACH_KEYSTORE_UNAVAILABLE');
   }
@@ -215,8 +215,8 @@ test('9. Resend check: one GET to /domains with the key; the result is reduced t
   const body = { data: [{ id: 'd_1', name: 'mail.example-shop.pk', status: 'verified', region: 'us-east-1', records: [{ value: 'SECRET-DKIM' }] }, { name: 'other.pk', status: 'failed' }] };
   const { call, store, fetchLog } = setup({ fetchImpl: async () => resp(200, body) });
   await call(CH.SAVE_EMAIL, GOOD_EMAIL);
-  await call(CH.SET_KEY, { provider: 'resend', key: RKEY });
-  const r = await call(CH.VERIFY, { provider: 'resend' });
+  await call(CH.SET_KEY, { channel: 'email', key: RKEY });
+  const r = await call(CH.VERIFY, { channel: 'email' });
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(Object.keys(r.data).sort(), ['checkedAt', 'message', 'status']);
   assert.strictEqual(r.data.status, 'verified');
@@ -246,16 +246,16 @@ test('10. Resend status mapping, not-found, rejected key and an unreachable prov
   for (const [answer, expected] of cases) {
     const { call } = setup({ fetchImpl: async () => answer });
     await call(CH.SAVE_EMAIL, GOOD_EMAIL);
-    await call(CH.SET_KEY, { provider: 'resend', key: RKEY });
-    assert.strictEqual((await call(CH.VERIFY, { provider: 'resend' })).data.status, expected);
+    await call(CH.SET_KEY, { channel: 'email', key: RKEY });
+    assert.strictEqual((await call(CH.VERIFY, { channel: 'email' })).data.status, expected);
   }
   // unreachable / 5xx: nothing is changed, the previous state stays
   for (const f of [async () => { throw new Error('ECONNRESET'); }, async () => resp(503, {})]) {
     const { call, store } = setup({ fetchImpl: f });
     await call(CH.SAVE_EMAIL, GOOD_EMAIL);
-    await call(CH.SET_KEY, { provider: 'resend', key: RKEY });
+    await call(CH.SET_KEY, { channel: 'email', key: RKEY });
     store.set('settings', { ...store.get('settings'), emailDomainVerification: 'verified', [CHECKED_AT.email]: '2026-10-01T00:00:00.000Z' });
-    const r = await call(CH.VERIFY, { provider: 'resend' });
+    const r = await call(CH.VERIFY, { channel: 'email' });
     assert.strictEqual(r.data.status, 'verified');
     assert.strictEqual(r.data.checkedAt, '2026-10-01T00:00:00.000Z');
     assert.match(r.data.message, /Nothing was changed/);
@@ -266,8 +266,8 @@ test('11. Meta check: one GET to the phone-number object; verified only for OUR 
   const ok = { display_phone_number: '+92 300 1234567', code_verification_status: 'VERIFIED', status: 'CONNECTED', id: '123456789012345', verified_name: 'Secret Biz' };
   const { call, store, fetchLog } = setup({ fetchImpl: async () => resp(200, ok) });
   await call(CH.SAVE_WHATSAPP, GOOD_WA);
-  await call(CH.SET_KEY, { provider: 'meta-cloud', key: MKEY });
-  const r = await call(CH.VERIFY, { provider: 'meta-cloud' });
+  await call(CH.SET_KEY, { channel: 'whatsapp', key: MKEY });
+  const r = await call(CH.VERIFY, { channel: 'whatsapp' });
   assert.strictEqual(r.data.status, 'verified');
   scan(r, ['Secret Biz', 'CONNECTED', MKEY]);
   assert.strictEqual(fetchLog.length, 1);
@@ -286,17 +286,17 @@ test('11. Meta check: one GET to the phone-number object; verified only for OUR 
   for (const [status, expected] of [[404, 'failed'], [400, 'failed'], [401, 'unknown']]) {
     const t = setup({ fetchImpl: async () => resp(status, { error: { message: 'x' } }) });
     await t.call(CH.SAVE_WHATSAPP, GOOD_WA);
-    await t.call(CH.SET_KEY, { provider: 'meta-cloud', key: MKEY });
-    assert.strictEqual((await t.call(CH.VERIFY, { provider: 'meta-cloud' })).data.status, expected, String(status));
+    await t.call(CH.SET_KEY, { channel: 'whatsapp', key: MKEY });
+    assert.strictEqual((await t.call(CH.VERIFY, { channel: 'whatsapp' })).data.status, expected, String(status));
   }
 });
 
 test('12. verify refuses before any network call when the configuration is not ready', async () => {
   const { call, fetchLog } = setup({ fetchImpl: async () => resp(200, {}) });
-  assert.match((await call(CH.VERIFY, { provider: 'resend' })).error.message, /domain first/);
+  assert.match((await call(CH.VERIFY, { channel: 'email' })).error.message, /domain first/);
   await call(CH.SAVE_EMAIL, GOOD_EMAIL);
-  assert.match((await call(CH.VERIFY, { provider: 'resend' })).error.message, /API key first/);
-  assert.match((await call(CH.VERIFY, { provider: 'meta-cloud' })).error.message, /sending number/);
+  assert.match((await call(CH.VERIFY, { channel: 'email' })).error.message, /API key first/);
+  assert.match((await call(CH.VERIFY, { channel: 'whatsapp' })).error.message, /sending number/);
   assert.strictEqual(fetchLog.length, 0);
 });
 
@@ -305,8 +305,8 @@ test('13. every write notifies (for live apply); refused writes notify nobody', 
   await call(CH.SAVE_BUSINESS, { companyName: 'X' });
   await call(CH.SAVE_EMAIL, GOOD_EMAIL);
   await call(CH.SAVE_WHATSAPP, GOOD_WA);
-  await call(CH.SET_KEY, { provider: 'resend', key: RKEY });
-  await call(CH.CLEAR_KEY, { provider: 'resend' });
+  await call(CH.SET_KEY, { channel: 'email', key: RKEY });
+  await call(CH.CLEAR_KEY, { channel: 'email' });
   await call(CH.SAVE_EMAIL, { ...GOOD_EMAIL, fromAddress: 'bad' });
   assert.deepStrictEqual(changes, ['business', 'email', 'whatsapp', 'email', 'email']);
 });
@@ -315,8 +315,8 @@ test('14. IPC: trusted sender only, closed payloads, no key in any response', as
   const { call, calls } = setup();
   for (const ch of Object.values(CH)) assert.strictEqual((await call(ch, {}, { untrusted: true })).ok, false, ch);
   assert.strictEqual((await call(CH.SAVE_BUSINESS, { companyName: 'x', apiKey: RKEY })).ok, false);
-  assert.strictEqual((await call(CH.VERIFY, { provider: 'resend', url: 'http://evil' })).ok, false);
-  await call(CH.SET_KEY, { provider: 'resend', key: RKEY });
+  assert.strictEqual((await call(CH.VERIFY, { channel: 'email', url: 'http://evil' })).ok, false);
+  await call(CH.SET_KEY, { channel: 'email', key: RKEY });
   await call(CH.STATUS, {});
   scan(calls, [RKEY]);
 });

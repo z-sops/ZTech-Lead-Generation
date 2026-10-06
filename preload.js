@@ -18,16 +18,17 @@ contextBridge.exposeInMainWorld('appAPI', {
     load: () => ipcRenderer.invoke('settings:load')
   },
   // F26: Outreach Settings. Keys are WRITE-ONLY (setKey seals in main; nothing returns
-  // them). verify asks main for one read-only provider check and returns only
+  // them). Methods take a channel ('email' | 'whatsapp'), never a provider id.
+  // verify asks main for one read-only provider check and returns only
   // { status, checkedAt, message }.
   outreachSettings: Object.freeze({
     status: () => ipcRenderer.invoke('outreach-settings:status', {}),
     saveBusiness: (payload) => ipcRenderer.invoke('outreach-settings:save-business', payload || {}),
     saveEmail: (payload) => ipcRenderer.invoke('outreach-settings:save-email', payload || {}),
     saveWhatsApp: (payload) => ipcRenderer.invoke('outreach-settings:save-whatsapp', payload || {}),
-    setKey: (provider, key) => ipcRenderer.invoke('outreach-settings:set-key', { provider, key }),
-    clearKey: (provider) => ipcRenderer.invoke('outreach-settings:clear-key', { provider }),
-    verify: (provider) => ipcRenderer.invoke('outreach-settings:verify', { provider }),
+    setKey: (channel, key) => ipcRenderer.invoke('outreach-settings:set-key', { channel, key }),
+    clearKey: (channel) => ipcRenderer.invoke('outreach-settings:clear-key', { channel }),
+    verify: (channel) => ipcRenderer.invoke('outreach-settings:verify', { channel }),
   }),
 
   // 官网调研 (prospect research). Every method passes through a trusted-sender

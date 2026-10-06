@@ -1793,6 +1793,9 @@
                 <button type="button" class="settings-index-item" data-settings-jump="collection">Collection provider</button>
                 <button type="button" class="settings-index-item" data-settings-jump="research">Website research</button>
                 <button type="button" class="settings-index-item" data-settings-jump="intelligence">Opportunity Intelligence</button>
+                <button type="button" class="settings-index-item" data-settings-jump="business">Business profile</button>
+                <button type="button" class="settings-index-item" data-settings-jump="email">Email</button>
+                <button type="button" class="settings-index-item" data-settings-jump="whatsapp">WhatsApp</button>
                 <button type="button" class="settings-index-item" data-settings-jump="network">Network</button>
                 <button type="button" class="settings-index-item" data-settings-jump="security">Security</button>
                 <button type="button" class="settings-index-item" data-settings-jump="application">Application</button>
@@ -1969,6 +1972,240 @@
                     </div>
                   </div>
                   <p class="form-hint" id="oi-settings-status" role="status" aria-live="polite"></p>
+                </section>
+
+                <!-- F26 Outreach Settings. Business profile, Email (Resend) and WhatsApp (Meta).
+                     Keys are write-only: only stored / readable booleans come back. Verification
+                     is a user-triggered check; only status and the time of the last check are
+                     shown. Values are set in renderer.js with textContent / value only. -->
+                <section class="settings-group" id="settings-group-business" aria-labelledby="settings-title-business">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-business">Business profile</h3>
+                    <p class="settings-group-desc">Who the pitch comes from. Left empty, pitches carry no sender identity instead of an invented one.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-representativeName">Your name</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-business-representativeName" placeholder="Not set" autocomplete="off" maxlength="80">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-companyName">Company name</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-business-companyName" placeholder="Not set" autocomplete="off" maxlength="120">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-valueProposition">Value proposition</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <textarea id="outreach-business-valueProposition" rows="3" placeholder="Not set" maxlength="1200"></textarea>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-callToAction">Call to action</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <textarea id="outreach-business-callToAction" rows="3" placeholder="Not set" maxlength="400"></textarea>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label"></div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-business-status" role="status" aria-live="polite"></p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-save-business">Save business profile</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-email" aria-labelledby="settings-title-email">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-email">Email</h3>
+                    <p class="settings-group-desc">Sends one approved pitch at a time through Resend, from an address on your own verified domain. Changes apply right away; no restart is needed.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Sending</span>
+                      <span class="settings-key-state" id="outreach-email-capability" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint" id="outreach-email-capability-message" role="status" aria-live="polite"></p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-enabled">Email sending on</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="checkbox" id="outreach-email-enabled">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-fromName">From name</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-email-fromName" placeholder="Not set" autocomplete="off" maxlength="120">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-domain">Sending domain</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-email-domain" placeholder="Not set" autocomplete="off" maxlength="253">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-fromAddress">From address</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-email-fromAddress" placeholder="Not set" autocomplete="off" maxlength="320">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-replyTo">Reply-to address</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-email-replyTo" placeholder="Optional" autocomplete="off" maxlength="320">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-signature">Signature</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <textarea id="outreach-email-signature" rows="3" placeholder="Not set" maxlength="500"></textarea>
+                      <p class="form-hint">Optional. Plain text, added below the pitch.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label"></div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-email-status" role="status" aria-live="polite"></p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-save-email">Save email settings</button>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-key">Resend API key</label>
+                      <span class="settings-key-state" id="outreach-email-key-state" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="outreach-email-key" placeholder="Enter key to replace" autocomplete="off" maxlength="2048">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-email-save-key">Save key</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-email-clear-key" disabled>Clear</button>
+                      </div>
+                      <p class="form-hint">Stored encrypted on this computer. It is never shown again.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Domain verification</span>
+                      <span class="settings-key-state" id="outreach-email-verify-state" data-state="unknown">Not checked</span>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-email-verify-checked" role="status" aria-live="polite">Never checked.</p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-email-verify">Check domain</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-whatsapp" aria-labelledby="settings-title-whatsapp">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-whatsapp">WhatsApp</h3>
+                    <p class="settings-group-desc">Sends one approved pitch at a time through the Meta WhatsApp Cloud API, from your connected business number. Changes apply right away; no restart is needed.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Sending</span>
+                      <span class="settings-key-state" id="outreach-whatsapp-capability" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint" id="outreach-whatsapp-capability-message" role="status" aria-live="polite"></p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-enabled">WhatsApp sending on</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="checkbox" id="outreach-whatsapp-enabled">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-fromNumber">Sending number</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-whatsapp-fromNumber" placeholder="International format, e.g. +1..." autocomplete="off" maxlength="40">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-phoneNumberId">Phone number ID</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-whatsapp-phoneNumberId" placeholder="Not set" autocomplete="off" maxlength="120">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-businessAccountId">Business account ID</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-whatsapp-businessAccountId" placeholder="Not set" autocomplete="off" maxlength="120">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label"></div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-whatsapp-status" role="status" aria-live="polite"></p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-save-whatsapp">Save WhatsApp settings</button>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-key">Meta access token</label>
+                      <span class="settings-key-state" id="outreach-whatsapp-key-state" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="outreach-whatsapp-key" placeholder="Enter key to replace" autocomplete="off" maxlength="2048">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-whatsapp-save-key">Save key</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-whatsapp-clear-key" disabled>Clear</button>
+                      </div>
+                      <p class="form-hint">Stored encrypted on this computer. It is never shown again.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Number verification</span>
+                      <span class="settings-key-state" id="outreach-whatsapp-verify-state" data-state="unknown">Not checked</span>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-whatsapp-verify-checked" role="status" aria-live="polite">Never checked.</p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-whatsapp-verify">Check number</button>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Message templates</span>
+                      <span class="settings-key-state" id="outreach-whatsapp-templates" data-state="unknown">Not supported yet</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint">WhatsApp accepts free-form text only inside a 24-hour window the customer opened. A first message to a new lead needs a Meta-approved template, which this version cannot send yet, so Meta will usually refuse it.</p>
+                    </div>
+                  </div>
                 </section>
 
                 <section class="settings-group" id="settings-group-network" aria-labelledby="settings-title-network">

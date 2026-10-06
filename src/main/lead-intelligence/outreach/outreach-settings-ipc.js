@@ -2,12 +2,15 @@
 
 const { assertValid } = require('../core/validate');
 const { publicError, ForbiddenError } = require('../core/errors');
-const { KEY_PROVIDERS } = require('./outreachSettings');
+const { PROVIDERS } = require('./outreachSettings');
 
 /**
  * F26 - Outreach Settings channels. Trusted sender only; every payload is a closed
  * object. Keys go in (set-key) and never come out. verify is a user-triggered,
  * read-only provider check that returns only { status, checkedAt, message }.
+ *
+ * The renderer names a CHANNEL ('email' | 'whatsapp'), never a provider id: which
+ * provider serves a channel is main-process configuration (F24 rule O).
  */
 const OUTREACH_SETTINGS_CHANNELS = Object.freeze({
   STATUS: 'outreach-settings:status',
@@ -21,7 +24,8 @@ const OUTREACH_SETTINGS_CHANNELS = Object.freeze({
 
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const text = (max) => ({ type: 'string', maxLength: max });
-const provider = { type: 'string', enum: [...KEY_PROVIDERS] };
+const channel = { type: 'string', enum: ['email', 'whatsapp'] };
+const CHANNEL_PROVIDER = Object.freeze({ email: PROVIDERS.resend, whatsapp: PROVIDERS.meta });
 
 const OUTREACH_SETTINGS_SCHEMAS = Object.freeze({
   [OUTREACH_SETTINGS_CHANNELS.STATUS]: obj({}),
@@ -34,9 +38,9 @@ const OUTREACH_SETTINGS_SCHEMAS = Object.freeze({
   [OUTREACH_SETTINGS_CHANNELS.SAVE_WHATSAPP]: obj({
     enabled: { type: 'boolean' }, fromNumber: text(40), phoneNumberId: text(120), businessAccountId: text(120),
   }),
-  [OUTREACH_SETTINGS_CHANNELS.SET_KEY]: obj({ provider, key: { type: 'string', minLength: 1, maxLength: 2048 } }, ['provider', 'key']),
-  [OUTREACH_SETTINGS_CHANNELS.CLEAR_KEY]: obj({ provider }, ['provider']),
-  [OUTREACH_SETTINGS_CHANNELS.VERIFY]: obj({ provider }, ['provider']),
+  [OUTREACH_SETTINGS_CHANNELS.SET_KEY]: obj({ channel, key: { type: 'string', minLength: 1, maxLength: 2048 } }, ['channel', 'key']),
+  [OUTREACH_SETTINGS_CHANNELS.CLEAR_KEY]: obj({ channel }, ['channel']),
+  [OUTREACH_SETTINGS_CHANNELS.VERIFY]: obj({ channel }, ['channel']),
 });
 
 function registerOutreachSettingsIpc({ ipcMain, settings, isTrustedSender, logger = console }) {
@@ -63,9 +67,9 @@ function registerOutreachSettingsIpc({ ipcMain, settings, isTrustedSender, logge
   handle(OUTREACH_SETTINGS_CHANNELS.SAVE_BUSINESS, (a) => settings.saveBusiness(a));
   handle(OUTREACH_SETTINGS_CHANNELS.SAVE_EMAIL, (a) => settings.saveEmail(a));
   handle(OUTREACH_SETTINGS_CHANNELS.SAVE_WHATSAPP, (a) => settings.saveWhatsApp(a));
-  handle(OUTREACH_SETTINGS_CHANNELS.SET_KEY, (a) => settings.setKey(a.provider, a.key));
-  handle(OUTREACH_SETTINGS_CHANNELS.CLEAR_KEY, (a) => settings.clearKey(a.provider));
-  handle(OUTREACH_SETTINGS_CHANNELS.VERIFY, (a) => settings.verify(a.provider));
+  handle(OUTREACH_SETTINGS_CHANNELS.SET_KEY, (a) => settings.setKey(CHANNEL_PROVIDER[a.channel], a.key));
+  handle(OUTREACH_SETTINGS_CHANNELS.CLEAR_KEY, (a) => settings.clearKey(CHANNEL_PROVIDER[a.channel]));
+  handle(OUTREACH_SETTINGS_CHANNELS.VERIFY, (a) => settings.verify(CHANNEL_PROVIDER[a.channel]));
   return registered;
 }
 

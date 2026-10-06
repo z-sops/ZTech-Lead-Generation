@@ -184,10 +184,11 @@ test('9. every existing Settings control survives, once, with its type', () => {
   assert.ok(!/settings-research-timeout|settings-provider-|settings-collection-provider/.test(SETTINGS_HTML), 'no invented provider setting');
 });
 
-test('10. Settings is organised into six groups, each holding its own controls', () => {
+test('10. Settings is organised into nine groups, each holding its own controls', () => {
   const groups = [...SETTINGS_HTML.matchAll(/<section class="settings-group" id="settings-group-([a-z]+)"/g)].map((m) => m[1]);
   // I3/I4 declared lock update: + 'intelligence' (Opportunity Intelligence service and keys).
-  assert.deepStrictEqual(groups, ['collection', 'research', 'intelligence', 'network', 'security', 'application']);
+  // F26 declared lock update: + 'business', 'email', 'whatsapp' (Outreach Settings).
+  assert.deepStrictEqual(groups, ['collection', 'research', 'intelligence', 'business', 'email', 'whatsapp', 'network', 'security', 'application']);
   const group = (name) => {
     const start = SETTINGS_HTML.indexOf(`id="settings-group-${name}"`);
     const end = SETTINGS_HTML.indexOf('<section class="settings-group"', start + 1);
@@ -197,6 +198,9 @@ test('10. Settings is organised into six groups, each holding its own controls',
   has('collection', ['settings-apikey', 'btn-test-apikey', 'btn-clear-apikey', 'settings-task-key', 'btn-test-taskkey', 'btn-clear-taskkey']);
   has('research', ['settings-research-baseurl', 'settings-research-transport', 'settings-research-key', 'btn-research-clear-key', 'settings-research-health', 'btn-research-health']);
   has('intelligence', ['oi-service-state', 'oi-service-mode', 'btn-oi-choose-folder', 'btn-oi-start', 'btn-oi-stop', 'btn-oi-restart', 'btn-oi-copy-log', 'oi-provider-rows', 'btn-oi-save-settings']);
+  has('business', ['outreach-business-representativeName', 'outreach-business-companyName', 'btn-outreach-save-business']);
+  has('email', ['outreach-email-enabled', 'outreach-email-domain', 'outreach-email-key', 'btn-outreach-email-verify', 'outreach-email-capability']);
+  has('whatsapp', ['outreach-whatsapp-enabled', 'outreach-whatsapp-fromNumber', 'outreach-whatsapp-key', 'btn-outreach-whatsapp-verify', 'outreach-whatsapp-templates']);
   has('network', ['settings-proxy-url', 'btn-detect-proxy']);
   has('security', ['settings-security-apikey', 'settings-security-taskkey', 'settings-security-researchkey', 'settings-security-proxy']);
   has('application', ['btn-export-logs', 'settings-storage-engine']);

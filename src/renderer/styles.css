@@ -3237,6 +3237,14 @@ textarea {
   border-color: var(--border-2);
 }
 
+/* F26: Outreach Settings text fields and textareas fill the row; the on/off box stays native size. */
+.settings-group[id^="settings-group-"] .settings-row-control > input[id^="outreach-"]:not([type="checkbox"]),
+.settings-row-control > textarea[id^="outreach-"] {
+  width: 100%;
+  max-width: 560px;
+  border-color: var(--border-2);
+}
+
 .settings-row-control .form-hint {
   margin: var(--space-2) 0 0;
   font-size: var(--font-12);
