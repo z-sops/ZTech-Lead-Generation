@@ -76,6 +76,10 @@ const SNAP_ID = { type: 'string', minLength: 1, maxLength: 128, pattern: /^snap_
 const ENTITY_KEY = { type: 'string', minLength: 1, maxLength: 300 };
 
 class OpportunityIntelligenceGateway {
+  // I4: the managed service's per-launch bearer token. A private field, so it can never
+  // be reached by JSON.stringify, a spread, a log line or anything sent over IPC.
+  #authToken = null;
+
   /**
    * @param {object} input
    * @param {object} [input.config]      { enabled, baseUrl, timeoutMs, healthTimeoutMs, allowLocalhost, maxCompetitors }
@@ -114,6 +118,45 @@ class OpportunityIntelligenceGateway {
     } else {
       this.baseUrl = checked.base;
     }
+    this.initialBaseUrl = this.baseUrl;
+    // I4: a supervisor may close the gate (managed service stopped, crashed, not set
+    // up, turned off). A closed gate answers with the supervisor's own plain message.
+    this.gate = null;
+    this.inflightResearch = 0;
+  }
+
+  /**
+   * I4 - point the gateway at the service the supervisor launched (main process only;
+   * there is no IPC path to this). `port` is a loopback port; `authToken` is the managed
+   * child's per-launch token, or null for an external developer service (which never
+   * receives ZTech's token). `port: null` restores the configured destination.
+   */
+  reconfigure({ port = null, authToken = null } = {}) {
+    if (port === null) {
+      this.baseUrl = this.initialBaseUrl;
+    } else {
+      const n = Number(port);
+      if (!Number.isInteger(n) || n < 1 || n > 65535) throw new TypeError('reconfigure: port must be an integer 1-65535');
+      this.baseUrl = `http://127.0.0.1:${n}`;
+    }
+    this.#authToken = typeof authToken === 'string' && authToken ? authToken : null;
+    this.health = { state: 'not_checked', message: 'OI health has not been checked yet.' };
+  }
+
+  /** Whether this gateway currently sends a bearer token. Never the token itself. */
+  get authenticated() { return this.#authToken !== null; }
+
+  /** I4 - `fn()` returns null when OI may be called, else the plain reason it may not. */
+  setGate(fn) { this.gate = typeof fn === 'function' ? fn : null; }
+
+  gateReason() {
+    if (!this.gate) return null;
+    try {
+      const r = this.gate();
+      return typeof r === 'string' && r ? r : null;
+    } catch {
+      return 'Opportunity Intelligence is unavailable.';
+    }
   }
 
   get enabled() { return Boolean(this.config.enabled && this.baseUrl); }
@@ -139,6 +182,8 @@ class OpportunityIntelligenceGateway {
     if (!this.usable) {
       return { ok: false, state: this.config.enabled ? 'misconfigured' : 'disabled', error: this.unavailableReason() };
     }
+    const closed = this.gateReason();
+    if (closed) return { ok: false, state: 'unavailable', error: closed };
     const url = `${this.baseUrl}${route}`;
     const budget = timeoutMs || (route === ROUTES.health ? this.config.healthTimeoutMs : this.config.timeoutMs);
     const controller = new AbortController();
@@ -157,6 +202,8 @@ class OpportunityIntelligenceGateway {
         headers: { accept: 'application/json' },
         signal: controller.signal,
       };
+      // I4: only a MANAGED child ever has a token, and only it receives one.
+      if (this.#authToken && route !== ROUTES.health) init.headers.authorization = `Bearer ${this.#authToken}`;
       if (body !== undefined) {
         init.headers['content-type'] = 'application/json';
         init.body = JSON.stringify(body);
@@ -265,7 +312,14 @@ class OpportunityIntelligenceGateway {
       },
       options: whitelistOptions(options),
     };
-    const res = await this.call(ROUTES.research, { method: 'POST', body: payload, signal });
+    // Counted so a supervisor never restarts the service under a research request.
+    this.inflightResearch += 1;
+    let res;
+    try {
+      res = await this.call(ROUTES.research, { method: 'POST', body: payload, signal });
+    } finally {
+      this.inflightResearch -= 1;
+    }
     return this.#reportOrError(res, { leadId, company, domain: dom });
   }
 

@@ -670,8 +670,8 @@ test('20. the drawer markup, CSP, channel set and dependencies are untouched by 
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 write-only OI settings methods = 63 total.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 63, '63 preload methods');
+  // I3/I4 declared lock update: +4 write-only OI settings methods, +6 OI service methods = 69 total.
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 69, '69 preload methods');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');
   // F12 declared lock update: the former "Ready" placeholder became the live, read-only

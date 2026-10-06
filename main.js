@@ -17,6 +17,8 @@ const { initializeLeadIntelligenceRuntime } = require('./src/main/lead-intellige
 const { registerUnavailableOpportunityIpc } = require('./src/main/lead-intelligence/opportunity');
 const { createOiProviderConfig } = require('./src/main/lead-intelligence/opportunity/oiProviderConfig');
 const { registerOiConfigIpc } = require('./src/main/lead-intelligence/opportunity/oi-config-ipc');
+const { OpportunityServiceSupervisor } = require('./src/main/lead-intelligence/opportunity/OpportunityServiceSupervisor');
+const { registerOiServiceIpc } = require('./src/main/lead-intelligence/opportunity/oi-service-ipc');
 const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/main/lead-intelligence/outreach-ipc');
 
 let mainWindow = null;
@@ -33,6 +35,9 @@ let leadIntelIpc = null;
 let leadIntelTrustedSender = null;
 // I3: Opportunity Intelligence provider configuration (sealed keys, main process only).
 let oiProviderConfig = null;
+// I4: the one supervisor of the local OI service process (managed / external / off).
+let oiSupervisor = null;
+let oiQuitDone = false;
 // F23: the electron-store instance from initServices, kept so the Resend transport can
 // read the customer's own API credential at send time - inside the main process only.
 // No key is ever copied out of this store into code, config objects or the renderer.
@@ -1362,8 +1367,10 @@ async function initLeadIntelligence() {
  * service that is not running simply reports "unavailable". Setting
  * `ZTECH_OI_ENABLED=0` turns the feature off entirely.
  *
- * No provider credential is read here. OI's own keys (BRAVE_API_KEY and friends)
- * live in the OI process environment and never cross into ZTech.
+ * No provider credential is read here. Since I3, OI provider keys are sealed in
+ * electron-store by oiProviderConfig and injected ONLY into a child that the I4
+ * supervisor launched itself (managed mode); they never cross IPC. In external mode
+ * this env-configured destination is used, with no key and no token.
  */
 function opportunityConfigFromEnv() {
   const timeout = Number(process.env.ZTECH_OI_TIMEOUT_MS);
@@ -1470,13 +1477,56 @@ function registerOiConfigIpcHandlers() {
       ipcMain,
       config: oiProviderConfig,
       isTrustedSender: oiTrustedSender(),
-      serviceView: () => null,
-      reported: () => null,
+      serviceView: () => (oiSupervisor ? oiSupervisor.healthView() : null),
+      reported: () => (oiSupervisor ? oiSupervisor.reportedConfiguration() : null),
       logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
     });
     logger.info('lead-intel', `registered ${channels.length} opportunity-intelligence config channels`);
   } catch (err) {
     logger.error('lead-intel', 'opportunity-intelligence config IPC registration failed', { error: err.message });
+  }
+}
+
+/**
+ * I4: start supervising the local OI service. Fire-and-forget: the window is already
+ * up, and nothing here is awaited by startup. The supervisor reconfigures the existing
+ * OI gateway in place (port + per-launch token) - the OI IPC handlers are not rebuilt.
+ * The OI folder is chosen in a native dialog opened HERE; the renderer never sends a path.
+ */
+function startOiSupervisor() {
+  try {
+    if (!oiProviderConfig) return;
+    const oi = leadIntelRuntime && leadIntelRuntime.opportunity ? leadIntelRuntime.opportunity : null;
+    oiSupervisor = new OpportunityServiceSupervisor({
+      gateway: oi ? oi.gateway : null,
+      providerConfig: oiProviderConfig,
+      store: electronStore,
+      logger: {
+        info: (msg) => logger.info('oi-service', String(msg)),
+        warn: (msg) => logger.warn('oi-service', String(msg)),
+      },
+    });
+    const channels = registerOiServiceIpc({
+      ipcMain,
+      supervisor: oiSupervisor,
+      isTrustedSender: oiTrustedSender(),
+      pickFolder: async () => {
+        const res = await dialog.showOpenDialog(mainWindow, {
+          title: 'Choose the Opportunity Intelligence folder',
+          properties: ['openDirectory'],
+        });
+        return res && !res.canceled && Array.isArray(res.filePaths) && res.filePaths[0] ? res.filePaths[0] : null;
+      },
+      copyText: (text) => {
+        const { clipboard } = require('electron');
+        clipboard.writeText(String(text || ''));
+      },
+      logger: { warn: (msg) => logger.warn('oi-service', String(msg)) },
+    });
+    logger.info('oi-service', `registered ${channels.length} opportunity-intelligence service channels`);
+    oiSupervisor.start();
+  } catch (err) {
+    logger.error('oi-service', 'opportunity-intelligence supervisor could not start', { error: err.message });
   }
 }
 
@@ -2101,6 +2151,9 @@ app.whenReady().then(async () => {
     // I3: OI provider configuration. Registered whether or not the LI runtime started,
     // so Settings can always show and edit it. Never awaited on anything network-bound.
     registerOiConfigIpcHandlers();
+    // I4: supervise the local OI service. Not awaited: a slow or failing OI never
+    // delays the window or anything else that starts after it.
+    startOiSupervisor();
     let storedProxyUrl = '';
     try {
       const Store = require('electron-store');
@@ -2124,6 +2177,26 @@ app.whenReady().then(async () => {
 // A5: stop the research scheduler and close the Zuni-SEO transport on quit.
 // The re-entrancy flag makes the preventDefault/app.quit() pair safe, and the
 // 3s race bounds shutdown so a transport that will not close cannot trap the app.
+// I4: the managed OI child must not outlive ZTech. will-quit runs after every window is
+// closed; the shutdown is graceful, bounded at 3.5 s, then the process tree is forced.
+app.on('will-quit', (event) => {
+  if (!oiSupervisor || oiQuitDone || !oiSupervisor.child) return;
+  event.preventDefault();
+  oiQuitDone = true;
+  Promise.race([
+    oiSupervisor.shutdown(),
+    new Promise((resolve) => setTimeout(resolve, 3500))
+  ]).catch(() => {}).finally(() => {
+    try { oiSupervisor.killSync(); } catch {}
+    app.quit();
+  });
+});
+
+// Last resort if ZTech exits without will-quit (crash path): kill the OI tree synchronously.
+process.on('exit', () => {
+  try { if (oiSupervisor) oiSupervisor.killSync(); } catch {}
+});
+
 app.on('before-quit', (event) => {
   // A10: Lead Intelligence holds no timers of its own (li.start() was never
   // called). Its handlers and runtime are torn down synchronously and the

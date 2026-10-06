@@ -441,6 +441,23 @@ test('19. the production lead source: a stored row (title + full website URL) re
   assert.ok(p.text().includes('res_20261005120000_abcdef01'));
 });
 
+test('20. I4: a crashed managed service renders unavailable with the supervisor\'s own message', async () => {
+  const { MESSAGES } = require(path.join(OP, 'OpportunityServiceSupervisor'));
+  const main = mainProcess({ [RESEARCH]: { body: fixtures.report() }, [REPORT]: { body: fixtures.report() } });
+  const p = makePanel(main.api);
+  await p.ctl.open('L1');
+  await p.ctl.run();
+  assert.ok(p.text().includes('res_20261005120000_abcdef01'));
+  // The supervisor closes the gateway's gate when the managed service has crashed.
+  main.svc.gateway.setGate(() => MESSAGES.crashed);
+  const q = makePanel(main.api);
+  await q.ctl.open('L1');
+  assert.ok(q.text().includes('Opportunity Intelligence unavailable'), q.text());
+  assert.ok(q.text().includes(MESSAGES.crashed));
+  assert.ok(q.button('oi-retry'));
+  assert.ok(!main.log.some((c) => c.key === REPORT && c.after), 'no call crossed the closed gate');
+});
+
 (async () => {
   for (const { name, fn } of queue) {
     try {

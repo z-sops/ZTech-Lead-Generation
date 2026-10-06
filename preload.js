@@ -182,5 +182,13 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     setKey: (provider, key) => ipcRenderer.invoke('oi-config:set-key', { provider, key }),
     clearKey: (provider) => ipcRenderer.invoke('oi-config:clear-key', { provider }),
     setSetting: (name, value) => ipcRenderer.invoke('oi-config:set-setting', { name, value }),
+    // I4: the local OI service. No path, port or command is ever sent or returned:
+    // chooseFolder asks main to open a native folder dialog.
+    chooseFolder: () => ipcRenderer.invoke('oi-service:choose-folder', {}),
+    setMode: (mode) => ipcRenderer.invoke('oi-service:set-mode', { mode }),
+    start: () => ipcRenderer.invoke('oi-service:start', {}),
+    stop: () => ipcRenderer.invoke('oi-service:stop', {}),
+    restart: () => ipcRenderer.invoke('oi-service:restart', {}),
+    copyLog: () => ipcRenderer.invoke('oi-service:copy-log', {}),
   })
 }));

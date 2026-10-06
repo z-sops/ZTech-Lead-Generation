@@ -731,9 +731,9 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F19 declared lock update: 51 -> 52, the single outreach send boundary.
     // F21 declared lock update: 52 -> 53, the single read-only send-ledger read.
     // Phase I2: +7 Opportunity Intelligence channels = 60 total.
-    // I3/I4 declared lock update: +4 write-only OI settings methods = 64 total.
-    assert.strictEqual(channels.length, 64, 'exactly 64 channels');
-    assert.strictEqual(new Set(channels).size, 64, 'no duplicate channel names');
+    // I3/I4 declared lock update: +4 write-only OI settings methods, +6 OI service methods = 70 total.
+    assert.strictEqual(channels.length, 70, 'exactly 70 channels');
+    assert.strictEqual(new Set(channels).size, 70, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1439,8 +1439,8 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
   // F19 declared lock update: 51 -> 52, adding the single outreach send boundary.
   // F21 declared lock update: 52 -> 53, adding the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 60 total.
-  // I3/I4 declared lock update: +4 write-only OI settings methods = 64 total.
-  assert.strictEqual(allChannels().length, 64, 'exactly 64 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send, F21 send-ledger read, Phase I2 Opportunity Intelligence)');
+  // I3/I4 declared lock update: +4 write-only OI settings methods, +6 OI service methods = 70 total.
+  assert.strictEqual(allChannels().length, 70, 'exactly 70 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send, F21 send-ledger read, Phase I2 Opportunity Intelligence)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

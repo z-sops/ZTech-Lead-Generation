@@ -578,7 +578,7 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   // Phase I2: +7 Opportunity Intelligence channels.
   const expectedOutreach = ['activity', 'approve', 'gate', 'list', 'outreachSend', 'prepare', 'ready', 'sends'];
   const expectedOI = ['health', 'engine', 'request', 'report', 'latest', 'associations', 'pitchContext'];
-  const expectedI3 = ['status', 'setKey', 'clearKey', 'setSetting']; // I3/I4 declared lock update
+  const expectedI3 = ['status', 'setKey', 'clearKey', 'setSetting', 'chooseFolder', 'setMode', 'start', 'stop', 'restart', 'copyLog']; // I3/I4 declared lock update
   assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI, ...expectedI3].sort(),
     'F17 added no preload method of its own; F18 adds exactly prepare, F19 exactly outreachSend, F21 exactly the reads; Phase I2 adds Opportunity Intelligence');
   for (const forbidden of [/contact/i, /schedule/i, /whatsapp/i, /verify/i]) {

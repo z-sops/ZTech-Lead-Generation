@@ -116,7 +116,14 @@ test('8. existing will-navigate guard remains intact', () => {
   // separately so a second navigation guard could not slip in unnoticed.
   const quitHookStart = mainSource.indexOf("app.on('before-quit'");
   const quitHookEnd = mainSource.indexOf("app.on('window-all-closed'", quitHookStart);
-  const navCode = mainSource.slice(0, quitHookStart) + mainSource.slice(quitHookEnd);
+  // I4 declared lock update: the will-quit hook defers the final quit once while the
+  // managed OI child is stopped. It is excluded here and counted on its own below.
+  const willQuitStart = mainSource.indexOf("app.on('will-quit'");
+  const willQuitEnd = mainSource.indexOf("process.on('exit'", willQuitStart);
+  assert.ok(willQuitStart > 0 && willQuitEnd > willQuitStart && willQuitEnd < quitHookStart, 'will-quit hook sits before before-quit');
+  const willQuit = mainSource.slice(willQuitStart, willQuitEnd);
+  assert.strictEqual(willQuit.split('event.preventDefault()').length - 1, 1, 'the will-quit hook has its own single preventDefault');
+  const navCode = mainSource.slice(0, willQuitStart) + mainSource.slice(willQuitEnd, quitHookStart) + mainSource.slice(quitHookEnd);
   const pdCount = navCode.split('event.preventDefault()').length - 1;
   assert.strictEqual(pdCount, 1, 'exactly one navigation preventDefault in main.js');
   const quitHook = mainSource.slice(quitHookStart, quitHookEnd);
