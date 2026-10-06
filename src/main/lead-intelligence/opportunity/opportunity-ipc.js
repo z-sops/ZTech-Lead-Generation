@@ -2,6 +2,7 @@
 
 const { assertValid, S } = require('../core/validate');
 const { publicError, ForbiddenError, ValidationError } = require('../core/errors');
+const { toLeadView } = require('../contracts/leadView');
 
 /**
  * Opportunity Intelligence channels.
@@ -88,10 +89,24 @@ function assertNoDestination(input, channel) {
  * a compromised renderer cannot invent a company name or domain to research.
  */
 async function resolveLeadView(leadSource, leadId) {
-  if (!leadSource || typeof leadSource.get !== 'function') return {};
+  if (!leadSource) return {};
+  // The production source (accountStoreLeadSource) exposes getLead(); `get` is kept
+  // for callers that already supply a view. Either way the answer is mapped through
+  // the shared ZTech lead-view contract, so the stored `title` column becomes the
+  // business name exactly as it does for Zuni-SEO.
+  const read = typeof leadSource.getLead === 'function' ? leadSource.getLead
+    : (typeof leadSource.get === 'function' ? leadSource.get : null);
+  if (!read) return {};
   try {
-    const view = await leadSource.get(leadId);
-    return view && typeof view === 'object' ? view : {};
+    const raw = await read.call(leadSource, leadId);
+    if (!raw || typeof raw !== 'object') return {};
+    try {
+      const view = toLeadView(raw);
+      // A source that already returns a view (company_name/domain) keeps those keys.
+      return { ...raw, ...view, name: view.name || raw.company_name || raw.name || null };
+    } catch {
+      return raw;
+    }
   } catch {
     return {};
   }

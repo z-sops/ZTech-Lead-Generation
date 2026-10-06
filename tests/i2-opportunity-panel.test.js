@@ -108,7 +108,7 @@ function fakeFetch(routes, log) {
   };
 }
 
-const { toLeadView } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'contracts', 'leadView'));
+const { accountStoreLeadSource } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'integration', 'mainProcess'));
 
 function mainProcess(routes, leadRows) {
   const log = [];
@@ -123,7 +123,14 @@ function mainProcess(routes, leadRows) {
     ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } },
     opportunity: svc,
     isTrustedSender: () => true,
-    leadSource: { get: async (id) => (leadRows ? toLeadView(leadRows[id]) : { id, company_name: 'Acme Bakery', domain: 'acme.example' }) },
+    // With rows: the PRODUCTION lead source over a fake accountStore, so the real
+    // getLead() + stored-row shape is exercised end to end.
+    leadSource: leadRows
+      ? accountStoreLeadSource({
+        queryNumbers: async ({ id }) => ({ rows: leadRows[id] ? [leadRows[id]] : [] }),
+        getCollectedNumbers: async () => Object.values(leadRows)
+      })
+      : { get: async (id) => ({ id, company_name: 'Acme Bakery', domain: 'acme.example' }) },
     logger: { warn() {} }
   });
   const sent = [];
@@ -421,7 +428,7 @@ test('18. the health view crossing IPC does not carry the OI destination', async
   assert.ok(!JSON.stringify(res.data).includes('127.0.0.1'));
 });
 
-test('19. a real ZTech lead row (title + full website URL) reaches OI as company + hostname', async () => {
+test('19. the production lead source: a stored row (title + full website URL) reaches OI as company + hostname', async () => {
   const rows = { L9: { id: 'L9', title: 'Thai Cafe & Co', website: 'https://www.thaicafe-bkk.com/menu', phone: '+66 81 234 5678' } };
   const main = mainProcess({ [RESEARCH]: { body: fixtures.report() }, [REPORT]: { body: fixtures.report() } }, rows);
   const p = makePanel(main.api);
