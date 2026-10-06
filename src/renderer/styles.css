@@ -5920,3 +5920,16 @@ textarea {
   font-weight: 700;
   color: var(--danger-f2);
 }
+
+/* ZTech I3/I4 - Opportunity Intelligence settings. Reuses the Settings row, chip and
+   button styles; only the service button strip is new. */
+.oi-service-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+#oi-provider-rows .settings-row-label .settings-key-state + .settings-key-state {
+  margin-left: var(--space-2);
+}

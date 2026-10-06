@@ -166,8 +166,10 @@ class OpportunityServiceSupervisor {
     this.fsImpl = fsImpl;
     this.opts = { ...DEFAULTS, ...options };
 
-    this.state = 'off';
-    this.message = MESSAGES.off;
+    // Until start() runs, report what the settings say, never a misleading "off".
+    const initial = !this.folder ? 'not_set_up' : (this.mode === 'off' ? 'off' : (this.mode === 'external' ? 'external' : 'starting'));
+    this.state = initial;
+    this.message = MESSAGES[initial];
     this.since = new Date(this.now()).toISOString();
     this.child = null;
     this.port = null;

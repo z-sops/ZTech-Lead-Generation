@@ -1187,6 +1187,8 @@ function renderSettingsKeyStates(settings) {
 async function loadSettingsWorkspace() {
   await loadSettings();
   refreshResearchHealth();
+  // I3/I4: Opportunity Intelligence service + provider keys (booleans only).
+  loadOiSettings();
   const engine = document.getElementById('settings-storage-engine');
   try {
     const storage = await window.appAPI.collector.storageStatus();
@@ -1205,6 +1207,272 @@ for (const jump of document.querySelectorAll('[data-settings-jump]')) {
     if (group) group.scrollIntoView({ block: 'start' });
   });
 }
+
+// === I3/I4 Opportunity Intelligence settings ===
+// The local OI service (managed / external / off) and its provider keys. Keys are
+// WRITE-ONLY: a key typed here is sent once to main, which seals it, and the field is
+// emptied. Main answers with booleans only (stored / readable / loaded by OI) and the
+// service's plain state. No path, port, URL, token or key value ever reaches this page,
+// and every value below is set with textContent.
+
+const OI_PROVIDER_ROWS = [
+  { id: 'brave', label: 'Brave Search API key', unlocks: 'Finds competitors (search).' },
+  { id: 'serper', label: 'Serper API key', unlocks: 'Finds competitors (alternative search).' },
+  { id: 'serpapi', label: 'SerpApi key', unlocks: 'Google Ads transparency.' },
+  { id: 'meta', label: 'Meta access token', unlocks: 'Meta Ad Library.' },
+  { id: 'x', label: 'X API token', unlocks: 'X / Twitter activity.' },
+  { id: 'llm', label: 'LLM API key', unlocks: 'Better content classification (optional).' },
+];
+const OI_SETTING_IDS = ['search_provider', 'meta_countries', 'llm_base_url', 'llm_model'];
+const OI_STATE_TEXT = {
+  running: 'Running', starting: 'Starting', restarting: 'Restarting', stopped: 'Stopped', crashed: 'Crashed',
+  port_conflict: 'Port in use', not_set_up: 'Not set up', misconfigured: 'Folder not usable', off: 'Off', external: 'External',
+};
+const OI_STATE_TONE = {
+  running: 'stored', external: 'stored', starting: 'unknown', restarting: 'missing', stopped: 'missing',
+  crashed: 'missing', port_conflict: 'missing', not_set_up: 'missing', misconfigured: 'missing', off: 'unknown',
+};
+const OI_POLL_MS = 1000;
+const OI_POLL_MAX = 30;
+let oiPollCount = 0;
+let oiPollTimer = null;
+
+function oiSettingsApi() {
+  return typeof window !== 'undefined' && window.ztechLeadIntel && window.ztechLeadIntel.opportunitySettings
+    ? window.ztechLeadIntel.opportunitySettings
+    : null;
+}
+
+function oiSettingsUnwrap(res) {
+  if (res && res.ok === true) return res.data && typeof res.data === 'object' ? res.data : {};
+  const msg = res && res.error && typeof res.error.message === 'string' && res.error.message ? res.error.message : 'The request failed.';
+  throw new Error(msg);
+}
+
+function oiEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function oiSetChip(el, text, tone) {
+  if (!el) return;
+  el.textContent = text;
+  el.dataset.state = tone;
+}
+
+function oiKeyStateText(p) {
+  if (!p || p.stored !== true) return ['Not set', 'unknown'];
+  if (p.readable !== true) return ['Unreadable', 'missing'];
+  return ['Stored', 'stored'];
+}
+
+function oiLoadedText(p) {
+  if (!p || p.reported === null || p.reported === undefined) return ['OI not asked', 'unknown'];
+  return p.reported === true ? ['Loaded by OI', 'stored'] : ['Not loaded', 'unknown'];
+}
+
+function buildOiProviderRows() {
+  const box = document.getElementById('oi-provider-rows');
+  if (!box || box.dataset.built === 'true') return;
+  box.dataset.built = 'true';
+  for (const p of OI_PROVIDER_ROWS) {
+    const row = oiEl('div', 'settings-row');
+    const label = oiEl('div', 'settings-row-label');
+    const l = oiEl('label', null, p.label);
+    l.setAttribute('for', `oi-key-${p.id}`);
+    const stored = oiEl('span', 'settings-key-state', 'Checking');
+    stored.id = `oi-key-state-${p.id}`;
+    stored.dataset.state = 'unknown';
+    const loaded = oiEl('span', 'settings-key-state', 'Checking');
+    loaded.id = `oi-key-loaded-${p.id}`;
+    loaded.dataset.state = 'unknown';
+    label.append(l, stored, loaded);
+    const control = oiEl('div', 'settings-row-control');
+    const group = oiEl('div', 'input-with-btn');
+    const input = oiEl('input');
+    input.type = 'password';
+    input.id = `oi-key-${p.id}`;
+    input.autocomplete = 'off';
+    input.placeholder = 'Enter key to replace';
+    input.maxLength = 512;
+    const save = oiEl('button', 'btn btn-secondary btn-sm', 'Save');
+    save.type = 'button';
+    save.dataset.oiSaveKey = p.id;
+    save.addEventListener('click', safeAsync(() => saveOiKey(p.id)));
+    const clear = oiEl('button', 'btn btn-secondary btn-sm', 'Clear');
+    clear.type = 'button';
+    clear.id = `oi-key-clear-${p.id}`;
+    clear.dataset.oiClearKey = p.id;
+    clear.addEventListener('click', safeAsync(() => clearOiKey(p.id)));
+    group.append(input, save, clear);
+    control.append(group, oiEl('p', 'form-hint', p.unlocks));
+    row.append(label, control);
+    box.appendChild(row);
+  }
+}
+
+function renderOiService(service) {
+  const s = service && typeof service === 'object' ? service : null;
+  const state = s && typeof s.state === 'string' ? s.state : null;
+  oiSetChip(document.getElementById('oi-service-state'), state ? (OI_STATE_TEXT[state] || state) : 'Unavailable', state ? (OI_STATE_TONE[state] || 'unknown') : 'missing');
+  const msg = document.getElementById('oi-service-message');
+  if (msg) msg.textContent = s && s.message ? String(s.message) : 'The Opportunity Intelligence service status is unavailable.';
+  const folder = document.getElementById('oi-service-folder');
+  if (folder) folder.textContent = s && s.folder_name ? `Folder: ${s.folder_name}` : 'No OI folder chosen.';
+  const mode = document.getElementById('oi-service-mode');
+  if (mode && s && ['managed', 'external', 'off'].includes(s.mode)) mode.value = s.mode;
+  const note = document.getElementById('oi-keys-note');
+  if (note) {
+    note.textContent = s && s.keys_apply === false
+      ? 'Saved keys are NOT passed to an external or stopped-by-mode service. They apply when ZTech manages the OI service.'
+      : 'Saving a key restarts the managed OI service so it takes effect.';
+  }
+  const managed = !s || s.mode === 'managed';
+  const set = (id, enabled) => { const b = document.getElementById(id); if (b) b.disabled = !enabled; };
+  set('btn-oi-start', managed && ['stopped', 'crashed', 'port_conflict', 'misconfigured'].includes(state));
+  set('btn-oi-stop', managed && ['running', 'starting', 'restarting'].includes(state));
+  set('btn-oi-restart', managed && Boolean(s && s.folder_name));
+  set('btn-oi-copy-log', Boolean(s));
+}
+
+function renderOiStatus(data) {
+  const d = data && typeof data === 'object' ? data : {};
+  buildOiProviderRows();
+  const providers = d.providers && typeof d.providers === 'object' ? d.providers : {};
+  for (const p of OI_PROVIDER_ROWS) {
+    const info = providers[p.id];
+    const [st, stTone] = oiKeyStateText(info);
+    const [ld, ldTone] = oiLoadedText(info);
+    oiSetChip(document.getElementById(`oi-key-state-${p.id}`), st, stTone);
+    oiSetChip(document.getElementById(`oi-key-loaded-${p.id}`), ld, ldTone);
+    const clear = document.getElementById(`oi-key-clear-${p.id}`);
+    if (clear) clear.disabled = !(info && info.stored === true);
+  }
+  const settings = d.settings && typeof d.settings === 'object' ? d.settings : {};
+  for (const id of OI_SETTING_IDS) {
+    const el = document.getElementById(`oi-setting-${id}`);
+    if (el && document.activeElement !== el) el.value = typeof settings[id] === 'string' ? settings[id] : '';
+  }
+  renderOiService(d.service);
+}
+
+async function loadOiSettings() {
+  const api = oiSettingsApi();
+  buildOiProviderRows();
+  if (!api) {
+    renderOiService(null);
+    return null;
+  }
+  try {
+    const data = oiSettingsUnwrap(await api.status());
+    renderOiStatus(data);
+    return data;
+  } catch (err) {
+    renderOiService(null);
+    const msg = document.getElementById('oi-service-message');
+    if (msg) msg.textContent = (err && err.message) || 'The Opportunity Intelligence settings could not be loaded.';
+    return null;
+  }
+}
+
+// While the service is starting or restarting, re-read its state once a second, at
+// most OI_POLL_MAX times. A bounded timeout chain, never an interval.
+function scheduleOiPoll(reset) {
+  if (reset) oiPollCount = 0;
+  if (oiPollTimer) clearTimeout(oiPollTimer);
+  oiPollTimer = setTimeout(async () => {
+    oiPollTimer = null;
+    oiPollCount += 1;
+    const data = await loadOiSettings();
+    const st = data && data.service ? data.service.state : null;
+    if ((st === 'starting' || st === 'restarting') && oiPollCount < OI_POLL_MAX) scheduleOiPoll(false);
+  }, OI_POLL_MS);
+}
+
+function oiSettingsStatus(text, isError) {
+  const el = document.getElementById('oi-settings-status');
+  if (el) el.textContent = text || '';
+  if (text && isError) toast(text, 'error');
+}
+
+async function saveOiKey(provider) {
+  const api = oiSettingsApi();
+  const input = document.getElementById(`oi-key-${provider}`);
+  if (!api || !input) return;
+  const key = input.value.trim();
+  if (key === '') return;
+  try {
+    oiSettingsUnwrap(await api.setKey(provider, key));
+    oiSettingsStatus('Key saved.', false);
+  } catch (err) {
+    oiSettingsStatus((err && err.message) || 'The key was not saved.', true);
+  } finally {
+    // Write-only: the field never keeps the value, saved or not.
+    input.value = '';
+  }
+  await loadOiSettings();
+  scheduleOiPoll(true);
+}
+
+async function clearOiKey(provider) {
+  const api = oiSettingsApi();
+  if (!api) return;
+  try {
+    oiSettingsUnwrap(await api.clearKey(provider));
+    oiSettingsStatus('Key cleared.', false);
+  } catch (err) {
+    oiSettingsStatus((err && err.message) || 'The key could not be cleared.', true);
+  }
+  await loadOiSettings();
+  scheduleOiPoll(true);
+}
+
+async function saveOiSettings() {
+  const api = oiSettingsApi();
+  if (!api) return;
+  for (const id of OI_SETTING_IDS) {
+    const el = document.getElementById(`oi-setting-${id}`);
+    if (!el) continue;
+    try {
+      oiSettingsUnwrap(await api.setSetting(id, el.value.trim()));
+    } catch (err) {
+      oiSettingsStatus((err && err.message) || 'A setting was not saved.', true);
+      await loadOiSettings();
+      return;
+    }
+  }
+  oiSettingsStatus('Opportunity Intelligence settings saved.', false);
+  await loadOiSettings();
+  scheduleOiPoll(true);
+}
+
+async function oiServiceAction(name, payload) {
+  const api = oiSettingsApi();
+  if (!api || typeof api[name] !== 'function') return;
+  try {
+    const data = oiSettingsUnwrap(await (payload === undefined ? api[name]() : api[name](payload)));
+    if (name === 'chooseFolder' && data && data.ok === false && data.reason) oiSettingsStatus(data.reason, true);
+    else if (name === 'copyLog') oiSettingsStatus(data && data.lines ? `Copied ${data.lines} log lines.` : 'The log is empty.', false);
+    else oiSettingsStatus('', false);
+  } catch (err) {
+    oiSettingsStatus((err && err.message) || 'The request failed.', true);
+  }
+  await loadOiSettings();
+  scheduleOiPoll(true);
+}
+
+document.getElementById('btn-oi-choose-folder').addEventListener('click', safeAsync(() => oiServiceAction('chooseFolder')));
+document.getElementById('btn-oi-start').addEventListener('click', safeAsync(() => oiServiceAction('start')));
+document.getElementById('btn-oi-stop').addEventListener('click', safeAsync(() => oiServiceAction('stop')));
+document.getElementById('btn-oi-restart').addEventListener('click', safeAsync(() => oiServiceAction('restart')));
+document.getElementById('btn-oi-copy-log').addEventListener('click', safeAsync(() => oiServiceAction('copyLog')));
+document.getElementById('btn-oi-save-settings').addEventListener('click', safeAsync(saveOiSettings));
+document.getElementById('oi-service-mode').addEventListener('change', safeAsync(() => {
+  const mode = document.getElementById('oi-service-mode').value;
+  return oiServiceAction('setMode', mode);
+}));
 
 // === 保存采集结果到号码库 ===
 document.getElementById('btn-save-numbers').addEventListener('click', safeAsync(async () => {

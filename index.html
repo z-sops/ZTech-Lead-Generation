@@ -1792,6 +1792,7 @@
               <nav class="settings-index" aria-label="Settings sections">
                 <button type="button" class="settings-index-item" data-settings-jump="collection">Collection provider</button>
                 <button type="button" class="settings-index-item" data-settings-jump="research">Website research</button>
+                <button type="button" class="settings-index-item" data-settings-jump="intelligence">Opportunity Intelligence</button>
                 <button type="button" class="settings-index-item" data-settings-jump="network">Network</button>
                 <button type="button" class="settings-index-item" data-settings-jump="security">Security</button>
                 <button type="button" class="settings-index-item" data-settings-jump="application">Application</button>
@@ -1877,6 +1878,97 @@
                       <button type="button" class="btn btn-secondary btn-sm" id="btn-research-health">Check status</button>
                     </div>
                   </div>
+                </section>
+
+                <!-- I3/I4 Opportunity Intelligence. The local OI service and its provider keys.
+                     Keys are write-only: only stored / loaded-by-OI booleans come back. The
+                     folder is chosen in a native dialog opened by main; no path, port, URL or
+                     token ever reaches this page. Rows are built in renderer.js with
+                     textContent only. -->
+                <section class="settings-group" id="settings-group-intelligence" aria-labelledby="settings-title-intelligence">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-intelligence">Opportunity Intelligence</h3>
+                    <p class="settings-group-desc">Competitor, ads, content and social research for a lead. ZTech runs the local OI service for you. Keys stay on this computer, encrypted by the operating system, and are passed only to the local OI service.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Service</span>
+                      <span class="settings-key-state" id="oi-service-state" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint" id="oi-service-message" role="status" aria-live="polite">Checking the Opportunity Intelligence service.</p>
+                      <p class="form-hint" id="oi-service-folder"></p>
+                      <div class="oi-service-actions">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-choose-folder">Choose OI folder</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-start">Start</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-stop">Stop</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-restart">Restart</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-copy-log">Copy log</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-service-mode">Mode</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <select id="oi-service-mode">
+                        <option value="managed">Managed by ZTech</option>
+                        <option value="external">External (developer)</option>
+                        <option value="off">Off</option>
+                      </select>
+                      <p class="form-hint" id="oi-keys-note">Keys apply when ZTech manages the OI service.</p>
+                    </div>
+                  </div>
+                  <div id="oi-provider-rows"></div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">LinkedIn</span>
+                      <span class="settings-key-state" data-state="unknown">Unsupported</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint">Unsupported by design. LinkedIn does not allow scraping or automation.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-setting-search_provider">Search provider</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <select id="oi-setting-search_provider">
+                        <option value="">Automatic</option>
+                        <option value="brave">Brave</option>
+                        <option value="serper">Serper</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-setting-meta_countries">Meta ad countries</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="oi-setting-meta_countries" placeholder="Not set" autocomplete="off" maxlength="200">
+                      <p class="form-hint">Two-letter country codes, comma separated (for example PK,AE). Empty uses the OI default.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-setting-llm_base_url">LLM base URL</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="oi-setting-llm_base_url" placeholder="Not set" autocomplete="off" maxlength="300">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-setting-llm_model">LLM model</label>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <input type="text" id="oi-setting-llm_model" placeholder="Not set" autocomplete="off" maxlength="100">
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-save-settings">Save OI settings</button>
+                    </div>
+                  </div>
+                  <p class="form-hint" id="oi-settings-status" role="status" aria-live="polite"></p>
                 </section>
 
                 <section class="settings-group" id="settings-group-network" aria-labelledby="settings-title-network">
