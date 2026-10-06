@@ -5836,3 +5836,87 @@ textarea {
   color: var(--danger);
   overflow-wrap: anywhere;
 }
+
+/* ZTech Phase I2 - Opportunity Intelligence, inside the existing Lead Detail drawer.
+   Reuses the drawer's field, list and warning styles; only the claim-kind / provider
+   badges and the collapsible groups are new. Tones reuse the status tokens, so an
+   ESTIMATE or an unavailable provider never looks like an error. */
+
+.oi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.oi-badge {
+  display: inline-block;
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.oi-badge[data-tone="ok"] { color: var(--ok); background: var(--ok-bg); }
+.oi-badge[data-tone="warn"] { color: var(--warn); background: var(--warn-bg); }
+.oi-badge[data-tone="bad"] { color: var(--danger-f2); background: var(--danger-f2-bg); }
+.oi-badge[data-tone="info"] { color: var(--info); background: var(--info-bg); }
+
+.oi-group {
+  border-top: 1px solid var(--border-1);
+  padding: var(--space-3) 0;
+}
+
+.oi-group-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.oi-group-count {
+  font-size: var(--font-11);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.oi-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.oi-body {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-12);
+  line-height: 1.5;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.oi-source {
+  color: var(--text-3);
+}
+
+.oi-do-not-claim {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--danger-f2-bg);
+  border-left: 2px solid var(--danger-f2);
+}
+
+.oi-do-not-claim-label {
+  display: block;
+  font-size: var(--font-11);
+  font-weight: 700;
+  color: var(--danger-f2);
+}

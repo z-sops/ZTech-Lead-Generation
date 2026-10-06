@@ -424,6 +424,11 @@ test('10c. the read model keeps the estimate range and the raw confidence', () =
   assert.equal(est.claim_kind, 'estimate');
   assert.equal(est.confidence, 0.7);
   assert.equal(est.freshness, 'fresh');
+  // the range itself survives, so the UI can show what the estimate is of
+  assert.equal(est.estimate.low, 3);
+  assert.equal(est.estimate.high, 5);
+  // a fact carries no range, and none is synthesised for it
+  assert.equal(m.evidence.find((e) => e.evidence_id === 'ev_web01').estimate, null);
 });
 
 // ============================================================================

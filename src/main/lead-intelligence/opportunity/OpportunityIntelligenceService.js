@@ -63,7 +63,7 @@ class OpportunityIntelligenceService {
       message: h.message,
       schema_version: h.schema_version || null,
       checked_at: h.checked_at || null,
-      base_url: this.gateway.baseUrl || null,
+      // The OI destination is main-process configuration; the renderer never sees it.
       affects_outreach: false,
     };
   }

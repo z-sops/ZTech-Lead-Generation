@@ -244,8 +244,9 @@ test('renderer: UMD files attach to the browser global in import order (what ind
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
 const order = [...fs.readFileSync(path.join(dir, 'index.mjs'), 'utf8').matchAll(/^import '\.\/([\w]+\.js)';$/gm)].map((m) => m[1]);
-    // Phase I2 adds opportunitySection.js as the 6th module.
-    assert.deepEqual(order, ['dom.js', 'researchSection.js', 'listsPanels.js', 'pitchPanel.js', 'enrichmentSection.js', 'opportunitySection.js']);
+    // Opportunity Intelligence renders natively in the F5 drawer (renderer.js), so it
+    // is deliberately NOT one of these UMD modules: one OI implementation, not two.
+    assert.deepEqual(order, ['dom.js', 'researchSection.js', 'listsPanels.js', 'pitchPanel.js', 'enrichmentSection.js']);
     for (const f of order) vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), sandbox, { filename: f });
     const LI = sandbox.ZTechLI;
     assert.equal(typeof LI.dom.h, 'function');
@@ -253,5 +254,5 @@ const order = [...fs.readFileSync(path.join(dir, 'index.mjs'), 'utf8').matchAll(
     assert.equal(typeof LI.listsPanels.mountSegmentsPanel, 'function');
     assert.equal(typeof LI.pitchPanel.mountPitchPanel, 'function');
     assert.equal(typeof LI.enrichmentSection.mountEnrichmentSection, 'function');
-    assert.equal(typeof LI.opportunitySection.mountOpportunitySection, 'function');
+    assert.equal(LI.opportunitySection, undefined);
 });

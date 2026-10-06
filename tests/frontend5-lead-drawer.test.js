@@ -180,13 +180,14 @@ function makeEnv(opts) {
     window: {
       ztechLeadIntel: {
         opportunity: {
-          health: async () => ({ available: false, state: 'unavailable', message: 'OI unavailable', schema_version: null, checked_at: null, base_url: null, affects_outreach: false }),
-          engine: async () => ({ available: false, state: 'unavailable', error: 'OI unavailable', health: { state: 'unavailable' } }),
-          latest: async () => ({ available: false, state: 'not_researched', message: 'No Opportunity Intelligence research has been run for this lead yet.', lead_id: null, model: null, summary: null, sections: null, affects_outreach: false }),
-          request: async () => ({ available: false, state: 'unavailable', message: 'OI unavailable', affects_outreach: false }),
-          report: async () => ({ available: false, state: 'unavailable', message: 'OI unavailable', affects_outreach: false }),
-          associations: async () => ({ available: false, state: 'unavailable', message: 'OI unavailable', affects_outreach: false }),
-          pitchContext: async () => ({ available: false, reason: 'OI unavailable', bridge: null, affects_outreach: false }),
+          // The real preload answers with the {ok,data} envelope.
+          health: async () => ({ ok: true, data: { enabled: false, state: 'unavailable', message: 'OI unavailable', affects_outreach: false } }),
+          engine: async () => ({ ok: true, data: { available: false, state: 'unavailable', error: 'OI unavailable' } }),
+          latest: async () => ({ ok: true, data: { available: false, state: 'not_researched', message: 'No Opportunity Intelligence research has been run for this lead yet.', lead_id: null, model: null, summary: null, sections: null, affects_outreach: false } }),
+          request: async () => ({ ok: true, data: { available: false, state: 'unavailable', message: 'OI unavailable', model: null, affects_outreach: false } }),
+          report: async () => ({ ok: true, data: { available: false, state: 'unavailable', message: 'OI unavailable', model: null, affects_outreach: false } }),
+          associations: async () => ({ ok: true, data: { available: false, affects_outreach: false } }),
+          pitchContext: async () => ({ ok: true, data: { available: false, reason: 'OI unavailable', bridge: null, affects_outreach: false } }),
         },
       },
     },
@@ -197,9 +198,12 @@ function makeEnv(opts) {
   const p1a = between(rendererSource, '// === P1-A deterministic data-quality signals (read-only) ===',
     "document.getElementById('btn-delete-selected')");
   const mobile = between(rendererSource, 'function isMobileNumber(phone) {', '\nfunction ');
+  // The I2 OI panel is its own block; the drawer calls into it at runtime.
+  const oiPanel = between(rendererSource, '// === I2 Opportunity Intelligence: Lead Drawer panel ===',
+    '// === P1-G Collection Quality Report (read-only) ===');
   const names = Object.keys(deps);
   const api = new Function(...names,
-    escapeHtmlSrc + '\n' + renderWebsiteSrc + '\n' + mobile + '\n' + researchConsts + '\n' + p1a + '\n' + f5 +
+    escapeHtmlSrc + '\n' + renderWebsiteSrc + '\n' + mobile + '\n' + researchConsts + '\n' + p1a + '\n' + f5 + '\n' + oiPanel +
     '\nreturn { showLeadDrawer, renderLeadDrawer, renderLeadDrawerResearch, resetLeadDrawer, selectLeadDrawerTab,' +
     ' updateLeadDrawerNav, setLeadDrawerSaveState, updateLeadDrawerQualificationBadge,' +
     ' get leadId() { return leadDrawerLeadId; }, get tab() { return leadDrawerTab; } };'

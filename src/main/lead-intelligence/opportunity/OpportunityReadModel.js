@@ -52,6 +52,19 @@ const MAX_ITEMS = Object.freeze({
 });
 
 function clip(list, n) { return Array.isArray(list) ? list.slice(0, n) : []; }
+
+/** OI EstimateRange, bounded. `null` when OI attached none - never synthesised. */
+function estimateOf(est) {
+  if (!est || typeof est !== 'object') return null;
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return {
+    low: num(est.low),
+    high: num(est.high),
+    unit: est.unit == null ? null : String(est.unit).slice(0, 50),
+    method: est.method == null ? null : String(est.method).slice(0, 200),
+    source: est.source == null ? null : String(est.source).slice(0, 200),
+  };
+}
 function text(v, max = 1000) { return v == null ? null : String(v).slice(0, max); }
 
 /** How a claim should be presented. `null` means OI asserted no claim kind. */
@@ -136,10 +149,15 @@ function buildOpportunityReadModel({ report, leadId = null, association = null }
     claim_kind: claimKindOf(e),
     metric: text(e.metric, 200),
     value: e.value === undefined ? null : e.value,
+    // An ESTIMATE without its range is just a number; keep the range OI attached.
+    estimate: estimateOf(e.estimate),
     freshness: e.freshness ? String(e.freshness) : null,
+    source_type: text(e.source_type, 100),
     source_url: text(e.source_url, 2048),
+    observed_at: e.observed_at || null,
     captured_at: e.captured_at || null,
     confidence: typeof e.confidence === 'number' ? e.confidence : null,
+    conflicts_with: clip(e.conflicts_with, MAX_ITEMS.evidence),
   }));
 
   const observations = clip(report.observations, MAX_ITEMS.observations).map((o) => ({
@@ -177,6 +195,8 @@ function buildOpportunityReadModel({ report, leadId = null, association = null }
     prospect_observed: c.prospect_observed === undefined ? null : c.prospect_observed,
     competitor_observed: c.competitor_observed === undefined ? null : c.competitor_observed,
     unit: text(c.unit, 50),
+    topic: text(c.topic, 200),
+    window: text(c.window, 50),
     interpretation: text(c.interpretation, 100),
     confidence: typeof c.confidence === 'number' ? c.confidence : null,
     note: text(c.note, 1000),

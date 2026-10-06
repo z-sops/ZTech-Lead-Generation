@@ -2881,7 +2881,7 @@ let leadDrawerLeadId = null;
 let leadDrawerReturnFocus = null;
 // { kind: 'idle' | 'loading' | 'error' | 'view', view, error }
 let leadDrawerResearch = { kind: 'idle', view: null, error: null };
-let leadDrawerOpportunity = { kind: 'idle', view: null, error: null, mounted: false };
+let leadDrawerOpportunity = { kind: 'idle', view: null, error: null, leadId: null, running: false, notice: null };
 
 // Renderer-local fallback flag: "modal" restores the centred B3 modal with every
 // section stacked; anything else (or no storage) is the drawer.
@@ -3315,79 +3315,6 @@ function renderLeadDrawerEvidence() {
   box.replaceChildren(...nodes);
 }
 
-// Phase I2: Opportunity Intelligence drawer panel.
-// Uses the separate ztechLeadIntel.opportunity.* bridge (not the Zuni-SEO research bridge).
-function renderLeadDrawerOpportunity() {
-  const box = document.getElementById('lead-drawer-opportunity');
-  if (!box) return;
-
-  if (leadDrawerOpportunity.kind === 'loading' || leadDrawerOpportunity.kind === 'idle') {
-    if (!leadDrawerOpportunity.mounted) {
-      // Mount the opportunity section module once.
-      if (typeof mountOpportunitySection === 'function') {
-        leadDrawerOpportunity.mount = mountOpportunitySection({
-          doc: document,
-          container: box,
-          api: window.ztechLeadIntel,
-          leadId: leadDrawerLeadId,
-        });
-        leadDrawerOpportunity.mounted = true;
-      }
-    }
-    box.replaceChildren(
-      document.createElement('p'), // placeholder to keep structure
-      // The mountOpportunitySection will replace the content
-    );
-    return;
-  }
-
-  if (leadDrawerOpportunity.kind === 'error') {
-    box.replaceChildren(
-      leadDrawerEl('h3', 'lead-drawer-section-title', 'Opportunity Intelligence'),
-      leadDrawerEl('p', 'lead-drawer-warning',
-        'Opportunity Intelligence could not be loaded: ' + leadDrawerOpportunity.error)
-    );
-    return;
-  }
-
-  // If we have a view, the mounted module will handle rendering.
-  // This function mainly ensures the module is mounted.
-  if (!leadDrawerOpportunity.mounted && typeof mountOpportunitySection === 'function') {
-    leadDrawerOpportunity.mount = mountOpportunitySection({
-      doc: document,
-      container: box,
-      api: window.ztechLeadIntel,
-      leadId: leadDrawerLeadId,
-    });
-    leadDrawerOpportunity.mounted = true;
-  }
-}
-
-// Load Opportunity Intelligence data for the lead.
-async function loadLeadDrawerOpportunity(leadId) {
-  if (!leadId) return;
-  if (!window.ztechLeadIntel || !window.ztechLeadIntel.opportunity) {
-    leadDrawerOpportunity = { kind: 'error', view: null, error: 'Opportunity Intelligence bridge not available.', mounted: leadDrawerOpportunity.mounted };
-    renderLeadDrawerOpportunity();
-    return;
-  }
-  leadDrawerOpportunity = { kind: 'loading', view: null, error: null, mounted: leadDrawerOpportunity.mounted };
-  renderLeadDrawerOpportunity();
-  try {
-    const latest = await window.ztechLeadIntel.opportunity.latest({ leadId });
-    if (latest && latest.available) {
-      leadDrawerOpportunity = { kind: 'view', view: latest, error: null, mounted: leadDrawerOpportunity.mounted };
-    } else if (latest && latest.state === 'not_researched') {
-      leadDrawerOpportunity = { kind: 'view', view: latest, error: null, mounted: leadDrawerOpportunity.mounted };
-    } else {
-      leadDrawerOpportunity = { kind: 'error', view: null, error: latest?.message || 'Opportunity Intelligence unavailable.', mounted: leadDrawerOpportunity.mounted };
-    }
-  } catch (err) {
-    leadDrawerOpportunity = { kind: 'error', view: null, error: err?.message || 'Opportunity Intelligence request failed.', mounted: leadDrawerOpportunity.mounted };
-  }
-  renderLeadDrawerOpportunity();
-}
-
 // No ICP evaluation reaches the renderer in this build, so the only honest
 // state is UNKNOWN, with the concrete reasons why. No score is ever shown.
 // F8: the ICP tab shows the same evaluation as Intelligence -> ICP: the Lead
@@ -3558,7 +3485,8 @@ function renderLeadDrawerResearch(view, error) {
 function resetLeadDrawer() {
   leadDrawerLeadId = null;
   leadDrawerResearch = { kind: 'idle', view: null, error: null };
-  leadDrawerOpportunity = { kind: 'idle', view: null, error: null, mounted: false };
+  leadDrawerOpportunitySeq += 1;
+  leadDrawerOpportunity = { kind: 'idle', view: null, error: null, leadId: null, running: false, notice: null };
   leadDrawerTab = 'overview';
   markLeadDrawerRow(null);
   setLeadDrawerSaveState('lead-drawer-save-state', null, '');
@@ -3664,6 +3592,637 @@ document.getElementById('btn-import-numbers').addEventListener('click', () => {
     }));
     input.click();
   });
+
+// === I2 Opportunity Intelligence: Lead Drawer panel ===
+// Phase I2: Opportunity Intelligence drawer panel.
+//
+// A SEPARATE intelligence system from Zuni-SEO, read over its own
+// ztechLeadIntel.opportunity.* bridge. Every OI value below is third-party
+// research text, so it is only ever set as textContent - never as HTML, and a
+// source URL is shown as text, never as a link the renderer would navigate to.
+//
+// What this panel guarantees:
+//   - ClaimKind is shown exactly as OI stated it: FACT, ESTIMATE, INFERENCE, or
+//     "Not stated" when OI gave none. Nothing is upgraded or defaulted.
+//   - Provider status is shown per provider, verbatim. A degraded report is a
+//     usable report; only an OI-reported failure is shown as a failure.
+//   - OI being down renders "Opportunity Intelligence unavailable". It never
+//     throws into the drawer, and it never touches Research, Pitch or Outreach.
+//   - Research only runs when the user presses the button. Opening the drawer
+//     or the tab only READS the latest report.
+//   - The renderer supplies a lead id and nothing else.
+
+const OI_CLAIM_KIND_TEXT = { fact: 'FACT', estimate: 'ESTIMATE', inference: 'INFERENCE' };
+const OI_CLAIM_KIND_TONE = { fact: 'ok', estimate: 'warn', inference: 'info' };
+const OI_PROVIDER_STATUS_TEXT = {
+  success: 'Success', partial: 'Partial', unavailable: 'Unavailable',
+  unsupported: 'Unsupported', failed: 'Failed', rate_limited: 'Rate limited'
+};
+const OI_PROVIDER_STATUS_TONE = {
+  success: 'ok', partial: 'warn', unavailable: 'neutral',
+  unsupported: 'neutral', failed: 'bad', rate_limited: 'warn'
+};
+const OI_UNAVAILABLE_TITLE = 'Opportunity Intelligence unavailable';
+const OI_MAX_RENDERED = 100;
+
+let leadDrawerOpportunitySeq = 0;
+
+function oiBridge() {
+  return typeof window !== 'undefined' && window.ztechLeadIntel && window.ztechLeadIntel.opportunity
+    ? window.ztechLeadIntel.opportunity
+    : null;
+}
+
+// The preload bridge answers with the A10 {ok,data} / {ok:false,error} envelope.
+function oiUnwrap(res) {
+  if (res && res.ok === true) return res.data && typeof res.data === 'object' ? res.data : {};
+  const msg = res && res.error && typeof res.error.message === 'string' && res.error.message
+    ? res.error.message
+    : 'The Opportunity Intelligence request failed.';
+  throw new Error(msg);
+}
+
+function oiText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return '';
+}
+
+function oiPercent(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 100)}%` : '';
+}
+
+function oiList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function oiBadge(text, tone, kind) {
+  const badge = leadDrawerEl('span', 'oi-badge', text);
+  badge.setAttribute('data-tone', tone || 'neutral');
+  if (kind) badge.setAttribute('data-kind', kind);
+  return badge;
+}
+
+// Never defaults: a claim OI did not type is "Not stated", not FACT.
+function oiClaimKindBadge(kind) {
+  const key = typeof kind === 'string' ? kind : '';
+  if (!Object.prototype.hasOwnProperty.call(OI_CLAIM_KIND_TEXT, key)) return oiBadge('Not stated', 'neutral', 'claim-kind');
+  return oiBadge(OI_CLAIM_KIND_TEXT[key], OI_CLAIM_KIND_TONE[key], 'claim-kind');
+}
+
+function oiProviderStatusBadge(status) {
+  const key = typeof status === 'string' ? status : '';
+  const text = OI_PROVIDER_STATUS_TEXT[key] || key || 'Not reported';
+  return oiBadge(text, OI_PROVIDER_STATUS_TONE[key] || 'neutral', 'provider-status');
+}
+
+function oiMeta(parts) {
+  const text = parts.filter(Boolean).join(' · ');
+  return text ? leadDrawerEl('span', 'lead-drawer-evidence-meta', text) : null;
+}
+
+function oiRefs(label, ids) {
+  const list = oiList(ids).filter((id) => typeof id === 'string' && id);
+  return list.length ? leadDrawerEl('span', 'lead-drawer-refs', `${label}: ${list.join(', ')}`) : null;
+}
+
+function oiAppend(parent, nodes) {
+  for (const node of nodes) if (node) parent.appendChild(node);
+  return parent;
+}
+
+// A collapsible group, so a large report stays scannable inside the drawer.
+function oiGroup(title, count, body, open) {
+  const group = leadDrawerEl('details', 'oi-group');
+  if (open) group.setAttribute('open', '');
+  const summary = leadDrawerEl('summary', 'oi-group-summary');
+  summary.appendChild(leadDrawerEl('span', 'oi-group-title', title));
+  if (typeof count === 'number') summary.appendChild(leadDrawerEl('span', 'oi-group-count', String(count)));
+  group.appendChild(summary);
+  oiAppend(group, Array.isArray(body) ? body : [body]);
+  return group;
+}
+
+function oiItems(items, build, emptyText) {
+  const list = oiList(items);
+  if (!list.length) return leadDrawerEl('p', 'lead-drawer-muted', emptyText);
+  const ul = leadDrawerEl('ul', 'lead-drawer-evidence-list');
+  for (const entry of list.slice(0, OI_MAX_RENDERED)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const li = leadDrawerEl('li', 'lead-drawer-evidence-item');
+    build(li, entry);
+    ul.appendChild(li);
+  }
+  if (list.length > OI_MAX_RENDERED) {
+    const more = leadDrawerEl('li', 'lead-drawer-muted', `${list.length - OI_MAX_RENDERED} more not shown.`);
+    ul.appendChild(more);
+  }
+  return ul;
+}
+
+function oiHeadline(text, badges) {
+  const line = leadDrawerEl('div', 'oi-headline');
+  line.appendChild(leadDrawerEl('span', 'lead-drawer-evidence-fact', text));
+  oiAppend(line, badges || []);
+  return line;
+}
+
+// entity_id -> display name, from OI's own resolved entities. Display only: it is
+// never used to join anything, so it cannot become a business-name match.
+function oiEntityNames(model) {
+  const names = {};
+  const add = (e, role) => {
+    if (!e || typeof e !== 'object') return;
+    const label = oiText(e.company_name) || oiText(e.domain);
+    const full = label ? `${label} (${role})` : role;
+    for (const key of [e.entity_id, e.entity_key]) if (typeof key === 'string' && key) names[key] = full;
+  };
+  add(model.prospect, 'prospect');
+  for (const c of oiList(model.competitors)) add(c, 'competitor');
+  return names;
+}
+
+function oiEntityLabel(names, id) {
+  const key = oiText(id);
+  if (!key) return '';
+  return names[key] || key;
+}
+
+function oiMetricsText(metrics) {
+  if (!metrics || typeof metrics !== 'object') return '';
+  return Object.keys(metrics)
+    .filter((k) => metrics[k] !== null && metrics[k] !== undefined && oiText(metrics[k]) !== '')
+    .slice(0, 20)
+    .map((k) => `${k.replace(/_/g, ' ')}: ${oiText(metrics[k])}`)
+    .join(' · ');
+}
+
+function oiEstimateText(est) {
+  if (!est || typeof est !== 'object') return '';
+  const low = oiText(est.low);
+  const high = oiText(est.high);
+  if (!low && !high) return '';
+  const range = low && high ? `${low}–${high}` : (low || high);
+  const unit = oiText(est.unit);
+  const method = oiText(est.method);
+  return `Estimated range ${range}${unit ? ' ' + unit : ''}${method ? ` (method: ${method})` : ''}`;
+}
+
+// --- sections ---------------------------------------------------------------
+
+function oiOverviewGroup(model, view) {
+  const score = model.opportunity_score && typeof model.opportunity_score === 'object' ? model.opportunity_score : {};
+  const summary = model.provider_summary && typeof model.provider_summary === 'object' ? model.provider_summary : {};
+  const fields = [
+    leadDrawerField('Status', oiText(model.status)),
+    leadDrawerField('Generated', leadDrawerFormatTime(model.generated_at)),
+    leadDrawerField('Opportunity score', Number.isInteger(score.score)
+      ? `${score.score} / 100${Number.isInteger(score.previous_score) ? ` (previously ${score.previous_score})` : ''}`
+      : ''),
+    leadDrawerField('Providers usable', Number.isInteger(summary.total)
+      ? `${Number.isInteger(summary.usable) ? summary.usable : 0} of ${summary.total}`
+      : ''),
+    leadDrawerField('Research ID', oiText(model.research_id)),
+    leadDrawerField('Snapshot ID', oiText(model.snapshot_id)),
+    leadDrawerField('Previous snapshot', oiText(model.previous_snapshot_id)),
+    leadDrawerField('Entity key', oiText(model.entity_key))
+  ];
+  const body = [oiAppend(leadDrawerEl('div', 'lead-drawer-fields'), fields)];
+  const explanation = oiList(score.explanation).map(oiText).filter(Boolean);
+  if (explanation.length) {
+    body.push(leadDrawerEl('h4', 'lead-drawer-subhead', 'Why this score'));
+    const ul = leadDrawerEl('ul', 'lead-drawer-plain-list');
+    for (const line of explanation.slice(0, 20)) ul.appendChild(leadDrawerEl('li', null, line));
+    body.push(ul);
+  }
+  const limitations = oiList(model.limitations).map(oiText).filter(Boolean);
+  if (limitations.length) {
+    body.push(leadDrawerEl('h4', 'lead-drawer-subhead', 'Limitations'));
+    const ul = leadDrawerEl('ul', 'lead-drawer-plain-list');
+    for (const line of limitations.slice(0, OI_MAX_RENDERED)) ul.appendChild(leadDrawerEl('li', null, line));
+    body.push(ul);
+  }
+  if (view && oiText(view.message)) body.push(leadDrawerEl('p', 'lead-drawer-muted', oiText(view.message)));
+  return oiGroup('Overview', null, body, true);
+}
+
+function oiProviderGroup(model, names) {
+  const rows = oiList(model.provider_status);
+  const body = oiItems(rows, (li, p) => {
+    oiAppend(li, [
+      oiHeadline(oiText(p.provider) || 'Provider', [oiProviderStatusBadge(p.status)]),
+      oiMeta([oiEntityLabel(names, p.entity_key)])
+    ]);
+  }, 'OI reported no provider status for this research.');
+  return oiGroup('Provider status', rows.length, [
+    leadDrawerEl('p', 'lead-drawer-muted',
+      'An unavailable or unsupported provider means that channel was not observed. It is not evidence that the channel is empty.'),
+    body
+  ], false);
+}
+
+function oiOpportunitiesGroup(model) {
+  const items = oiList(model.opportunities);
+  return oiGroup('Opportunities', items.length, [
+    leadDrawerEl('p', 'lead-drawer-muted', 'Opportunities are OI inferences. Each lists the evidence it rests on.'),
+    oiItems(items, (li, o) => {
+      oiAppend(li, [
+        oiHeadline(oiText(o.title) || 'Opportunity', [
+          oiClaimKindBadge(o.claim_kind),
+          oiText(o.severity) ? oiBadge(`Severity: ${oiText(o.severity)}`, o.severity === 'high' ? 'bad' : o.severity === 'medium' ? 'warn' : 'neutral') : null
+        ].filter(Boolean)),
+        oiMeta([oiText(o.type), oiPercent(o.confidence) ? `confidence ${oiPercent(o.confidence)}` : '']),
+        oiText(o.what_was_observed) ? leadDrawerEl('p', 'oi-body', `Observed: ${oiText(o.what_was_observed)}`) : null,
+        oiText(o.prospect_state) ? leadDrawerEl('p', 'oi-body', `Prospect today: ${oiText(o.prospect_state)}`) : null,
+        oiText(o.why_it_matters) ? leadDrawerEl('p', 'oi-body', `Why it matters: ${oiText(o.why_it_matters)}`) : null,
+        oiList(o.who).length ? oiMeta([`Driven by: ${oiList(o.who).map(oiText).filter(Boolean).join(', ')}`]) : null,
+        oiRefs('Evidence', o.evidence_refs),
+        oiRefs('Signals', o.signal_refs),
+        oiRefs('Comparisons', o.comparison_refs),
+        oiList(o.limitations).length ? oiMeta([`Limitations: ${oiList(o.limitations).map(oiText).filter(Boolean).join('; ')}`]) : null
+      ]);
+    }, 'OI identified no opportunities in this research.')
+  ], true);
+}
+
+function oiCompetitorsGroup(model, names) {
+  const competitors = oiList(model.competitors);
+  const comparisons = oiList(model.comparisons);
+  const body = [oiItems(competitors, (li, c) => {
+    oiAppend(li, [
+      oiHeadline(oiText(c.company_name) || oiText(c.domain) || 'Competitor', [
+        oiText(c.relationship_type) ? oiBadge(oiText(c.relationship_type), 'neutral') : null
+      ].filter(Boolean)),
+      oiMeta([
+        oiText(c.domain),
+        oiText(c.location),
+        oiPercent(c.relationship_confidence) ? `relationship confidence ${oiPercent(c.relationship_confidence)}` : '',
+        oiText(c.discovered_via) ? `found via ${oiText(c.discovered_via)}` : ''
+      ]),
+      oiText(c.reason) ? leadDrawerEl('p', 'oi-body', oiText(c.reason)) : null,
+      oiRefs('Evidence', c.evidence_refs)
+    ]);
+  }, 'OI identified no competitors in this research.')];
+  if (comparisons.length) {
+    body.push(leadDrawerEl('h4', 'lead-drawer-subhead', 'Comparisons'));
+    body.push(oiItems(comparisons, (li, c) => {
+      const unit = oiText(c.unit);
+      const val = (v) => (v === null || v === undefined ? 'not observed' : `${oiText(v)}${unit ? ' ' + unit : ''}`);
+      oiAppend(li, [
+        oiHeadline(`${(oiText(c.dimension) || 'Comparison').replace(/_/g, ' ')}${oiText(c.topic) ? ` — ${oiText(c.topic)}` : ''}`, [
+          oiText(c.interpretation) ? oiBadge(oiText(c.interpretation).replace(/_/g, ' '), 'neutral') : null
+        ].filter(Boolean)),
+        leadDrawerEl('p', 'oi-body',
+          `Prospect: ${val(c.prospect_observed)} · ${oiEntityLabel(names, c.competitor_entity_key || c.competitor_id) || 'Competitor'}: ${val(c.competitor_observed)}`),
+        oiMeta([oiText(c.window), oiPercent(c.confidence) ? `confidence ${oiPercent(c.confidence)}` : '']),
+        oiText(c.note) ? leadDrawerEl('p', 'lead-drawer-muted', oiText(c.note)) : null,
+        oiRefs('Evidence', c.evidence_refs)
+      ]);
+    }, ''));
+  }
+  return oiGroup('Competitors', competitors.length, body, false);
+}
+
+function oiChannelItems(buckets, names, emptyText) {
+  const rows = [];
+  for (const bucket of oiList(buckets)) {
+    if (!bucket || typeof bucket !== 'object') continue;
+    for (const ch of oiList(bucket.channels)) {
+      if (ch && typeof ch === 'object') rows.push({ entity: bucket.entity_key, ch });
+    }
+  }
+  return {
+    count: rows.length,
+    node: oiItems(rows, (li, row) => {
+      const ch = row.ch;
+      // Metrics are shown only when OI supplied them; an unavailable channel shows none.
+      const metrics = oiMetricsText(ch.metrics);
+      oiAppend(li, [
+        oiHeadline(oiText(ch.provider) || 'Channel', [oiProviderStatusBadge(ch.status)]),
+        oiMeta([oiEntityLabel(names, row.entity)]),
+        metrics ? leadDrawerEl('p', 'oi-body', metrics) : null,
+        oiList(ch.limitations).length ? oiMeta([`Limitations: ${oiList(ch.limitations).map(oiText).filter(Boolean).join('; ')}`]) : null,
+        oiRefs('Observations', ch.observation_refs)
+      ]);
+    }, emptyText)
+  };
+}
+
+function oiAdsGroup(model, names) {
+  const ads = oiChannelItems(model.advertising_intelligence, names, 'OI returned no advertising channels for this research.');
+  return oiGroup('Ads', ads.count, ads.node, false);
+}
+
+function oiContentSocialGroup(model, names) {
+  const content = oiChannelItems(model.content_intelligence, names, 'No content channels returned.');
+  const social = oiChannelItems(model.social_intelligence, names, 'No social channels returned.');
+  const body = [
+    leadDrawerEl('h4', 'lead-drawer-subhead', 'Content'), content.node,
+    leadDrawerEl('h4', 'lead-drawer-subhead', 'Social'), social.node
+  ];
+  const changes = oiList(model.changes);
+  if (changes.length) {
+    body.push(leadDrawerEl('h4', 'lead-drawer-subhead', 'Changes since the previous snapshot'));
+    body.push(oiItems(changes, (li, c) => {
+      oiAppend(li, [
+        oiHeadline(oiText(c.detail) || oiText(c.type) || 'Change', [oiClaimKindBadge(c.claim_kind)]),
+        oiMeta([oiText(c.entity_name), oiText(c.channel), oiText(c.type)]),
+        oiRefs('Evidence', c.evidence_refs)
+      ]);
+    }, ''));
+  }
+  return oiGroup('Content & Social', content.count + social.count, body, false);
+}
+
+function oiTimelineGroup(model, names) {
+  const items = oiList(model.timeline);
+  return oiGroup('Research timeline', items.length, [
+    leadDrawerEl('p', 'lead-drawer-muted',
+      'OI research events only. ZTech operational Activity (approvals, sends) is a separate ledger and is not shown here.'),
+    oiItems(items, (li, t) => {
+      oiAppend(li, [
+        oiHeadline(oiText(t.title) || oiText(t.event_type) || 'Event', [oiClaimKindBadge(t.claim_kind)]),
+        oiMeta([leadDrawerFormatTime(t.occurred_at), oiText(t.event_type), oiEntityLabel(names, t.entity_id)]),
+        oiText(t.summary) ? leadDrawerEl('p', 'oi-body', oiText(t.summary)) : null,
+        oiRefs('Evidence', t.evidence_refs)
+      ]);
+    }, 'OI recorded no timeline events for this research.')
+  ], false);
+}
+
+function oiEvidenceGroup(model, names) {
+  const evidence = oiList(model.evidence);
+  const body = [oiItems(evidence, (li, e) => {
+    const value = e.value === null || e.value === undefined ? '' : oiText(e.value);
+    oiAppend(li, [
+      oiHeadline(oiText(e.claim) || 'Evidence', [oiClaimKindBadge(e.claim_kind)]),
+      oiEstimateText(e.estimate) ? leadDrawerEl('p', 'oi-body', oiEstimateText(e.estimate)) : null,
+      oiMeta([
+        oiText(e.evidence_id),
+        oiEntityLabel(names, e.entity_id),
+        oiText(e.provider),
+        oiText(e.metric) ? `${oiText(e.metric)}${value ? ` = ${value}` : ''}` : '',
+        oiPercent(e.confidence) ? `confidence ${oiPercent(e.confidence)}` : '',
+        oiText(e.freshness),
+        e.captured_at ? `captured ${leadDrawerFormatTime(e.captured_at)}` : ''
+      ]),
+      // A source is shown as text only; the renderer never navigates to OI-supplied URLs.
+      oiText(e.source_url) ? leadDrawerEl('span', 'lead-drawer-evidence-meta oi-source', `Source: ${oiText(e.source_url)}`) : null,
+      oiList(e.conflicts_with).length ? oiMeta([`Conflicts with: ${oiList(e.conflicts_with).map(oiText).filter(Boolean).join(', ')}`]) : null
+    ]);
+  }, 'OI returned no evidence for this research.')];
+
+  const observations = oiList(model.observations);
+  if (observations.length) {
+    body.push(leadDrawerEl('h4', 'lead-drawer-subhead', 'Observations'));
+    body.push(oiItems(observations, (li, o) => {
+      oiAppend(li, [
+        oiHeadline(oiText(o.type) || 'Observation', [oiClaimKindBadge(o.claim_kind)]),
+        oiMeta([oiText(o.observation_id), oiEntityLabel(names, o.entity_id), oiText(o.provider), leadDrawerFormatTime(o.captured_at)]),
+        oiMetricsText(o.metrics) ? leadDrawerEl('p', 'oi-body', oiMetricsText(o.metrics)) : null,
+        oiRefs('Evidence', o.evidence_refs)
+      ]);
+    }, ''));
+  }
+
+  const signals = oiList(model.signals);
+  if (signals.length) {
+    body.push(leadDrawerEl('h4', 'lead-drawer-subhead', 'Signals'));
+    body.push(oiItems(signals, (li, s) => {
+      oiAppend(li, [
+        oiHeadline(oiText(s.summary) || oiText(s.type) || 'Signal', [oiClaimKindBadge(s.claim_kind)]),
+        oiMeta([
+          oiText(s.type),
+          oiEntityLabel(names, s.subject_id),
+          oiPercent(s.strength) ? `strength ${oiPercent(s.strength)}` : '',
+          oiPercent(s.confidence) ? `confidence ${oiPercent(s.confidence)}` : '',
+          leadDrawerFormatTime(s.observed_at)
+        ]),
+        oiRefs('Evidence', s.evidence_refs)
+      ]);
+    }, ''));
+  }
+
+  const conflicts = oiList(model.conflicts);
+  if (conflicts.length) {
+    body.push(leadDrawerEl('h4', 'lead-drawer-subhead', 'Conflicting evidence'));
+    body.push(oiItems(conflicts, (li, c) => {
+      oiAppend(li, [
+        oiHeadline(oiText(c.metric) || 'Conflict', []),
+        oiMeta([oiEntityLabel(names, c.entity_id), `values: ${oiList(c.values).map((v) => (v === null ? 'none' : oiText(v))).join(', ')}`]),
+        oiText(c.resolution) ? leadDrawerEl('p', 'oi-body', `Resolution: ${oiText(c.resolution)}`) : null,
+        oiRefs('Evidence', c.evidence_refs)
+      ]);
+    }, ''));
+  }
+  return oiGroup('Evidence', evidence.length, body, false);
+}
+
+function oiSalesAnglesGroup(model) {
+  const items = oiList(model.sales_angles);
+  return oiGroup('Sales angles', items.length, [
+    leadDrawerEl('p', 'lead-drawer-warning',
+      'Sales angles are intelligence-derived suggestions, not verified facts. Never use a "Do not claim" statement in a pitch.'),
+    oiItems(items, (li, a) => {
+      const doNot = oiList(a.do_not_claim).map(oiText).filter(Boolean);
+      const parts = [
+        oiHeadline(oiText(a.angle) || 'Sales angle', [oiBadge('INFERENCE', 'info', 'claim-kind')]),
+        oiPercent(a.confidence) ? oiMeta([`confidence ${oiPercent(a.confidence)}`]) : null,
+        oiText(a.summary) ? leadDrawerEl('p', 'oi-body', oiText(a.summary)) : null
+      ];
+      if (doNot.length) {
+        const warn = leadDrawerEl('div', 'oi-do-not-claim');
+        warn.appendChild(leadDrawerEl('span', 'oi-do-not-claim-label', 'Do not claim'));
+        const ul = leadDrawerEl('ul', 'lead-drawer-plain-list');
+        for (const line of doNot.slice(0, 20)) ul.appendChild(leadDrawerEl('li', null, line));
+        warn.appendChild(ul);
+        parts.push(warn);
+      }
+      parts.push(oiRefs('Evidence', a.evidence_refs));
+      parts.push(oiRefs('Opportunities', a.opportunity_refs));
+      if (oiList(a.limitations).length) parts.push(oiMeta([`Limitations: ${oiList(a.limitations).map(oiText).filter(Boolean).join('; ')}`]));
+      oiAppend(li, parts);
+    }, 'OI suggested no sales angles in this research.')
+  ], false);
+}
+
+// --- panel states -----------------------------------------------------------
+
+function oiRunButton(label, disabled) {
+  const btn = leadDrawerEl('button', 'btn btn-sm', label);
+  btn.type = 'button';
+  btn.setAttribute('data-action', 'oi-run');
+  btn.disabled = Boolean(disabled);
+  if (!disabled) btn.addEventListener('click', () => { runLeadDrawerOpportunity(); });
+  return btn;
+}
+
+function oiReloadButton() {
+  const btn = leadDrawerEl('button', 'btn btn-sm btn-secondary', 'Retry');
+  btn.type = 'button';
+  btn.setAttribute('data-action', 'oi-retry');
+  btn.addEventListener('click', () => { if (leadDrawerLeadId) loadLeadDrawerOpportunity(leadDrawerLeadId); });
+  return btn;
+}
+
+function oiActions(nodes) {
+  return oiAppend(leadDrawerEl('div', 'oi-actions'), nodes);
+}
+
+function renderLeadDrawerOpportunity() {
+  const box = document.getElementById('lead-drawer-opportunity');
+  if (!box) return;
+  const st = leadDrawerOpportunity;
+  const title = leadDrawerEl('h3', 'lead-drawer-section-title', 'Opportunity Intelligence');
+  const running = st.running === true;
+
+  if (st.kind === 'idle' || st.kind === 'loading') {
+    box.replaceChildren(title, leadDrawerEl('p', 'lead-drawer-muted', 'Loading Opportunity Intelligence...'));
+    return;
+  }
+
+  if (st.kind === 'unavailable') {
+    const nodes = [
+      title,
+      leadDrawerEl('p', 'lead-drawer-empty', OI_UNAVAILABLE_TITLE),
+      leadDrawerEl('p', 'lead-drawer-muted', st.error || 'The Opportunity Intelligence service is not reachable.'),
+      leadDrawerEl('p', 'lead-drawer-muted',
+        'Research, Evidence, Pitch and Outreach keep working without it.'),
+      oiActions([oiReloadButton()])
+    ];
+    box.replaceChildren(...nodes);
+    return;
+  }
+
+  const view = st.view && typeof st.view === 'object' ? st.view : null;
+  const model = view && view.model && typeof view.model === 'object' ? view.model : null;
+  const notice = st.notice ? leadDrawerEl('p', 'lead-drawer-warning', st.notice) : null;
+  const runLabel = running ? 'Running research...' : (model ? 'Run research again' : 'Run Opportunity Research');
+
+  if (!model) {
+    const nodes = [title, notice];
+    if (view && view.state === 'not_researched') {
+      nodes.push(leadDrawerEl('p', 'lead-drawer-empty', 'No Opportunity Intelligence research has been run for this lead yet.'));
+      nodes.push(leadDrawerEl('p', 'lead-drawer-muted',
+        'Research runs only when you start it. It looks at this business and its competitors across website, ads, content and social.'));
+    } else {
+      nodes.push(leadDrawerEl('p', 'lead-drawer-empty', (view && oiText(view.message)) || 'No Opportunity Intelligence report is available.'));
+    }
+    nodes.push(oiActions([oiRunButton(runLabel, running)]));
+    box.replaceChildren(...nodes.filter(Boolean));
+    return;
+  }
+
+  const names = oiEntityNames(model);
+  const stateLine = leadDrawerEl('div', 'lead-drawer-state-line');
+  if (model.research_failed === true || view.state === 'failed') {
+    stateLine.appendChild(oiBadge('Research failed', 'bad'));
+  } else if (model.available === false) {
+    stateLine.appendChild(oiBadge('No usable provider data', 'warn'));
+  } else if (model.degraded) {
+    stateLine.appendChild(oiBadge('Partial — some providers unavailable', 'warn'));
+  } else {
+    stateLine.appendChild(oiBadge('Report available', 'ok'));
+  }
+  if (model.generated_at) stateLine.appendChild(leadDrawerEl('span', 'lead-drawer-muted', `Generated ${leadDrawerFormatTime(model.generated_at)}`));
+
+  const nodes = [
+    title,
+    stateLine,
+    notice,
+    oiActions([oiRunButton(runLabel, running)]),
+    oiOverviewGroup(model, view),
+    oiProviderGroup(model, names),
+    oiOpportunitiesGroup(model),
+    oiSalesAnglesGroup(model),
+    oiCompetitorsGroup(model, names),
+    oiAdsGroup(model, names),
+    oiContentSocialGroup(model, names),
+    oiTimelineGroup(model, names),
+    oiEvidenceGroup(model, names)
+  ];
+  box.replaceChildren(...nodes.filter(Boolean));
+}
+
+// A view is "unavailable" when OI could not be reached or is not configured. The
+// two honest non-errors are a report (model present) and "not researched yet".
+function oiClassify(view) {
+  if (view && view.model && typeof view.model === 'object') return 'view';
+  if (view && view.state === 'not_researched') return 'view';
+  return 'unavailable';
+}
+
+// Read the latest report for the lead. Never starts research.
+async function loadLeadDrawerOpportunity(leadId) {
+  if (!leadId) return;
+  if (leadDrawerOpportunity.running && leadDrawerOpportunity.leadId === leadId) return;
+  const seq = ++leadDrawerOpportunitySeq;
+  const bridge = oiBridge();
+  if (!bridge || typeof bridge.latest !== 'function') {
+    leadDrawerOpportunity = { kind: 'unavailable', view: null, error: 'Opportunity Intelligence is not available in this build.', leadId, running: false, notice: null };
+    renderLeadDrawerOpportunity();
+    return;
+  }
+  leadDrawerOpportunity = { kind: 'loading', view: null, error: null, leadId, running: false, notice: null };
+  renderLeadDrawerOpportunity();
+  let next;
+  try {
+    const view = oiUnwrap(await bridge.latest({ leadId }));
+    next = oiClassify(view) === 'view'
+      ? { kind: 'view', view, error: null, leadId, running: false, notice: null }
+      : { kind: 'unavailable', view: null, error: oiText(view.message) || null, leadId, running: false, notice: null };
+  } catch (err) {
+    next = { kind: 'unavailable', view: null, error: (err && err.message) || null, leadId, running: false, notice: null };
+  }
+  // A late answer for a different lead, or a superseded request, is dropped.
+  if (seq !== leadDrawerOpportunitySeq || leadDrawerLeadId !== leadId) return;
+  leadDrawerOpportunity = next;
+  renderLeadDrawerOpportunity();
+}
+
+// The one write: the user asked OI to research this lead. Main resolves the
+// business identity from its own store; the renderer sends the lead id only.
+async function runLeadDrawerOpportunity() {
+  const leadId = leadDrawerLeadId;
+  const bridge = oiBridge();
+  if (!leadId || !bridge || typeof bridge.request !== 'function') return;
+  if (leadDrawerOpportunity.running) return;
+  const seq = ++leadDrawerOpportunitySeq;
+  const previous = leadDrawerOpportunity.kind === 'view' ? leadDrawerOpportunity.view : null;
+  leadDrawerOpportunity = { kind: 'view', view: previous || { state: 'not_researched', model: null }, error: null, leadId, running: true, notice: null };
+  renderLeadDrawerOpportunity();
+  let next;
+  try {
+    const view = oiUnwrap(await bridge.request({ leadId, force: true }));
+    if (view.model && typeof view.model === 'object') {
+      next = { kind: 'view', view, error: null, leadId, running: false, notice: null };
+    } else {
+      // Research did not produce a report. Keep the last good report on screen and say why.
+      next = {
+        kind: 'view',
+        view: previous || { state: 'not_researched', model: null },
+        error: null,
+        leadId,
+        running: false,
+        notice: `Research did not complete: ${oiText(view.message) || 'Opportunity Intelligence unavailable.'}`
+      };
+    }
+  } catch (err) {
+    next = {
+      kind: 'view',
+      view: previous || { state: 'not_researched', model: null },
+      error: null,
+      leadId,
+      running: false,
+      notice: `Research did not complete: ${(err && err.message) || 'Opportunity Intelligence unavailable.'}`
+    };
+  }
+  if (seq !== leadDrawerOpportunitySeq || leadDrawerLeadId !== leadId) return;
+  leadDrawerOpportunity = next;
+  renderLeadDrawerOpportunity();
+}
 
 // === P1-G Collection Quality Report (read-only) ===
 // The report for the run on screen. It DISPLAYS counts the main process derived
