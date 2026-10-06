@@ -37,9 +37,9 @@ const { generatePitch } = require('../outreach/PitchGenerator');
 const READ_SECTIONS = Object.freeze(['overview', 'opportunities', 'competitors', 'ads', 'content', 'social', 'timeline', 'evidence', 'angles']);
 
 class OpportunityIntelligenceService {
-  constructor({ config = {}, fetchImpl, clock, logger, gateway } = {}) {
+  constructor({ config = {}, fetchImpl, clock, logger, gateway, associationBacking = null } = {}) {
     this.gateway = gateway || new OpportunityIntelligenceGateway({ config, fetchImpl, clock, logger });
-    this.associations = new OpportunityAssociationStore({ clock: clock || (() => new Date()) });
+    this.associations = new OpportunityAssociationStore({ clock: clock || (() => new Date()), backing: associationBacking, logger });
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.migration = MIGRATION_NEED;
   }
@@ -126,6 +126,21 @@ class OpportunityIntelligenceService {
       };
     }
     const res = await this.gateway.getReport(assoc.research_id);
+    if (!res.ok && res.status === 404) {
+      // The link survived (migration 006) but OI no longer holds the report (its DB was
+      // reset or deleted). Say so and offer a fresh run - never fabricate a report.
+      return {
+        available: false,
+        state: 'report_missing',
+        message: "This lead's report is no longer in Opportunity Intelligence. Run research again.",
+        lead_id: String(leadId),
+        research_id: assoc.research_id,
+        model: null,
+        summary: null,
+        sections: null,
+        affects_outreach: false,
+      };
+    }
     if (!res.ok) return { ...this.unavailableView(res.error), state: res.state, lead_id: String(leadId), research_id: assoc.research_id };
     return this.toView(leadId, res.report, assoc);
   }

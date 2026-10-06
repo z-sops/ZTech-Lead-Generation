@@ -59,6 +59,7 @@ class SqlJsStore {
     this.sends = new SqlSends(this);
     this.enrichmentJobs = new SqlEnrichmentJobs(this);
     this.enrichmentObservations = new SqlEnrichmentObservations(this);
+    this.oiAssociations = new SqlOiAssociations(this);
   }
 
   /** Apply pending migrations in one transaction each. Idempotent. */
@@ -118,6 +119,8 @@ class SqlJsStore {
       this.db.run('DELETE FROM li_research_jobs WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_segment_members WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_enrichment_observations WHERE lead_id = ?', [id]);
+      // The link to OI goes with the lead; the report itself lives in OI's store.
+      this.db.run('DELETE FROM li_oi_associations WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_enrichment_jobs WHERE lead_id = ?', [id]);
     });
   }
@@ -800,6 +803,41 @@ class SqlEnrichmentObservations {
       out.get(o.lead_id).push(o);
     }
     return out;
+  }
+}
+
+
+/* ------------------------ opportunity intelligence ------------------------ */
+
+/**
+ * I3: lead <-> Opportunity Intelligence research associations (migration 006).
+ * Exactly seven columns, IDs and metadata only. `listAll` is read once at start-up by
+ * OpportunityAssociationStore; `put` is idempotent on research_id and prunes a lead to
+ * its newest `keep` rows.
+ */
+const OI_ASSOC_COLS = ['research_id', 'lead_id', 'snapshot_id', 'entity_key', 'status', 'generated_at', 'recorded_at'];
+
+class SqlOiAssociations {
+  constructor(store) { this.s = store; }
+
+  async listAll() {
+    return rows(this.s.db, `SELECT ${OI_ASSOC_COLS.join(', ')} FROM li_oi_associations ORDER BY lead_id, recorded_at DESC, research_id DESC`);
+  }
+
+  async put(rec, { keep = 50 } = {}) {
+    const values = OI_ASSOC_COLS.map((c) => (rec[c] === undefined || rec[c] === null ? null : String(rec[c])));
+    return this.s.tx(() => {
+      this.s.db.run(
+        `INSERT OR IGNORE INTO li_oi_associations (${OI_ASSOC_COLS.join(', ')}) VALUES (${OI_ASSOC_COLS.map(() => '?').join(', ')})`,
+        values
+      );
+      this.s.db.run(
+        'DELETE FROM li_oi_associations WHERE lead_id = ? AND research_id NOT IN '
+        + '(SELECT research_id FROM li_oi_associations WHERE lead_id = ? ORDER BY recorded_at DESC, research_id DESC LIMIT ?)',
+        [String(rec.lead_id), String(rec.lead_id), keep]
+      );
+      return row(this.s.db, `SELECT ${OI_ASSOC_COLS.join(', ')} FROM li_oi_associations WHERE research_id = ?`, [String(rec.research_id)]);
+    });
   }
 }
 

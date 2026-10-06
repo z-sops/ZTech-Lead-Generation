@@ -48,6 +48,8 @@ const LI_TABLES = Object.freeze([
   // F19: the outbound send ledger. At most one accepted row per idempotency key, so the
   // same approved content can never be accepted twice.
   'li_outreach_sends',
+  // I3: lead <-> Opportunity Intelligence research ids. IDs only; the report stays in OI.
+  'li_oi_associations',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';
@@ -130,8 +132,8 @@ function createRound1Port(db) {
 *        does not supply one.
  * @param {object} [p.opportunity] Phase I2 Opportunity Intelligence wiring:
  *        { config?, fetchImpl? }. OI is a SEPARATE local FastAPI service with its
- *        OWN database, so nothing here is persisted on the shared whatsapp.db and
- *        no migration is run for it. Constructing it cannot fail and cannot
+ *        OWN database. ZTech persists only the lead <-> research ids (migration 006,
+ *        li_oi_associations); no report content enters the shared whatsapp.db. Constructing it cannot fail and cannot
  *        affect `li`: if OI is down, misconfigured or disabled, `li` is returned
  *        exactly as it would have been without this parameter.
  */
@@ -187,7 +189,10 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
   // Built last, in its own try/catch, and never awaited in a way that could delay
   // or fail Lead Intelligence. OI is read-only research context with its own store;
   // it shares nothing with `li` except lead_id.
-  const oi = buildOpportunity(opportunity, leadSource, logger);
+  const oi = buildOpportunity(opportunity, leadSource, logger, store);
+  // I3: reload persisted associations so a researched lead still opens its report after
+  // a restart. load() never throws; a failure leaves the store empty ("not researched").
+  if (oi && typeof oi.loadAssociations === 'function') await oi.loadAssociations();
 
   return {
     li,
@@ -212,7 +217,7 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
  * Construct the OI service, or return a handle whose every method answers
  * "unavailable". NEVER throws: a broken OI must not be able to break ZTech.
  */
-function buildOpportunity(spec, leadSource, logger) {
+function buildOpportunity(spec, leadSource, logger, store = null) {
   if (!spec) return null;
   const safeWarn = (m) => { if (logger && logger.warn) logger.warn('lead-intel', String(m)); };
   try {
@@ -220,6 +225,7 @@ function buildOpportunity(spec, leadSource, logger) {
       config: spec.config || {},
       fetchImpl: spec.fetchImpl,
       clock: spec.clock,
+      associationBacking: store && store.oiAssociations ? store.oiAssociations : null,
       logger: { warn: safeWarn, error: (m) => { if (logger && logger.error) logger.error('lead-intel', String(m)); }, info: () => {} },
     });
     // `oiSource` is the one thing OI is given from ZTech: a leadId -> view reader.

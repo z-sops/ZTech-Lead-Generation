@@ -313,12 +313,20 @@ const MIGRATION_005 = fs.readFileSync(
   'utf8'
 );
 
+// I3: Opportunity Intelligence associations - lead_id <-> research_id/snapshot_id/entity_key,
+// IDs and metadata only. The report body never enters this database.
+const MIGRATION_006 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '006_oi_associations.sql'),
+  'utf8'
+);
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
   Object.freeze({ version: 3, name: '003_outreach_activity.sql', sql: MIGRATION_003 }),
   Object.freeze({ version: 4, name: '004_email_send.sql', sql: MIGRATION_004 }),
   Object.freeze({ version: 5, name: '005_whatsapp_send.sql', sql: MIGRATION_005 }),
+  Object.freeze({ version: 6, name: '006_oi_associations.sql', sql: MIGRATION_006 }),
 ]);
 
 module.exports = { MIGRATIONS };

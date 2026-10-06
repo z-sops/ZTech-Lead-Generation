@@ -269,6 +269,39 @@ class MemEnrichmentObservations {
  * and - like the SQL version - activity rows survive purgeLead, because a historical
  * event must not disappear when the lead it referred to is purged.
  */
+/** I3: mirror of SqlOiAssociations - seven columns, idempotent on research_id. */
+const OI_ASSOC_COLS = ['research_id', 'lead_id', 'snapshot_id', 'entity_key', 'status', 'generated_at', 'recorded_at'];
+
+class MemOiAssociations {
+  constructor() { this.rows = new Map(); }
+
+  async listAll() {
+    return [...this.rows.values()]
+      .sort((a, b) => (a.lead_id < b.lead_id ? -1 : a.lead_id > b.lead_id ? 1
+        : a.recorded_at < b.recorded_at ? 1 : a.recorded_at > b.recorded_at ? -1
+          : a.research_id < b.research_id ? 1 : -1))
+      .map((r) => ({ ...r }));
+  }
+
+  async put(rec, { keep = 50 } = {}) {
+    const id = String(rec.research_id);
+    if (!this.rows.has(id)) {
+      const row = {};
+      for (const c of OI_ASSOC_COLS) row[c] = rec[c] === undefined || rec[c] === null ? null : String(rec[c]);
+      this.rows.set(id, row);
+    }
+    const lead = String(rec.lead_id);
+    const mine = [...this.rows.values()].filter((r) => r.lead_id === lead)
+      .sort((a, b) => (a.recorded_at < b.recorded_at ? 1 : a.recorded_at > b.recorded_at ? -1 : a.research_id < b.research_id ? 1 : -1));
+    for (const r of mine.slice(keep)) this.rows.delete(r.research_id);
+    return this.rows.has(id) ? { ...this.rows.get(id) } : null;
+  }
+
+  async deleteByLead(leadId) {
+    for (const [k, r] of this.rows) if (r.lead_id === String(leadId)) this.rows.delete(k);
+  }
+}
+
 class MemActivity {
   constructor() { this.rows = new Map(); }
 
@@ -433,6 +466,7 @@ class MemoryStore {
     this.sends = new MemSends();
     this.enrichmentJobs = new MemEnrichmentJobs();
     this.enrichmentObservations = new MemEnrichmentObservations();
+    this.oiAssociations = new MemOiAssociations();
   }
 
   async purgeLead(leadId) {
@@ -445,6 +479,7 @@ class MemoryStore {
     await this.segments.deleteLeadMemberships(leadId);
     await this.enrichmentJobs.deleteByLead(leadId);
     await this.enrichmentObservations.deleteByLead(leadId);
+    await this.oiAssociations.deleteByLead(leadId);
   }
 }
 

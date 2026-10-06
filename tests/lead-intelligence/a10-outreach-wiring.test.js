@@ -396,9 +396,10 @@ test('A10 runtime: runs the 12 additive li_* migrations on whatsapp.db and chang
   const tables = tableNames();
   const created = tables.filter((t) => t.startsWith('li_'));
   // F19 declared lock update: 12 -> 13 additive li_* tables, adding the send ledger.
-  assert.equal(LI_TABLES.length, 13, 'thirteen additive LI tables are declared');
+  // I3 declared lock update: 13 -> 14, adding li_oi_associations (OI ids only, migration 006).
+  assert.equal(LI_TABLES.length, 14, 'fourteen additive LI tables are declared');
   for (const t of LI_TABLES) assert.ok(tables.includes(t), 'missing additive table: ' + t);
-  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 13, 'exactly the thirteen li_* tables were added');
+  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 14, 'exactly the fourteen li_* tables were added');
 
   // Every pre-existing ZTech table is still present and its data is intact.
   const ztechAfter = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
@@ -410,7 +411,7 @@ test('A10 runtime: runs the 12 additive li_* migrations on whatsapp.db and chang
 
   // Migrations are idempotent: a second init adds nothing.
   const again = await initializeLeadIntelligenceRuntime({ accountStore, logger: SILENT });
-  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 13); // F19 declared lock update: 12 -> 13
+  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 14); // F19 12 -> 13; I3 13 -> 14 (li_oi_associations)
   await again.shutdown();
 });
 

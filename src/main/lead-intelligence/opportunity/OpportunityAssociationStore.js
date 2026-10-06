@@ -16,50 +16,21 @@ const { OI_ID, SNAP_ID } = require('./OpportunityIntelligenceGateway');
  * the ids that OI itself returned on the report ZTech just validated, so the
  * association cannot be asserted from anything the renderer supplied.
  *
- * In Phase I2 this is an in-process store. Persistence is deliberately NOT
- * added here: adding a `li_*` table means a production migration to ZTech's
- * whatsapp.db, which is reported separately before it is done. See
- * MIGRATION-NEED below.
+ * PERSISTENCE (I3, migration 006). Reads stay synchronous and in-process; the
+ * optional `backing` (store.oiAssociations) is loaded once by `load()` and every new
+ * association is written through to it. Only the seven persisted columns survive a
+ * restart (lead_id, research_id, snapshot_id, entity_key, status, generated_at,
+ * recorded_at). The report body is never stored here - it stays in OI and is
+ * re-fetched by research_id.
  */
 
-/**
- * The smallest migration I2 would need, documented rather than applied.
- *
- * Nothing here is executed. `li_evidence_packets` already stores
- * (lead_id, job_id, research_status, captured_at) but has no research_id,
- * snapshot_id or OI entity_key, and its job_id is Zuni-SEO's - so the tuple
- * genuinely cannot be expressed there. The minimal addition is:
- *
- *   CREATE TABLE li_oi_associations (
- *     association_id TEXT PRIMARY KEY,
- *     lead_id       TEXT NOT NULL,
- *     research_id   TEXT NOT NULL,
- *     snapshot_id   TEXT NOT NULL,
- *     entity_key    TEXT NOT NULL,
- *     status        TEXT NOT NULL,
- *     generated_at  TEXT NOT NULL,
- *     provider_status_json TEXT NOT NULL,
- *     created_at    TEXT NOT NULL
- *   );
- *   CREATE INDEX li_oi_assoc_lead  ON li_oi_associations(lead_id, generated_at DESC);
- *   CREATE UNIQUE INDEX li_oi_assoc_research ON li_oi_associations(research_id);
- *
- * One row per research_id, keyed by research_id so a re-fetch is idempotent.
- * It stores NO report body: the full IntelligenceReport stays in OI's own
- * SQLite store and is re-fetched by research_id.
- */
+/** Migration 006 is applied (I3). Kept as a record of what the table holds. */
 const MIGRATION_NEED = Object.freeze({
   migration_required: true,
-  applied: false,
-  reason: 'No existing ZTech table can hold (lead_id, research_id, snapshot_id, entity_key, status). '
-    + 'li_evidence_packets stores Zuni-SEO job_id only, and OI has its own store.',
+  applied: true,
   file: '006_oi_associations.sql',
   tables: ['li_oi_associations'],
-  also_required: [
-    'SqlJsStore accessor (associationForLead / putAssociation / associationForResearch)',
-    'LI_TABLES entry in src/main/lead-intelligence/lead-intelligence-runtime.js',
-    'MIGRATIONS entry in src/main/lead-intelligence/persistence/migrations.js (regenerate via scripts/embed-migrations.js)',
-  ],
+  columns: ['lead_id', 'research_id', 'snapshot_id', 'entity_key', 'status', 'generated_at', 'recorded_at'],
   rationale: 'ZTech persists only the minimum association needed to reopen intelligence for a lead. '
     + 'The detailed report is never copied into whatsapp.db.',
 });
@@ -67,11 +38,88 @@ const MIGRATION_NEED = Object.freeze({
 const MAX_PER_LEAD = 50;
 
 class OpportunityAssociationStore {
-  constructor({ clock = () => new Date(), maxPerLead = MAX_PER_LEAD } = {}) {
+  constructor({ clock = () => new Date(), maxPerLead = MAX_PER_LEAD, backing = null, logger = null } = {}) {
     this.clock = clock;
     this.maxPerLead = maxPerLead;
+    this.backing = backing && typeof backing.put === 'function' && typeof backing.listAll === 'function' ? backing : null;
+    this.logger = logger;
     this.byResearchId = new Map(); // research_id -> association
     this.byLeadId = new Map();     // lead_id    -> [association] newest first
+    this.pendingWrites = new Set();
+  }
+
+  /**
+   * Load persisted associations (migration 006). Rows that do not carry valid OI ids are
+   * skipped, never repaired. Never throws: an unreadable table leaves the store empty,
+   * which renders as "not researched yet", never as a crash.
+   */
+  async load() {
+    if (!this.backing) return 0;
+    let stored = [];
+    try {
+      stored = await this.backing.listAll();
+    } catch (e) {
+      this.warn(`opportunity associations could not be loaded: ${e && e.message}`);
+      return 0;
+    }
+    let loaded = 0;
+    for (const r of Array.isArray(stored) ? stored : []) {
+      if (!r || !OI_ID.pattern.test(String(r.research_id || '')) || !SNAP_ID.pattern.test(String(r.snapshot_id || ''))) continue;
+      if (!r.lead_id || !r.entity_key || this.byResearchId.has(String(r.research_id))) continue;
+      const a = Object.freeze({
+        association_id: `oia_${r.lead_id}_${r.research_id}`,
+        lead_id: String(r.lead_id),
+        research_id: String(r.research_id),
+        snapshot_id: String(r.snapshot_id),
+        entity_key: String(r.entity_key),
+        status: String(r.status),
+        generated_at: String(r.generated_at),
+        schema_version: null, // not persisted (migration 006 holds seven columns only)
+        created_at: String(r.recorded_at),
+      });
+      this.byResearchId.set(a.research_id, a);
+      const list = this.byLeadId.get(a.lead_id) || [];
+      list.push(a);
+      this.byLeadId.set(a.lead_id, list);
+      loaded += 1;
+    }
+    for (const [lead, list] of this.byLeadId) {
+      list.sort((x, y) => (x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : (x.research_id < y.research_id ? 1 : -1)));
+      if (list.length > this.maxPerLead) list.length = this.maxPerLead;
+      this.byLeadId.set(lead, list);
+    }
+    return loaded;
+  }
+
+  /** Resolves when every write-through started so far has settled (tests, shutdown). */
+  async flush() {
+    await Promise.allSettled([...this.pendingWrites]);
+  }
+
+  warn(msg) {
+    if (this.logger && typeof this.logger.warn === 'function') this.logger.warn(`[opportunity-intelligence] ${msg}`);
+  }
+
+  persist(a) {
+    if (!this.backing) return;
+    const rec = {
+      research_id: a.research_id,
+      lead_id: a.lead_id,
+      snapshot_id: a.snapshot_id,
+      entity_key: a.entity_key,
+      status: a.status,
+      generated_at: a.generated_at,
+      recorded_at: a.created_at,
+    };
+    let p;
+    try {
+      p = Promise.resolve(this.backing.put(rec, { keep: this.maxPerLead }));
+    } catch (e) {
+      p = Promise.reject(e);
+    }
+    const tracked = p.catch((e) => this.warn(`opportunity association could not be saved: ${e && e.message}`))
+      .finally(() => this.pendingWrites.delete(tracked));
+    this.pendingWrites.add(tracked);
   }
 
   /**
@@ -122,6 +170,7 @@ class OpportunityAssociationStore {
     list.unshift(association);
     if (list.length > this.maxPerLead) list.length = this.maxPerLead;
     this.byLeadId.set(lead, list);
+    this.persist(association);
     return { ok: true, association, updated: true };
   }
 

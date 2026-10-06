@@ -936,20 +936,23 @@ test('29b. OI provider hosts are never contacted, whatever the config says', asy
 // ============================================================================
 // 30. existing F12-F25 tests remain green  (enforced by the full suite run)
 // ============================================================================
-test('30. OI adds no migration, no send path and no change to F12-F25 semantics', async () => {
+test('30. OI adds exactly one ID-only table, no send path and no change to F12-F25 semantics', async () => {
   const fs = require('fs');
   const root = path.join(__dirname, '..', '..');
-  // The required migration is REPORTED, not applied.
-  assert.equal(MIGRATION_NEED.migration_required, true);
-  assert.equal(MIGRATION_NEED.applied, false);
-  assert.equal(fs.existsSync(path.join(root, 'src', 'main', 'lead-intelligence', 'migrations', '006_oi_associations.sql')), false,
-    'I2 must not add a ZTech migration');
-  // No OI table exists in the shipped migrations.
-  const migs = fs.readdirSync(path.join(root, 'src', 'main', 'lead-intelligence', 'migrations'));
-  const combined = migs.map((f) => fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'migrations', f), 'utf8')).join('\n');
-  assert.equal(combined.includes('li_oi_'), false, 'no OI table may exist in ZTech migrations yet');
-  // whatsapp.db still has no opportunity-intelligence table.
-  assert.equal(combined.includes('opportunity_intelligence'), false);
+  const dir = path.join(root, 'src', 'main', 'lead-intelligence', 'migrations');
+  // I3 declared update: migration 006 is applied - and it is the only OI schema.
+  assert.equal(MIGRATION_NEED.applied, true);
+  const migs = fs.readdirSync(dir).sort();
+  const oiFiles = migs.filter((f) => fs.readFileSync(path.join(dir, f), 'utf8').includes('li_oi_'));
+  assert.deepEqual(oiFiles, ['006_oi_associations.sql'], 'exactly one migration mentions an OI table');
+  const sql = fs.readFileSync(path.join(dir, '006_oi_associations.sql'), 'utf8').replace(/--.*$/gm, '');
+  assert.deepEqual([...sql.matchAll(/CREATE TABLE[^(]*\b(li_\w+)/g)].map((m) => m[1]), ['li_oi_associations']);
+  const cols = sql.slice(sql.indexOf('(') + 1, sql.indexOf(');')).split(',').map((c) => c.trim().split(/\s+/)[0]).filter(Boolean);
+  assert.deepEqual(cols.sort(), ['entity_key', 'generated_at', 'lead_id', 'recorded_at', 'research_id', 'snapshot_id', 'status']);
+  // IDs only: no report body, no provider data, no secret, and no other table is touched.
+  for (const banned of ['json', 'report', 'provider', 'secret', 'token', 'key TEXT', 'numbers', 'li_outreach', 'li_pitch', 'ALTER', 'DROP', 'UPDATE ', 'DELETE ']) {
+    assert.equal(new RegExp(banned, 'i').test(sql), false, `migration 006 must not contain ${banned}`);
+  }
 
   // The outreach activity enum is untouched: 7 operational events, no research event.
   const contract = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'contract.js'), 'utf8');

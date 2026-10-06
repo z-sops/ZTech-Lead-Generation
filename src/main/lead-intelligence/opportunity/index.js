@@ -25,7 +25,7 @@ const oiContract = require('./oiContract');
  * @param {object} [input.leadSource] anything with .get(leadId) -> lead view
  * @returns {{service, gateway, associations, migration, start, stop, registerIpc}}
  */
-function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, gateway } = {}) {
+function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, gateway, associationBacking = null } = {}) {
   const resolved = {
     enabled: config.enabled !== undefined ? Boolean(config.enabled) : DEFAULT_CONFIG.enabled,
     baseUrl: config.baseUrl === undefined ? DEFAULT_CONFIG.baseUrl : String(config.baseUrl),
@@ -37,7 +37,7 @@ function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, 
     maxCompetitors: config.maxCompetitors === undefined ? DEFAULT_CONFIG.maxCompetitors : Number(config.maxCompetitors),
   };
 
-  const service = new OpportunityIntelligenceService({ config: resolved, fetchImpl, clock, logger });
+  const service = new OpportunityIntelligenceService({ config: resolved, fetchImpl, clock, logger, gateway, associationBacking });
 
   return {
     service,
@@ -46,7 +46,9 @@ function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, 
     config: resolved,
     migration: MIGRATION_NEED,
     async start() { return service.start(); },
-    async stop() { return service.stop(); },
+    async stop() { await service.associations.flush(); return service.stop(); },
+    /** Load persisted lead <-> research associations (migration 006). Never throws. */
+    async loadAssociations() { return service.associations.load(); },
     registerIpc({ ipcMain, isTrustedSender, leadSource, logger: lg }) {
       if (!service.enabled) {
         return registerUnavailableOpportunityIpc({

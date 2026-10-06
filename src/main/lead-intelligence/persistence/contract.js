@@ -34,6 +34,7 @@ const { ValidationError } = require('../core/errors');
  *               listDue(nowIso), listByStates(states)
  * enrichmentObservations: upsertMany(obs[]) (same observation_id -> refresh collected_at/job_id),
  *               listByLead(leadId), listAllGrouped() -> Map<leadId, obs[]>
+ * oiAssociations: listAll(), put(rec, {keep}) - I3 lead <-> OI research ids (7 columns, IDs only)
  * purgeLead(leadId)                     remove all lead-intelligence rows for a deleted lead
  */
 

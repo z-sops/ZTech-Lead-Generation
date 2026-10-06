@@ -4229,7 +4229,7 @@ function renderLeadDrawerOpportunity() {
 // two honest non-errors are a report (model present) and "not researched yet".
 function oiClassify(view) {
   if (view && view.model && typeof view.model === 'object') return 'view';
-  if (view && view.state === 'not_researched') return 'view';
+  if (view && (view.state === 'not_researched' || view.state === 'report_missing')) return 'view';
   return 'unavailable';
 }
 
