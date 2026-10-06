@@ -45,7 +45,12 @@ function leadIntelChannels() {
   const opportunitySrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'opportunity', 'opportunity-ipc.js'), 'utf8');
   const outreach = [...outreachSrc.matchAll(/'(lead-intel:[a-z-]+)'/g)].map(m => m[1]);
   const opportunity = [...opportunitySrc.matchAll(/'(lead-intel:opportunity-[a-z-]+)'/g)].map(m => m[1]);
-  return [...outreach, ...opportunity];
+  // I3/I4 declared lock update: the OI settings/service registrars (oi-config:*, oi-service:*).
+  const oiSettingsSrc = ['oi-config-ipc.js', 'oi-service-ipc.js']
+    .map((f) => path.join(root, 'src', 'main', 'lead-intelligence', 'opportunity', f))
+    .filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  const oiSettings = [...oiSettingsSrc.matchAll(/'(oi-(?:config|service):[a-z-]+)'/g)].map(m => m[1]);
+  return [...outreach, ...opportunity, ...oiSettings];
 }
 
 function preloadChannels(src) {

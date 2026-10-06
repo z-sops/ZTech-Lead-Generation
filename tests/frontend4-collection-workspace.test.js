@@ -336,7 +336,8 @@ test('15. no backend, preload or dependency surface changed', () => {
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  assert.strictEqual(invokes, 59, 'the preload surface is 59 channels');
+  // I3/I4 declared lock update: +4 write-only OI settings methods = 63 total.
+  assert.strictEqual(invokes, 63, 'the preload surface is 63 channels');
   const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(htmlSource);
   assert.strictEqual(csp[1],
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",

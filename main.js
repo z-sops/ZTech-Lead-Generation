@@ -15,6 +15,8 @@ const { toLeadView } = require('./src/main/lead-intelligence/contracts/leadView'
 // A10: the Lead Intelligence outreach runtime (pitch + gate) on the shared db.
 const { initializeLeadIntelligenceRuntime } = require('./src/main/lead-intelligence/lead-intelligence-runtime');
 const { registerUnavailableOpportunityIpc } = require('./src/main/lead-intelligence/opportunity');
+const { createOiProviderConfig } = require('./src/main/lead-intelligence/opportunity/oiProviderConfig');
+const { registerOiConfigIpc } = require('./src/main/lead-intelligence/opportunity/oi-config-ipc');
 const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/main/lead-intelligence/outreach-ipc');
 
 let mainWindow = null;
@@ -29,6 +31,8 @@ let listsTrustedSender = null;
 let leadIntelRuntime = null;
 let leadIntelIpc = null;
 let leadIntelTrustedSender = null;
+// I3: Opportunity Intelligence provider configuration (sealed keys, main process only).
+let oiProviderConfig = null;
 // F23: the electron-store instance from initServices, kept so the Resend transport can
 // read the customer's own API credential at send time - inside the main process only.
 // No key is ever copied out of this store into code, config objects or the renderer.
@@ -1432,6 +1436,51 @@ function registerLeadIntelIpcHandlers() {
 }
 
 /**
+ * I3: write-only Opportunity Intelligence configuration channels (oi-config:*).
+ * Keys are sealed into electron-store by oiProviderConfig and never returned. The
+ * same trusted-sender rule as every Lead Intelligence channel applies.
+ */
+function oiTrustedSender() {
+  if (!leadIntelTrustedSender) {
+    leadIntelTrustedSender = createTrustedSender(() => mainWindow, {
+      isDev,
+      port: Number(process.env.VITE_PORT) || undefined,
+      indexPath: path.join(__dirname, 'index.html'),
+      onReject: (reason) => logger.warn('ipc', `lead-intel rejected: ${reason}`)
+    });
+  }
+  return (event) => {
+    try {
+      return leadIntelTrustedSender(event) === true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+function registerOiConfigIpcHandlers() {
+  try {
+    if (!oiProviderConfig) {
+      oiProviderConfig = createOiProviderConfig({
+        store: electronStore,
+        logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
+      });
+    }
+    const channels = registerOiConfigIpc({
+      ipcMain,
+      config: oiProviderConfig,
+      isTrustedSender: oiTrustedSender(),
+      serviceView: () => null,
+      reported: () => null,
+      logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
+    });
+    logger.info('lead-intel', `registered ${channels.length} opportunity-intelligence config channels`);
+  } catch (err) {
+    logger.error('lead-intel', 'opportunity-intelligence config IPC registration failed', { error: err.message });
+  }
+}
+
+/**
  * Phase I2: Opportunity Intelligence channels.
  *
  * Same trusted-sender rule as every other Lead Intelligence channel, and the same
@@ -2049,6 +2098,9 @@ app.whenReady().then(async () => {
     // 4. register its five IPC handlers. li.start() is deliberately NOT called.
     await initLeadIntelligence();
     registerLeadIntelIpcHandlers();
+    // I3: OI provider configuration. Registered whether or not the LI runtime started,
+    // so Settings can always show and edit it. Never awaited on anything network-bound.
+    registerOiConfigIpcHandlers();
     let storedProxyUrl = '';
     try {
       const Store = require('electron-store');

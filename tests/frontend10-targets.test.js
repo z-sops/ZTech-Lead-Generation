@@ -125,7 +125,8 @@ test('5. no new IPC channel, preload method or delete/get/duplicate path', () =>
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 59, 'preload includes A10..F21 + Phase I2 Opportunity Intelligence');
+  // I3/I4 declared lock update: +4 write-only OI settings methods = 63 total.
+  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 63, 'preload includes A10..F21 + Phase I2 Opportunity Intelligence');
   assert.ok(!/targets:(delete|get|duplicate)|deleteTarget|duplicateTarget/.test(mainSource + preloadSource + rendererSource), 'no delete/get/duplicate');
   assert.ok(!/data-action="(delete|duplicate)"/.test(TARGET_JS) && !/>\s*(Delete|Duplicate)\s*</.test(VIEW), 'no Delete or Duplicate control');
 });

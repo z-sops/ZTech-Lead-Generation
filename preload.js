@@ -172,5 +172,15 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     // Pitch Evidence Bridge: bounded context for the existing PitchGenerator.
     // Returns { available, bridge: { packet, claim_kinds, oi, counts, excluded, boundaries } }.
     pitchContext: (payload) => ipcRenderer.invoke('lead-intel:opportunity-pitch-context', payload || {}),
+  }),
+  // I3: Opportunity Intelligence provider configuration - WRITE-ONLY for keys.
+  // setKey sends a key to the main process, which seals it; nothing ever returns it.
+  // status returns booleans per provider (stored / readable / loaded by OI) and the
+  // four non-secret settings. No path, port, URL or token is reachable from here.
+  opportunitySettings: Object.freeze({
+    status: () => ipcRenderer.invoke('oi-config:status', {}),
+    setKey: (provider, key) => ipcRenderer.invoke('oi-config:set-key', { provider, key }),
+    clearKey: (provider) => ipcRenderer.invoke('oi-config:clear-key', { provider }),
+    setSetting: (name, value) => ipcRenderer.invoke('oi-config:set-setting', { name, value }),
   })
 }));

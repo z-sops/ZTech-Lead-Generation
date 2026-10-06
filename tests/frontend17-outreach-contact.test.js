@@ -552,7 +552,7 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const versions = migrationsSource.match(/Object\.freeze\(\{ version: (\d+), name: '([^']+)'/g).map((s) => s.match(/version: (\d+)/)[1]);
   // F19 declared lock update: migration 004 exists legitimately, so versions are 1-4. The
   // banned-token check below is what actually protects F17's no-schema-change property.
-  assert.deepStrictEqual(versions, ['1', '2', '3', '4', '5'], 'migrations include F20 WhatsApp send: ' + versions.join(','));
+  assert.deepStrictEqual(versions, ['1', '2', '3', '4', '5', '6'], 'migrations include F20 WhatsApp send and I3 OI associations: ' + versions.join(','));
   for (const banned of [/contact/i, /channel/i, /whatsapp/i, /outbox/i, /queue/i]) {
     assert.ok(!new RegExp('CREATE TABLE IF NOT EXISTS (li_)?\\w*' + banned.source, 'i').test(migrationsSource),
       'no ' + banned + ' table was migrated');
@@ -578,7 +578,8 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   // Phase I2: +7 Opportunity Intelligence channels.
   const expectedOutreach = ['activity', 'approve', 'gate', 'list', 'outreachSend', 'prepare', 'ready', 'sends'];
   const expectedOI = ['health', 'engine', 'request', 'report', 'latest', 'associations', 'pitchContext'];
-  assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI].sort(),
+  const expectedI3 = ['status', 'setKey', 'clearKey', 'setSetting']; // I3/I4 declared lock update
+  assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI, ...expectedI3].sort(),
     'F17 added no preload method of its own; F18 adds exactly prepare, F19 exactly outreachSend, F21 exactly the reads; Phase I2 adds Opportunity Intelligence');
   for (const forbidden of [/contact/i, /schedule/i, /whatsapp/i, /verify/i]) {
     assert.ok(!forbidden.test(bridge), 'no preload method for ' + forbidden);

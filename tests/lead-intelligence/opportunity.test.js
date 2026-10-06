@@ -875,11 +875,22 @@ test('28. no provider credential crosses the IPC boundary in either direction', 
   assert.equal(rendered.includes('secret'), false);
   assert.equal(rendered.includes('token'), false);
 
-  // 3. the OI source files never hard-code a key
+  // 3. the OI source files never hard-code a key.
+  // I3 declared update: oiProviderConfig.js is the ONE module that names OI's variables,
+  // because it builds the managed child's environment from sealed storage. It still
+  // holds no key VALUE, and no other OI module may name the variables at all.
   const fs = require('fs');
   const dir = path.join(__dirname, '..', '..', 'src', 'main', 'lead-intelligence', 'opportunity');
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) {
     const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    if (f === 'oiProviderConfig.js') {
+      for (const n of SECRET_NAMES) {
+        for (const m of src.matchAll(new RegExp(`${n}\\s*[:=]\\s*['"\`]([^'"\`]*)['"\`]`, 'g'))) {
+          assert.equal(m[1], '', `${f} must not assign a value to ${n}`);
+        }
+      }
+      continue;
+    }
     for (const n of SECRET_NAMES) assert.equal(src.includes(n), false, `${f} must not mention ${n}`);
   }
 });
