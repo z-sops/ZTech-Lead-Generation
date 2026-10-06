@@ -292,9 +292,9 @@ test('19. no IPC, channel, or dependency was added', () => {
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 write-only OI settings methods, +6 OI service methods = 69 total.
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods = 76 total.
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 69, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read, the eleven A10..F21 Lead Intelligence methods, and the seven Phase I2 Opportunity Intelligence methods');
+    .split('ipcRenderer.invoke').length - 1, 76, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read, the eleven A10..F21 Lead Intelligence methods, and the seven Phase I2 Opportunity Intelligence methods');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {

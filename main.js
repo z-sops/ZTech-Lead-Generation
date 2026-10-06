@@ -19,6 +19,8 @@ const { createOiProviderConfig } = require('./src/main/lead-intelligence/opportu
 const { registerOiConfigIpc } = require('./src/main/lead-intelligence/opportunity/oi-config-ipc');
 const { OpportunityServiceSupervisor } = require('./src/main/lead-intelligence/opportunity/OpportunityServiceSupervisor');
 const { registerOiServiceIpc } = require('./src/main/lead-intelligence/opportunity/oi-service-ipc');
+const { createOutreachSettings } = require('./src/main/lead-intelligence/outreach/outreachSettings');
+const { registerOutreachSettingsIpc } = require('./src/main/lead-intelligence/outreach/outreach-settings-ipc');
 const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/main/lead-intelligence/outreach-ipc');
 
 let mainWindow = null;
@@ -38,6 +40,8 @@ let oiProviderConfig = null;
 // I4: the one supervisor of the local OI service process (managed / external / off).
 let oiSupervisor = null;
 let oiQuitDone = false;
+// F26: the writer for the outreach configuration F22-F25 read (keys sealed, write-only).
+let outreachSettings = null;
 // F23: the electron-store instance from initServices, kept so the Resend transport can
 // read the customer's own API credential at send time - inside the main process only.
 // No key is ever copied out of this store into code, config objects or the renderer.
@@ -1531,6 +1535,35 @@ function startOiSupervisor() {
 }
 
 /**
+ * F26: Outreach Settings channels (outreach-settings:*). Writes exactly the store keys
+ * F22-F25 already read; keys are sealed and never returned; verification is a
+ * user-triggered, read-only provider check. No send path is added or changed here.
+ */
+function registerOutreachSettingsIpcHandlers() {
+  try {
+    if (!outreachSettings) {
+      outreachSettings = createOutreachSettings({
+        store: electronStore,
+        onChange: () => applyOutreachSettings(),
+        logger: { warn: (msg) => logger.warn('outreach-settings', String(msg)) },
+      });
+    }
+    const channels = registerOutreachSettingsIpc({
+      ipcMain,
+      settings: outreachSettings,
+      isTrustedSender: oiTrustedSender(),
+      logger: { warn: (msg) => logger.warn('outreach-settings', String(msg)) },
+    });
+    logger.info('outreach-settings', `registered ${channels.length} outreach settings channels`);
+  } catch (err) {
+    logger.error('outreach-settings', 'outreach settings IPC registration failed', { error: err.message });
+  }
+}
+
+/** F26 D2 placeholder: replaced by the live reconfigure in the next commit. */
+function applyOutreachSettings() {}
+
+/**
  * Phase I2: Opportunity Intelligence channels.
  *
  * Same trusted-sender rule as every other Lead Intelligence channel, and the same
@@ -2154,6 +2187,9 @@ app.whenReady().then(async () => {
     // I4: supervise the local OI service. Not awaited: a slow or failing OI never
     // delays the window or anything else that starts after it.
     startOiSupervisor();
+    // F26: Outreach Settings (business profile, Resend, WhatsApp). Registered whether or
+    // not the LI runtime started, so the customer can always configure.
+    registerOutreachSettingsIpcHandlers();
     let storedProxyUrl = '';
     try {
       const Store = require('electron-store');

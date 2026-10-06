@@ -50,7 +50,10 @@ function leadIntelChannels() {
     .map((f) => path.join(root, 'src', 'main', 'lead-intelligence', 'opportunity', f))
     .filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
   const oiSettings = [...oiSettingsSrc.matchAll(/'(oi-(?:config|service):[a-z-]+)'/g)].map(m => m[1]);
-  return [...outreach, ...opportunity, ...oiSettings];
+  // F26 declared lock update: the outreach-settings registrar.
+  const outreachSettingsSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'outreach-settings-ipc.js'), 'utf8');
+  const outreachSettings = [...outreachSettingsSrc.matchAll(/'(outreach-settings:[a-z-]+)'/g)].map(m => m[1]);
+  return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings];
 }
 
 function preloadChannels(src) {
