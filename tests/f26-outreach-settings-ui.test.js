@@ -295,6 +295,30 @@ test('10. no API -> Unavailable; IPC refuses a provider id where a channel is ex
   }
 });
 
+test('11. F26 follow-up: replacing or clearing a key resets the chip to Not checked / Never checked and Not ready, with no check', async () => {
+  for (const [section, values, key] of [['email', EMAIL, RKEY], ['whatsapp', WA, MKEY]]) {
+    const m = mainSide();
+    const u = makeUi(m.api);
+    fill(u, section, values);
+    await u.ui.saveOutreachSection(section);
+    u.el(`outreach-${section}-key`).value = key;
+    await u.ui.saveOutreachKey(section);
+    await u.ui.verifyOutreach(section);
+    assert.strictEqual(u.el(`outreach-${section}-capability`).textContent, 'Ready to send');
+    const checks = m.fetchLog.length;
+    u.el(`outreach-${section}-key`).value = key + '_rotated';
+    await u.ui.saveOutreachKey(section);
+    assert.strictEqual(u.el(`outreach-${section}-verify-state`).textContent, 'Not checked');
+    assert.strictEqual(u.el(`outreach-${section}-verify-checked`).textContent, 'Never checked.');
+    assert.strictEqual(u.el(`outreach-${section}-capability`).textContent, 'Not ready');
+    await u.ui.verifyOutreach(section);
+    await u.ui.clearOutreachKey(section);
+    assert.strictEqual(u.el(`outreach-${section}-verify-state`).textContent, 'Not checked');
+    assert.strictEqual(m.fetchLog.length, checks + 1, 'only the explicit Check reached the provider');
+    scanDom(u.doc, [key, key + '_rotated']);
+  }
+});
+
 (async () => {
   for (const { name, fn } of queue) {
     try { await fn(); passed++; console.log('ok - ' + name); } catch (e) { failures.push(name); console.log('FAIL - ' + name + '\n' + (e && e.stack)); }

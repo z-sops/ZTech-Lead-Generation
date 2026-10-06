@@ -346,6 +346,86 @@ test('16. main.js registers the channels outside the LI-runtime guard; preload e
   assert.ok(!/getKey|revealKey|readKey/.test(block));
 });
 
+// F26 follow-up: a verification proves what ONE credential's account says. Replacing or
+// clearing that channel's key invalidates it; nothing re-checks by itself.
+const RESEND_VERIFIED = { data: [{ name: 'mail.example-shop.pk', status: 'verified' }] };
+const META_VERIFIED = { display_phone_number: '+92 300 1234567', code_verification_status: 'VERIFIED', status: 'CONNECTED' };
+const CHANNELS = [
+  { channel: 'email', save: CH.SAVE_EMAIL, good: GOOD_EMAIL, key: RKEY, body: RESEND_VERIFIED, field: 'emailDomainVerification', at: CHECKED_AT.email },
+  { channel: 'whatsapp', save: CH.SAVE_WHATSAPP, good: GOOD_WA, key: MKEY, body: META_VERIFIED, field: 'whatsappNumberVerification', at: CHECKED_AT.whatsapp },
+];
+async function verifiedChannel(c) {
+  const t = setup({ fetchImpl: async () => resp(200, c.body) });
+  await t.call(c.save, c.good);
+  await t.call(CH.SET_KEY, { channel: c.channel, key: c.key });
+  assert.strictEqual((await t.call(CH.VERIFY, { channel: c.channel })).data.status, 'verified');
+  const st = (await t.call(CH.STATUS, {})).data[c.channel];
+  assert.strictEqual(st.capability.canSend, true, c.channel + ' starts Ready');
+  assert.ok(st.verification.checkedAt);
+  return t;
+}
+const expectReset = async (t, c, why) => {
+  assert.strictEqual(t.store.get('settings')[c.field], 'unknown', `${c.channel}: ${why}`);
+  assert.strictEqual(t.store.get('settings')[c.at], null, `${c.channel}: ${why}`);
+  const st = (await t.call(CH.STATUS, {})).data[c.channel];
+  assert.deepStrictEqual(st.verification, { status: 'unknown', checkedAt: null });
+  assert.strictEqual(st.capability.canSend, false, `${c.channel}: not Ready on stale verification`);
+};
+
+test('17. verified -> replace key -> unknown / null, for both channels', async () => {
+  for (const c of CHANNELS) {
+    const t = await verifiedChannel(c);
+    assert.strictEqual((await t.call(CH.SET_KEY, { channel: c.channel, key: c.key + '_rotated' })).ok, true);
+    await expectReset(t, c, 'replaced key');
+  }
+});
+
+test('18. verified -> clear key -> unknown / null, for both channels', async () => {
+  for (const c of CHANNELS) {
+    const t = await verifiedChannel(c);
+    assert.strictEqual((await t.call(CH.CLEAR_KEY, { channel: c.channel })).ok, true);
+    await expectReset(t, c, 'cleared key');
+  }
+});
+
+test('19. a key change makes NO provider call; only an explicit Check re-verifies', async () => {
+  for (const c of CHANNELS) {
+    const t = await verifiedChannel(c);
+    const before = t.fetchLog.length;
+    await t.call(CH.SET_KEY, { channel: c.channel, key: c.key + '_rotated' });
+    await t.call(CH.CLEAR_KEY, { channel: c.channel });
+    await t.call(CH.SET_KEY, { channel: c.channel, key: c.key + '_again' });
+    await t.call(CH.STATUS, {});
+    assert.strictEqual(t.fetchLog.length, before, c.channel + ': no automatic check after a key change');
+    assert.strictEqual(t.store.get('settings')[c.field], 'unknown');
+    await t.call(CH.VERIFY, { channel: c.channel });
+    assert.strictEqual(t.fetchLog.length, before + 1, c.channel + ': one check, on request');
+    assert.strictEqual((await t.call(CH.STATUS, {})).data[c.channel].capability.canSend, true);
+  }
+});
+
+test('20. capability cannot become Ready from stale verification; a refused key changes nothing; the other channel is untouched', async () => {
+  for (const c of CHANNELS) {
+    const t = await verifiedChannel(c);
+    // A refused key is not a credential change: the verification stands.
+    assert.strictEqual((await t.call(CH.SET_KEY, { channel: c.channel, key: 'has space key-123' })).ok, false);
+    assert.strictEqual(t.store.get('settings')[c.field], 'verified', c.channel + ': refused key keeps the check');
+    // The other channel's verification is independent.
+    const other = CHANNELS.find((x) => x !== c);
+    t.store.set('settings', { ...t.store.get('settings'), [other.field]: 'verified', [other.at]: '2026-10-05T09:00:00.000Z' });
+    await t.call(CH.SET_KEY, { channel: c.channel, key: c.key + '_rotated' });
+    assert.strictEqual(t.store.get('settings')[other.field], 'verified', 'only the changed channel resets');
+    // Unchanged non-key saves cannot resurrect it either.
+    await t.call(c.save, c.good);
+    await expectReset(t, c, 'stale after re-save');
+    // The capability resolver (the one the send boundary calls) agrees.
+    const cap = c.channel === 'email'
+      ? resend.evaluateResendCapability(resend.readResendConfig(t.store))
+      : wa.evaluateWhatsAppConfig(wa.readWhatsAppConfig(t.store));
+    assert.strictEqual(cap.canSend, false);
+  }
+});
+
 (async () => {
   for (const { name, fn } of queue) {
     try {

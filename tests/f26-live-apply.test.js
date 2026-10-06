@@ -204,6 +204,19 @@ test('a failed write does not apply; the apply never needs the key value', async
   assert.ok(!sliceFn('applyOutreachSettings').includes('apiKey'));
 });
 
+test('F26 follow-up: a replaced key closes the send boundary until Check runs again (zero provider calls meanwhile)', async () => {
+  const { li, settings, sends } = build();
+  await configureEmail(settings);
+  const pitch = await approvedPitch(li);
+  await settings.setKey('resend', KEY + '_rotated');
+  await assert.rejects(() => li.outreach.sendEmail({ pitchId: pitch.pitch_id }), (e) => e.code === 'EMAIL_DOMAIN_NOT_VERIFIED');
+  assert.strictEqual(sends.length, 0, 'stale verification never reaches the provider');
+  assert.strictEqual((await settings.verify('resend')).status, 'verified');
+  const result = await li.outreach.sendEmail({ pitchId: pitch.pitch_id });
+  assert.strictEqual(result.providerAcknowledged, true);
+  assert.strictEqual(sends.length, 1);
+});
+
 (async () => {
   let passed = 0; let failed = 0;
   for (const { name, fn } of tests) {

@@ -17,7 +17,10 @@
  * to the provider, reduces the answer to unknown | pending | verified | failed, and stores
  * that state with an internal checkedAt. Raw provider responses never leave this module.
  * Changing the sending domain, the sending number, the phone-number id or the business
- * account id resets the state to unknown and checkedAt to null. Nothing polls.
+ * account id resets the state to unknown and checkedAt to null. So does replacing or
+ * clearing that channel's key: a check proves what one credential's account says, so it
+ * is not trusted for another. The user runs Check again; nothing re-checks by itself.
+ * Nothing polls.
  *
  * IDENTITY: nothing here has a default identity. Empty means "not configured".
  */
@@ -325,6 +328,12 @@ function createOutreachSettings({ store, safeStorage = defaultSafeStorage(), fet
     return { ok: true };
   }
 
+  /** A credential change invalidates that channel's verification (F26 follow-up). */
+  function resetVerificationFor(provider) {
+    if (provider === PROVIDERS.resend) writeSettings({ emailDomainVerification: 'unknown', [CHECKED_AT.email]: null });
+    else writeSettings({ whatsappNumberVerification: 'unknown', [CHECKED_AT.whatsapp]: null });
+  }
+
   function setKey(provider, key) {
     if (!KEY_PROVIDERS.includes(provider)) refuse('OUTREACH_PROVIDER_UNKNOWN', 'Unknown provider.');
     validateKey(key);
@@ -339,6 +348,7 @@ function createOutreachSettings({ store, safeStorage = defaultSafeStorage(), fet
       credentials: { ...(existing.credentials && typeof existing.credentials === 'object' ? existing.credentials : {}), apiKey: sealed },
     };
     store.set('providers', all);
+    resetVerificationFor(provider);
     changed(provider === PROVIDERS.resend ? 'email' : 'whatsapp');
     return { ok: true, stored: true };
   }
@@ -351,6 +361,7 @@ function createOutreachSettings({ store, safeStorage = defaultSafeStorage(), fet
       all[provider] = { ...existing, credentials: { ...(existing.credentials || {}), apiKey: '' } };
       store.set('providers', all);
     }
+    resetVerificationFor(provider);
     changed(provider === PROVIDERS.resend ? 'email' : 'whatsapp');
     return { ok: true, stored: false };
   }
