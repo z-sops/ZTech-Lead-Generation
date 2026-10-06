@@ -1560,8 +1560,20 @@ function registerOutreachSettingsIpcHandlers() {
   }
 }
 
-/** F26 D2 placeholder: replaced by the live reconfigure in the next commit. */
-function applyOutreachSettings() {}
+/**
+ * F26 (D2): live-apply a Settings save. Re-reads the same three values initLeadIntelligence
+ * reads at startup and hands them to the running OutreachService. No restart, and no send
+ * logic is touched - providers read their credentials lazily already.
+ */
+function applyOutreachSettings() {
+  const outreach = leadIntelRuntime && leadIntelRuntime.li ? leadIntelRuntime.li.outreach : null;
+  if (!outreach || typeof outreach.reconfigure !== 'function') return;
+  outreach.reconfigure({
+    email: emailConfigFromSettings(),
+    whatsapp: whatsappConfigFromSettings(),
+    offer: businessProfileFromSettings(),
+  });
+}
 
 /**
  * Phase I2: Opportunity Intelligence channels.

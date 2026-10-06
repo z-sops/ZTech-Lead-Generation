@@ -232,6 +232,20 @@ class OutreachService {
 
 
   /**
+   * F26 (D2) - live-apply Settings. Replaces ONLY the three values the constructor
+   * already accepts from configuration (email/whatsapp enable + sender, and the business
+   * profile used as the pitch offer), so a Settings save takes effect without a restart.
+   * It changes no send logic: the providers, the gate, approval, idempotency and both
+   * send boundaries are untouched, and every send still re-checks the capability verdict.
+   * An omitted part keeps its current value.
+   */
+  reconfigure({ email, whatsapp, offer } = {}) {
+    if (email !== undefined) this.email = { enabled: false, fromAddress: null, ...(email && typeof email === 'object' ? email : {}) };
+    if (whatsapp !== undefined) this.whatsapp = { enabled: false, fromNumber: null, ...(whatsapp && typeof whatsapp === 'object' ? whatsapp : {}) };
+    if (offer !== undefined) this.offer = offer && typeof offer === 'object' ? offer : {};
+  }
+
+  /**
    * F22: the provider CONFIGURATION source, resolved lazily and at most once.
    *
    * `emailConfigStore` was injected by the main process if there is one. If it was not
