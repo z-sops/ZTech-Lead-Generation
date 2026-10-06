@@ -5766,3 +5766,73 @@ textarea {
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
+
+/* ZTech Frontend 2.0 - F21 Outreach: the recorded send history.
+   A read-only strip appended to an existing Outreach row's actions cell. It introduces no
+   new colour: every tone below is one of the tokens the rest of the workspace already uses,
+   so a recorded send state cannot look more alarming than the rest of the UI. */
+
+.f21-send-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border-2);
+  width: 100%;
+}
+
+.f21-send-history-heading {
+  font-size: var(--font-11);
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* One recorded attempt. A list, not a table: the strip is inside a cell of a table row and
+   must not try to lay itself out as a grid inside one. */
+.f21-send-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.f21-send-history-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.f21-send-history-state {
+  flex: 0 0 auto;
+}
+
+/* The channel, the timestamp and the provider handle are qualifications on the recorded
+   state, not states of their own, so they carry the muted tokens. */
+.f21-send-history-channel,
+.f21-send-history-when,
+.f21-send-history-provider,
+.f21-send-history-message-id,
+.f21-send-history-scope,
+.f21-send-history-none {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* A recorded failure keeps the failure colour, because that is exactly what happened. The
+   code is shown verbatim so it can be quoted in a support conversation. */
+.f21-send-history-failure {
+  font-size: var(--font-11);
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}

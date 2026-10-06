@@ -2862,7 +2862,7 @@ document.getElementById('btn-export-csv').addEventListener('click', safeAsync(as
 // available. Text is always set with textContent - the only markup inserted is
 // the website link produced by the existing protocol-checked renderWebsite.
 const LEAD_DRAWER_LAYOUT_KEY = 'ztech.leadDetail.layout';
-const LEAD_DRAWER_TABS = ['overview', 'research', 'evidence', 'icp', 'pitch'];
+const LEAD_DRAWER_TABS = ['overview', 'research', 'opportunity', 'evidence', 'icp', 'pitch'];
 const LEAD_DRAWER_NA = 'Not available';
 const LEAD_DRAWER_EVIDENCE_LIMIT = 50;
 const LEAD_DRAWER_RESEARCH_SHORT = {
@@ -2881,6 +2881,7 @@ let leadDrawerLeadId = null;
 let leadDrawerReturnFocus = null;
 // { kind: 'idle' | 'loading' | 'error' | 'view', view, error }
 let leadDrawerResearch = { kind: 'idle', view: null, error: null };
+let leadDrawerOpportunity = { kind: 'idle', view: null, error: null, mounted: false };
 
 // Renderer-local fallback flag: "modal" restores the centred B3 modal with every
 // section stacked; anything else (or no storage) is the drawer.
@@ -3102,14 +3103,21 @@ function renderLeadDrawerPipeline() {
     else if (['partial', 'pending', 'stale'].includes(availability)) researchTone = 'busy';
   }
   const facts = leadDrawerFacts(packet);
+  // === F21: these three states used to read "Not available yet" for all three, which was
+  // false twice over. F13/F14 generate, approve and gate pitches; F18 prepares them; F19/F20
+  // can contact a provider once one is configured. So the build HAS the capability, and a
+  // blanket "not available yet" told the operator the product could not do something it can.
+  // Worse, it read as a statement about the build when the honest statement is about THIS
+  // lead: no opportunity has been detected, no pitch has been generated, and nothing has
+  // been sent. Each now says exactly that, and none of them implies a provider is live.
   const steps = [
     ['Lead', 'Stored', 'ok'],
     ['Research', research, researchTone],
     ['Evidence', facts.length ? `${facts.length} fact${facts.length === 1 ? '' : 's'}` : 'None yet', facts.length ? 'ok' : 'idle'],
     ['ICP', 'Per Target', 'idle'],
-    ['Opportunity', 'Not available yet', 'off'],
-    ['Pitch', 'Not available yet', 'off'],
-    ['Outreach', 'Not available yet', 'off']
+    ['Opportunity', 'None detected', 'off'],
+    ['Pitch', 'None generated', 'off'],
+    ['Outreach', 'Nothing sent', 'off']
   ];
   list.replaceChildren(...steps.map(([label, state, tone]) => {
     const item = leadDrawerEl('li', 'lead-drawer-step');
@@ -3307,6 +3315,79 @@ function renderLeadDrawerEvidence() {
   box.replaceChildren(...nodes);
 }
 
+// Phase I2: Opportunity Intelligence drawer panel.
+// Uses the separate ztechLeadIntel.opportunity.* bridge (not the Zuni-SEO research bridge).
+function renderLeadDrawerOpportunity() {
+  const box = document.getElementById('lead-drawer-opportunity');
+  if (!box) return;
+
+  if (leadDrawerOpportunity.kind === 'loading' || leadDrawerOpportunity.kind === 'idle') {
+    if (!leadDrawerOpportunity.mounted) {
+      // Mount the opportunity section module once.
+      if (typeof mountOpportunitySection === 'function') {
+        leadDrawerOpportunity.mount = mountOpportunitySection({
+          doc: document,
+          container: box,
+          api: window.ztechLeadIntel,
+          leadId: leadDrawerLeadId,
+        });
+        leadDrawerOpportunity.mounted = true;
+      }
+    }
+    box.replaceChildren(
+      document.createElement('p'), // placeholder to keep structure
+      // The mountOpportunitySection will replace the content
+    );
+    return;
+  }
+
+  if (leadDrawerOpportunity.kind === 'error') {
+    box.replaceChildren(
+      leadDrawerEl('h3', 'lead-drawer-section-title', 'Opportunity Intelligence'),
+      leadDrawerEl('p', 'lead-drawer-warning',
+        'Opportunity Intelligence could not be loaded: ' + leadDrawerOpportunity.error)
+    );
+    return;
+  }
+
+  // If we have a view, the mounted module will handle rendering.
+  // This function mainly ensures the module is mounted.
+  if (!leadDrawerOpportunity.mounted && typeof mountOpportunitySection === 'function') {
+    leadDrawerOpportunity.mount = mountOpportunitySection({
+      doc: document,
+      container: box,
+      api: window.ztechLeadIntel,
+      leadId: leadDrawerLeadId,
+    });
+    leadDrawerOpportunity.mounted = true;
+  }
+}
+
+// Load Opportunity Intelligence data for the lead.
+async function loadLeadDrawerOpportunity(leadId) {
+  if (!leadId) return;
+  if (!window.ztechLeadIntel || !window.ztechLeadIntel.opportunity) {
+    leadDrawerOpportunity = { kind: 'error', view: null, error: 'Opportunity Intelligence bridge not available.', mounted: leadDrawerOpportunity.mounted };
+    renderLeadDrawerOpportunity();
+    return;
+  }
+  leadDrawerOpportunity = { kind: 'loading', view: null, error: null, mounted: leadDrawerOpportunity.mounted };
+  renderLeadDrawerOpportunity();
+  try {
+    const latest = await window.ztechLeadIntel.opportunity.latest({ leadId });
+    if (latest && latest.available) {
+      leadDrawerOpportunity = { kind: 'view', view: latest, error: null, mounted: leadDrawerOpportunity.mounted };
+    } else if (latest && latest.state === 'not_researched') {
+      leadDrawerOpportunity = { kind: 'view', view: latest, error: null, mounted: leadDrawerOpportunity.mounted };
+    } else {
+      leadDrawerOpportunity = { kind: 'error', view: null, error: latest?.message || 'Opportunity Intelligence unavailable.', mounted: leadDrawerOpportunity.mounted };
+    }
+  } catch (err) {
+    leadDrawerOpportunity = { kind: 'error', view: null, error: err?.message || 'Opportunity Intelligence request failed.', mounted: leadDrawerOpportunity.mounted };
+  }
+  renderLeadDrawerOpportunity();
+}
+
 // No ICP evaluation reaches the renderer in this build, so the only honest
 // state is UNKNOWN, with the concrete reasons why. No score is ever shown.
 // F8: the ICP tab shows the same evaluation as Intelligence -> ICP: the Lead
@@ -3365,6 +3446,7 @@ function selectLeadDrawerTab(name, focus) {
     }
     if (panel) panel.hidden = !active;
   }
+  if (tab === 'opportunity') renderLeadDrawerOpportunity();
   const scroll = document.getElementById('lead-drawer-scroll');
   if (scroll && changed) scroll.scrollTop = 0;
 }
@@ -3449,6 +3531,8 @@ function renderLeadDrawer(lead) {
   renderLeadDrawerIcp(row);
   renderLeadDrawerPitch(row);
   renderLeadDrawerPipeline();
+  // Phase I2: load Opportunity Intelligence (non-blocking, separate system).
+  if (leadDrawerLeadId) loadLeadDrawerOpportunity(leadDrawerLeadId);
 }
 
 function renderLeadDrawerResearchViews() {
@@ -3474,6 +3558,7 @@ function renderLeadDrawerResearch(view, error) {
 function resetLeadDrawer() {
   leadDrawerLeadId = null;
   leadDrawerResearch = { kind: 'idle', view: null, error: null };
+  leadDrawerOpportunity = { kind: 'idle', view: null, error: null, mounted: false };
   leadDrawerTab = 'overview';
   markLeadDrawerRow(null);
   setLeadDrawerSaveState('lead-drawer-save-state', null, '');
@@ -6935,7 +7020,16 @@ function f16ReadyDeliveryNote(delivery) {
     return 'Delivery capability unknown. Nothing is sent.';
   }
   const channel = typeof delivery.channel === 'string' && delivery.channel ? delivery.channel : null;
-  const configured = Object.entries(delivery).some(([k, v]) => k !== 'channel' && v === true);
+  // F23 honesty fix: "a provider is configured" used to mean "some flag here is true",
+  // which became WRONG the moment the build shipped with an adapter instance present
+  // while the customer had configured nothing (no credential, no domain, delivery off).
+  // It now means: capability is available, or an instance exists AND its channel is
+  // actually enabled - an adapter sitting in the build is not a customer configuration.
+  // Deliberately channel-neutral: the enabled flag is discovered by SUFFIX, never named.
+  const channelEnabled = Object.entries(delivery)
+    .some(([k, v]) => typeof k === 'string' && k.slice(-7) === 'Enabled' && v === true);
+  const configured = delivery.canSend === true ||
+    (delivery.providerConfigured === true && channelEnabled);
   // The channel is named whenever the backend reported one, in BOTH cases, so this code
   // path needs no change when a second channel is added.
   const named = channel ? ' (' + channel + ')' : '';
@@ -7416,15 +7510,78 @@ function f18PrepareRenderBody() {
   }
   if (!data) return;
 
-  // Recipient: the factual stored value, verbatim. WhatsApp always carries the caveat.
+  // Recipient: the factual stored value, verbatim. WhatsApp carries the caveat only
+  // when the number is not explicitly verified by the user.
   const recipient = data.recipient || {};
   const rec = f18PrepareEl('div', 'f18-prepare-recipient');
-  rec.appendChild(f18PrepareEl('span', 'f18-prepare-label', channel === 'email' ? 'To (email)' : 'To (WhatsApp candidate)'));
+  const isWhatsApp = channel === 'whatsapp';
+  const label = isWhatsApp ? 'To (WhatsApp)' : 'To (email)';
+  rec.appendChild(f18PrepareEl('span', 'f18-prepare-label', label));
   rec.appendChild(f18PrepareEl('div', 'f18-prepare-value f18-prepare-to', recipient.contact || F18_PREPARE_UNAVAILABLE));
-  if (channel === 'whatsapp') {
+  if (isWhatsApp && recipient.verified !== true) {
     rec.appendChild(f18PrepareEl('div', 'f18-prepare-hint', 'WhatsApp candidate \u00b7 Not verified for WhatsApp'));
   }
   body.appendChild(rec);
+
+  // F23: the sender identity and provider capability for the EMAIL channel, read from the
+  // backend's own bounded `sender` profile - never computed here, never hard-coded. An
+  // installation with no sender configured shows "Not configured" plainly; the capability
+  // line comes from the delivery block beside it, so the panel states both facts at once.
+  const sender = data.sender;
+  if (!isWhatsApp && sender) {
+    const senderBox = f18PrepareEl('div', 'f18-prepare-sender');
+    const fromText = sender.fromAddress
+      ? (sender.displayName ? `${sender.displayName} <${sender.fromAddress}>` : sender.fromAddress)
+      : 'Not configured';
+    senderBox.appendChild(f18PrepareEl('span', 'f18-prepare-label', 'From'));
+    senderBox.appendChild(f18PrepareEl('div', 'f18-prepare-value f18-prepare-from', fromText));
+    senderBox.appendChild(f18PrepareEl('span', 'f18-prepare-label', 'Reply-To'));
+    senderBox.appendChild(f18PrepareEl('div', 'f18-prepare-value', sender.replyTo || 'Not set'));
+    const delivery = data.delivery || {};
+    const capability = delivery.canSend === true ? 'Available' : 'Unavailable';
+    const providerName = sender.providerDisplay || sender.providerId || 'Not configured';
+    const reason = delivery.canSend === true ? '' : (delivery.blockedMessage ? ` \u2014 ${delivery.blockedMessage}` : '');
+    senderBox.appendChild(f18PrepareEl('span', 'f18-prepare-label', 'Provider'));
+    senderBox.appendChild(f18PrepareEl('div', 'f18-prepare-value f18-prepare-provider',
+      `${providerName} \u00b7 Capability: ${capability}${reason}`));
+    body.appendChild(senderBox);
+  }
+
+  // F24: the SAME bounded status surface for the WHATSAPP channel, read from the
+  // backend's own `sender` profile - never computed here, never hard-coded. It reports
+  // configuration FACTS only: which provider is selected, whether the connected account,
+  // the sending number and the credential are configured, what the number-verification
+  // status says, and the capability verdict plus its factual reason from the delivery
+  // block beside it. The credential is a word - "Configured" or "Missing" - never a
+  // token. None of these facts is readiness (that stays the gate's own verdict above),
+  // and none of them says anything about the stored lead number, which remains a
+  // candidate until provider-level requirements permit use.
+  if (isWhatsApp && sender) {
+    const senderBox = f18PrepareEl('div', 'f18-prepare-sender f18-prepare-sender-whatsapp');
+    const delivery = data.delivery || {};
+    const waCapability = delivery.canSend === true ? 'Available' : 'Unavailable';
+    const numberStatus = typeof sender.numberVerification === 'string' && sender.numberVerification
+      ? sender.numberVerification.charAt(0).toUpperCase() + sender.numberVerification.slice(1)
+      : 'Unknown';
+    const rows = [
+      ['WhatsApp provider', sender.providerSelected === true
+        ? (sender.providerDisplay || sender.providerId || 'Configured')
+        : 'Not configured'],
+      ['Account', sender.accountConfigured === true ? 'Configured' : 'Missing'],
+      ['Sender number', sender.fromNumber || 'Not configured'],
+      ['Number status', numberStatus],
+      ['Credential', sender.keyConfigured === true ? 'Configured' : 'Missing'],
+      ['Capability', waCapability],
+      ['Why', delivery.canSend === true
+        ? 'The WhatsApp configuration is complete.'
+        : (delivery.blockedMessage || 'Unavailable.')]
+    ];
+    for (const [rowLabel, value] of rows) {
+      senderBox.appendChild(f18PrepareEl('span', 'f18-prepare-label', rowLabel));
+      senderBox.appendChild(f18PrepareEl('div', 'f18-prepare-value', value));
+    }
+    body.appendChild(senderBox);
+  }
 
   // Content: the canonical pitch text. For WhatsApp the note says plainly that no
   // transformation exists and the source is shown unchanged. Nothing is invented here.
@@ -7434,7 +7591,10 @@ function f18PrepareRenderBody() {
   contentBox.appendChild(f18PrepareEl('div', 'f18-prepare-value', content.subject || F18_PREPARE_UNAVAILABLE));
   contentBox.appendChild(f18PrepareEl('span', 'f18-prepare-label', channel === 'email' ? 'Body' : 'Message source (unchanged pitch text)'));
   const pre = f18PrepareEl('div', 'f18-prepare-text');
-  pre.textContent = content.body || '';
+  // F23: for email the panel shows the EXACT bytes the transport would send (canonical
+  // approved pitch + configured signature) - byte-for-byte what a confirmation would hand
+  // to the provider. There is no hidden footer: what is on screen IS the payload.
+  pre.textContent = (channel === 'email' && content.finalBody) ? content.finalBody : (content.body || '');
   contentBox.appendChild(pre);
   if (content.transformationNote) {
     contentBox.appendChild(f18PrepareEl('div', 'f18-prepare-hint', content.transformationNote));
@@ -7453,7 +7613,15 @@ function f18PrepareRenderBody() {
   // The standing boundary line. This BODY is a read-only preview and never contains a send
   // control: any action F19 adds lives in the panel FOOTER, below.
   body.appendChild(f18PrepareEl('div', 'f18-prepare-boundary',
-    'Review only \u00b7 nothing is sent, queued or recorded \u00b7 this build has no sending provider'));
+    // === F21: the old wording here was "nothing is sent, queued or recorded · this build has
+    // no sending provider". Both halves were misleading. The capability EXISTS - F19/F20 can
+    // contact a provider - what does not exist is a CONFIGURED one, and those are different
+    // facts that fail for different reasons. The second half also said nothing was
+    // "recorded", which stopped being true the moment the ledger became readable: an attempt
+    // against this pitch is recorded, it is just refused before it reaches anyone. So the
+    // line now states the one true thing about this screen (nothing has been attempted yet)
+    // and names the actual precondition, without claiming a provider is or is not live.
+    'Review only · nothing has been attempted for this pitch yet · attempting still needs a configured provider'));
 }
 
 function f18PrepareRenderFooter() {
@@ -7466,18 +7634,24 @@ function f18PrepareRenderFooter() {
   // Two properties are deliberate:
   //
   //  1. The control appears ONLY when the backend said it can send. The capability verdict
-  //     comes from `sendCapability()` in the main process and is reported through the gate's
-  //     `delivery` block. The renderer does not compute it, and it cannot be overridden from
-  //     here - so with no live provider configured there is literally nothing to click.
-  //  2. It is Email only. The WhatsApp tab is a candidate preview with no provider behind it,
-  //     so no control is offered for it.
+  //     comes from `sendCapability(channel)` in the main process. The renderer does not
+  //     compute it, and it cannot be overridden from here - so with no live provider
+  //     configured there is literally nothing to click.
+  //  2. F20: the verdict used is the one for THIS tab. `data.delivery` is the capability of
+  //     the channel being prepared, computed by the same evaluator the send boundary calls;
+  //     `data.readiness.delivery` is the email gate's own block and is kept only as a
+  //     fallback for a response that predates F20. A WhatsApp tab is therefore never gated on
+  //     the email provider's configuration, and an email tab is never gated on WhatsApp's.
   const data = f18PrepareState.data;
   const verdict = data && data.readiness;
-  const delivery = verdict && verdict.delivery;
-  const canSend = Boolean(delivery && delivery.canSend) && f18PrepareState.channel === 'email';
-  // A result from another pitch must never be shown against this one.
-  const result = f19SendState.forPitchId === (data && data.pitchId) ? f19SendState.result : null;
-  const sendError = f19SendState.forPitchId === (data && data.pitchId) ? f19SendState.error : null;
+  const delivery = (data && data.delivery) || (verdict && verdict.delivery);
+  const canSend = Boolean(delivery && delivery.canSend);
+  const isWhatsApp = f18PrepareState.channel === 'whatsapp';
+  // A result from another pitch - or from the OTHER channel of this same pitch - must never
+  // be shown against this one.
+  const sameChannel = f19SendState.forChannel === f18PrepareState.channel;
+  const result = f19SendState.forPitchId === (data && data.pitchId) && sameChannel ? f19SendState.result : null;
+  const sendError = f19SendState.forPitchId === (data && data.pitchId) && sameChannel ? f19SendState.error : null;
 
   if (sendError) {
     // The refusal stays on screen while the control returns, so a human who has just fixed
@@ -7491,12 +7665,24 @@ function f18PrepareRenderFooter() {
       `Delivery ${result.deliveryStatus} \u00b7 opened ${result.openStatus} \u00b7 clicked ${result.clickStatus}`));
   }
   if (f19SendState.busy) {
-    footer.appendChild(f11Status('Contacting the email provider\u2026', 'busy'));
+    const providerName = f18PrepareState.channel === 'whatsapp' ? 'WhatsApp provider' : 'email provider';
+    // F25: factual in-flight wording. While the request is open the human sees "Submitting"
+    // (the only claim this build can honestly make about an operation in flight), the second
+    // click is ignored because the armed control is not rendered AND f19ConfirmSend itself
+    // refuses a re-entry while busy - the durable idempotency ledger remains the authority.
+    footer.appendChild(f11Status(`Submitting to the ${providerName}\u2026`, 'busy'));
   } else if (canSend && f19SendState.armed) {
-    // The confirmation step. It restates the stored recipient and the subject so the human
+    // The confirmation step. It restates the stored recipient and the content so the human
     // can verify who is about to be contacted, and it is the only path to the provider.
+    // For WhatsApp it ALSO restates that the number is unverified, because in this build a
+    // WhatsApp send always goes to a candidate number: that is the fact the second click
+    // is acknowledging, so it must be on the button's own screen, not only on the tab.
+    const previewText = isWhatsApp
+      ? data.content.body.slice(0, 120) + (data.content.body.length > 120 ? '\u2026' : '')
+      : data.content.subject;
+    const unverifiedNote = isWhatsApp && data.recipient.verified !== true ? ' \u00b7 unverified number' : '';
     footer.appendChild(f11El('span', 'f19-send-confirm-text',
-      `Send "${data.content.subject}" to ${data.recipient.contact}?`));
+      `Send "${previewText}" to ${data.recipient.contact}?${unverifiedNote}`));
     const confirm = f11El('button', 'btn btn-sm btn-danger', 'Yes, send it');
     confirm.type = 'button';
     confirm.addEventListener('click', () => f19ConfirmSend());
@@ -7509,7 +7695,8 @@ function f18PrepareRenderFooter() {
     // No control once this pitch has a result. The service would refuse a second send of the
     // same content as a replay anyway, so offering it again would only invite a click whose
     // honest answer is "nothing was sent again".
-    const send = f11El('button', 'btn btn-sm btn-primary', 'Send this email');
+    const buttonText = f18PrepareState.channel === 'whatsapp' ? 'Send this WhatsApp' : 'Send this email';
+    const send = f11El('button', 'btn btn-sm btn-primary', buttonText);
     send.type = 'button';
     send.addEventListener('click', () => f19OpenSendConfirm());
     footer.appendChild(send);
@@ -7564,10 +7751,16 @@ function f18SetChannel(channel) {
   f18PrepareLoad();
 }
 
-function f18OpenPrepare(pitchId) {
+function f18OpenPrepare(pitchId, channel) {
   f18PrepareState.open = true;
   f18PrepareState.pitchId = String(pitchId);
-  f18PrepareState.channel = 'email';
+  // F25: an OPTIONAL channel lets the F21 "Review and try again" affordance reopen the
+  // context the RECORDED attempt used (§13: a failed WhatsApp attempt returns to the
+  // WhatsApp tab, a failed email attempt to Email). It is validated against the same two
+  // factual channels and NEVER against capability: reopening never switches channels because
+  // the old one is now unavailable - that would silently replace the human's intent. An
+  // absent or unknown value falls back to 'email', the historical default of this panel.
+  f18PrepareState.channel = channel === 'whatsapp' ? 'whatsapp' : 'email';
   f18PrepareState.data = null;
   f18PrepareState.error = null;
   f18PrepareState.loading = false;
@@ -7610,13 +7803,40 @@ function f18PrepareInit() {
 //    clicked, queued or retried state in the ledger and none is invented here, because
 //    nothing in this build sends anything.
 //
-// The three event types below are the backend's closed allowlist, mirrored as LABELS only
-// so the wording is friendly. An unrecognised type is rendered as itself rather than
-// being hidden or mapped onto something that sounds like outreach.
+// === F21: all seven activity types, labelled factually ===
+//
+// F15 shipped with three labels, because F15 itself only ever emitted three events. F19 and
+// F20 then added four more to the SAME closed allowlist, and this renderer had no entry for
+// them. The visible result was the worst possible outcome for an audit trail: a real send
+// that had actually happened was rendered as a raw `OUTREACH_SEND_ACCEPTED` token, tinted
+// with the unknown-type 'danger' tone and captioned "Unrecognised activity type". The ledger
+// was right and the screen was wrong, and it was wrong in the direction that makes a
+// completed send look like a crash.
+//
+// So the map below is now the backend's full vocabulary, and every entry carries its own
+// deliberate tone rather than a single blanket one:
+//
+//  - 'danger' is reserved for a send that a provider REFUSED or could not accept. That is a
+//    real failure of a real attempt, and calling it anything softer would understate it.
+//  - 'warn' is a refusal to even try: blocked by the capability check or the gate. Nothing
+//    left the machine, so it is not a failure - but it is not a success either.
+//  - 'ok' is a provider ACKNOWLEDGEMENT and nothing more. The word 'accepted' is used
+//    precisely so it cannot be misread as delivered, opened or clicked.
+//  - 'neutral' is everything that is simply a recorded state change.
+//
+// An unrecognised type is still rendered as itself with the 'danger' tone and still
+// captioned. That fallback is unchanged and still correct: a type this build does not know
+// about genuinely is unexplained, and hiding it or mapping it onto something that sounds
+// like outreach would be worse. What F21 fixes is that all seven KNOWN types no longer fall
+// into it.
 const F15_ACTIVITY_LABELS = Object.freeze({
-  PITCH_APPROVED: 'Pitch approved',
-  OUTREACH_READY: 'Ready for outreach',
-  APPROVAL_INVALIDATED: 'Approval needs repeating'
+  PITCH_APPROVED: { label: 'Pitch approved', tone: 'neutral' },
+  OUTREACH_READY: { label: 'Ready for outreach', tone: 'neutral' },
+  APPROVAL_INVALIDATED: { label: 'Approval needs repeating', tone: 'neutral' },
+  OUTREACH_SEND_ATTEMPTED: { label: 'Send attempted', tone: 'neutral' },
+  OUTREACH_SEND_ACCEPTED: { label: 'Send accepted', tone: 'ok' },
+  OUTREACH_SEND_FAILED: { label: 'Send failed', tone: 'danger' },
+  OUTREACH_SEND_BLOCKED: { label: 'Send blocked', tone: 'warn' }
 });
 
 const F15_ACTIVITY_PAGE_SIZE = 20;
@@ -7656,14 +7876,62 @@ function f15ActivityCell(value) {
 /**
  * The factual one-line description. It is built ONLY from the ledger row itself, so it
  * can never state more than the backend recorded.
+ *
+ * === F21 ===
+ * F15 could only describe three event types, all of which wrote `reason` and `approvedBy`.
+ * F19/F20 write a different, much richer metadata shape per send event - `channel`,
+ * `contentHash`, `providerId`, `idempotencyKey`, `providerMessageId`, `failureCode` - and
+ * until now every one of those was silently dropped on the floor. The operator was told a
+ * send was "blocked" with no channel and no reason, and a send was "accepted" with no
+ * provider message id: the two facts a person needs in order to reconcile the ledger
+ * against a provider's own dashboard.
+ *
+ * Every token below is COPIED from metadata. None is derived, and a field the backend did
+ * not record contributes nothing at all rather than a placeholder - there is no
+ * "provider: unknown" here, because "unknown" would be a statement about a provider this
+ * build never asked.
  */
 function f15ActivityDetail(row) {
   const meta = row && row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
   const parts = [];
-  if (typeof meta.reason === 'string' && meta.reason.trim()) parts.push(meta.reason.trim());
-  if (typeof meta.approvedBy === 'string' && meta.approvedBy.trim()) parts.push('by ' + meta.approvedBy.trim());
+  const reason = text(meta.reason);
+  if (reason) parts.push(reason);
+  const approvedBy = text(meta.approvedBy);
+  if (approvedBy) parts.push('by ' + approvedBy);
   // Explicit, because "ready" is easy to misread as "sent".
   if (row && row.activity_type === 'OUTREACH_READY') parts.push('nothing has been sent');
+
+  // === F21: the send-event facts, each shown only when it was actually recorded. ===
+  const type = row && row.activity_type;
+  if (type === 'OUTREACH_SEND_ATTEMPTED' || type === 'OUTREACH_SEND_ACCEPTED'
+      || type === 'OUTREACH_SEND_FAILED' || type === 'OUTREACH_SEND_BLOCKED') {
+    // Which of the two channels this was. F19 sends email, F20 WhatsApp; before F21 the
+    // event said nothing, so a WhatsApp attempt and an email attempt were indistinguishable.
+    const channel = text(meta.channel);
+    if (channel) parts.push('channel ' + channel);
+
+    // A provider message id is the ONLY handle a person has to reconcile this row against
+    // a provider's own records, so it is promoted rather than left in the metadata.
+    const messageId = text(meta.providerMessageId);
+    if (messageId) parts.push('providerMessageId ' + messageId);
+
+    // Which provider configuration was used. Reported as recorded - never as the one that
+    // is configured NOW, which would be a different fact from the one this row asserts.
+    const providerId = text(meta.providerId);
+    if (providerId) parts.push('via ' + providerId);
+
+    // The backend's own failure code, verbatim, so a support conversation can quote it.
+    const failureCode = text(meta.failureCode);
+    if (failureCode) parts.push('code ' + failureCode);
+  }
+
+  // The one thing this build must never imply: an inbox was observed. Acknowledgement is
+  // recorded at contact time; delivery, open and click are not knowable here and are said
+  // so explicitly rather than left for the reader to assume.
+  if (type === 'OUTREACH_SEND_ATTEMPTED') parts.push('no delivery information is available');
+  if (type === 'OUTREACH_SEND_ACCEPTED') parts.push('acknowledged only; not confirmed delivered');
+
   return parts.join(' · ');
 }
 
@@ -7685,8 +7953,14 @@ function f15ActivityRow(row) {
   tr.appendChild(f15ActivityCell(row && row.lead_id));
 
   const eventTd = f15ActivityEl('td', 'col-event');
-  const badge = f11Status(known ? F15_ACTIVITY_LABELS[type] : type, known ? 'neutral' : 'danger');
+  // A known type gets ITS OWN deliberate tone (see F15_ACTIVITY_LABELS). Only a genuinely
+  // unknown type is 'danger', because only then is the ledger showing something this build
+  // cannot explain - which is no longer the case for any event F19/F20 actually records.
+  const badge = known
+    ? f11Status(F15_ACTIVITY_LABELS[type].label, F15_ACTIVITY_LABELS[type].tone)
+    : f11Status(type, 'danger');
   badge.setAttribute('data-activity-type', type);
+  if (known) badge.setAttribute('data-activity-known', 'true');
   if (!known) badge.title = 'Unrecognised activity type: ' + type;
   eventTd.appendChild(badge);
   tr.appendChild(eventTd);
@@ -7808,10 +8082,14 @@ function f15ActivityInit() {
 // untouched.
 //
 // WHAT THE RENDERER IS ALLOWED TO DECIDE
-//  - That a human asked for this. That is the entire capability. `f19SendConfirm` invokes
-//    `api.outreach.outreachSend({ pitchId })` and NOTHING else: no recipient, from, subject, body,
-//    provider or channel can be supplied from here. The IPC schema admits exactly `pitchId`
-//    with additionalProperties:false, so the renderer cannot even express a recipient.
+//  - That a human asked for this, and ON WHICH REVIEWED CHANNEL. `f19ConfirmSend` invokes
+//    `api.outreach.outreachSend({ pitchId, channel })` and NOTHING else: no recipient, from,
+//    subject, body or provider can be supplied from here. The IPC schema admits exactly
+//    `pitchId` plus a REQUIRED channel enum ('email' | 'whatsapp') with
+//    additionalProperties:false, so the renderer cannot even express a recipient. F25: the
+//    channel is the one intent that crosses the line, and it is always the Prepare tab the
+//    human just reviewed - the service dispatches to that channel's boundary ONLY, with no
+//    fallback in either direction.
 //
 // WHAT THE RENDERER IS NOT ALLOWED TO DO
 //  - Decide readiness. It cannot: the service re-runs the OutreachGate immediately before the
@@ -7828,7 +8106,11 @@ function f15ActivityInit() {
 // out the factual recipient and subject; only the second click contacts anything. A single
 // accidental click cannot mail a prospect.
 
-const f19SendState = { armed: false, busy: false, result: null, error: null, forPitchId: null };
+// F20: the send state is keyed by pitch AND channel. A result produced on the WhatsApp tab
+// must never be rendered against the Email tab of the same pitch (or vice versa): the
+// outcome, the provider and the recipient are all channel-specific, so showing one channel's
+// result under the other channel's heading would be a false claim about what was sent.
+const f19SendState = { armed: false, busy: false, result: null, error: null, forPitchId: null, forChannel: null };
 
 function f19ResetSend() {
   f19SendState.armed = false;
@@ -7836,17 +8118,20 @@ function f19ResetSend() {
   f19SendState.result = null;
   f19SendState.error = null;
   f19SendState.forPitchId = null;
+  f19SendState.forChannel = null;
 }
 
 /** First click: arm, and restate the facts so the human can check them. */
 function f19OpenSendConfirm() {
   const data = f18PrepareState.data;
   if (!data) return;
-  // Re-arming for a different pitch (or a different channel) always starts clean, so a
-  // confirmation can never be carried across from an earlier panel.
-  if (f19SendState.forPitchId !== data.pitchId || f18PrepareState.channel !== 'email') f19ResetSend();
-  // Recorded up front: the footer only renders a result that belongs to the pitch on screen.
+  // Re-arming for a different pitch OR a different channel always starts clean, so a
+  // confirmation can never be carried across from an earlier panel or tab.
+  if (f19SendState.forPitchId !== data.pitchId || f19SendState.forChannel !== f18PrepareState.channel) f19ResetSend();
+  // Recorded up front: the footer only renders a result that belongs to the pitch AND the
+  // channel on screen.
   f19SendState.forPitchId = data.pitchId;
+  f19SendState.forChannel = f18PrepareState.channel;
   f19SendState.armed = true;
   f18PrepareRenderFooter();
 }
@@ -7855,6 +8140,7 @@ function f19OpenSendConfirm() {
 async function f19ConfirmSend() {
   const data = f18PrepareState.data;
   const pitchId = data ? data.pitchId : null;
+  const channel = f18PrepareState.channel;
   if (!pitchId || f19SendState.busy) return;
   const api = f11LeadIntel();
   if (!api || !api.outreach || typeof api.outreach.outreachSend !== 'function') {
@@ -7867,18 +8153,20 @@ async function f19ConfirmSend() {
   f18PrepareRenderFooter();
   let result;
   try {
-    // EXACTLY { pitchId }. Nothing else crosses this line.
-    result = f11Unwrap(await api.outreach.outreachSend({ pitchId }));
+    // EXACTLY { pitchId, channel }. The channel is the tab this panel is showing - the one
+    // fact a human confirmed - and nothing else crosses this line.
+    result = f11Unwrap(await api.outreach.outreachSend({ pitchId, channel }));
   } catch (e) {
-    if (f18PrepareState.pitchId !== pitchId) return;
+    if (f18PrepareState.pitchId !== pitchId || f18PrepareState.channel !== channel) return;
     f19SendState.busy = false;
     f19SendState.armed = false;
     f19SendState.error = { code: (e && e.code) || 'ERROR', message: (e && e.message) || 'The message could not be sent.' };
     f18PrepareRenderFooter();
     return;
   }
-  // A response for a panel that has since closed or changed must not paint over the new state.
-  if (f18PrepareState.pitchId !== pitchId) return;
+  // A response for a panel that has since closed, changed pitch or changed channel must not
+  // paint over the new state.
+  if (f18PrepareState.pitchId !== pitchId || f18PrepareState.channel !== channel) return;
   f19SendState.busy = false;
   f19SendState.armed = false;
   f19SendState.result = result;
@@ -7892,11 +8180,22 @@ async function f19ConfirmSend() {
  */
 function f19SendResultCopy(result) {
   if (!result) return null;
+  // F20: the channel comes from the RESULT, not from the tab that happens to be open. A
+  // WhatsApp acceptance must never be described as an email acceptance, and vice versa - the
+  // provider that acted is a different company on a different channel.
+  const whatsapp = result.channel === 'whatsapp';
+  const provider = whatsapp ? 'WhatsApp' : 'email';
+  // The provider's own message id is quoted verbatim when it exists: it is the one artefact
+  // that lets a human reconcile this row against the provider's own dashboard. It is never
+  // reformatted, shortened or invented.
+  const ref = result.providerMessageId ? ` (provider message id ${result.providerMessageId})` : '';
   if (result.outcome === 'replayed') {
-    return 'This exact content was already accepted by the provider, so nobody was contacted again.';
+    return `This exact content was already accepted by the ${provider} provider${ref}, so nobody was contacted again.`;
   }
   if (result.outcome === 'accepted' && result.providerAcknowledged === true) {
-    return 'The email provider accepted this message for delivery.';
+    // "Accepted" and nothing stronger: the provider took the message. ZTech observes no inbox,
+    // no read receipt and no click, so "delivered" is never printed here.
+    return `The ${provider} provider accepted this message for delivery${ref}.`;
   }
   return 'The send boundary returned no acceptance, so nothing is claimed.';
 }
@@ -8208,8 +8507,12 @@ function f12OutreachRender() {
   } else if (visible.length === 0) {
     tbody.replaceChildren(f12OutreachEmptyRow('No pitches match these filters.'));
   } else {
-    tbody.replaceChildren(...visible.map((pitch) =>
-      f12OutreachRow(pitch, f12OutreachState.gates.get(String(pitch && pitch.pitch_id)))));
+    const rows = visible.map((pitch) =>
+      f12OutreachRow(pitch, f12OutreachState.gates.get(String(pitch && pitch.pitch_id))));
+    tbody.replaceChildren(...rows);
+    // F21: paint the recorded send history onto the rows just built. Rendered from the last
+    // bounded read, so changing a status or gate filter repaints without re-fetching.
+    f21SendHistoryPaint(rows);
   }
   f12OutreachRenderRange();
   f12OutreachRenderPager();
@@ -8283,6 +8586,10 @@ async function f12OutreachLoad() {
     }
   }
   if (seq !== f12OutreachSeq) return;
+  // F21: one bounded read of the recorded sends, so the rows below can show what the ledger
+  // actually holds for them. Read-only, and it shares this function's seq guard.
+  await f21SendHistoryLoad(seq);
+  if (seq !== f12OutreachSeq) return;
   f12OutreachRender();
 }
 
@@ -8336,6 +8643,281 @@ function f12OutreachInit() {
   // this only fetches. No timer, no polling, no interval.
   const nav = document.querySelector('.nav-item[data-view="outreach"]');
   if (nav) nav.addEventListener('click', () => f12OutreachLoad());
+}
+
+// === F21 Outreach: the recorded send history, made readable ===
+//
+// === WHY THIS BLOCK EXISTS AT ALL ===
+//
+// F19 and F20 both worked. They wrote one durable row per send attempt into
+// `li_outreach_sends` BEFORE contacting a provider (so a crash could not erase the fact)
+// and settled that row to accepted / failed afterwards. F21 changes none of that.
+//
+// The defect was that nothing ever read the table back. A human had a send button that
+// could contact a real external party, and the only record of whether it had actually done
+// so was a row in a database table with no user interface whatsoever. After a refusal, a
+// timeout, a crash or a simple "did that go out?", the app could say nothing truthful, so
+// the only safe assumption available to the operator was the worst one: that it had.
+//
+// This block is that read. It is deliberately the smallest thing that closes the gap, and
+// it is worth being explicit about everything it is NOT.
+//
+// === WHAT IT IS NOT ===
+//
+//  - Not a second ledger. There is one table and one writer (the send boundary). This reads
+//    it through the existing repository contract; nothing here writes.
+//  - Not a send path. The only bridge method this block calls is `sends`, whose payload is
+//    limit/offset and nothing else. It cannot name a recipient, a provider, a channel or a
+//    message body even if a renderer bug tried to.
+//  - Not a delivery report. There is no delivered / opened / clicked column in the ledger and
+//    this block does not invent one. Where a row has no provider message id, the UI says so
+//    rather than implying contact.
+//  - Not automatic. No timer, no polling, no interval, no queue: the read happens when the
+//    operator opens the Outreach view, exactly like F12's own list and gate reads.
+//
+// === THE RETRY AFFORDANCE, AND WHY IT DOES NOT SEND ANYTHING ===
+//
+// A recorded `failed` / `blocked` / `attempted` row is evidence that no provider accepted
+// this content, so the content-hash idempotency rule does not stand in the way of another
+// attempt. That is what `retryable` reports, and it is a fact about the ROW - it grants no
+// permission and bypasses no check.
+//
+// An `accepted` row is deliberately NOT retryable. A second attempt would contact nobody:
+// the boundary would recognise the content hash as a replay. Offering it would advertise an
+// action whose honest outcome is "nothing happened".
+//
+// So the button this block renders does not call the provider, and it cannot. It opens the
+// reviewed Prepare panel for that pitch - on the channel the RECORDED attempt used (F25
+// section 13), so a failed WhatsApp attempt returns to the WhatsApp tab and a failed email
+// attempt to Email - where the existing F19 control re-presents the stored recipient and
+// the exact content and the human still has to confirm. The actual attempt then goes through
+// `outreachSend({ pitchId, channel })` as always, re-running the capability check, the
+// OutreachGate, the approval and content integrity, the recipient lookup and the
+// idempotency rule. Nothing here can skip a step, because nothing here sends.
+//
+// With no live provider configured - the state this build actually ships in - the panel
+// will show the backend's own refusal and there will be nothing to confirm. That is the
+// correct outcome, not a broken button.
+
+// One bounded read per page load. Not a per-row read: twenty rows would mean twenty IPC
+// calls, and the ledger is append-mostly and tiny. Fifty rows is enough to be useful and
+// small enough that no operator can turn it into a burst.
+const F21_SEND_HISTORY_SCAN_LIMIT = 50;
+const F21_SEND_HISTORY_UNAVAILABLE = '—';
+
+const f21SendHistoryState = {
+  seq: 0,
+  rows: [],
+  total: 0,
+  loaded: false,
+  error: null
+};
+
+// The four states the ledger actually records, each with its own tone. 'ok' means the
+// provider ACKNOWLEDGED - never that anything was delivered or opened.
+const F21_SEND_STATE_LABELS = Object.freeze({
+  attempted: { label: 'Attempted', tone: 'neutral' },
+  accepted: { label: 'Accepted', tone: 'ok' },
+  failed: { label: 'Failed', tone: 'danger' },
+  blocked: { label: 'Blocked', tone: 'warn' }
+});
+
+const F21_SEND_STATE_UNKNOWN = Object.freeze({ label: 'Unknown state', tone: 'neutral' });
+
+function f21SendStateLabel(state) {
+  return Object.prototype.hasOwnProperty.call(F21_SEND_STATE_LABELS, state)
+    ? F21_SEND_STATE_LABELS[state]
+    : F21_SEND_STATE_UNKNOWN;
+}
+
+function f21SendHistoryEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+const f21SendHistoryText = (value) => (typeof value === 'string' && value.trim() ? value.trim() : '');
+
+/**
+ * One recorded send attempt, rendered from the row and nothing else.
+ *
+ * `data-send-*` attributes exist so the tests - and a person reading the DOM - can tell
+ * which recorded fact produced which piece of text. There is no second source for any of
+ * them and nothing is derived from a sibling field.
+ */
+function f21SendHistoryRow(send) {
+  const item = f21SendHistoryEl('li', 'f21-send-history-item');
+  item.setAttribute('data-send-id', String(send && send.sendId ? send.sendId : ''));
+  item.setAttribute('data-send-state', String(send && send.state ? send.state : ''));
+  if (send && send.retryable === true) item.setAttribute('data-send-retryable', 'true');
+
+  const known = f21SendStateLabel(send && send.state);
+  const badge = f11Status(known.label, known.tone);
+  badge.className = 'f21-send-history-state';
+  badge.setAttribute('data-send-state-badge', known.label);
+  item.appendChild(badge);
+
+  const channel = f21SendHistoryText(send && send.channel);
+  if (channel) {
+    const chan = f21SendHistoryEl('span', 'f21-send-history-channel', channel);
+    chan.setAttribute('data-send-channel', channel);
+    item.appendChild(chan);
+  }
+
+  const when = f21SendHistoryText(send && send.createdAt);
+  if (when) {
+    const stamp = f21SendHistoryEl('span', 'f21-send-history-when', f15ActivityWhen(when));
+    stamp.setAttribute('data-send-created-at', when);
+    item.appendChild(stamp);
+  }
+
+  const providerId = f21SendHistoryText(send && send.providerId);
+  if (providerId) {
+    const via = f21SendHistoryEl('span', 'f21-send-history-provider', 'via ' + providerId);
+    via.setAttribute('data-send-provider-id', providerId);
+    item.appendChild(via);
+  }
+
+  // The provider's own handle. Absent for every row that never reached a provider, which is
+  // the normal case for a blocked attempt - so its absence is shown, never filled in.
+  const messageId = f21SendHistoryText(send && send.providerMessageId);
+  const msg = f21SendHistoryEl('span', 'f21-send-history-message-id',
+    messageId ? 'message ' + messageId : 'no message id recorded');
+  msg.setAttribute('data-send-message-id', messageId ? messageId : '');
+  item.appendChild(msg);
+
+  const failureCode = f21SendHistoryText(send && send.failureCode);
+  const failureMessage = f21SendHistoryText(send && send.failureMessage);
+  if (failureCode || failureMessage) {
+    const why = f21SendHistoryEl('span', 'f21-send-history-failure',
+      failureCode ? failureCode + ' · ' + failureMessage : failureMessage);
+    why.setAttribute('data-send-failure-code', failureCode ? failureCode : '');
+    item.appendChild(why);
+  }
+
+  return item;
+}
+
+/**
+ * The per-pitch history strip, appended to the row's existing actions cell.
+ *
+ * It is placed inside that cell rather than as a new column so no existing cell index
+ * shifts, and it renders NO buttons at all: a pitch with no send history gets one honest
+ * line of text, so the workspace's own "the only action here opens the lead" property is
+ * preserved for every row that has never been sent to.
+ */
+function f21SendHistoryStrip(pitchId) {
+  const strip = f21SendHistoryEl('div', 'f21-send-history');
+  strip.setAttribute('data-pitch-id', String(pitchId || ''));
+
+  if (f21SendHistoryState.error) {
+    const problem = f21SendHistoryEl('span', 'lead-drawer-muted',
+      'Send history could not be read: ' + f21SendHistoryState.error);
+    problem.setAttribute('data-send-history-error', f21SendHistoryState.error);
+    strip.appendChild(problem);
+    return strip;
+  }
+  if (!f21SendHistoryState.loaded) return strip;
+
+  const mine = f21SendHistoryState.rows.filter((s) => s && String(s.pitchId) === String(pitchId));
+  const heading = f21SendHistoryEl('div', 'f21-send-history-heading', 'Recorded sends');
+  strip.appendChild(heading);
+
+  if (mine.length === 0) {
+    // Stated as a bounded observation rather than as an absence. This read saw the newest
+    // N records in the whole ledger; it cannot claim a pitch has never been sent to, and
+    // it does not need to, because the per-pitch Prepare panel reads the same table again.
+    const none = f21SendHistoryEl('div', 'f21-send-history-none lead-drawer-muted',
+      'No send record in the ' + f21SendHistoryState.rows.length + ' most recent records.');
+    none.setAttribute('data-send-history-empty', 'true');
+    strip.appendChild(none);
+    return strip;
+  }
+
+  const list = f21SendHistoryEl('ul', 'f21-send-history-list');
+  mine.forEach((send) => list.appendChild(f21SendHistoryRow(send)));
+  strip.appendChild(list);
+
+  // The count is the backend's own COUNT(*) over the ledger, not a per-row tally.
+  const scope = f21SendHistoryEl('div', 'f21-send-history-scope lead-drawer-muted',
+    mine.length + ' of ' + f21SendHistoryState.total + ' recorded sends');
+  strip.appendChild(scope);
+
+  // The retry affordance. One button per pitch, shown only when some recorded row says a
+  // further attempt is eligible - and it opens the reviewed Prepare panel rather than
+  // contacting anything. See the block header for why.
+  const eligible = mine.some((s) => s && s.retryable === true);
+  if (eligible && typeof f18OpenPrepare === 'function') {
+    // F25 §13: the attempt that made this pitch recoverable decides which tab reopens. The
+    // channel comes from the RECORDED row (the newest retryable one, else the newest row that
+    // carries a channel) - never from current capability, so an unavailable channel is never
+    // silently swapped for the other one. Anything outside the two factual channels reopens
+    // the panel's historical default instead of being guessed at.
+    const recorded = mine.find((s) => s && s.retryable === true) || mine.find((s) => s && s.channel);
+    const recordedChannel = recorded && recorded.channel === 'whatsapp' ? 'whatsapp' : 'email';
+    const retry = f11El('button', 'btn btn-sm btn-secondary', 'Review and try again');
+    retry.type = 'button';
+    retry.setAttribute('data-pitch-id', String(pitchId || ''));
+    retry.setAttribute('data-retry-channel', recordedChannel);
+    retry.title = 'Re-open this pitch for review. Sending still needs your confirmation, '
+      + 'and the gate, approval and recipient checks all run again.';
+    retry.addEventListener('click', () => f18OpenPrepare(String(pitchId), recordedChannel));
+    strip.appendChild(retry);
+  }
+
+  return strip;
+}
+
+/**
+ * Paint the strip onto the rows currently on screen, from the cached read.
+ *
+ * The row ELEMENTS are handed in by the caller rather than looked up here. The workspace
+ * has just built them, so re-finding them through the DOM would be both wasteful and a
+ * second way for this block to depend on document structure it does not own.
+ */
+function f21SendHistoryPaint(rows) {
+  if (!Array.isArray(rows)) return;
+  for (const row of rows) {
+    if (!row || !row.lastElementChild) continue;
+    const pitchId = row.getAttribute ? row.getAttribute('data-pitch-id') : null;
+    if (!pitchId) continue;
+    row.lastElementChild.appendChild(f21SendHistoryStrip(pitchId));
+  }
+}
+
+/**
+ * One bounded read of the ledger, then repaint. Guarded by the caller's seq exactly like
+ * F12's own reads, so a slow response can never overwrite a newer page.
+ */
+async function f21SendHistoryLoad(seq) {
+  const mySeq = ++f21SendHistoryState.seq;
+  const api = f11LeadIntel();
+  if (!api || !api.outreach || typeof api.outreach.sends !== 'function') {
+    // A build without the read simply shows no history. That is an absence, never a
+    // fabricated "no sends have happened".
+    f21SendHistoryState.rows = [];
+    f21SendHistoryState.total = 0;
+    f21SendHistoryState.loaded = false;
+    f21SendHistoryState.error = null;
+    return;
+  }
+  let page;
+  try {
+    page = f11Unwrap(await api.outreach.sends({ limit: F21_SEND_HISTORY_SCAN_LIMIT, offset: 0 }));
+  } catch (err) {
+    if (seq !== mySeq) return;
+    f21SendHistoryState.rows = [];
+    f21SendHistoryState.total = 0;
+    f21SendHistoryState.loaded = true;
+    f21SendHistoryState.error = err && err.message ? err.message : 'the request failed';
+    return;
+  }
+  if (seq !== mySeq) return;
+  f21SendHistoryState.rows = page && Array.isArray(page.rows) ? page.rows : [];
+  f21SendHistoryState.total = page && Number.isFinite(page.total) ? page.total : f21SendHistoryState.rows.length;
+  f21SendHistoryState.loaded = true;
+  f21SendHistoryState.error = null;
 }
 
 // F12: wire the read-only Outreach workspace's controls.

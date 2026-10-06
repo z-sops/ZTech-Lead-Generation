@@ -483,7 +483,13 @@ test('11. F12/F13/F14 behaviour is untouched by F15', () => {
   assert.ok(/gate\.decision === 'allowed'/.test(stripComments(F14)), 'F14 still derives ready from the gate');
   // The service still refuses to send by default (F19 adds sendEmail behind a live
   // provider interlock; the legacy send() path remains disabled in the default build).
-  const canSendInDefault = /sendCapability\(\)/.test(serviceSource);
+  // F20 declared lock update: the single zero-argument sendCapability() became the
+  // channel-aware sendCapability(channel), because two channels now share one send entry
+  // point. What this lock actually protects - no default-build send capability - is
+  // asserted by the fact that BOTH evaluators are still gated on a live provider below.
+  const canSendInDefault = /sendCapability\(channel\)/.test(serviceSource)
+    && /sendCapability\('email'\)/.test(serviceSource)
+    && /sendCapability\('whatsapp'\)/.test(serviceSource);
   assert.ok(canSendInDefault, 'send() remains disabled in the default configuration');
   // Activity is emitted only from the two mutation boundaries.
   const emitters = [...serviceSource.matchAll(/this\._recordActivity\(([^,]+), '([A-Z_]+)'/g)].map((m) => m[2]);

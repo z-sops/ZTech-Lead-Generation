@@ -28,6 +28,36 @@ const DEFAULT_LEAD_FIELD_MAP = Object.freeze({
 
 const EMAIL = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$/;
 
+/**
+ * F20: the syntactic E.164 shape for a phone number, defined here beside EMAIL so the WHOLE
+ * codebase has exactly one notion of "this string is a phone number".
+ *
+ * WHAT IT IS: a leading '+', a non-zero country digit, and 7-15 further digits, with no
+ * spaces, punctuation or separators. It is deliberately strict and it is deliberately
+ * SYNTACTIC ONLY - it cannot tell you whether a number exists, is reachable, is assigned to
+ * the business, or is a WhatsApp account. Nothing in ZTech may treat a match as any of those;
+ * F18 already decided a stored number is a `candidate`, and that decision stands.
+ *
+ * The no-space rule is intentional. Real catalogues store '+92 300 1234567', and F17's
+ * catalog normaliser accepts that shape, so a stored number may arrive spaced. Any consumer
+ * that needs to use the number on the wire must therefore NORMALISE it through
+ * `toE164()` first and validate the result - which is exactly what the WhatsApp send boundary
+ * does, so the string that was validated is the string that is sent.
+ */
+const E164 = /^\+[1-9]\d{6,14}$/;
+
+/** Strip human formatting from a phone number and return the E.164 form, or null. */
+function toE164(raw) {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Keep a leading '+' only; drop spaces, dots, dashes, brackets and parentheses.
+  const plus = trimmed.startsWith('+') ? '+' : '';
+  const digits = trimmed.replace(/\D/g, '');
+  const candidate = plus + digits;
+  return E164.test(candidate) ? candidate : null;
+}
+
 function str(v, max = 500) {
   if (v === undefined || v === null) return null;
   if (typeof v !== 'string' && typeof v !== 'number') return null;
@@ -79,4 +109,4 @@ function identityFromView(view) {
   };
 }
 
-module.exports = { DEFAULT_LEAD_FIELD_MAP, toLeadView, identityFromView, EMAIL };
+module.exports = { DEFAULT_LEAD_FIELD_MAP, toLeadView, identityFromView, EMAIL, E164, toE164 };

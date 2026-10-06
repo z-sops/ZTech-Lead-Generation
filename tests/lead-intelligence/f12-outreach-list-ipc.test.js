@@ -85,13 +85,15 @@ function harness(outreach, { trusted = true } = {}) {
   return { handlers, reg, invoke: (c, payload, event = {}) => handlers.get(c)(event, payload) };
 }
 
-// F19 declared lock update: the registrar now also requires `sendEmail`, because the send
-// channel is registered unconditionally. These stubs register all channels, so they must
-// satisfy that startup requirement too - it is asserted directly in the F19 suite.
+// F21 declared lock update: the registrar also requires the read-only send-ledger read.
+// This stub includes it so all channels can register.
 const stubOutreach = (list) => ({
   generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
   update: async () => ({}), approve: async () => ({}), gate: async () => ({}), list,
+  send: async () => ({}),
   sendEmail: async () => ({}),
+  sendWhatsApp: async () => ({}),
+  sendList: async () => ({ rows: [], total: 0, limit: 0, offset: 0 }),
 });
 
 // --- 1. the channel exists and is registered -----------------------------------
@@ -100,6 +102,9 @@ test('F12 B2: the outreach:list channel exists with the approved name', () => {
   assert.equal(OUTREACH_CHANNELS.OUTREACH_LIST, 'lead-intel:outreach-list');
 });
 
+// F21 declared lock update: the read-only send-ledger read was added alongside the send
+// boundary. It is a read channel, so the "no batch/queue/schedule/campaign channel"
+// invariant holds.
 test('F12 B2: outreach:list is registered, and the five previous channels are unchanged', () => {
   const { reg, handlers } = harness(stubOutreach(async () => ({ rows: [], total: 0, limit: 20, offset: 0, status: null })));
   const registered = reg.channels.slice().sort();
@@ -107,10 +112,12 @@ test('F12 B2: outreach:list is registered, and the five previous channels are un
   // longer the newest channel. This test pins that F12's own channel is untouched.
   // F18 declared lock update: + the single read-only prepare channel.
   // F19 declared lock update: + the single send boundary.
-  assert.deepEqual(registered, [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send'].sort());
+  // F21 declared lock update: + the single read-only send-ledger read.
+  assert.deepEqual(registered, [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends'].sort());
   // F15/F16 declared lock update: the read-only activity and ready channels are now also
   // registered. F18 declared lock update: + prepare. F19 declared lock update: 9 -> 10.
-  assert.equal(handlers.size, 10);
+  // F21 declared lock update: 10 -> 11, the read-only send-ledger read.
+  assert.equal(handlers.size, 11);
   for (const c of PREVIOUS_FIVE) assert.ok(handlers.has(c), 'previous channel must survive: ' + c);
   assert.ok(handlers.has('lead-intel:outreach-list'));
   // No new channel beyond these: email-send, searches, segments, enrichment,
@@ -268,14 +275,26 @@ test('F12 B2: preload exposes outreach.list and no email.send', () => {
   const source = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
   const invoked = [...source.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((m) => m[1]);
   const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
-  // F15/F16 declared lock update: EXACT allowlist of eight - a ninth or a substitution fails here.
-  // F18 declared lock update: + the single read-only prepare method, so the exact set is now nine.
-  // F19 declared lock update: + the single send boundary, so the exact set is now ten.
-  assert.deepEqual(leadIntel.slice().sort(), [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send'].sort());
-  assert.equal(leadIntel.length, 10);
-  assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 1, 'exactly one send method exists');
-  assert.ok(leadIntel.includes('lead-intel:outreach-list'), 'outreach.list must be exposed');
-  assert.ok(!leadIntel.includes('lead-intel:email-send'), 'email.send must never be exposed');
+// F15/F16 declared lock update: EXACT allowlist of eight - a ninth or a substitution fails here.
+    // F18 declared lock update: + the single read-only prepare method, so the exact set is now nine.
+    // F19 declared lock update: + the single send boundary, so the exact set is now ten.
+    // F21 declared lock update: + the single read-only send-ledger read, so the exact set is now eleven.
+    // Phase I2: + 7 Opportunity Intelligence channels, so the exact set is now eighteen.
+    const OI_CHANNELS = [
+      'lead-intel:opportunity-associations',
+      'lead-intel:opportunity-engine',
+      'lead-intel:opportunity-health',
+      'lead-intel:opportunity-latest',
+      'lead-intel:opportunity-pitch-context',
+      'lead-intel:opportunity-report',
+      'lead-intel:opportunity-request',
+    ];
+    const EXPECTED = [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends', ...OI_CHANNELS].sort();
+    assert.deepEqual(leadIntel.slice().sort(), EXPECTED);
+    assert.equal(leadIntel.length, 18);
+    assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
+    assert.ok(leadIntel.includes('lead-intel:outreach-list'), 'outreach.list must be exposed');
+    assert.ok(!leadIntel.includes('lead-intel:email-send'), 'email.send must never be exposed');
 
   const block = source.slice(source.indexOf("exposeInMainWorld('ztechLeadIntel'"));
   assert.ok(/outreach:\s*Object\.freeze\(\{[\s\S]*?\blist:\s*\(payload\)\s*=>\s*ipcRenderer\.invoke\('lead-intel:outreach-list'/.test(block),

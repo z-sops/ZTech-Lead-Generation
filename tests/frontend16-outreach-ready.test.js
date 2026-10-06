@@ -561,7 +561,7 @@ test('9. no new persisted ready status, flag or table exists', () => {
     ['draft', 'insufficient_evidence', 'needs_revision'], 'no ready status was added to the pitch model');
   const migrations = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'migrations.js'), 'utf8');
   const version = migrations.match(/Object\.freeze\(\{ version: (\d+), name: '([^']+)'/g).map((s) => s.match(/version: (\d+)/)[1]);
-  assert.deepStrictEqual(version, ['1', '2', '3', '4'], 'F16 added no migration: ' + version.join(','));
+  assert.deepStrictEqual(version, ['1', '2', '3', '4', '5'], 'migrations include F20 WhatsApp send: ' + version.join(','));
   // Schema-scoped, not prose-scoped: F15's migration comment legitimately discusses
   // "readiness", so the claim is that no TABLE or COLUMN is named ready.
   const created = [...migrations.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]);

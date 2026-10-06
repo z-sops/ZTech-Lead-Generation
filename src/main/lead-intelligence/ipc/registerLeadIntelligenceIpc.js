@@ -116,7 +116,12 @@ function registerLeadIntelligenceIpc({ ipcMain, li, isTrustedSender, dialogs = {
 
   const emailCfg = (li.config && li.config.email) || {};
   if (emailCfg.enabled === true && li.outreach.emailProvider) {
-    handle(C.EMAIL_SEND, (a) => li.outreach.send({ pitchId: a.pitchId }));
+    // F25: this channel is named EMAIL_SEND, and it now calls the EMAIL boundary directly.
+    // The unified outreach.send({ pitchId, channel }) dispatcher is reachable only through
+    // OUTREACH_SEND, whose schema supplies the required channel enum; routing this legacy
+    // email-only channel through the dispatcher would need a channel it must never accept
+    // from its own (email-only) caller.
+    handle(C.EMAIL_SEND, (a) => li.outreach.sendEmail({ pitchId: a.pitchId }));
   }
 
   return {

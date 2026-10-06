@@ -176,7 +176,20 @@ function makeEnv(opts) {
     toast: (msg, type) => toasts.push({ msg, type }),
     safeAsync: (fn) => fn,
     openLeadDetail: async (id) => { calls.open.push(id); },
-    closeLeadDetail: () => { calls.close += 1; }
+    closeLeadDetail: () => { calls.close += 1; },
+    window: {
+      ztechLeadIntel: {
+        opportunity: {
+          health: async () => ({ available: false, state: 'unavailable', message: 'OI unavailable', schema_version: null, checked_at: null, base_url: null, affects_outreach: false }),
+          engine: async () => ({ available: false, state: 'unavailable', error: 'OI unavailable', health: { state: 'unavailable' } }),
+          latest: async () => ({ available: false, state: 'not_researched', message: 'No Opportunity Intelligence research has been run for this lead yet.', lead_id: null, model: null, summary: null, sections: null, affects_outreach: false }),
+          request: async () => ({ available: false, state: 'unavailable', message: 'OI unavailable', affects_outreach: false }),
+          report: async () => ({ available: false, state: 'unavailable', message: 'OI unavailable', affects_outreach: false }),
+          associations: async () => ({ available: false, state: 'unavailable', message: 'OI unavailable', affects_outreach: false }),
+          pitchContext: async () => ({ available: false, reason: 'OI unavailable', bridge: null, affects_outreach: false }),
+        },
+      },
+    },
   };
   const escapeHtmlSrc = functionSource(rendererSource, 'function escapeHtml(');
   const renderWebsiteSrc = functionSource(rendererSource, 'function renderWebsite(value)');
@@ -447,8 +460,8 @@ test('7. tabs switch by click and by keyboard, with correct ARIA state', () => {
   assert.strictEqual(env.el('lead-tab-overview').tabIndex, -1);
   const key = (k) => tabs.fire('keydown', { key: k, preventDefault() {} });
   key('ArrowRight');
-  assert.strictEqual(env.api.tab, 'evidence');
-  assert.strictEqual(env.doc.activeElement, env.el('lead-tab-evidence'), 'focus follows the selected tab');
+  assert.strictEqual(env.api.tab, 'opportunity');
+  assert.strictEqual(env.doc.activeElement, env.el('lead-tab-opportunity'), 'focus follows the selected tab');
   key('End');
   assert.strictEqual(env.api.tab, 'pitch');
   key('ArrowRight');
@@ -554,7 +567,7 @@ test('17. Pitch hands off to the F11 block and still offers no send action', () 
   assert.ok(!/>\s*Send\b/i.test(overlayHtml) && !/'Send'|"Send"/.test(f5Code), 'no Send button anywhere in the drawer');
   // The F5 boundary is unchanged: no pitch API, no I/O, inside this slice.
   assert.ok(!/pitch\.(generate|get|update)|outreach\./.test(f5Code), 'no pitch API is invented in the F5 slice');
-  assert.ok(!/ztechLeadIntel/.test(f5Code), 'the F5 slice does not reach the Lead Intelligence API');
+  assert.ok(!/ztechLeadIntel\.(pitch|outreach)\./.test(f5Code), 'the F5 slice does not reach the outreach/pitch API');
   assert.ok(!/'Send'|"Send"/.test(f11Source), 'no send control in the F11 block either');
 });
 
@@ -586,9 +599,13 @@ test('19. no fake metrics, scores or sample data', () => {
   }
   const env = makeEnv();
   openLead(env, FULL);
+  // F21 copy update: the last three steps no longer read "Not available yet", which claimed the
+  // build lacked a capability it has had since F13 (generate/approve), F18 (prepare) and
+  // F19/F20 (a confirmed, provider-gated attempt). Each step now states the fact about THIS
+  // lead instead, and none of them implies a live provider exists.
   const steps = env.el('lead-drawer-pipeline').children.map((c) => c.textContent);
   assert.deepStrictEqual(steps, ['LeadStored', 'ResearchLoading', 'EvidenceNone yet', 'ICPPer Target',
-    'OpportunityNot available yet', 'PitchNot available yet', 'OutreachNot available yet'],
+    'OpportunityNone detected', 'PitchNone generated', 'OutreachNothing sent'],
   'the progression states only what is real');
   env.api.renderLeadDrawerResearch({ leadRef: 'L1', availability: 'complete', packet: PACKET });
   assert.strictEqual(env.el('lead-drawer-pipeline').children[2].textContent, 'Evidence1 fact', 'the real fact count');
@@ -612,7 +629,9 @@ test('21. the IPC channel set and dependencies are unchanged', () => {
   // Lead Intelligence methods). The F5 block itself still performs no I/O.
   // F18 declared lock update: 49 -> 50, the single read-only prepare method.
   // F19 declared lock update: 50 -> 51, the single send boundary.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 51, '51 preload invocations');
+  // F21 declared lock update: 51 -> 52, the read-only send-ledger read.
+  // Phase I2: +7 Opportunity Intelligence channels = 59 total.
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 59, '59 preload invocations');
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'the F5 block performs no I/O');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);

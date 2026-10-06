@@ -13,8 +13,10 @@ const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET, ACTIVITY_MAX_LIMIT, ACTIVIT
  * F19 history, kept because the reasoning matters more than the outcome: `lead-intel:email-send`
  * was deliberately absent for many phases while the provider stayed abstract. F19 registers a
  * send channel, but under three constraints that keep the earlier safety property intact:
- *   - its input is EXACTLY { pitchId }. No recipient, from, subject, body, provider or channel
- *     can be supplied by the renderer, so every one of those is re-derived in the main process.
+ *   - its input is EXACTLY { pitchId, channel } (F25). No recipient, from, subject, body or
+ *     provider can be supplied by the renderer - those are all re-derived in the main
+ *     process - and `channel` is a required closed enum ('email' | 'whatsapp'): the explicit
+ *     channel a human reviewed, dispatched to that channel's boundary ONLY, with no fallback.
  *   - it is refused unless a LIVE provider and a valid from-address are configured, so the
  *     default build still cannot send anything at all.
  *   - the OutreachGate is re-run immediately before the provider is contacted.
@@ -47,9 +49,21 @@ const CHANNELS = Object.freeze({
   // re-runs the OutreachGate, the idempotency check and the recipient lookup inside the
   // main process immediately before contacting a provider.
   //
-  // There is deliberately still NO batch, queue, schedule, retry-loop, campaign or
-  // unsubscribe channel, and no second send channel for another provider.
+  // F25: the payload now carries ONE additional property - the EXPLICIT channel enum,
+  // email or whatsapp: the reviewed tab a human just confirmed, dispatched to the
+  // selected boundary only. No quote or apostrophe may be added to this comment - the F18
+  // suite parses this block with a naive single-quote regex, and one stray quote silently
+  // swallows the declarations that follow it. There is deliberately still NO batch,
+  // queue, schedule, retry-loop, campaign or unsubscribe channel, and no second send
+  // channel for another provider: the dispatcher never falls back to the other channel.
   OUTREACH_SEND: 'lead-intel:outreach-send',
+  // F21: read-only send history. F19/F20 already wrote a durable row per send attempt but
+  // nothing could read one back, so a provider call that happened was unauditable. This
+  // channel is the read. It is NOT a second send path: the payload is paging plus at most
+  // one id filter, so it can neither name a recipient, a provider, a channel nor a payload,
+  // and there is deliberately still no channel here that can retry, queue or reschedule
+  // anything - a further attempt must go back through OUTREACH_SEND above.
+  OUTREACH_SENDS: 'lead-intel:outreach-sends',
 });
 
 /**
@@ -124,20 +138,47 @@ const INPUT_SCHEMAS = Object.freeze({
     pitchId,
     channel: { type: 'string', enum: ['email', 'whatsapp'] },
   }, ['pitchId', 'channel']),
-  // F19: the send boundary. This is the ONLY channel in the entire product that can cause
-  // an outbound message, and its input is deliberately the smallest possible:
+  // F19/F25: the send boundary. This is the ONLY channel in the entire product that can
+  // cause an outbound message, and its input is deliberately the smallest possible:
   //
-  //   - exactly ONE property: pitchId. The renderer cannot pass a recipient, a from
-  //     address, a subject, a body, a provider, a channel or a template, because
+  //   - exactly TWO properties: pitchId and channel. The renderer cannot pass a recipient,
+  //     a from address, a subject, a body, a provider or a template, because
   //     additionalProperties:false refuses all of them and no other property is defined.
-  //   - NO channel parameter. F19 ships email only, so the channel is not a choice the
-  //     renderer can make; the service decides. F20 adds WhatsApp at the service layer,
-  //     behind the same closed payload, rather than by widening what the renderer may say.
+  //   - the channel is a CLOSED enum ('email' | 'whatsapp'), required, never defaulted. It
+  //     is the one choice F25 deliberately moves to the renderer: the Prepare tab a human
+  //     reviewed IS the channel sent, and the service dispatches to that channel's existing
+  //     boundary ONLY - with no fallback to the other channel in either direction.
   //
-  // So the renderer can ask "send the approved pitch for this id, to whoever the stored
-  // contact facts say" and can express nothing else. Everything that determines WHO is
-  // contacted and WHAT is said is re-derived in the main process at send time.
-  [CHANNELS.OUTREACH_SEND]: obj({ pitchId }, ['pitchId']),
+  // So the renderer can ask "send the approved pitch for this id, on the channel I name, to
+  // whoever the stored contact facts say" and can express nothing else. Everything that
+  // determines WHO is contacted and WHAT is said is re-derived in the main process at send
+  // time; the channel is the only intent that crosses this line.
+  [CHANNELS.OUTREACH_SEND]: obj({
+    pitchId,
+    channel: { type: 'string', enum: ['email', 'whatsapp'] },
+  }, ['pitchId', 'channel']),
+  // F21: read-only send history. Deliberately the same narrow shape as the F15 activity
+  // channel - paging integers plus an optional id filter, additionalProperties:false - so the
+  // renderer cannot smuggle a sort field, an ORDER BY, a SQL fragment, a column list, a
+  // provider name or a state filter. The store's own fixed `created_at DESC, send_id DESC`
+  // ordering is therefore the only order obtainable, and the bounds come from the same
+  // contract module so they cannot drift from the store's clamp.
+  //
+  // Note the contrast with the Ready queue's schema just above, which must stay free of any
+  // row count because its queue is DERIVED and a derived count would be an approximation. A
+  // send ledger is a real table, so its count is an exact COUNT(*) and the handler returns
+  // it. The word is kept out of this comment so the Ready schema's own check cannot be
+  // confused by prose sitting next to it.
+  [CHANNELS.OUTREACH_SENDS]: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      limit: { type: 'integer', minimum: 1, maximum: ACTIVITY_MAX_LIMIT },
+      offset: { type: 'integer', minimum: 0, maximum: ACTIVITY_MAX_OFFSET },
+      leadId: { type: 'string', minLength: 1, maxLength: 100 },
+      pitchId: { type: 'string', minLength: 1, maxLength: 100 },
+    },
+  },
 });
 
 function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = console }) {
@@ -147,10 +188,19 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   // the service can actually serve it. Failing here is far better than a channel that
   // throws only on its first invoke.
   if (typeof outreach.list !== 'function') throw new TypeError('outreach service must implement list');
-  // F19: the send channel is registered unconditionally too, so it gets the same treatment.
-  // Without this, a build whose service predates F19 would start cleanly and then throw an
-  // opaque TypeError the first time a human tried to send an email.
+  // F19/F20: the send channel is registered unconditionally, so it gets the same treatment.
+  // Without this, a build whose service predates F19/F20 would start cleanly and then throw an
+  // opaque TypeError the first time a human tried to send.
+  if (typeof outreach.send !== 'function') throw new TypeError('outreach service must implement send');
+  // The channel-specific boundaries are what `send` delegates to, so a service that
+  // implements send() without them would fail on the first human send instead of at
+  // registration, where the error is still actionable.
   if (typeof outreach.sendEmail !== 'function') throw new TypeError('outreach service must implement sendEmail');
+  if (typeof outreach.sendWhatsApp !== 'function') throw new TypeError('outreach service must implement sendWhatsApp');
+  // F21: same reasoning for the read-only send history - a build whose service predates F21
+  // would otherwise start cleanly and throw an opaque TypeError the first time someone opened
+  // a pitch's history.
+  if (typeof outreach.sendList !== 'function') throw new TypeError('outreach service must implement sendList');
 
   const registered = [];
 
@@ -203,11 +253,26 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   // a preview derived from stored data; nothing is sent, queued or recorded.
   handle(CHANNELS.OUTREACH_PREPARE, (a) => outreach.prepare({ pitchId: a.pitchId, channel: a.channel }));
 
-  // F19: the send boundary. One pitch, one human action, no caller-supplied content.
-  // Everything else - gate re-check, idempotency, recipient, body - is re-derived in the
-  // main process. The result reports provider ACKNOWLEDGEMENT only; delivery, open and
-  // click are reported as 'unknown' because nothing here observes an inbox.
-  handle(CHANNELS.OUTREACH_SEND, (a) => outreach.sendEmail({ pitchId: a.pitchId }));
+  // F19/F20/F25: the send boundary. One pitch, ONE EXPLICIT CHANNEL, one human action, no
+  // caller-supplied content. Everything else - gate re-check, idempotency, recipient, body -
+  // is re-derived in the main process. The result reports provider ACKNOWLEDGEMENT only;
+  // delivery, open and click are reported as 'unknown' because nothing here observes an
+  // inbox.
+  //
+  // F25: the channel comes from the payload but only after the schema has already refused
+  // anything outside the closed enum, and the service dispatches to that channel's existing
+  // boundary and nowhere else. There is NO automatic fallback in either direction: if the
+  // selected channel's capability is unavailable the call fails closed with that channel's
+  // own factual refusal rather than contacting the lead somewhere else. An unknown channel
+  // never reaches a provider - the service throws before any boundary runs.
+  handle(CHANNELS.OUTREACH_SEND, (a) => outreach.send({ pitchId: a.pitchId, channel: a.channel }));
+
+  // F21: read-only send history. The renderer can ask "what send attempts are recorded for
+  // this pitch" and nothing else. It cannot write a row, mark one accepted, delete one, or
+  // trigger another attempt from here - the send boundary above is the only way out of this.
+  handle(CHANNELS.OUTREACH_SENDS, (a) => outreach.sendList({
+    limit: a.limit, offset: a.offset, leadId: a.leadId, pitchId: a.pitchId
+  }));
 
   return {
     channels: [...registered],

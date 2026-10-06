@@ -552,7 +552,7 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const versions = migrationsSource.match(/Object\.freeze\(\{ version: (\d+), name: '([^']+)'/g).map((s) => s.match(/version: (\d+)/)[1]);
   // F19 declared lock update: migration 004 exists legitimately, so versions are 1-4. The
   // banned-token check below is what actually protects F17's no-schema-change property.
-  assert.deepStrictEqual(versions, ['1', '2', '3', '4'], 'F17 added no migration: ' + versions.join(','));
+  assert.deepStrictEqual(versions, ['1', '2', '3', '4', '5'], 'migrations include F20 WhatsApp send: ' + versions.join(','));
   for (const banned of [/contact/i, /channel/i, /whatsapp/i, /outbox/i, /queue/i]) {
     assert.ok(!new RegExp('CREATE TABLE IF NOT EXISTS (li_)?\\w*' + banned.source, 'i').test(migrationsSource),
       'no ' + banned + ' table was migrated');
@@ -573,8 +573,13 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const methods = [...bridge.matchAll(/(\w+):\s*\(/g)].map((m) => m[1]);
   // F18 declared lock update: + the single read-only prepare method.
   // F19 declared lock update: + the single send boundary (outreachSend).
-  assert.deepStrictEqual(methods.sort(), ['activity', 'approve', 'gate', 'list', 'outreachSend', 'prepare', 'ready'],
-    'F17 added no preload method of its own; F18 adds exactly prepare, F19 exactly outreachSend');
+  // F21 declared lock update: + the single read-only send-ledger read (`sends`). It reads the
+  // ledger F19/F20 write; it cannot cause a send, so F17's "no send method" property holds.
+  // Phase I2: +7 Opportunity Intelligence channels.
+  const expectedOutreach = ['activity', 'approve', 'gate', 'list', 'outreachSend', 'prepare', 'ready', 'sends'];
+  const expectedOI = ['health', 'engine', 'request', 'report', 'latest', 'associations', 'pitchContext'];
+  assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI].sort(),
+    'F17 added no preload method of its own; F18 adds exactly prepare, F19 exactly outreachSend, F21 exactly the reads; Phase I2 adds Opportunity Intelligence');
   for (const forbidden of [/contact/i, /schedule/i, /whatsapp/i, /verify/i]) {
     assert.ok(!forbidden.test(bridge), 'no preload method for ' + forbidden);
   }

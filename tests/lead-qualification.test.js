@@ -586,9 +586,14 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
   // A10: the five approved Lead Intelligence channels live in their own narrowly
   // scoped registrar (src/main/lead-intelligence/outreach-ipc.js), so a main.js
   // scan alone does not see them either.
+  // Phase I2: the seven Opportunity Intelligence channels live in their own
+  // registrar (src/main/lead-intelligence/opportunity/opportunity-ipc.js).
   function leadIntelChannels() {
-    const src = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
-    return [...src.matchAll(/'(lead-intel:[a-z-]+)'/g)].map(m => m[1]);
+    const outreachSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+    const opportunitySrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'opportunity', 'opportunity-ipc.js'), 'utf8');
+    const outreach = [...outreachSrc.matchAll(/'(lead-intel:[a-z-]+)'/g)].map(m => m[1]);
+    const opportunity = [...opportunitySrc.matchAll(/'(lead-intel:opportunity-[a-z-]+)'/g)].map(m => m[1]);
+    return [...outreach, ...opportunity];
   }
 
   function allChannels() {
@@ -719,8 +724,10 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // WRITE channel exists either. F18 declared lock update: 50 -> 51, the single
     // read-only outreach prepare channel.
     // F19 declared lock update: 51 -> 52, the single outreach send boundary.
-    assert.strictEqual(channels.length, 52, 'exactly 52 channels');
-    assert.strictEqual(new Set(channels).size, 52, 'no duplicate channel names');
+    // F21 declared lock update: 52 -> 53, the single read-only send-ledger read.
+    // Phase I2: +7 Opportunity Intelligence channels = 60 total.
+    assert.strictEqual(channels.length, 60, 'exactly 60 channels');
+    assert.strictEqual(new Set(channels).size, 60, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1420,11 +1427,13 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // IPC: the filter still rides collector:get-numbers.
     // F6 declared lock update: 33 -> 40, the seven sender-checked Lists channels.
     // F7 declared lock update: 40 -> 41, the read-only prospect-research:list channel.
-    // F8 declared lock update: 41 -> 42, intelligence:icp.
-// F15 declared lock update: 48 -> 49, adding the single read-only outreach activity channel.
+// F8 declared lock update: 41 -> 42, intelligence:icp.
+  // F15 declared lock update: 48 -> 49, adding the single read-only outreach activity channel.
   // F18 declared lock update: 50 -> 51, adding the single read-only outreach prepare channel.
   // F19 declared lock update: 51 -> 52, adding the single outreach send boundary.
-  assert.strictEqual(allChannels().length, 52, 'exactly 52 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send)');
+  // F21 declared lock update: 52 -> 53, adding the single read-only send-ledger read.
+  // Phase I2: +7 Opportunity Intelligence channels = 60 total.
+  assert.strictEqual(allChannels().length, 60, 'exactly 60 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send, F21 send-ledger read, Phase I2 Opportunity Intelligence)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

@@ -24,6 +24,7 @@ const { SqlJsStore } = require('./persistence/SqlJsStore');
 const { createLeadIntelligence } = require('./index');
 const { accountStoreLeadSource } = require('./integration/mainProcess');
 const { round1PacketMapper } = require('./round1PacketMapper');
+const { createOpportunityIntelligence } = require('./opportunity');
 
 /**
  * The 11 additive Lead Intelligence tables, exactly as the shipped migrations
@@ -119,8 +120,22 @@ function createRound1Port(db) {
  * @param {object} [p.config]      lead-intelligence config (research.mode is forced to "round1")
  * @param {object} [p.logger]
  * @param {object} [p.round1Port]  injected read-only Round-1 port (tests); defaults to the table reader
+ * @param {object} [p.emailProvider] F23: the email EmailProvider instance (ResendEmailProvider
+ *        in the main process). `null`/omitted means no provider instance exists and the send
+ *        boundary refuses with EMAIL_PROVIDER_NOT_SET - the pre-F23 default, unchanged.
+ * @param {object} [p.whatsappProvider] F24: the WhatsApp WhatsAppProvider instance (the
+ *        single MetaCloudWhatsAppProvider adapter in the main process). `null`/omitted means
+ *        no provider instance exists and the send boundary refuses with
+ *        WHATSAPP_PROVIDER_NOT_SET - the pre-F24 default, unchanged for every caller that
+*        does not supply one.
+ * @param {object} [p.opportunity] Phase I2 Opportunity Intelligence wiring:
+ *        { config?, fetchImpl? }. OI is a SEPARATE local FastAPI service with its
+ *        OWN database, so nothing here is persisted on the shared whatsapp.db and
+ *        no migration is run for it. Constructing it cannot fail and cannot
+ *        affect `li`: if OI is down, misconfigured or disabled, `li` is returned
+ *        exactly as it would have been without this parameter.
  */
-async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = null, config = {}, logger = console, round1Port = null, clock }) {
+async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = null, config = {}, logger = console, round1Port = null, clock, emailProvider = null, whatsappProvider = null, opportunity = null }) {
   if (!accountStore || typeof accountStore !== 'object') throw new TypeError('accountStore is required');
   // A10 contract: the runtime initialises ONLY after the shared database is open.
   await accountStore.ready;
@@ -149,27 +164,76 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
     // wall clock rather than on the data.
     ...(clock ? { clock } : {}),
     llmComplete: null,
-    // No email provider in this phase: the channel is not registered and no
-    // send path exists. OutreachService keeps its EMAIL_DISABLED default.
-    emailProvider: null,
+    // F23: the email provider instance is INJECTED by the caller (main.js builds
+    // ResendEmailProvider with a main-process-only API-key closure and an injectable
+    // transport). Omitted/null - every test harness and the previous behaviour - means no
+    // provider instance exists, and the F19 boundary refuses before anything is read.
+    // The channel is never registered from here and no send path is invented here.
+    emailProvider,
+    // F24: the WhatsApp provider instance is INJECTED by the caller exactly like the email
+    // provider (main.js builds MetaCloudWhatsAppProvider with a main-process-only token
+    // closure and an injectable transport). Omitted/null - every test harness and the
+    // previous behaviour - means no provider instance exists, and the F20 boundary refuses
+    // with WHATSAPP_PROVIDER_NOT_SET before anything is read. The channel is never
+    // registered from here and no send path is invented here.
+    whatsappProvider,
     // The Round-1 record shape is mapped by the injectable A10 mapper.
     round1ResultMapper: round1PacketMapper,
   });
 
   let closed = false;
+
+  // --- Phase I2: Opportunity Intelligence -----------------------------------
+  // Built last, in its own try/catch, and never awaited in a way that could delay
+  // or fail Lead Intelligence. OI is read-only research context with its own store;
+  // it shares nothing with `li` except lead_id.
+  const oi = buildOpportunity(opportunity, leadSource, logger);
+
   return {
     li,
     store,
     round1Port: port,
+    opportunity: oi,
     get available() { return !closed; },
     /** Clean shutdown: stops nothing that was never started, closes LI resources. */
     async shutdown() {
       if (closed) return;
       closed = true;
       li.stop();
+      // OI holds no socket and no timer, so this is a no-op that exists so the
+      // shutdown path is explicit rather than accidental.
+      if (oi) { try { await oi.stop(); } catch { /* never block shutdown */ } }
       if (typeof store.close === 'function') await store.close();
     },
   };
+}
+
+/**
+ * Construct the OI service, or return a handle whose every method answers
+ * "unavailable". NEVER throws: a broken OI must not be able to break ZTech.
+ */
+function buildOpportunity(spec, leadSource, logger) {
+  if (!spec) return null;
+  const safeWarn = (m) => { if (logger && logger.warn) logger.warn('lead-intel', String(m)); };
+  try {
+    const oi = createOpportunityIntelligence({
+      config: spec.config || {},
+      fetchImpl: spec.fetchImpl,
+      clock: spec.clock,
+      logger: { warn: safeWarn, error: (m) => { if (logger && logger.error) logger.error('lead-intel', String(m)); }, info: () => {} },
+    });
+    // `oiSource` is the one thing OI is given from ZTech: a leadId -> view reader.
+    // It cannot express a destination or a credential, which is the whole point.
+    oi.leadSource = leadSource;
+    // Health is probed in the BACKGROUND: startup must not wait on OI, and a slow
+    // or dead OI must not delay the ZTech window. .catch keeps an unhandled
+    // rejection out of the process.
+    oi.healthProbe = oi.start().catch((e) => safeWarn(`opportunity-intelligence probe failed: ${e && e.message}`));
+    return oi;
+  } catch (e) {
+    safeWarn(`opportunity-intelligence could not be constructed: ${e && e.message}`);
+    return null;
+  }
 }
 
 module.exports = { initializeLeadIntelligenceRuntime, createRound1Port, LI_TABLES, ROUND1_TABLE };

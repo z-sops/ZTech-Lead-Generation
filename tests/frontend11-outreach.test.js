@@ -453,7 +453,9 @@ test('14. the F11 block builds no HTML strings', () => {
 test('14b. the F5 slice still performs no I/O and holds no pitch API', () => {
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'F5 still does no I/O');
   assert.ok(!/pitch\.(generate|get|update)|outreach\./.test(f5Code), 'F5 still calls no pitch API');
-  assert.ok(!/ztechLeadIntel/.test(f5Code), 'F5 does not reach the Lead Intelligence API');
+  // F5 may use ztechLeadIntel.opportunity.* for the Opportunity Intelligence
+  // panel, but must not use the outreach/pitch APIs directly.
+  assert.ok(!/ztechLeadIntel\.(pitch|outreach)\./.test(f5Code), 'F5 does not reach the outreach/pitch API');
   assert.ok(/if \(typeof loadLeadDrawerPitch === 'function'\) loadLeadDrawerPitch\(lead\);/.test(f5Code), 'the hand-off is guarded');
 });
 
@@ -666,7 +668,9 @@ test('20. the drawer markup, CSP, channel set and dependencies are untouched by 
   assert.strictEqual((mainSource.match(/ipcMain\.handle\('/g) || []).length, 34, 'still 34 main channels');
   // F18 declared lock update: 49 -> 50, the single read-only prepare method.
   // F19 declared lock update: 50 -> 51, the single send boundary.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 51, 'still 51 preload methods');
+  // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
+  // Phase I2: +7 Opportunity Intelligence channels = 59 total.
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 59, '59 preload methods');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');
   // F12 declared lock update: the former "Ready" placeholder became the live, read-only

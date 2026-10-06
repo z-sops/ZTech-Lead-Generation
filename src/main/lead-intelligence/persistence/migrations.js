@@ -7,6 +7,9 @@
  *   node scripts/embed-migrations.js
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const MIGRATION_001 = `-- ZTech lead-intelligence schema, migration 001.
 -- Runs inside ZTech's EXISTING sql.js database (same file). No second database.
 -- All tables are prefixed li_ so they cannot collide with existing ZTech tables.
@@ -303,11 +306,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS li_sends_one_accepted
   ON li_outreach_sends (idempotency_key) WHERE state = 'accepted';
 `;
 
+// F20: WhatsApp send channel - widens li_outreach_sends.channel CHECK to include
+// 'whatsapp'. The payload stays { pitchId } only; the service derives channel.
+const MIGRATION_005 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '005_whatsapp_send.sql'),
+  'utf8'
+);
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
   Object.freeze({ version: 3, name: '003_outreach_activity.sql', sql: MIGRATION_003 }),
   Object.freeze({ version: 4, name: '004_email_send.sql', sql: MIGRATION_004 }),
+  Object.freeze({ version: 5, name: '005_whatsapp_send.sql', sql: MIGRATION_005 }),
 ]);
 
 module.exports = { MIGRATIONS };

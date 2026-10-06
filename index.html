@@ -910,6 +910,7 @@
                 <div class="lead-drawer-tabs" role="tablist" aria-label="Lead sections" id="lead-drawer-tabs">
                   <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-overview" data-tab="overview" aria-controls="lead-panel-overview" aria-selected="true" tabindex="0">Overview</button>
                   <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-research" data-tab="research" aria-controls="lead-panel-research" aria-selected="false" tabindex="-1">Research</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-opportunity" data-tab="opportunity" aria-controls="lead-panel-opportunity" aria-selected="false" tabindex="-1">Opportunity Intelligence</button>
                   <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-evidence" data-tab="evidence" aria-controls="lead-panel-evidence" aria-selected="false" tabindex="-1">Evidence</button>
                   <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-icp" data-tab="icp" aria-controls="lead-panel-icp" aria-selected="false" tabindex="-1">ICP</button>
                   <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-pitch" data-tab="pitch" aria-controls="lead-panel-pitch" aria-selected="false" tabindex="-1">Pitch</button>
@@ -1073,6 +1074,17 @@
                       </div>
                     </div>
                   </div>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-opportunity" aria-labelledby="lead-tab-opportunity" tabindex="0" hidden>
+                  <!-- Phase I2: Opportunity Intelligence. A SEPARATE intelligence
+                       system from Zuni-SEO. It answers a different question
+                       (multi-entity, opportunities, competitors, ads, social, timeline)
+                       and has its own channels, store and contract (IntelligenceReport).
+                       The renderer CANNOT supply a URL, host, endpoint or credential.
+                       The renderer CANNOT trigger a send, approve, schedule or campaign.
+                       The only write is REQUEST: asking main to run OI for a lead,
+                       where identity comes from the main store, never the renderer. -->
+                  <div class="lead-drawer-section" id="lead-drawer-opportunity" aria-live="polite"></div>
                 </section>
                 <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-evidence" aria-labelledby="lead-tab-evidence" tabindex="0" hidden>
                   <div class="lead-drawer-section" id="lead-drawer-evidence" aria-live="polite"></div>
@@ -1397,7 +1409,7 @@
             <div class="lists-header">
               <div class="lists-heading">
                 <h2 class="lists-title">Ready</h2>
-                <p class="lists-subtitle">Prospects the Outreach Gate allows right now. Nothing here has been sent: this build has no sending provider.</p>
+                <p class="lists-subtitle">Prospects the Outreach Gate allows right now. Attempting a send needs your confirmation and a configured provider; no live provider is configured, so nothing has left this machine.</p>
               </div>
               <div class="lists-actions">
                 <button class="btn btn-sm" id="ready-refresh" type="button">Refresh</button>
@@ -1447,7 +1459,7 @@
             <div class="lists-header">
               <div class="lists-heading">
                 <h2 class="lists-title">Activity</h2>
-                <p class="lists-subtitle">Outreach actions recorded by the app, newest first. Nothing here has been sent: this build has no sending provider.</p>
+                <p class="lists-subtitle">Outreach actions recorded by the app, newest first. Attempting a send needs your confirmation and a configured provider; no live email or WhatsApp provider is configured, so every attempt so far was refused before anything left this machine.</p>
               </div>
               <div class="lists-actions">
                 <button class="btn btn-sm" id="activity-refresh" type="button">Refresh</button>

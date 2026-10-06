@@ -287,12 +287,13 @@ test('19. no IPC, channel, or dependency was added', () => {
   // lock update: 46 -> 47. The single change is the one extra approved Lead
   // Intelligence method (outreach.list) under the existing `ztechLeadIntel` key.
   // The appAPI surface is untouched and no renderer invoke was added to the
-  // document.
   // F18 declared lock update: 49 -> 50, the single read-only Lead Intelligence prepare
   // method under the existing `ztechLeadIntel` key.
   // F19 declared lock update: 50 -> 51, the single send boundary.
+  // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
+  // Phase I2: +7 Opportunity Intelligence channels = 59 total.
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 51, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read and the ten A10..F19 Lead Intelligence methods');
+    .split('ipcRenderer.invoke').length - 1, 59, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read, the eleven A10..F21 Lead Intelligence methods, and the seven Phase I2 Opportunity Intelligence methods');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {

@@ -38,9 +38,14 @@ function researchChannels() {
 // A10: the five Lead Intelligence channels are registered by registerOutreachIpc
 // in src/main/lead-intelligence/outreach-ipc.js (a narrowly scoped registrar), so
 // they are read from that file's channel constant rather than from main.js.
+// Phase I2: the seven Opportunity Intelligence channels are registered by
+// registerOpportunityIntelIpc in src/main/lead-intelligence/opportunity/opportunity-ipc.js.
 function leadIntelChannels() {
-  const src = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
-  return [...src.matchAll(/'(lead-intel:[a-z-]+)'/g)].map(m => m[1]);
+  const outreachSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+  const opportunitySrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'opportunity', 'opportunity-ipc.js'), 'utf8');
+  const outreach = [...outreachSrc.matchAll(/'(lead-intel:[a-z-]+)'/g)].map(m => m[1]);
+  const opportunity = [...opportunitySrc.matchAll(/'(lead-intel:opportunity-[a-z-]+)'/g)].map(m => m[1]);
+  return [...outreach, ...opportunity];
 }
 
 function preloadChannels(src) {

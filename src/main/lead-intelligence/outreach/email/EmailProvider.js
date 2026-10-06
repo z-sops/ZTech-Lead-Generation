@@ -38,6 +38,21 @@ function validateEmailMessage(m) {
   }
   if (typeof m.to === 'string' && !EMAIL.test(m.to.trim())) bad('to', 'is not a valid single email address');
   if (typeof m.from === 'string' && !EMAIL.test(m.from.trim())) bad('from', 'is not a valid email address');
+  // F23: the optional sender-profile fields. Bounded plain text only - a From Name can
+  // never carry a line break or control character (header injection), and a Reply-To must
+  // be one valid address when it is present at all. Both are absent by default.
+  if (m.fromName !== undefined && m.fromName !== null && m.fromName !== '') {
+    if (typeof m.fromName !== 'string') bad('fromName', 'must be a string');
+    else if (m.fromName.length > 120) bad('fromName', 'is too long');
+    else if (/[\r\n]/.test(m.fromName) || /[\u0000-\u001f\u007f]/.test(m.fromName)) {
+      bad('fromName', 'must be plain text without line breaks or control characters');
+    }
+  }
+  if (m.replyTo !== undefined && m.replyTo !== null && m.replyTo !== '') {
+    if (typeof m.replyTo !== 'string' || /[\r\n]/.test(m.replyTo) || !EMAIL.test(m.replyTo.trim())) {
+      bad('replyTo', 'is not a valid single email address');
+    }
+  }
   if (typeof m.subject === 'string' && m.subject.length > 200) bad('subject', 'is too long');
   if (typeof m.text === 'string' && m.text.length > 20000) bad('text', 'is too long');
   if (m.html !== undefined) bad('html', 'HTML email is not supported');

@@ -14,6 +14,7 @@ const { targetToIcp, evaluateIcpFit } = require('./src/main/lead-intelligence/ic
 const { toLeadView } = require('./src/main/lead-intelligence/contracts/leadView');
 // A10: the Lead Intelligence outreach runtime (pitch + gate) on the shared db.
 const { initializeLeadIntelligenceRuntime } = require('./src/main/lead-intelligence/lead-intelligence-runtime');
+const { registerUnavailableOpportunityIpc } = require('./src/main/lead-intelligence/opportunity');
 const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/main/lead-intelligence/outreach-ipc');
 
 let mainWindow = null;
@@ -28,6 +29,10 @@ let listsTrustedSender = null;
 let leadIntelRuntime = null;
 let leadIntelIpc = null;
 let leadIntelTrustedSender = null;
+// F23: the electron-store instance from initServices, kept so the Resend transport can
+// read the customer's own API credential at send time - inside the main process only.
+// No key is ever copied out of this store into code, config objects or the renderer.
+let electronStore = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -919,6 +924,7 @@ async function initServices() {
   const adapter = providerManager.register(new CoreClawAdapter());
   const Store = require('electron-store');
   const store = new Store();
+  electronStore = store;
   migrateLegacySettingsToProviders(store, adapter.providerId);
   const migration = credentialVault.migrateStoredCredentials(store, adapter.providerId);
   if (migration.status === 'complete') {
@@ -1136,6 +1142,162 @@ function leadIntelTargetSource() {
 // A10: the runtime is constructed ONLY after `await accountStore.ready` (done in
 // initServices). It reuses the same whatsapp.db, runs the additive li_* migrations
 // and does NOT call li.start(): no background timer, no scheduler, no research.
+
+// F23 PLUG & PLAY: email identity comes from the customer's configuration, never from
+// code. Both helpers below are read-only views over the same electron-store instance;
+// with no configuration they return the OFF state, which is the honest current state of
+// this installation (no sender, no domain) and a fully supported product state.
+//
+// CONFIGURATION KEYS (non-secret; the API credential is NOT one of these):
+//   settings.emailEnabled       true to enable the send boundary at all (default false)
+//   settings.emailFromName      From Name, plain text, <=120 chars
+//   settings.emailFromAddress   From Email, one valid address
+//   settings.emailReplyTo       optional Reply-To, one valid address
+//   settings.emailDomain        the sending domain (must be verified in Resend)
+//   settings.emailDomainVerification  unknown|pending|verified|failed
+//   settings.emailSignature     optional signature appended to the canonical pitch body
+//   providers.resend.credentials.apiKey  THE SECRET - main-process/electron-store only,
+//       revealed through credentialVault at send time, never read by or exposed to the
+//       renderer, never stored in whatsapp.db, and never displayed anywhere.
+function emailConfigFromSettings() {
+  try {
+    const settings = electronStore ? electronStore.get('settings', null) : null;
+    const s = settings && typeof settings === 'object' ? settings : {};
+    const from = typeof s.emailFromAddress === 'string' ? s.emailFromAddress.trim() : '';
+    return { enabled: s.emailEnabled === true, fromAddress: from || null };
+  } catch {
+    // A configuration source that cannot be read means "not configured", never "enabled".
+    return { enabled: false, fromAddress: null };
+  }
+}
+
+// F24 PLUG & PLAY: the bounded Business/Offer Profile that feeds config.offer. It is the
+// SAME read-only view over the same electron-store instance; with no configuration it
+// returns four empty strings - the honest "Not configured" state of this installation -
+// and the PitchGenerator then composes an identity-free pitch instead of inventing one.
+//
+// CONFIGURATION KEYS (non-secret, plain identity text; credentials are NOT part of the
+// Business Profile and never live under these keys):
+//   settings.businessRepresentativeName   who signs the pitch, plain text, <=80 chars
+//   settings.businessCompanyName          the sender company, plain text, <=120 chars
+//   settings.businessValueProposition     the offer's value proposition, <=1200 chars
+//   settings.businessCallToAction         the offer's call to action, <=400 chars
+function businessProfileFromSettings() {
+  try {
+    const { readBusinessProfile } = require('./src/main/lead-intelligence/outreach/businessProfile');
+    return readBusinessProfile(electronStore);
+  } catch {
+    // A profile that cannot be read is "not configured" - never a default identity.
+    return { sender_name: '', sender_company: '', value_proposition: '', call_to_action: '' };
+  }
+}
+
+// F24 PLUG & PLAY: WhatsApp send configuration, mirroring emailConfigFromSettings above.
+// Read-only, non-secret, main-process only. With no configuration it returns the OFF
+// state, which is the honest current state of this installation (no enabled switch, no
+// sender number) and a fully supported product state.
+//
+// CONFIGURATION KEYS (non-secret; the access token is NOT one of these):
+//   settings.whatsappEnabled        true to enable the send boundary at all (default false)
+//   settings.whatsappFromNumber     the connected WhatsApp Business sending number, E.164
+//   settings.whatsappProvider       the selected supported provider id ('meta-cloud')
+//   settings.whatsappPhoneNumberId         the connected phone-number id (account fact)
+//   settings.whatsappBusinessAccountId     the WhatsApp Business account id (account fact)
+//   settings.whatsappNumberVerification    unknown|pending|verified|failed
+//   providers.meta-cloud.credentials.apiKey  THE SECRET - main-process/electron-store only,
+//       revealed through credentialVault at send time, never read by or exposed to the
+//       renderer, never stored in whatsapp.db, and never displayed anywhere.
+function whatsappConfigFromSettings() {
+  try {
+    const settings = electronStore ? electronStore.get('settings', null) : null;
+    const s = settings && typeof settings === 'object' ? settings : {};
+    const from = typeof s.whatsappFromNumber === 'string' ? s.whatsappFromNumber.trim() : '';
+    return { enabled: s.whatsappEnabled === true, fromNumber: from || null };
+  } catch {
+    // A configuration source that cannot be read means "not configured", never "enabled".
+    return { enabled: false, fromNumber: null };
+  }
+}
+
+// F23: the operational Resend transport, constructed once for the main process. Building
+// it performs no I/O and no network call - the credential is read lazily at send time and
+// the transport only runs after the send boundary has approved an attempt. With this
+// installation's current configuration the capability check refuses long before this
+// object is ever asked to send anything.
+function buildResendEmailProvider() {
+  try {
+    const { ResendEmailProvider } = require('./src/main/lead-intelligence/outreach/email/ResendEmailProvider');
+    return new ResendEmailProvider({
+      getApiKey: () => {
+        try {
+          if (!electronStore) return null;
+          const providers = electronStore.get('providers', null);
+          const record = providers && typeof providers === 'object' ? providers.resend : null;
+          const stored = record && record.credentials ? record.credentials.apiKey : null;
+          if (typeof stored !== 'string' || stored.length === 0) return null;
+          const revealed = credentialVault.reveal(stored);
+          return typeof revealed === 'string' && revealed.length > 0 ? revealed : null;
+        } catch {
+          // Unreadable credential = not configured. The boundary fails closed with the
+          // capability refusal; no key value is ever logged.
+          return null;
+        }
+      }
+    });
+  } catch {
+    // If the adapter cannot even be constructed, the product behaves as it did before
+    // F23: no provider instance, EMAIL_PROVIDER_NOT_SET. Unrelated functionality is
+    // never disabled by this.
+    return null;
+  }
+}
+
+// F24: the operational WhatsApp transport - ONE official Cloud API adapter, constructed
+// once for the main process. Building it performs no I/O and no network call: the access
+// token and the phone-number id are read lazily through closures at send time, and the
+// transport only runs after the send boundary has approved an attempt. With this
+// installation's current configuration (no provider selected, no credential, no connected
+// number) the capability check refuses long before this object is ever asked to send.
+// The provider choice stays configuration (settings.whatsappProvider); the adapter below
+// is the single supported implementation behind the existing WhatsAppProvider interface.
+function buildWhatsAppProvider() {
+  try {
+    const { MetaCloudWhatsAppProvider } = require('./src/main/lead-intelligence/outreach/whatsapp/MetaCloudWhatsAppProvider');
+    return new MetaCloudWhatsAppProvider({
+      getAccessToken: () => {
+        try {
+          if (!electronStore) return null;
+          const providers = electronStore.get('providers', null);
+          const record = providers && typeof providers === 'object' ? providers['meta-cloud'] : null;
+          const stored = record && record.credentials ? record.credentials.apiKey : null;
+          if (typeof stored !== 'string' || stored.length === 0) return null;
+          const revealed = credentialVault.reveal(stored);
+          return typeof revealed === 'string' && revealed.length > 0 ? revealed : null;
+        } catch {
+          // Unreadable credential = not configured. The boundary fails closed with the
+          // capability refusal; no token value is ever logged.
+          return null;
+        }
+      },
+      getPhoneNumberId: () => {
+        try {
+          if (!electronStore) return null;
+          const settings = electronStore.get('settings', null);
+          const id = settings && typeof settings === 'object' ? settings.whatsappPhoneNumberId : null;
+          return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
+        } catch {
+          return null;
+        }
+      }
+    });
+  } catch {
+    // If the adapter cannot even be constructed, WhatsApp behaves as it did before F24:
+    // no provider instance, WHATSAPP_PROVIDER_NOT_SET. Unrelated functionality is never
+    // disabled by this.
+    return null;
+  }
+}
+
 async function initLeadIntelligence() {
   try {
     if (!accountStore || !accountStore.db) {
@@ -1155,7 +1317,22 @@ async function initLeadIntelligence() {
     leadIntelRuntime = await initializeLeadIntelligenceRuntime({
       accountStore,
       targetSource: leadIntelTargetSource(),
-      config: LEAD_INTEL_CONFIG,
+      // F23/F24: every customer-specific value comes from configuration, never from code.
+      config: {
+        ...LEAD_INTEL_CONFIG,
+        email: emailConfigFromSettings(),
+        whatsapp: whatsappConfigFromSettings(),
+        offer: businessProfileFromSettings(),
+      },
+      // F23: the operational Resend transport (main-process only, credential closure).
+      emailProvider: buildResendEmailProvider(),
+      // F24: the operational WhatsApp transport (main-process only, token closure).
+      whatsappProvider: buildWhatsAppProvider(),
+      // Phase I2: Opportunity Intelligence. A SEPARATE local FastAPI service with its
+      // own database, loopback by default, and no credential anywhere in ZTech. The
+      // destination comes from configuration and the environment only; the renderer
+      // can never supply it. OI being down is not an error here.
+      opportunity: { config: opportunityConfigFromEnv() },
       logger: {
         warn: (msg) => logger.warn('lead-intel', String(msg)),
         error: (msg) => logger.error('lead-intel', String(msg)),
@@ -1169,18 +1346,52 @@ async function initLeadIntelligence() {
   }
 }
 
+/**
+ * Phase I2: Opportunity Intelligence connection settings.
+ *
+ * These are the ONLY inputs the OI gateway accepts, and they come from the
+ * main-process environment only. There is deliberately no settings key, no
+ * renderer control and no IPC channel that can change them: an OI destination is
+ * a deployment fact, not user content.
+ *
+ * `enabled` defaults to TRUE because the default destination is loopback, where a
+ * service that is not running simply reports "unavailable". Setting
+ * `ZTECH_OI_ENABLED=0` turns the feature off entirely.
+ *
+ * No provider credential is read here. OI's own keys (BRAVE_API_KEY and friends)
+ * live in the OI process environment and never cross into ZTech.
+ */
+function opportunityConfigFromEnv() {
+  const timeout = Number(process.env.ZTECH_OI_TIMEOUT_MS);
+  const healthTimeout = Number(process.env.ZTECH_OI_HEALTH_TIMEOUT_MS);
+  const maxCompetitors = Number(process.env.ZTECH_OI_MAX_COMPETITORS);
+  const out = {
+    enabled: String(process.env.ZTECH_OI_ENABLED || '1') !== '0',
+    baseUrl: process.env.ZTECH_OI_BASE_URL || 'http://127.0.0.1:8099',
+  };
+  if (Number.isFinite(timeout) && timeout > 0) out.timeoutMs = timeout;
+  if (Number.isFinite(healthTimeout) && healthTimeout > 0) out.healthTimeoutMs = healthTimeout;
+  if (Number.isFinite(maxCompetitors) && maxCompetitors > 0) out.maxCompetitors = maxCompetitors;
+  // allowLocalhost stays true: an operator who sets a REMOTE base URL still gets it
+  // refused unless it is HTTPS, because validateServiceBaseUrl enforces that.
+  return out;
+}
+
 // The user's own offer text. It is USER content, not a credential, and it never
 // leaves the main process: the pitch draft is composed here and the renderer only
 // ever receives the finished, scrubbed draft.
 const LEAD_INTEL_CONFIG = Object.freeze({
   freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
   outreach: { allowedQualification: ['qualified'], allowPartialEvidence: false, requireIcpFit: false },
-  offer: {
-    sender_name: 'Zee',
-    sender_company: 'ZuniTech',
-    value_proposition: 'We help local businesses fix the website issues found in an audit like this one.',
-    call_to_action: 'Would a short call next week be useful to go through these points?',
-  },
+  // F24 PLUG & PLAY: this is the UNCONFIGURED default and it is deliberately EMPTY.
+  // The business/offer identity is configuration, never code: businessProfileFromSettings()
+  // reads the customer's own four settings keys at runtime (below) and overrides this
+  // object in initLeadIntelligence(). No representative, no company and no value
+  // proposition is baked into source, so another customer can install this product with
+  // zero source edits - and an installation that configured nothing reads back as empty
+  // strings, the honest "Not configured" state, rather than falling back to a built-in
+  // identity.
+  offer: { sender_name: '', sender_company: '', value_proposition: '', call_to_action: '' },
   // Email stays abstract: no provider is configured, so no send path exists.
   email: { enabled: false, fromAddress: null },
 });
@@ -1215,6 +1426,56 @@ function registerLeadIntelIpcHandlers() {
   } catch (err) {
     leadIntelIpc = null;
     logger.error('lead-intel', 'IPC registration failed', { error: err.message });
+  }
+
+  registerOpportunityIntelIpcHandlers();
+}
+
+/**
+ * Phase I2: Opportunity Intelligence channels.
+ *
+ * Same trusted-sender rule as every other Lead Intelligence channel, and the same
+ * treatment when OI is absent: the channels are still registered, and each one
+ * answers `{ available: false }` instead of leaving the renderer with an unhandled
+ * invoke. Nothing here can send, approve or schedule anything - there is no such
+ * channel in the OI set, and OI is not consulted by OutreachGate.
+ */
+function registerOpportunityIntelIpcHandlers() {
+  if (!leadIntelRuntime) return;
+  if (!leadIntelTrustedSender) {
+    leadIntelTrustedSender = createTrustedSender(() => mainWindow, {
+      isDev,
+      port: Number(process.env.VITE_PORT) || undefined,
+      indexPath: path.join(__dirname, 'index.html'),
+      onReject: (reason) => logger.warn('ipc', `lead-intel rejected: ${reason}`)
+    });
+  }
+  const isTrusted = (event) => {
+    try {
+      return leadIntelTrustedSender(event) === true;
+    } catch {
+      return false;
+    }
+  };
+  const oiLogger = { warn: (msg) => logger.warn('lead-intel', String(msg)) };
+  try {
+    const oi = leadIntelRuntime.opportunity;
+    if (!oi) {
+      // Not constructed at all (construction threw). Register the honest stub so
+      // the renderer always gets an answer.
+      registerUnavailableOpportunityIpc({
+        ipcMain,
+        isTrustedSender: isTrusted,
+        reason: 'Opportunity Intelligence is not available in this build.',
+        logger: oiLogger,
+      });
+      logger.info('lead-intel', 'opportunity-intelligence registered as unavailable');
+      return;
+    }
+    const channels = oi.registerIpc({ ipcMain, isTrustedSender: isTrusted, leadSource: oi.leadSource, logger: oiLogger });
+    logger.info('lead-intel', `registered ${channels.length} opportunity-intelligence channels`);
+  } catch (err) {
+    logger.error('lead-intel', 'opportunity-intelligence IPC registration failed', { error: err.message });
   }
 }
 

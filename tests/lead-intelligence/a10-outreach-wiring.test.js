@@ -474,33 +474,40 @@ function makeIpcHarness(outreach, { trusted = true } = {}) {
   return { handlers, reg };
 }
 
-// F19 declared lock update: A10 originally allowed no send channel at all. F19 adds exactly
-// ONE - lead-intel:outreach-send - and this lock is updated to match. The old
-// 'lead-intel:email-send' name stays absent, and no batch/queue/schedule/campaign channel exists.
-test('A10 IPC: the approved channels plus the single F19 send boundary are registered; email-send is not', () => {
-  const { handlers, reg } = makeIpcHarness({
-    generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
-    update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
-    list: async () => ({ rows: [], total: 0, limit: 20, offset: 0, status: null }),
-    sendEmail: async () => ({ outcome: 'accepted', providerAcknowledged: true }),
-  });
-  assert.deepEqual(reg.channels.slice().sort(), [
-    'lead-intel:outreach-activity',
-    'lead-intel:outreach-approve',
-    'lead-intel:outreach-gate',
-    'lead-intel:outreach-list',
-    'lead-intel:outreach-prepare',
-    'lead-intel:outreach-ready',
-    'lead-intel:outreach-send',
-    'lead-intel:pitch-generate',
-    'lead-intel:pitch-get',
-    'lead-intel:pitch-update',
+// F21 declared lock update: the read-only send-ledger read was added alongside the send
+  // boundary. It is a read, so the "no batch/queue/schedule/campaign channel" invariant
+  // holds. The channel name is the singular send channel plus an "s".
+  test('A10 IPC: the approved channels plus the single F19 send boundary are registered; email-send is not', () => {
+    const { handlers, reg } = makeIpcHarness({
+      generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
+      update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
+      list: async () => ({ rows: [], total: 0, limit: 20, offset: 0, status: null }),
+      send: async () => ({}),
+      sendEmail: async () => ({ outcome: 'accepted', providerAcknowledged: true }),
+      sendWhatsApp: async () => ({ outcome: 'accepted', providerAcknowledged: true }),
+      // F21: the registrar now requires the read-only send-ledger read.
+      sendList: async () => ({ rows: [], total: 0, limit: 0, offset: 0 }),
+    });
+    assert.deepEqual(reg.channels.slice().sort(), [
+      'lead-intel:outreach-activity',
+      'lead-intel:outreach-approve',
+      'lead-intel:outreach-gate',
+      'lead-intel:outreach-list',
+      'lead-intel:outreach-prepare',
+      'lead-intel:outreach-ready',
+      'lead-intel:outreach-send',
+      // F21: the read-only send-ledger read.
+      'lead-intel:outreach-sends',
+      'lead-intel:pitch-generate',
+      'lead-intel:pitch-get',
+      'lead-intel:pitch-update',
   ]);
   // F15/F16 declared lock update: + the read-only activity and ready channels. F18 declared
   // lock update: + the single read-only prepare channel. F19 declared lock update: + the
   // single send boundary.
-  assert.equal(handlers.size, 10);
+  assert.equal(handlers.size, 11);
   assert.ok(handlers.has('lead-intel:outreach-send'), 'the one send channel is registered');
+  assert.ok(handlers.has('lead-intel:outreach-sends'), 'the read-only send-ledger read is registered');
   assert.ok(!handlers.has('lead-intel:email-send'), 'the old email-send name is still not registered');
   assert.ok(!reg.channels.includes('lead-intel:email-send'));
   // Nothing beyond the outreach surface is exposed.
@@ -517,13 +524,16 @@ test('A10 IPC: the approved channels plus the single F19 send boundary are regis
     'lead-intel:outreach-prepare',
     'lead-intel:outreach-ready',
     'lead-intel:outreach-send',
+    // F21: the read-only send-ledger read.
+    'lead-intel:outreach-sends',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
   // F15/F16 declared lock update: + activity and ready. F18 declared lock update: + prepare.
   // F19 declared lock update: 9 -> 10, + the single send boundary.
-  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 10);
+  // F21 declared lock update: 10 -> 11, + the single read-only send-ledger read.
+  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 11);
   assert.ok(!Object.values(OUTREACH_CHANNELS).includes('lead-intel:email-send'), 'email-send is not even declared here');
   reg.dispose();
   assert.equal(handlers.size, 0, 'dispose removes every handler');
@@ -535,7 +545,11 @@ test('A10 IPC: an untrusted sender is refused before any service call', async ()
     generate: async () => { called = true; return {}; }, get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
     list: async () => { called = true; return { rows: [], total: 0, limit: 20, offset: 0, status: null }; },
+    send: async () => ({}),
     sendEmail: async () => { called = true; return {}; },
+    sendWhatsApp: async () => { called = true; return {}; },
+    // F21: the registrar requires the read-only send-ledger read.
+    sendList: async () => ({ rows: [], total: 0, limit: 0, offset: 0 }),
   }, { trusted: false });
   for (const ch of reg_channels()) {
     const res = await handlers.get(ch)({}, { leadId: '5', pitchId: 'p' });
@@ -552,7 +566,11 @@ test('A10 IPC: invalid input is rejected and errors are structured', async () =>
     get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}),
     list: async () => { throw new Error('must not be reached'); },
+    send: async () => ({}),
     sendEmail: async () => { throw new Error('must not be reached'); },
+    sendWhatsApp: async () => { throw new Error('must not be reached'); },
+    // F21: the registrar requires the read-only send-ledger read.
+    sendList: async () => ({ rows: [], total: 0, limit: 0, offset: 0 }),
   });
   const bad = [
     ['lead-intel:pitch-generate', {}],                                   // leadId required
@@ -579,7 +597,11 @@ test('A10 IPC: invalid input is rejected and errors are structured', async () =>
     update: async () => ({}), approve: async () => ({}),
     gate: async () => { throw new NotFoundError('Pitch', 'p'); },
     list: async () => { throw new NotFoundError('Pitch', 'p'); },
+    send: async () => ({}),
     sendEmail: async () => { throw new NotFoundError('Pitch', 'p'); },
+    sendWhatsApp: async () => { throw new NotFoundError('Pitch', 'p'); },
+    // F21: the registrar requires the read-only send-ledger read.
+    sendList: async () => ({ rows: [], total: 0, limit: 0, offset: 0 }),
   });
   const gated = await h2.get('lead-intel:outreach-gate')({}, { pitchId: 'p' });
   assert.equal(gated.ok, false);
@@ -606,7 +628,11 @@ test('A10 IPC: no credential, DB handle or provider secret can reach the rendere
       rows: [{ pitch_id: 'p', status: 'draft', apiKey: 'sk-live-should-never-be-returned', password: 'hunter2' }],
       total: 1, limit: 20, offset: 0, status: null,
     }),
+    send: async () => ({}),
     sendEmail: async () => ({ outcome: 'accepted', providerAcknowledged: true }),
+    sendWhatsApp: async () => ({ outcome: 'accepted', providerAcknowledged: true }),
+    // F21: the registrar requires the read-only send-ledger read.
+    sendList: async () => ({ rows: [], total: 0, limit: 0, offset: 0 }),
   });
   const res = await handlers.get('lead-intel:pitch-generate')({}, { leadId: '5' });
   assert.equal(res.ok, true);
@@ -645,14 +671,24 @@ test('A10 IPC: the registrar requires a trusted sender and a real outreach servi
 
 // ============================================================ 5. Preload
 
-// F19 declared lock update: the preload now exposes the single send method alongside the
-// nine read methods. It remains an EXACT allowlist, and email.send still does not exist.
+// F21 declared lock update: the preload now exposes the single read-only send-ledger read
+  // alongside the single send boundary. The exact allowlist is still exact, and email.send
+  // still does not exist. The send boundary is the only method whose name implies sending.
 test('A10 preload: exposes exactly the approved methods plus the single F19 send method, and no email.send', () => {
   const source = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
   const invoked = [...source.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((m) => m[1]);
-  const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
-  // An EXACT allowlist, not a lower bound: an eleventh channel, or a swapped one, fails here.
-  assert.deepEqual(leadIntel.slice().sort(), [
+const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
+    // An EXACT allowlist, not a lower bound: a substitution or extra channel fails here.
+    // Original F15-F21: 11 channels. Phase I2 adds 7 Opportunity Intelligence channels = 18 total.
+    assert.deepEqual(leadIntel.slice().sort(), [
+    // F15-F21 (original) + Phase I2: 18 total, alphabetically sorted.
+    'lead-intel:opportunity-associations',
+    'lead-intel:opportunity-engine',
+    'lead-intel:opportunity-health',
+    'lead-intel:opportunity-latest',
+    'lead-intel:opportunity-pitch-context',
+    'lead-intel:opportunity-report',
+    'lead-intel:opportunity-request',
     'lead-intel:outreach-activity',
     'lead-intel:outreach-approve',
     'lead-intel:outreach-gate',
@@ -660,13 +696,14 @@ test('A10 preload: exposes exactly the approved methods plus the single F19 send
     'lead-intel:outreach-prepare',
     'lead-intel:outreach-ready',
     'lead-intel:outreach-send',
+    'lead-intel:outreach-sends',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
-  ]);
-  assert.equal(leadIntel.length, 10, 'exactly ten Lead Intelligence methods (F15 activity read, F16 ready read, F18 prepare read, F19 the single send boundary)');
-  assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 1, 'exactly one send method exists');
-  assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
+    ]);
+    assert.equal(leadIntel.length, 18, 'exactly eighteen Lead Intelligence methods (11 original F15-F21 + 7 Phase I2 Opportunity Intelligence)');
+    assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
+    assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 
   // The API lives under its own key; the existing appAPI surface is unchanged.
   assert.ok(/exposeInMainWorld\('ztechLeadIntel'/.test(source));

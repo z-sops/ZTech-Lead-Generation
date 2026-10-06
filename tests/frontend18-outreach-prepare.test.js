@@ -333,7 +333,7 @@ test('B2. preparation never reaches a provider, and send() stays refused', async
     await li.outreach.prepare({ pitchId: pitch.pitch_id, channel });
   }
   assert.deepStrictEqual(providerCalls, [], 'no provider method was ever called');
-  await assert.rejects(() => li.outreach.send({ pitchId: pitch.pitch_id }),
+  await assert.rejects(() => li.outreach.send({ pitchId: pitch.pitch_id, channel: 'email' }),
     (e) => e instanceof LiError && e.code === 'EMAIL_DISABLED', 'the send path stays disabled');
 });
 
@@ -466,12 +466,15 @@ test('I1. the prepare channel and the single F19 send boundary are registered - 
     'lead-intel:outreach-prepare',
     'lead-intel:outreach-ready',
     'lead-intel:outreach-send',
+    // F21: the read-only send-ledger read. Eleven channels now, and this is the only
+    // difference. It is registered next to the send boundary and is distinct from it.
+    'lead-intel:outreach-sends',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
   ]);
-  assert.strictEqual(handlers.size, 10, 'exactly ten channels are registered');
-  // The one and only outbound channel, and it takes only { pitchId }.
+  assert.strictEqual(handlers.size, 11, 'exactly eleven channels are registered');
+  // The one and only outbound channel, taking exactly { pitchId, channel } (F25).
   assert.ok(handlers.has('lead-intel:outreach-send'), 'the F19 send boundary exists');
   assert.ok(!handlers.has('lead-intel:email-send'), 'the old pre-F19 send channel name is still absent');
   for (const forbidden of ['lead-intel:email-send', 'lead-intel:outreach-schedule', 'lead-intel:outreach-queue',
@@ -517,7 +520,15 @@ test('I3. through IPC: a valid payload prepares; an extra property is refused; a
 
 // ============================================================ S. declared surface locks
 
-const PREPARE_BODY = stripComments(serviceSource.slice(serviceSource.indexOf('async prepare('), serviceSource.indexOf('/**\n   * Human-triggered send')));
+// F20 UPDATE: the slice used to end at the '/**\n * Human-triggered send' doc comment
+// that introduced F19's deprecated send() alias. F20 removed that alias and gave send()
+// its own documentation, so the slice now ends at the METHOD itself. Anchoring on the
+// method rather than prose is deliberate: a rewritten comment can no longer silently
+// widen this slice to the whole service file.
+// F25 UPDATE: send() is now the explicit-channel dispatcher, so its signature carries the
+// channel; the anchor follows the signature. The property this slice protects is unchanged:
+// prepare() still contains no send, provider call, schedule or write of any kind.
+const PREPARE_BODY = stripComments(serviceSource.slice(serviceSource.indexOf('async prepare('), serviceSource.indexOf('async send({ pitchId, channel })')));
 
 test('S1. the prepare body writes, sends, queues, schedules, retries and reaches nothing', () => {
   assert.ok(PREPARE_BODY.length > 100, 'the prepare body is located');
@@ -527,6 +538,15 @@ test('S1. the prepare body writes, sends, queues, schedules, retries and reaches
   }
   assert.ok(!/this\.emailProvider/.test(PREPARE_BODY), 'no provider object is touched');
   assert.ok(!/this\.email\./.test(PREPARE_BODY), 'no email config is consulted');
+  // F20 UPDATE: preparation now also reports `delivery`, the per-channel send capability, so
+  // a WhatsApp tab is gated on the WhatsApp provider rather than the email one. That block is
+  // built by the shared _deliveryBlock() helper, so prepare() still names no provider and no
+  // provider config of its own - what this lock now asserts instead is the stronger property
+  // that preparation can never CALL a provider, which is what "review only" has always meant.
+  assert.ok(!/this\.\w*[Pp]rovider\b/.test(PREPARE_BODY), 'no provider object is named at all');
+  for (const call of [/\.validate\(/, /\.getStatus\(/, /await\s+this\.\w*Provider/]) {
+    assert.ok(!call.test(PREPARE_BODY), 'preparation never calls a provider: ' + call);
+  }
   assert.ok(!/\.upsert\(|\.insert\(|\.append\(|_recordActivity/.test(PREPARE_BODY), 'no store write path');
   // Readiness is re-checked through the EXISTING gate on its default channel.
   assert.ok(/await this\.gate\(\{ pitchId \}\)/.test(PREPARE_BODY), 'the gate owns readiness');
@@ -536,39 +556,59 @@ test('S1. the prepare body writes, sends, queues, schedules, retries and reaches
 // F19 UPDATE: nine -> ten channels. The frozen allowlist still holds, still admits no
 // second provider surface, and still forbids every queue/schedule/retry/campaign channel.
 // The one name F18 used to forbid outright is now present, because it IS the F19 boundary.
-test('S2. the CHANNELS constant is an exact frozen allowlist of ten - exactly one send channel, no queue or campaign', () => {
+test('S2. the CHANNELS constant is an exact frozen allowlist of eleven - exactly one channel that can send, no queue or campaign', () => {
   const block = ipcSource.slice(ipcSource.indexOf('const CHANNELS = Object.freeze({'), ipcSource.indexOf('}));'));
   assert.ok(/Object\.freeze\(\{/.test(block), 'the channel set is frozen');
   const values = [...block.matchAll(/'([^']+)'/g)].map((m) => m[1]).filter((v) => v.startsWith('lead-intel:'));
-  assert.strictEqual(values.length, 10, 'exactly ten channels are declared');
+  // F21 declared-lock update: `lead-intel:outreach-sends` was added, so there are eleven
+  // channels. The invariant this test protects is unchanged and is restated more precisely:
+  // exactly ONE channel can CAUSE a send, and the F21 addition is a read whose name is the
+  // singular send channel plus an "s".
+  assert.strictEqual(values.length, 11, 'exactly eleven channels are declared');
   assert.ok(values.includes('lead-intel:outreach-prepare'), 'the prepare channel is declared');
-  assert.strictEqual(values.filter((v) => /send/i.test(v)).length, 1, 'exactly ONE send channel exists');
-  assert.ok(values.includes('lead-intel:outreach-send'), 'and it is the F19 send boundary');
+  assert.strictEqual(values.filter((v) => /send/i.test(v)).length, 2, 'the send and the send-log channel exist');
+  assert.deepStrictEqual(values.filter((v) => /send/i.test(v)),
+    ['lead-intel:outreach-send', 'lead-intel:outreach-sends'], 'and they are the boundary and its read');
+  // The one that can cause an outbound message is still singular.
+  assert.ok(values.includes('lead-intel:outreach-send'), 'the F19 send boundary is unchanged');
+  assert.ok(!values.includes('lead-intel:outreach-sends') || /OUTREACH_SENDS:\s*'lead-intel:outreach-sends'/.test(block),
+    'the plural channel is the read-only ledger');
   for (const v of values) {
-    assert.ok(!/schedule|queue|retry|campaign|batch|unsubscribe/i.test(v), 'no dangerous channel name: ' + v);
+    assert.ok(!/schedule|queue|campaign|batch|unsubscribe/i.test(v), 'no dangerous channel name: ' + v);
+    // F21 allows the word "retry" only where it appears in no channel NAME at all.
+    assert.ok(!/retry/i.test(v), 'no channel is named for a retry: ' + v);
   }
   assert.ok(!values.includes('lead-intel:email-send'), 'email-send is still not declared');
 });
 
-// F19 UPDATE: nine -> ten methods. The bridge still exposes no batch/queue/schedule/retry/
-// campaign method; the single addition is `outreachSend`, which is the F19 send boundary and
-// is still constrained to exactly { pitchId } by its own IPC schema (asserted in the F19 suite).
+// F19 UPDATE: nine -> ten methods. F21 UPDATE: ten -> eleven, the addition being `sends`,
+// the read-only ledger. The bridge still exposes no batch/queue/schedule/retry/campaign
+// method; `outreachSend` remains the single send boundary, still constrained to exactly
+// { pitchId, channel } by its own IPC schema (asserted in the F19 suite).
 test('S3. the preload bridge adds exactly one read-only prepare method plus the single F19 send method', () => {
   const start = preloadSource.indexOf("exposeInMainWorld('ztechLeadIntel'");
   const bridge = stripComments(preloadSource.slice(start));
   const methods = [...bridge.matchAll(/(\w+):\s*\((?:payload|payload \|\| \{\})\)\s*=>\s*ipcRenderer\.invoke/g)].map((m) => m[1]);
   assert.ok(methods.includes('prepare'), 'the bridge exposes prepare');
   assert.ok(methods.includes('outreachSend'), 'the bridge exposes the single send boundary');
-  assert.strictEqual(methods.length, 10, 'exactly ten Lead Intelligence methods: ' + methods.join(','));
+  assert.ok(methods.includes('sends'), 'the bridge exposes the F21 ledger read');
+  // Phase I2: +7 Opportunity Intelligence channels = 18 total.
+  // Phase I2: +5 Opportunity Intelligence methods with payload pattern = 16 total.
+  assert.strictEqual(methods.length, 16, 'exactly sixteen Lead Intelligence methods: ' + methods.join(','));
   assert.strictEqual([...bridge.matchAll(/\bprepare\s*:/g)].length, 1, 'prepare is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\boutreachSend\s*:/g)].length, 1, 'outreachSend is declared exactly once');
+  assert.strictEqual([...bridge.matchAll(/\bsends\s*:/g)].length, 1, 'the ledger read is declared exactly once');
   assert.ok(/lead-intel:outreach-prepare/.test(bridge), 'prepare invokes only its fixed channel');
-  assert.ok(/lead-intel:outreach-send/.test(bridge), 'outreachSend invokes only its fixed channel');
-  // Still no outbound verb other than the one send method.
-  assert.strictEqual((stripComments(preloadSource).match(/lead-intel:outreach-send/g) || []).length, 1,
+  assert.ok(/lead-intel:outreach-send'/.test(bridge), 'outreachSend invokes only its fixed channel');
+  // Still no outbound verb other than the one send method. The trailing quote matters: without
+  // it `lead-intel:outreach-send` also matches the longer `lead-intel:outreach-sends`, which
+  // would make the F21 read look like a second send path.
+  assert.strictEqual((stripComments(preloadSource).match(/lead-intel:outreach-send'/g) || []).length, 1,
     'the send channel is referenced exactly once, so no second send path can be added silently');
+  assert.strictEqual((stripComments(preloadSource).match(/lead-intel:outreach-sends'/g) || []).length, 1,
+    'the ledger read channel is referenced exactly once');
   for (const banned of [/\bschedule\b/i, /\bqueue\b/i, /\bretry\b/i, /\bcampaign\b/i, /\bverify\b/i,
-    /sendAll/i, /sendBatch/i]) {
+    /sendAll/i, /sendBatch/i, /sendRetry/i, /resend/i]) {
     assert.ok(!banned.test(bridge), 'no bridge method for: ' + banned);
   }
   assert.ok(!/exposeInMainWorld\([^)]{0,80}ipcRenderer/.test(preloadSource), 'ipcRenderer is never exposed directly');
@@ -716,7 +756,12 @@ test('R1. opening preparation calls prepare() once, defaults to Email, and rende
     assert.ok(!/\bSend\b|\bSchedule\b|\bQueue\b|\bLaunch\b|\bCampaign\b|\bRetry\b/i.test(b.textContent),
       'no outbound control is rendered: ' + b.textContent);
   }
-  assert.ok(!/\bSend\b|\bSchedule\b|\bQueue\b|\bLaunch\b|\bCampaign\b|\bRetry\b/i.test(body.textContent.replace('Review only · nothing is sent, queued or recorded · this build has no sending provider', '')));
+  // F21 copy update: the boundary line was rewritten to distinguish CAPABILITY (this build can
+  // attempt a send, behind a human confirmation) from a CONFIGURED PROVIDER (there is none, so
+  // every attempt is refused first). The new wording is neutralised here by the same rule as
+  // before: the declared boundary text is removed, then everything else must still contain no
+  // outbound-control word.
+  assert.ok(!/\bSend\b|\bSchedule\b|\bQueue\b|\bLaunch\b|\bCampaign\b|\bRetry\b/i.test(body.textContent.replace('Review only · nothing has been attempted for this pitch yet · attempting still needs a configured provider', '')));
 });
 
 test('R2. switching to WhatsApp re-prepares the SAME pitch, shows the candidate caveat, and switching back is read-only', async () => {

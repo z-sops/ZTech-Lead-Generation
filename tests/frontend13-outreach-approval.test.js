@@ -290,8 +290,12 @@ test('9. F12 behaviour, the notice markup and the read-only pins are intact', ()
   assert.ok(/<div class="outreach-notice" id="outreach-notice" hidden><\/div>/.test(htmlSource), 'the notice exists and starts hidden');
   // F12's own block still reaches only list and gate: the approve call lives in F13.
   const used = [...stripComments(F12).matchAll(/api\.(\w+)\.(\w+)\(/g)].map((m) => m[1] + '.' + m[2]);
-  assert.deepStrictEqual([...new Set(used)].sort(), ['outreach.gate', 'outreach.list'],
-    'the F12 block still reaches only outreach.list and outreach.gate');
+  // F21 declared-lock update: the workspace also reaches `outreach.sends`, the read-only
+  // send-ledger read. It is a read like the other two and cannot approve or send anything;
+  // the point of this test - that F13 adds no second data source and no second mutation -
+  // is unaffected by it.
+  assert.deepStrictEqual([...new Set(used)].sort(), ['outreach.gate', 'outreach.list', 'outreach.sends'],
+    'the F12 block reaches outreach.list, outreach.gate and the F21 read-only ledger read');
   assert.ok(!/outreach\.approve\s*\(/.test(F12), 'F12 still contains no approval call');
   // F13 offers the action; it does not add a second data source.
   const f13used = [...F13_CODE.matchAll(/api\.(\w+)\.(\w+)\(/g)].map((m) => m[1] + '.' + m[2]);

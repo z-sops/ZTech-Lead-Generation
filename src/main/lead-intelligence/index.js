@@ -35,9 +35,12 @@ const { EvidencePacketEnrichmentProvider } = require('./enrichment/EvidencePacke
  * @param {object} deps.config         see config/lead-intelligence.example.json
  * @param {Function} [deps.llmComplete] optional ({system,user,maxTokens}) => Promise<string>       (INTEGRATION POINT)
  * @param {object} [deps.emailProvider] optional EmailProvider (FakeEmailProvider in dev/tests only)
+ * @param {object} [deps.emailConfigStore] optional F22 provider CONFIGURATION source (read-only)
+ * @param {object} [deps.whatsappProvider] optional WhatsAppProvider (F20; null keeps WhatsApp refused)
+ * @param {object} [deps.whatsappConfigStore] optional F24 WhatsApp provider CONFIGURATION source (read-only)
  * @param {object[]} [deps.enrichmentProviders] extra EnrichmentProvider instances (verified adapters or fakes)
  */
-function createLeadIntelligence({ store, leadSource, targetSource = null, providers = new Map(), round1 = null, config = {}, clock = () => new Date(), logger = console, llmComplete = null, emailProvider = null, enrichmentProviders = [], round1ResultMapper = undefined }) {
+function createLeadIntelligence({ store, leadSource, targetSource = null, providers = new Map(), round1 = null, config = {}, clock = () => new Date(), logger = console, llmComplete = null, emailProvider = null, emailConfigStore = undefined, whatsappProvider = null, whatsappConfigStore = undefined, enrichmentProviders = [], round1ResultMapper = undefined }) {
   if (!store || !leadSource) throw new TypeError('store and leadSource are required');
   const research = config.research || {};
   const mode = research.mode || 'module';
@@ -109,7 +112,12 @@ function createLeadIntelligence({ store, leadSource, targetSource = null, provid
   const icp = new IcpService({ contexts });
   const profile = new ProfileService({ contexts, store, freshness, enrichment, clock });
   const agent = new LeadAgent({ complete: llmComplete, clock });
-  const outreach = new OutreachService({ store, contexts, leadSource, freshness, config, emailProvider, fieldMap, clock, logger });
+  const outreach = new OutreachService({ store, contexts, leadSource, freshness, config, emailProvider, emailConfigStore, whatsappConfigStore, fieldMap, clock, logger });
+  // F20: injected at construction for the same reason the email provider is - so an
+  // unconfigured or non-live WhatsApp provider is refused by the capability evaluator
+  // before any send, rather than being discovered halfway through a human's send.
+  // Default null, which is exactly the F19 posture: WhatsApp cannot send.
+  if (whatsappProvider) outreach.setWhatsAppProvider(whatsappProvider);
   const exporter = new ExportService({ contexts, store, segments, savedSearches, freshness, clock });
 
   const agentService = {

@@ -8,11 +8,14 @@
 //      contacts nothing. The first click only ARMS a confirmation that restates the stored
 //      recipient and the subject; the second click is the only call to the bridge. There is
 //      no path where a single stray click can mail a prospect.
-//   2. THE RENDERER DECIDES NOTHING BUT THE CLICK. It cannot pass a recipient, a from
-//      address, a subject, a body, a channel, a provider or a template: the payload is
-//      exactly { pitchId }. Readiness is never computed here - the service re-runs the real
-//      OutreachGate immediately before a provider is contacted, so a stale or edited panel
-//      is refused in the main process no matter what this block renders.
+//   2. THE RENDERER DECIDES NOTHING BUT THE CLICK AND THE REVIEWED CHANNEL. It cannot pass
+//      a recipient, a from address, a subject, a body, a provider or a template: the payload
+//      is exactly { pitchId, channel } with channel a required closed enum ('email' |
+//      'whatsapp') - F25's explicit channel, the Prepare tab a human just reviewed. There is
+//      no default channel in the schema or the dispatcher, and no fallback to the other
+//      channel in either direction. Readiness is never computed here - the service re-runs
+//      the real OutreachGate immediately before a provider is contacted, so a stale or edited
+//      panel is refused in the main process no matter what this block renders.
 //   3. THE CONTROL APPEARS ONLY WHEN THE BACKEND SAYS IT CAN. The `delivery.canSend` block
 //      comes from the same evaluateSendCapability() the send boundary itself uses, so the
 //      renderer can never offer a send the main process would refuse. With no live provider
@@ -302,16 +305,35 @@ test('A8. a provider failure is recorded as FAILED and can be retried into an ac
 function harness(outreach, { trusted = true } = {}) {
   const handlers = new Map();
   const reg = { channels: [] };
+  // F20: the registrar now requires sendWhatsApp too, so provide a no-op stub.
+  // F25: the generic send() the OUTREACH_SEND handler calls is now an EXPLICIT-CHANNEL
+  // dispatcher, so this stub mirrors it exactly: channel 'whatsapp' goes to sendWhatsApp,
+  // anything else to sendEmail - and the payloads in this suite always name 'email'. The
+  // real dispatcher (and its refusal of an unknown channel) is pinned by
+  // tests/f25-unified-send.test.js; the dispatch BEHAVIOUR of this harness exists only so
+  // this file's IPC tests observe the payload that actually crosses the boundary.
+  // F21: the registrar additionally requires sendList, the read-only send-history read.
+  const withSendWhatsApp = Object.assign({
+    sendWhatsApp: async () => ({ outcome: 'accepted', providerAcknowledged: true }),
+    send: async (a) => {
+      if (a && a.channel === 'whatsapp') {
+        return outreach.sendWhatsApp ? outreach.sendWhatsApp(a) : { outcome: 'accepted', providerAcknowledged: true };
+      }
+      return outreach.sendEmail ? outreach.sendEmail(a) : { outcome: 'accepted', providerAcknowledged: true };
+    },
+    // F21: read-only. It returns an empty page; no F19 test reads a real ledger.
+    sendList: async () => ({ rows: [], total: 0, limit: 0, offset: 0 }),
+  }, outreach);
   registerOutreachIpc({
     ipcMain: { handle: (c, fn) => { reg.channels.push(c); handlers.set(c, fn); } },
-    outreach,
+    outreach: withSendWhatsApp,
     isTrustedSender: () => trusted,
     logger: SILENT,
   });
   return { reg, handlers, invoke: (c, payload) => handlers.get(c)({}, payload) };
 }
 
-test('B1. the send channel is registered, and its schema admits exactly { pitchId }', async () => {
+test('B1. the send channel is registered, and its schema admits exactly { pitchId, channel }', async () => {
   const seen = [];
   const { reg, invoke } = harness({
     generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
@@ -320,31 +342,42 @@ test('B1. the send channel is registered, and its schema admits exactly { pitchI
   });
   assert.ok(reg.channels.includes(CHANNELS.OUTREACH_SEND), 'the send channel exists');
   const schema = INPUT_SCHEMAS[CHANNELS.OUTREACH_SEND];
-  assert.deepStrictEqual(schema.required, ['pitchId']);
-  assert.deepStrictEqual(Object.keys(schema.properties), ['pitchId'], 'pitchId is the ONLY property defined');
+  // F25 lock amendment (was: required === ['pitchId'], properties === ['pitchId']). The
+  // renderer must now name the EXPLICIT channel it reviewed, so `channel` is a required
+  // closed enum - still exactly two properties, still additionalProperties:false, and a
+  // payload without a channel is refused rather than defaulted to email.
+  assert.deepStrictEqual(schema.required, ['pitchId', 'channel'], 'both properties are required - no implicit channel');
+  assert.deepStrictEqual(Object.keys(schema.properties), ['pitchId', 'channel'], 'pitchId and channel are the ONLY properties defined');
+  assert.deepStrictEqual(schema.properties.channel.enum, ['email', 'whatsapp'], 'the channel enum is the two factual channels');
   assert.strictEqual(schema.additionalProperties, false, 'nothing else can be expressed');
 
-  const res = await invoke(CHANNELS.OUTREACH_SEND, { pitchId: 'p1' });
+  const res = await invoke(CHANNELS.OUTREACH_SEND, { pitchId: 'p1', channel: 'email' });
   assert.strictEqual(res.ok, true);
-  assert.deepStrictEqual(seen, [{ pitchId: 'p1' }], 'the service received only the id');
+  assert.deepStrictEqual(seen, [{ pitchId: 'p1', channel: 'email' }], 'the service received the id and the explicit channel');
 });
 
-test('B2. the renderer cannot smuggle a recipient, body, provider or channel through the boundary', async () => {
+test('B2. the renderer cannot smuggle a recipient, body, provider or bad channel through the boundary', async () => {
   let called = false;
   const { invoke } = harness({
     generate: async () => ({}), get: async () => ({}), latestForLead: async () => null,
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}), list: async () => ({ rows: [], total: 0 }),
     sendEmail: async () => { called = true; return {}; },
+    sendWhatsApp: async () => { called = true; return {}; },
   });
   const attempts = [
-    { pitchId: 'p1', to: 'victim@example.com' },
-    { pitchId: 'p1', body: 'anything you like' },
-    { pitchId: 'p1', from: 'ceo@zunitech.example.com' },
-    { pitchId: 'p1', provider: 'smtp' },
-    { pitchId: 'p1', channel: 'whatsapp' },
-    { pitchId: 'p1', subject: 'rewritten' },
+    { pitchId: 'p1', channel: 'email', to: 'victim@example.com' },
+    { pitchId: 'p1', channel: 'email', body: 'anything you like' },
+    { pitchId: 'p1', channel: 'email', from: 'ceo@zunitech.example.com' },
+    { pitchId: 'p1', channel: 'email', provider: 'smtp' },
+    // F25 lock amendment (removed: { pitchId: 'p1', channel: 'whatsapp' } was REFUSED).
+    // That payload is now the LEGITIMATE explicit WhatsApp send, so refusing it here would
+    // pin the obsolete email-only contract. What must still be refused is a channel outside
+    // the enum - 'sms' below proves the enum is closed, not loosened.
+    { pitchId: 'p1', channel: 'sms' },
+    { pitchId: 'p1', channel: 'email', subject: 'rewritten' },
+    { pitchId: 'p1' },
     {},
-    { leadId: 'L1', pitchId: 'p1' },
+    { leadId: 'L1', pitchId: 'p1', channel: 'email' },
   ];
   for (const payload of attempts) {
     const res = await invoke(CHANNELS.OUTREACH_SEND, payload);
@@ -361,7 +394,7 @@ test('B3. an untrusted sender is refused before the service is reached', async (
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}), list: async () => ({ rows: [], total: 0 }),
     sendEmail: async () => { called = true; return {}; },
   }, { trusted: false });
-  const res = await invoke(CHANNELS.OUTREACH_SEND, { pitchId: 'p1' });
+  const res = await invoke(CHANNELS.OUTREACH_SEND, { pitchId: 'p1', channel: 'email' });
   assert.strictEqual(res.ok, false);
   assert.strictEqual(res.error.code, 'FORBIDDEN');
   assert.strictEqual(called, false);
@@ -383,7 +416,7 @@ test('B5. a service refusal crosses the boundary as a typed error, never as a fa
     update: async () => ({}), approve: async () => ({}), gate: async () => ({}), list: async () => ({ rows: [], total: 0 }),
     sendEmail: async () => { throw new LiError('EMAIL_DISABLED', 'Email sending is switched off in this build.'); },
   });
-  const res = await invoke(CHANNELS.OUTREACH_SEND, { pitchId: 'p1' });
+  const res = await invoke(CHANNELS.OUTREACH_SEND, { pitchId: 'p1', channel: 'email' });
   assert.strictEqual(res.ok, false);
   assert.strictEqual(res.error.code, 'EMAIL_DISABLED', 'a typed domain refusal crosses the boundary intact');
   assert.ok(!/at .*\.js:\d+/.test(res.error.message), 'no stack trace reaches the renderer');
@@ -544,18 +577,18 @@ test('D2. when the backend says it cannot send, no control exists and its reason
   assert.ok(/Email sending is switched off\./.test(footer.textContent), 'the backend refusal is shown verbatim');
 });
 
-test('D3. the WhatsApp tab never offers a send control, even when email can send', async () => {
+test('D3. F20: the WhatsApp tab offers a send control when the backend says it can send', async () => {
   const p = loadPanel({
     outreach: {
       prepare: (pl) => ok(pl.channel === 'whatsapp'
         ? Object.assign(previewEmail(CAN_SEND), {
           channel: 'whatsapp',
-          recipient: { state: 'candidate', contact: '+92 300 1234567', verified: false, verifiedSource: null },
+          recipient: { state: 'available', contact: '+92 300 1234567', verified: true, verifiedSource: 'user' },
           content: Object.assign(previewEmail(CAN_SEND).content, { transformationNote: 'No WhatsApp-specific message transformation exists in this build.' }),
           readiness: Object.assign(previewEmail(CAN_SEND).readiness, { channel: 'whatsapp' }),
         })
         : previewEmail(CAN_SEND)),
-      outreachSend: () => ok(sendResult()),
+      outreachSend: () => ok(sendResult({ channel: 'whatsapp' })),
     },
   });
   p.f18OpenPrepare('p1');
@@ -563,9 +596,11 @@ test('D3. the WhatsApp tab never offers a send control, even when email can send
   p.f18SetChannel('whatsapp');
   await settle();
   const footer = footerOf(p);
-  assert.strictEqual(footer.byTag('button').filter((b) => /Send/i.test(b.textContent)).length, 0,
-    'WhatsApp has no provider behind it, so no control is offered');
-  assert.ok(/candidate|Not verified/i.test(p.doc.getElementById('f18-prepare-body').textContent), 'the candidate caveat is shown');
+  // F20: with a live WhatsApp provider configured, the send control appears.
+  assert.ok(footer.byTag('button').some((b) => /Send this WhatsApp/.test(b.textContent)),
+    'the footer offers the WhatsApp send control when canSend is true');
+  assert.ok(/candidate|Not verified/i.test(p.doc.getElementById('f18-prepare-body').textContent) === false,
+    'the candidate caveat is NOT shown when WhatsApp is verified and available');
 });
 
 test('D4. opening the panel sends nothing: two clicks are required and the first contacts no provider', async () => {
@@ -591,7 +626,9 @@ test('D4. opening the panel sends nothing: two clicks are required and the first
   clickByText(footerOf(p), /Yes, send it/).fire('click');
   await settle();
   assert.strictEqual(calls.length, 1, 'the second click is the only send');
-  assert.deepStrictEqual(calls[0], { pitchId: 'p1' }, 'the payload is exactly { pitchId }');
+  // F25: the payload now carries the EXPLICIT reviewed channel beside the id - still
+  // exactly two properties, and nothing else.
+  assert.deepStrictEqual(calls[0], { pitchId: 'p1', channel: 'email' }, 'the payload is exactly { pitchId, channel: email }');
 });
 
 test('D5. cancelling the confirmation sends nothing and returns to the plain control', async () => {
@@ -711,9 +748,16 @@ test('D11. the send block has no batch, queue, schedule, retry, timer or network
   // Exactly one bridge call, and it is the closed send payload.
   const bridgeCalls = [...code.matchAll(/api\.outreach\.(\w+)\s*\(/g)].map((m) => m[1]);
   assert.deepStrictEqual([...new Set(bridgeCalls)], ['outreachSend'], 'the block calls exactly one bridge method');
-  assert.ok(/outreachSend\(\{\s*pitchId\s*\}\)/.test(code), 'the payload is exactly { pitchId }');
-  // It cannot express a recipient, content or channel at all.
-  for (const banned of [/\bto\s*:/, /\bfrom\s*:/, /\bsubject\s*:/, /\bbody\s*:/, /\bchannel\s*:/, /\bprovider\s*:/]) {
+  // F25 lock amendment (was: /outreachSend\(\{\s*pitchId\s*\}\)/ - "the payload is exactly
+  // { pitchId }"). The reviewed channel is now the one intent that crosses the boundary, so
+  // the payload is exactly { pitchId, channel } and NOTHING more - the channel enum itself
+  // is pinned by B1 and by tests/f25-unified-send.test.js.
+  assert.ok(/outreachSend\(\{\s*pitchId\s*,\s*channel\s*\}\)/.test(code), 'the payload is exactly { pitchId, channel }');
+  // It cannot express a recipient, content or provider at all. F25: `channel:` is no longer
+  // in this list because the channel IS now a renderer-supplied property - but it appears
+  // only as the shorthand `{ pitchId, channel }` above, bound to f18PrepareState.channel,
+  // so no literal channel value (no provider name, no third channel) is expressible here.
+  for (const banned of [/\bto\s*:/, /\bfrom\s*:/, /\bsubject\s*:/, /\bbody\s*:/, /\bprovider\s*:/, /\brecipient\s*:/]) {
     assert.ok(!banned.test(code), 'the F19 payload cannot carry ' + banned);
   }
   // No delivery claim is expressible: the words cannot appear as a rendered state.
@@ -737,8 +781,18 @@ test('S1. the bridge exposes exactly one send method and no scheduling surface',
   }
   const block = preloadSource.slice(preloadSource.indexOf("exposeInMainWorld('ztechLeadIntel'"));
   const methods = [...block.matchAll(/(\w+):\s*\(payload\)\s*=>\s*ipcRenderer\.invoke\('lead-intel:/g)].map((m) => m[1]);
-  assert.deepStrictEqual(methods, ['generate', 'get', 'update', 'approve', 'gate', 'list', 'activity', 'ready', 'prepare', 'outreachSend'],
-    'the bridge method list is exactly the ten declared channels');
+  // Phase I2: +5 Opportunity Intelligence methods with payload pattern = 16 total.
+  const expectedOutreach = ['generate', 'get', 'update', 'approve', 'gate', 'list', 'activity', 'ready', 'prepare', 'outreachSend', 'sends'];
+  const expectedOI = ['request', 'report', 'latest', 'associations', 'pitchContext'];
+  assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI],
+    'the bridge method list is exactly the eleven declared channels plus Phase I2 Opportunity Intelligence');
+  assert.deepStrictEqual(methods.filter((m) => /send/i.test(m) && !/^sends$/.test(m)), ['outreachSend'],
+    'outreachSend is still the only sending method; `sends` is the ledger read');
+  for (const forbidden of [/sendRetry/, /sendAgain/, /resend/i, /redeliver/i, /scheduleSend/, /queueSend/]) {
+    // Comment-stripped: the bridge's own comment NAMES these methods in order to state their
+    // absence, and a comment must not be able to fail a surface check.
+    assert.ok(!forbidden.test(stripComments(preloadSource)), 'no retry or rescheduling surface on the bridge: ' + forbidden);
+  }
 });
 
 test('S2. the service surface adds one method and removes none', () => {

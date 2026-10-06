@@ -205,10 +205,9 @@ function normalizeActivityQuery(query) {
 // message; it does not prove arrival, and this build observes no inbox.
 const SEND_STATES = Object.freeze(['attempted', 'accepted', 'failed', 'blocked']);
 
-// F19 ships ONE channel. The table is channel-shaped (not email-shaped) so F20 can add
-// 'whatsapp' as data rather than as a schema change, but the allowlist stays CLOSED: an
-// unproven channel cannot be written.
-const SEND_CHANNELS = Object.freeze(['email']);
+// F19 ships the email channel. F20 adds WhatsApp. The table is channel-shaped
+// (not email-shaped) so channels are data; the allowlist stays CLOSED.
+const SEND_CHANNELS = Object.freeze(['email', 'whatsapp']);
 
 // Bounds a provider's own identifier may occupy. A provider message id is remote text, so
 // it is length-capped before it can ever reach a row, a log or the renderer.

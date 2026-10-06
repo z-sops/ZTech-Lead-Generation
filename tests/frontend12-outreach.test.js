@@ -328,11 +328,26 @@ test('4. no campaign exists, and the Activity placeholder is not F12\'s to grant
   // Neither placeholder gained a capability behind its disabled state.
   assert.ok(!/campaign/i.test(F12_CODE), 'the F12 block contains no campaign logic at all');
   // The workspace builds DOM nodes; it creates no domain record of any kind.
+  //
+  // F21 declared-lock update: the workspace gained ONE more bridge call, `outreach.sends`,
+  // which is a READ of the recorded send ledger. The `send\w*\(` heuristic cannot tell that
+  // apart from the singular write `outreach.send(`, because one is a prefix of the other, so
+  // the ban below is stated against the WRITE and the read is then pinned explicitly:
+  // it must be the only send-shaped call in the block, and it must carry paging only. If
+  // anyone ever adds a second send-shaped call - a retry, a resend, a batch - this fails.
+  const sendShaped = [...stripComments(F12).matchAll(/\bsend\w*\s*\(/gi)].map((m) => m[0]);
+  assert.deepStrictEqual([...new Set(sendShaped)], ['sends('],
+    'the only send-shaped call in the workspace is the ledger read');
+  assert.deepStrictEqual([...F12_CODE.matchAll(/api\.outreach\.sends\(\s*\{([^}]*)\}/g)].map((m) => m[1].trim()),
+    ['limit: F21_SEND_HISTORY_SCAN_LIMIT, offset: 0'],
+    'the ledger read passes paging integers and nothing else - no recipient, no channel, no payload');
   for (const banned of [/\bcreate\w*(Campaign|Segment|Search|Job|Pitch|Approval|Activity)\w*\s*\(/i,
     /\bsave\w*(Campaign|Segment|Pitch|Approval)\w*\s*\(/i,
-    /\bschedule\w*\s*\(/i, /\bapprove\w*\s*\(/i, /\bsend\w*\s*\(/i]) {
+    /\bschedule\w*\s*\(/i, /\bapprove\w*\s*\(/i]) {
     assert.ok(!banned.test(F12_CODE), 'the workspace performs no domain write: ' + banned);
   }
+  // And the write that F19 introduced is still not reachable from here.
+  assert.ok(!/\boutreach\.send\s*\(/.test(F12_CODE), 'outreach.send( - the send boundary - is not callable from the workspace');
   // Still no campaign/activity view or data source.
   assert.ok(!/view-campaign/i.test(htmlSource), 'no campaign view exists');
 });
@@ -631,10 +646,11 @@ test('16. opening the lead is the only action the F12 block itself offers', asyn
   for (const banned of [/pitch\.generate\s*\(/, /pitch\.update\s*\(/, /outreach\.approve\s*\(/, /outreach\.send\s*\(/]) {
     assert.ok(!banned.test(F12), 'no pitch mutation is callable here: ' + banned);
   }
-  // The only bridge methods the whole block reaches are list and gate.
+  // The only bridge methods the whole block reaches are list, gate, and F21's read-only
+  // send-ledger read. All three are reads: none of them can create, change or send anything.
   const used = [...F12_CODE.matchAll(/api\.(\w+)\.(\w+)\(/g)].map((m) => m[1] + '.' + m[2]);
-  assert.deepStrictEqual([...new Set(used)].sort(), ['outreach.gate', 'outreach.list'],
-    'the workspace reaches exactly outreach.list and outreach.gate');
+  assert.deepStrictEqual([...new Set(used)].sort(), ['outreach.gate', 'outreach.list', 'outreach.sends'],
+    'the workspace reaches exactly outreach.list, outreach.gate and the F21 ledger read');
   assert.strictEqual(ws.doc.getElementById('outreach-body').byClass('f11-claims').length, 0, 'no unsupported-claim editor');
 });
 
@@ -664,13 +680,17 @@ test('17. no fetch, XHR, WebSocket, EventSource or innerHTML in the workspace', 
 });
 
 test('18. no renderer database access, no require, no ipcRenderer, no email', () => {
-  for (const banned of [/require\s*\(/, /ipcRenderer/, /contextBridge/, /sqlite/i, /sql\.js/, /AccountStore/, /SqlJsStore/, /li_pitch_drafts/, /EMAIL_SEND/, /email\.send/, /outreach\.send/]) {
+  // F21 declared-lock update: `/outreach\.send/` matched `outreach.sends(` too, because one
+  // is a prefix of the other, so the forbidden WRITE is now spelled with its call paren. The
+  // read is permitted; the send boundary is not.
+  for (const banned of [/require\s*\(/, /ipcRenderer/, /contextBridge/, /sqlite/i, /sql\.js/, /AccountStore/, /SqlJsStore/, /li_pitch_drafts/, /EMAIL_SEND/, /email\.send/, /\boutreach\.send\s*\(/]) {
     assert.ok(!banned.test(F12_CODE), 'the F12 block must not reference: ' + banned);
   }
   assert.ok(/api\.outreach\.list\(/.test(F12), 'outreach.list is the data source');
   assert.ok(/api\.outreach\.gate\(/.test(F12), 'outreach.gate is the gate source');
   const called = [...F12_CODE.matchAll(/api\.outreach\.(\w+)\(/g)].map((m) => m[1]);
-  assert.deepStrictEqual([...new Set(called)].sort(), ['gate', 'list'], 'only outreach.list and outreach.gate are called');
+  assert.deepStrictEqual([...new Set(called)].sort(), ['gate', 'list', 'sends'],
+    'only outreach.list, outreach.gate and the F21 read-only ledger read are called');
   assert.ok(!/window\.appAPI/.test(F12), 'the workspace does not reach appAPI');
   // email.send is still not exposed by the preload surface.
   assert.ok(!/lead-intel:email-send/.test(preloadSource), 'preload still exposes no email.send');

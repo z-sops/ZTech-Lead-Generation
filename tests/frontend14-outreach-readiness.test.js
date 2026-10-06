@@ -299,9 +299,11 @@ test('8. no provider is introduced and no send path is reachable', () => {
     // check. The invariant being asserted is unchanged: a build with email disabled or with
     // no provider cannot send. The literal source shape changed, so the check is updated to
     // the F19 form while still requiring the refusal to exist.
-  assert.ok(/sendCapability\(\)/.test(serviceSource),
+  assert.ok(/sendCapability\(/.test(serviceSource),
     'sending is gated behind the capability check');
-  assert.ok(!/new .*Provider|smtp|nodemailer|sendgrid/i.test(F14_CODE + serviceSource.replace(/^\s*\/\/.*$/gm, '')),
+  // The regex must not greedily match 'new TypeError(... WhatsAppProvider...)' etc.
+  // Match only constructor calls for Email/WhatsApp provider classes.
+  assert.ok(!/new (Email|WhatsApp)Provider|smtp|nodemailer|sendgrid/i.test(F14_CODE + serviceSource.replace(/^\s*\/\/.*$/gm, '')),
     'no provider is constructed anywhere');
   // F16 declared update: preload now exposes a derived `ready` read. F14 added none, and
   // the shape is what matters: it must be a single read that hits the fixed ready channel,
@@ -321,12 +323,13 @@ test('8. no provider is introduced and no send path is reachable', () => {
   assert.ok(/ready:\s*\(payload\)\s*=>\s*ipcRenderer\.invoke\('lead-intel:outreach-ready'/.test(outreachBlock),
     'ready is a single read on the fixed channel');
   assert.ok(!/lead-intel:email-send/.test(preloadSource), 'still no email.send channel');
-  assert.ok(/delivery: \{[\s\S]*?providerConfigured: this\.emailProvider !== null/.test(serviceSource),
-    'the backend reports its existing delivery configuration rather than inventing one');
-  assert.ok(/emailEnabled: this\.email\.enabled === true/.test(serviceSource),
+  // F20: delivery block is channel-aware; for email it still reports emailProvider presence.
+  assert.ok(/providerConfigured:\s*channel\s*===\s*'email'\s*\?\s*this\.emailProvider\s*!==\s*null\s*&&\s*this\.emailProvider\s*!==\s*undefined/.test(serviceSource),
+    'the backend reports its existing delivery configuration per channel');
+  assert.ok(/emailEnabled:\s*channel\s*===\s*'email'\s*\?\s*this\.email\.enabled\s*===\s*true\s*:\s*false/.test(serviceSource),
     'and reports whether email is enabled, from the config it was constructed with');
   // The gate verdict itself is returned unchanged; only `delivery` was added.
-  assert.ok(/const gate = evaluateOutreachGate\(\{[\s\S]*?\n    \}\);\n    \/\/ F14/.test(serviceSource),
+  assert.ok(/const gate = evaluateOutreachGate\(\{[\s\S]*?\n    \}\);\n    \/\/ F20/.test(serviceSource),
     'the F14 change wraps the existing gate result rather than altering the evaluation');
 });
 
@@ -335,8 +338,11 @@ test('8. no provider is introduced and no send path is reachable', () => {
 test('9. F12 read-only protections and the F13 approval action are untouched', async () => {
   // F12 still reaches only list and gate.
   const f12used = [...stripComments(F12).matchAll(/api\.(\w+)\.(\w+)\(/g)].map((m) => m[1] + '.' + m[2]);
-  assert.deepStrictEqual([...new Set(f12used)].sort(), ['outreach.gate', 'outreach.list'],
-    'the F12 block still reaches only outreach.list and outreach.gate');
+  // F21 declared-lock update: `outreach.sends` (the read-only ledger read) joined the F12
+  // data sources. The bans below still hold - and `outreach.send\s*\(` cannot match the
+  // plural read, because the paren forces it to mean the send boundary itself.
+  assert.deepStrictEqual([...new Set(f12used)].sort(), ['outreach.gate', 'outreach.list', 'outreach.sends'],
+    'the F12 block reaches outreach.list, outreach.gate and the F21 read-only ledger read');
   assert.ok(!/outreach\.approve\s*\(|outreach\.send\s*\(|email\.send\s*\(/.test(F12),
     'F12 still contains no approval and no send call');
   // F13 still offers Approve only for a clean draft blocked by HUMAN_APPROVAL, with the

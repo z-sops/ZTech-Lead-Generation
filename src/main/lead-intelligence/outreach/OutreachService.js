@@ -2,12 +2,19 @@
 
 const { newId } = require('../core/ids');
 const { NotFoundError, LiError, ValidationError } = require('../core/errors');
-const { EMAIL } = require('../contracts/leadView');
+const { EMAIL, toE164 } = require('../contracts/leadView');
 const { normalizeFieldValue } = require('../enrichment/catalog');
 const { generatePitch, editPitch, renderPitchText } = require('./PitchGenerator');
 const { evaluateOutreachGate } = require('./OutreachGate');
-const { normalizeActivityMetadata, normalizeReadyQuery, sendIdempotencyKey } = require('../persistence/contract');
+const { normalizeActivityMetadata, normalizeReadyQuery, normalizeSendQuery, sendIdempotencyKey } = require('../persistence/contract');
 const { evaluateSendCapability } = require('./email/sendConfig');
+const { evaluateResendCapability } = require('./email/resendConfig');
+const { evaluateSendCapability: evalWhatsAppCapability } = require('./whatsapp/sendConfig');
+// F24: the WhatsApp provider CONFIGURATION resolver - the same main-process-only,
+// read-only layer as evaluateResendCapability above, imported for the same purpose
+// (_deliveryBlock's channel-specific configuration override).
+const { evaluateWhatsAppConfig } = require('./whatsapp/whatsappConfig');
+const { WhatsAppProvider } = require('./whatsapp/WhatsAppProvider');
 
 // === F17: factual contact facts for the derived Ready row ===
 //
@@ -111,7 +118,7 @@ function contactFactsFromView(view, rawEmailPresent) {
  * human-triggered) email hand-off. No scheduling, no batch sending, no auto-send.
  */
 class OutreachService {
-  constructor({ store, contexts, leadSource, freshness, config = {}, emailProvider = null, fieldMap, clock = () => new Date(), logger = null }) {
+  constructor({ store, contexts, leadSource, freshness, config = {}, emailProvider = null, emailConfigStore = undefined, whatsappConfigStore = undefined, fieldMap, clock = () => new Date(), logger = null }) {
     this.store = store;
     this.contexts = contexts;
     this.leadSource = leadSource;
@@ -119,14 +126,43 @@ class OutreachService {
     this.offer = config.offer || {};
     this.gateConfig = config.outreach || {};
     this.email = { enabled: false, fromAddress: null, ...(config.email || {}) };
+    // F20: WhatsApp send config. Same shape as email: enabled + fromNumber + provider.
+    this.whatsapp = { enabled: false, fromNumber: null, ...(config.whatsapp || {}) };
     this.operator = config.operatorName || 'local-user';
     this.emailProvider = emailProvider;
+    // F22: the provider CONFIGURATION source, injected by the main process. It is
+    // deliberately optional: a process that is not the Electron main process (a unit test,
+    // a script) has no configuration source, and "no configuration source" is reported as
+    // "not configured" rather than being papered over with a default.
+    //
+    // `undefined` means "resolve lazily" so constructing the service never reaches for
+    // electron; `null` means "this process has no configuration source".
+    this._emailConfigStoreInput = emailConfigStore;
+    this._emailConfigStoreResolved = false;
+    this._emailConfigStoreValue = null;
+    // F24: the WhatsApp provider CONFIGURATION source, injected by the main process under
+    // its own name. It is the same kind of optional, read-only source as the email one and
+    // resolves by the same rule: `undefined` = lazy resolution (a unit test or script
+    // never reaches for electron), `null` = "this process has no configuration source".
+    // It is a SEPARATE injection point so a test can give WhatsApp configuration without
+    // implying email configuration, and vice versa.
+    this._whatsappConfigStoreInput = whatsappConfigStore;
+    this._whatsappConfigStoreResolved = false;
+    this._whatsappConfigStoreValue = null;
     this.fieldMap = fieldMap;
     this.clock = clock;
     // F15: used only to report that an activity row could not be written. It never
     // carries activity content, pitch text or anything from the renderer.
     this.logger = logger;
   }
+
+  // F20: allow the WhatsApp provider to be injected after construction, mirroring
+  // the emailProvider pattern (passed at construct time).
+  setWhatsAppProvider(provider) {
+    if (!(provider instanceof WhatsAppProvider)) throw new TypeError('provider must be a WhatsAppProvider');
+    this.whatsappProvider = provider;
+  }
+
 
   async generate({ leadId, targetId }) {
     const ctx = await this.contexts.getContext(leadId, { targetId });
@@ -194,9 +230,290 @@ class OutreachService {
     }
   }
 
+
+  /**
+   * F22: the provider CONFIGURATION source, resolved lazily and at most once.
+   *
+   * `emailConfigStore` was injected by the main process if there is one. If it was not
+   * injected, this asks electron for one - but ONLY when it is actually running inside
+   * Electron's main process. A plain Node process (a unit test, a script) has no
+   * configuration source and gets `null`, which the parser reports as "not configured".
+   *
+   * It is never written to. It is read by `readResendConfig` and nothing else.
+   */
+  emailConfigStore() {
+    if (this._emailConfigStoreResolved) return this._emailConfigStoreValue;
+    this._emailConfigStoreResolved = true;
+    if (this._emailConfigStoreInput !== undefined) {
+      this._emailConfigStoreValue = this._emailConfigStoreInput;
+      return this._emailConfigStoreValue;
+    }
+    try {
+      const electron = require('electron');
+      if (!electron || typeof electron !== 'object' || !electron.app) {
+        this._emailConfigStoreValue = null;
+      } else {
+        const Store = require('electron-store');
+        this._emailConfigStoreValue = new Store();
+      }
+    } catch {
+      this._emailConfigStoreValue = null;
+    }
+    return this._emailConfigStoreValue;
+  }
+
+  /**
+   * F24: the provider CONFIGURATION source for WhatsApp, resolved lazily and at most
+   * once, by exactly the same rule as `emailConfigStore()` above. It is never written to.
+   * It is read by `readWhatsAppConfig` and nothing else.
+   */
+  whatsappConfigStore() {
+    if (this._whatsappConfigStoreResolved) return this._whatsappConfigStoreValue;
+    this._whatsappConfigStoreResolved = true;
+    if (this._whatsappConfigStoreInput !== undefined) {
+      this._whatsappConfigStoreValue = this._whatsappConfigStoreInput;
+      return this._whatsappConfigStoreValue;
+    }
+    try {
+      const electron = require('electron');
+      if (!electron || typeof electron !== 'object' || !electron.app) {
+        this._whatsappConfigStoreValue = null;
+      } else {
+        const Store = require('electron-store');
+        this._whatsappConfigStoreValue = new Store();
+      }
+    } catch {
+      this._whatsappConfigStoreValue = null;
+    }
+    return this._whatsappConfigStoreValue;
+  }
+
+  /**
+   * F24: the parsed WhatsApp provider configuration for this process, or `null` when this
+   * process has no configuration source at all. A read and nothing else.
+   */
+  _whatsappProviderConfiguration() {
+    const store = this.whatsappConfigStore();
+    if (!store) return null;
+    const { readWhatsAppConfig } = require('./whatsapp/whatsappConfig');
+    return readWhatsAppConfig(store);
+  }
+
+  /**
+   * F22: the parsed provider configuration for this process, or `null` when this process
+   * has no configuration source at all. A read and nothing else.
+   */
+  _emailProviderConfiguration() {
+    const store = this.emailConfigStore();
+    if (!store) return null;
+    const { readResendConfig } = require('./email/resendConfig');
+    return readResendConfig(store);
+  }
+
+  /**
+   * F22: read-only provider configuration status (the bounded read model).
+   *
+   * The chain is exactly: configuration source -> safe parser -> capability resolver ->
+   * this object. Nothing here executes anything: no network call, no provider is
+   * constructed, nothing is written and no activity is recorded. It answers only:
+   * which provider, are the three structural facts configured, is the domain verified,
+   * and what is the resolver's single stable factual reason.
+   *
+   * SECRETS NEVER LEAVE THE CONFIGURATION BOUNDARY. The API key is read only to answer
+   * "is one stored?" and "can it be read back?", and is discarded immediately, so this
+   * object carries two booleans and never a key, a token, an Authorization header or the
+   * configuration record it came from. The IPC boundary scrubs it once more on the way
+   * out; the booleans are named `keyConfigured`/`keyReadable` precisely because that scrub
+   * drops any key matching /credential/i as a last line of defence, and this payload
+   * leans on that control instead of fighting it. The same fact also arrives as
+   * `capability.code`, which is a value rather than a key and is never scrubbed.
+   *
+   * NOTHING IS CLAIMED THAT THE CONFIGURATION DOES NOT SAY. An absent domain reads back
+   * as not configured and `unknown`, never as verified; no sender mailbox and no domain
+   * is assumed to exist.
+   */
+  async getEmailProviderStatus() {
+    const { readResendConfig, evaluateResendCapability } = require('./email/resendConfig');
+    const config = readResendConfig(this.emailConfigStore());
+    const capability = evaluateResendCapability(config);
+    return {
+      providerId: config.providerId,
+      providerDisplay: config.providerDisplay,
+      providerSelected: config.providerSelected,
+      keyConfigured: config.keyConfigured,
+      keyReadable: config.keyReadable,
+      senderConfigured: config.senderConfigured,
+      fromName: config.fromName || null,
+      fromAddress: config.fromAddress || null,
+      replyTo: config.replyTo || null,
+      signature: config.signature || null,
+      domainConfigured: config.domainConfigured,
+      domain: config.domain || null,
+      domainVerification: config.domainVerification,
+      capability
+    };
+  }
+
+  /**
+   * F24: read-only WHATSAPP provider configuration status (the bounded read model),
+   * mirroring getEmailProviderStatus() exactly.
+   *
+   * The chain is exactly: configuration source -> safe parser -> capability resolver ->
+   * this object. Nothing here executes anything: no network call, no provider is
+   * constructed, nothing is written and no activity is recorded. It answers only: which
+   * provider, are the structural facts configured (credential presence, connected account,
+   * sending number), what the number-verification status is, and what the resolver's
+   * single stable factual reason is.
+   *
+   * SECRETS NEVER LEAVE THE CONFIGURATION BOUNDARY. The access token is read only to
+   * answer "is one stored?" and "can it be read back?", and is discarded immediately, so
+   * this object carries two booleans and never a token, an Authorization header or the
+   * configuration record it came from. The IPC boundary scrubs it once more on the way
+   * out; the booleans are named `keyConfigured`/`keyReadable` precisely because that scrub
+   * drops any key matching /credential|token|bearer/i as a last line of defence. The same
+   * fact also arrives as `capability.code`, which is a value rather than a key and is
+   * never scrubbed.
+   *
+   * NOTHING IS CLAIMED THAT THE CONFIGURATION DOES NOT SAY. An absent account reads back
+   * as not configured; an absent or unverified sending number reads back as `unknown`,
+   * never as verified; and none of this says anything about any lead's phone number -
+   * that is a separate, stored candidate and is never read here.
+   */
+  async getWhatsAppProviderStatus() {
+    const { readWhatsAppConfig, evaluateWhatsAppConfig } = require('./whatsapp/whatsappConfig');
+    const config = readWhatsAppConfig(this.whatsappConfigStore());
+    const capability = evaluateWhatsAppConfig(config);
+    return {
+      providerId: config.providerId,
+      providerDisplay: config.providerDisplay,
+      providerSelected: config.providerSelected,
+      keyConfigured: config.keyConfigured,
+      keyReadable: config.keyReadable,
+      accountConfigured: config.accountConfigured,
+      senderConfigured: config.senderConfigured,
+      fromNumber: config.fromNumber || null,
+      numberVerification: config.numberVerification,
+      capability
+    };
+  }
+
   /** Newest-first activity history. Read-only; this is what the workspace lists. */
   async activityList(query) {
     return this.store.activity.list(query);
+  }
+
+  /**
+   * F23 PLUG & PLAY: the bounded, non-secret sender identity for the email channel.
+   *
+   * Every field is read from the customer's own configuration source. Nothing here is
+   * hard-coded - no company name, no address, no domain - so an installation that has not
+   * configured a sender reads back as `configured: false` with null fields, which is an
+   * honest supported state rather than a missing feature. The API key is never part of
+   * this object; capability carries its own `keyConfigured`/`keyReadable` booleans.
+   */
+  _senderProfile() {
+    const { readResendConfig } = require('./email/resendConfig');
+    const config = readResendConfig(this.emailConfigStore());
+    return {
+      providerId: config.providerId,
+      providerDisplay: config.providerDisplay,
+      providerSelected: config.providerSelected,
+      displayName: config.fromName || null,
+      fromAddress: config.fromAddress || null,
+      replyTo: config.replyTo || null,
+      domain: config.domain || null,
+      domainVerification: config.domainVerification,
+      signatureConfigured: Boolean(config.signature),
+      configured: Boolean(config.providerSelected && config.senderConfigured && config.domainConfigured)
+    };
+  }
+
+  /**
+   * F24 PLUG & PLAY: the bounded, non-secret sender identity for the WhatsApp channel.
+   *
+   * Every field is read from the customer's own configuration source. Nothing here is
+   * hard-coded - no provider, no number, no account - so an installation that has not
+   * configured WhatsApp reads back as `configured: false` with null fields, which is an
+   * honest supported state rather than a missing feature. This is OUR sending identity
+   * only: it never contains, implies or reads a lead's phone number, and the stored lead
+   * number stays what F17 declared it to be - a candidate.
+   *
+   * The access token is never part of this object; capability carries its own
+   * `keyConfigured`/`keyReadable` booleans (names that survive the IPC secret scrub).
+   */
+  _whatsappSenderProfile() {
+    const { readWhatsAppConfig, evaluateWhatsAppConfig } = require('./whatsapp/whatsappConfig');
+    const config = readWhatsAppConfig(this.whatsappConfigStore());
+    const capability = evaluateWhatsAppConfig(config);
+    return {
+      providerId: config.providerId,
+      providerDisplay: config.providerDisplay,
+      providerSelected: config.providerSelected,
+      fromNumber: config.fromNumber || null,
+      senderConfigured: config.senderConfigured,
+      accountConfigured: config.accountConfigured,
+      numberVerification: config.numberVerification,
+      keyConfigured: config.keyConfigured,
+      keyReadable: config.keyReadable,
+      configured: capability.canSend === true
+    };
+  }
+
+  /**
+   * F23: the EXACT text the email provider will receive for this pitch.
+   *
+   * The canonical approved pitch body, plus the configured signature when one exists -
+   * and nothing else. This single function is used by BOTH Prepare (so a human sees the
+   * final bytes before confirming) and the send boundary (so the provider gets those same
+   * bytes). The signature is added here, upstream of the provider: transport never edits
+   * content, and the approval's content_hash still covers the canonical pitch underneath.
+   */
+  _emailFinalBody(pitch) {
+    const body = renderPitchText(pitch);
+    const { readResendConfig, validateSignature } = require('./email/resendConfig');
+    const check = validateSignature(readResendConfig(this.emailConfigStore()).signature);
+    // A signature that fails validation is simply not appended: the payload falls back to
+    // the canonical approved body rather than shipping unsafe text. Prepare and the send
+    // boundary both come through this ONE function, so the bytes always match.
+    return check.ok && check.value ? `${body}\n\n${check.value}` : body;
+  }
+
+  /**
+   * F21: newest-first send-ledger history. Read-only, and ONLY a read.
+   *
+   * The renderer can ask "what send attempts are recorded" with paging plus at most one
+   * id filter, and nothing else: the query is clamped by the same contract normaliser the
+   * store uses, so no caller can ask for the whole ledger, choose a sort, or filter by
+   * provider, state or channel. It cannot write a row, mark one accepted, delete one, or
+   * trigger another attempt - a further attempt must go back through the send boundary.
+   *
+   * Rows are projected to the renderer's own camelCase read shape. Two columns are
+   * deliberately NOT projected: `content_hash` and `idempotency_key` are internal
+   * integrity facts the workspace has no use for, so they never cross the boundary.
+   * `retryable` is a fact about the ROW (an accepted row would be a no-op replay), not a
+   * permission: it grants nothing and bypasses no check.
+   */
+  async sendList(query) {
+    const page = await this.store.sends.list(normalizeSendQuery(query));
+    return {
+      rows: (page.rows || []).map((r) => ({
+        sendId: r.send_id,
+        leadId: r.lead_id,
+        pitchId: r.pitch_id,
+        channel: r.channel,
+        state: r.state,
+        providerId: r.provider_id === undefined ? null : r.provider_id,
+        providerMessageId: r.provider_message_id === undefined ? null : r.provider_message_id,
+        failureCode: r.failure_code === undefined ? null : r.failure_code,
+        failureMessage: r.failure_message === undefined ? null : r.failure_message,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        retryable: r.state !== 'accepted'
+      })),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset
+    };
   }
 
   async update({ pitchId, edits }) {
@@ -345,6 +662,9 @@ class OutreachService {
       now: this.clock(),
       config: this.gateConfig,
     });
+    // F20: the gate verdict above is returned UNCHANGED; only the `delivery` block is
+    // added, and it is built by the shared _deliveryBlock() helper so gate() and prepare()
+    // can never report two different capability verdicts for the same channel.
     // F14: report the DELIVERY capability alongside the gate decision, so a caller can
     // say honestly whether an allowed pitch could actually be delivered.
     //
@@ -355,30 +675,71 @@ class OutreachService {
     // the one flag a renderer should gate a send control on; `code`/`message` say exactly
     // which configuration gap is responsible.
     //
-    // This still adds no state and no capability: the verdict is pure configuration, no
-    // provider is created or contacted, and the gate decision itself is returned unchanged.
-    const capability = evaluateSendCapability({
-      enabled: this.email.enabled,
-      provider: this.emailProvider,
-      fromAddress: this.email.fromAddress
-    });
     return {
       ...gate,
-      delivery: {
-        channel,
-        emailEnabled: this.email.enabled === true,
-        providerConfigured: this.emailProvider !== null && this.emailProvider !== undefined,
-        // F19: honest send capability.
-        canSend: capability.canSend,
-        blockedCode: capability.code,
-        blockedMessage: capability.message,
-        providerId: capability.providerId,
-        providerLive: capability.providerLive,
-        // Never claimed here, and never derivable from a gate verdict.
-        deliveryStatus: 'unknown',
-        openStatus: 'unknown',
-        clickStatus: 'unknown'
+      delivery: this._deliveryBlock(channel)
+    };
+  }
+
+  /**
+   * F20/F22: the ONE definition of the `delivery` block.
+   *
+   * `delivery` is PROVIDER CAPABILITY and is deliberately a separate fact from READINESS.
+   * Readiness is the OutreachGate verdict and nothing else; this block reports whether
+   * the configured provider for ONE channel could actually be contacted right now. The
+   * two are carried side by side and neither can influence the other: changing provider
+   * configuration can never add a lead to Ready, remove one, reorder it, change a
+   * qualification, an evidence freshness or an approval - it only changes what this block
+   * says.
+   *
+   * It is built by ONE helper so `gate()` and `prepare()` cannot disagree, it evaluates
+   * pure configuration through `sendCapability()`, and it never constructs, calls or
+   * contacts a provider. The three status words are always 'unknown', because nothing in
+   * this build observes an inbox.
+   */
+  _deliveryBlock(channel) {
+    let capability = this.sendCapability(channel);
+    // F22: when this process HAS a provider configuration source, the configuration
+    // verdict is the more specific fact, so it replaces the generic reason. That is how
+    // the existing Prepare/send surface reports provider status to the operator: the
+    // panel says exactly which configuration fact is missing (no key, no sender, domain
+    // not verified) instead of a blanket "switched off". With no configuration source
+    // - every unit test, any non-Electron process - this block is untouched.
+    if (channel === 'email') {
+      const config = this._emailProviderConfiguration();
+      if (config) {
+        const resolved = evaluateResendCapability(config);
+        if (!resolved.canSend) capability = resolved;
       }
+    }
+    // F24: the identical override for WhatsApp. When this process HAS a WhatsApp
+    // configuration source, the configuration verdict (provider selected, credential,
+    // connected account, sending number, number verification) is the more specific fact,
+    // so it replaces the generic reason - the panel says exactly which configuration gap
+    // is responsible instead of a blanket "switched off". It only ever NARROWS: a complete
+    // configuration leaves the instance verdict above untouched, and with no configuration
+    // source this block is unchanged.
+    if (channel === 'whatsapp') {
+      const config = this._whatsappProviderConfiguration();
+      if (config) {
+        const resolved = evaluateWhatsAppConfig(config);
+        if (!resolved.canSend) capability = resolved;
+      }
+    }
+    return {
+      channel,
+      emailEnabled: channel === 'email' ? this.email.enabled === true : false,
+      providerConfigured: channel === 'email' ? this.emailProvider !== null && this.emailProvider !== undefined : (this.whatsappProvider !== null && this.whatsappProvider !== undefined),
+      // Honest send capability, from the SAME evaluator the send boundary itself calls.
+      canSend: capability.canSend,
+      blockedCode: capability.code,
+      blockedMessage: capability.message,
+      providerId: capability.providerId,
+      providerLive: capability.providerLive,
+      // Never claimed here, and never derivable from a gate verdict.
+      deliveryStatus: 'unknown',
+      openStatus: 'unknown',
+      clickStatus: 'unknown'
     };
   }
 
@@ -488,6 +849,11 @@ class OutreachService {
         subject: pitch.subject,
         body: renderPitchText(pitch),
         bodySource: 'renderPitchText',
+        // F23: for email, the byte-for-byte payload the provider would receive (canonical
+        // body + configured signature). Prepare shows THIS for email so what a human
+        // confirms is exactly what the transport sends. WhatsApp keeps the canonical body
+        // unchanged - F24 owns any future WhatsApp message shaping.
+        ...(channel === 'email' ? { finalBody: this._emailFinalBody(pitch) } : {}),
         evidenceReferences: Array.isArray(pitch.evidenceReferences) ? pitch.evidenceReferences : [],
         transformationNote: channel === 'whatsapp'
           ? 'No WhatsApp-specific message transformation exists in this build. The canonical pitch text is shown unchanged as the message source.'
@@ -496,23 +862,56 @@ class OutreachService {
       // The same verdict the Ready queue reports, carried verbatim. Preparation never
       // re-decides readiness and can never influence it.
       readiness: verdict,
+      // F20/F22/F23: PROVIDER CAPABILITY for this tab, carried BESIDE readiness and never
+      // inside it. A pitch can be Ready while this block says the provider cannot send;
+      // the renderer shows both facts and conflates neither.
+      delivery: this._deliveryBlock(channel),
+      // F23: the non-secret sender identity for the email channel (null on WhatsApp), so
+      // Prepare can show From / Reply-To / Provider without a second IPC surface.
+      // F24: WhatsApp now carries ITS bounded sender profile for the same reason - the
+      // panel can show provider / account / sending number / number status / credential /
+      // capability / reason without a second IPC surface and without a secret.
+      sender: channel === 'email'
+        ? this._senderProfile()
+        : (channel === 'whatsapp' ? this._whatsappSenderProfile() : null),
       contactFacts: facts
     };
   }
 
   /**
-   * Human-triggered send of ONE approved pitch. Only available when email is enabled
-   * in config AND a provider is configured. Re-runs the gate right before sending.
+   * Human-triggered send of ONE approved pitch on ONE EXPLICITLY NAMED CHANNEL.
    *
-   * F19 SUPERSEDES THIS METHOD. It is retained only as a deprecated alias for
-   * sendEmail() so any pre-F19 caller keeps working, and it is deliberately thin: the real
-   * boundary, with the gate re-check, idempotency, the durable attempt record and the
-   * honest acknowledgement-only result, is sendEmail(). New code must call that.
+   * F25: THIS METHOD IS THE UNIFIED DISPATCHER, AND IT DECLARES NO BEHAVIOUR OF ITS OWN.
+   * The channel is required and closed: 'email' delegates to sendEmail(), 'whatsapp'
+   * delegates to sendWhatsApp(), and ANY other value - including a missing channel - throws
+   * ValidationError BEFORE any boundary, ledger row or provider call. There is deliberately
+   * no default channel, so a caller that does not name one cannot inherit email by accident.
    *
-   * @deprecated use sendEmail()
+   * THE CHANNEL IS NEVER CHOSEN HERE. Each boundary names its channel explicitly and
+   * re-runs the capability check, the OutreachGate, the approval and content-integrity check,
+   * the recipient lookup and the idempotency rule inside its own method.
+   *
+   * THERE IS NO AUTOMATIC FALLBACK IN EITHER DIRECTION. This dispatcher never observes that
+   * the OTHER channel happens to be able to send and never routes there: if the selected
+   * channel's capability is unavailable the call FAILS CLOSED with that channel's own
+   * factual capability refusal and contacts nobody. A human who selected email is never
+   * silently written to on WhatsApp, and a human who selected WhatsApp is never silently
+   * written to by email. Channel selection is explicit intent, never a capability lottery.
+   *
+   * The renderer cannot widen the choice either. The IPC schema admits EXACTLY
+   * { pitchId, channel } with channel restricted to the two factual channels and
+   * additionalProperties:false, so no recipient, provider or body can be smuggled in.
+   *
+   * @param {{ pitchId: string, channel: 'email' | 'whatsapp' }} request
+   * @returns {Promise<object>} the selected channel boundary's own result
+   * @throws {ValidationError} when the channel is missing or not one of the two enum values
    */
-  async send({ pitchId }) {
-    return this.sendEmail({ pitchId });
+  async send({ pitchId, channel }) {
+    if (channel === 'email') return this.sendEmail({ pitchId });
+    if (channel === 'whatsapp') return this.sendWhatsApp({ pitchId });
+    throw new ValidationError('unknown send channel', [
+      { path: '$.channel', message: 'channel must be "email" or "whatsapp"' },
+    ]);
   }
 
   // === F19: the email send boundary ===
@@ -550,13 +949,36 @@ class OutreachService {
   // that could support it.
   async sendEmail({ pitchId }) {
     // (1) Capability. Refused before anything is read or written beyond the refusal itself.
-    const capability = this.sendCapability();
+    const capability = this.sendCapability('email');
     if (!capability.canSend) {
       // A disabled or unconfigured provider is a refusal a human asked for and did not get,
       // so it IS an event worth recording. It records no provider id and no message id,
       // because no provider was contacted.
       await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: capability.message, channel: 'email' });
       throw new LiError(capability.code, capability.message);
+    }
+
+    // (1b) F22: PROVIDER CONFIGURATION capability - the one additional fail-closed check
+    // this phase is allowed to add. It only ever NARROWS: if this process has a provider
+    // configuration source and that configuration is not structurally complete AND
+    // verified, the send is refused with that configuration's own factual reason before
+    // anything else is read. With no configuration source (every non-Electron process,
+    // every unit test) it has nothing to say and the F19 check above remains the answer.
+    //
+    // After this check PASSES, F23 may proceed to a REAL provider invocation at step (8)
+    // - but only through the existing interlocks: a live provider instance, message
+    // validation, and the durable attempt record. With incomplete configuration (the
+    // current installation: no credential, no verified domain) this check refuses first
+    // and no transport exists to call. Nothing is ever fabricated from here: no
+    // providerMessageId and no acceptance can appear without an actual provider response.
+    const configured = this.emailConfigStore();
+    const providerStatus = configured ? await this.getEmailProviderStatus() : null;
+    if (providerStatus && !providerStatus.capability.canSend) {
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', {
+        reason: providerStatus.capability.message,
+        channel: 'email'
+      });
+      throw new LiError(providerStatus.capability.code, providerStatus.capability.message);
     }
 
     // (2) Existence. A missing pitch is not a gate decision, so it is not recorded as one.
@@ -593,12 +1015,17 @@ class OutreachService {
       throw new LiError('CHANNEL_UNAVAILABLE', 'No valid email address is stored for this lead.');
     }
 
-    // (6) Provider validation, before any provider contact.
+    // (6) Provider validation, before any provider contact. The command is COMPLETE and
+    // final here: recipient and sender address come from stored configuration, the subject
+    // is the approved pitch's own subject, and the text is the byte-for-byte body Prepare
+    // showed (canonical pitch + configured signature). The provider gets no discretion.
     const message = {
       to: facts.channels.email.contact,
       from: capability.fromAddress,
+      ...(providerStatus && providerStatus.fromName ? { fromName: providerStatus.fromName } : {}),
+      ...(providerStatus && providerStatus.replyTo ? { replyTo: providerStatus.replyTo } : {}),
       subject: pitch.subject,
-      text: renderPitchText(pitch),
+      text: this._emailFinalBody(pitch),
       headers: {
         'X-ZTech-Pitch': pitch.pitch_id,
         // The idempotency key travels WITH the message, so a provider that supports
@@ -684,15 +1111,192 @@ class OutreachService {
     return this._sendResult({ pitch, outcome: 'accepted', send: winner, gate: verdict, providerStatus: receipt && receipt.status });
   }
 
+  // === F20: the WhatsApp send boundary ===
+  //
+  // Mirrors the email send boundary exactly, with channel-specific differences:
+  // - Channel is 'whatsapp' instead of 'email'
+  // - Uses WhatsApp capability evaluator (checks phone number, not email)
+  // - Uses WhatsApp provider (whatsappProvider) instead of emailProvider
+  // - Validates E.164 phone number instead of email address
+  // - Uses WhatsAppProvider instead of EmailProvider
+  // - All safety interlocks (capability, gate, idempotency, approval) are identical
+  async sendWhatsApp({ pitchId }) {
+    // (1) Capability. Refused before anything is read or written beyond the refusal itself.
+    const capability = this.sendCapability('whatsapp');
+    if (!capability.canSend) {
+      // A disabled or unconfigured provider is a refusal a human asked for and did not get,
+      // so it IS an event worth recording. It records no provider id and no message id,
+      // because no provider was contacted.
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: capability.message, channel: 'whatsapp' });
+      throw new LiError(capability.code, capability.message);
+    }
+
+    // (1b) F24: PROVIDER CONFIGURATION capability - the same fail-closed check the email
+    // boundary has run since F22, now for WhatsApp. It only ever NARROWS: if this process
+    // has a WhatsApp configuration source and that configuration is not structurally
+    // complete AND marked verified, the send is refused with that configuration's own
+    // factual reason before anything else is read. With no configuration source (every
+    // non-Electron process, every unit test) it has nothing to say and the F20 check above
+    // remains the answer.
+    //
+    // After this check PASSES, the adapter may proceed to a REAL provider invocation at
+    // step (8) - but only through the existing interlocks: a live provider instance,
+    // message validation and the durable attempt record. With incomplete configuration
+    // (the current installation: no provider selected, no credential, no connected
+    // number) this check refuses first and no transport exists to call. Nothing is ever
+    // fabricated from here: no providerMessageId and no acceptance can appear without an
+    // actual provider response.
+    const waConfigured = this.whatsappConfigStore();
+    const waProviderStatus = waConfigured ? await this.getWhatsAppProviderStatus() : null;
+    if (waProviderStatus && !waProviderStatus.capability.canSend) {
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', {
+        reason: waProviderStatus.capability.message,
+        channel: 'whatsapp'
+      });
+      throw new LiError(waProviderStatus.capability.code, waProviderStatus.capability.message);
+    }
+
+    // (2) Existence. A missing pitch is not a gate decision, so it is not recorded as one.
+    const pitch = await this.get(pitchId);
+
+    // (3) THE RE-CHECK. The gate is asked on ITS OWN default channel ("email") - the same
+    // readiness decision the Ready queue and F18 preparation made. WhatsApp contact data
+    // has no vote in readiness and never had one; what is WhatsApp-specific happens BELOW,
+    // where a missing or invalid number can only REMOVE a send.
+    const verdict = await this.gate({ pitchId });
+    if (!verdict || verdict.decision !== 'allowed') {
+      const first = verdict && Array.isArray(verdict.reasons) && verdict.reasons.length ? verdict.reasons[0] : null;
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', {
+        reason: first ? first.message : 'The Outreach Gate does not allow this pitch right now.',
+        channel: 'whatsapp',
+        contentHash: pitch.content_hash
+      });
+      throw new LiError('NOT_READY', 'The Outreach Gate does not allow this pitch right now.');
+    }
+
+    // (4) IDEMPOTENCY, checked against the content that was just gate-approved. A replay
+    // contacts nobody: it returns the recorded provider outcome and says so.
+    const idempotencyKey = sendIdempotencyKey({ channel: 'whatsapp', pitchId: pitch.pitch_id, contentHash: pitch.content_hash });
+    const already = await this.store.sends.findAccepted(idempotencyKey);
+    if (already) return this._sendResult({ pitch, outcome: 'replayed', send: already, gate: verdict });
+
+    // (5) Recipient from the STORED contact facts. The caller cannot supply one: the IPC
+    // schema admits only { pitchId }.
+    const ctx = await this.contexts.getContext(pitch.lead_id, { targetId: pitch.target_id ?? undefined });
+    const facts = ctx && ctx.view ? contactFactsFromView(ctx.view, ctx.view.email_raw_present) : null;
+    if (!facts || facts.channels.whatsapp.state !== 'candidate' || !facts.channels.whatsapp.contact) {
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', {
+        reason: 'No valid WhatsApp number is stored for this lead.',
+        channel: 'whatsapp',
+        contentHash: pitch.content_hash
+      });
+      throw new LiError('CHANNEL_UNAVAILABLE', 'No valid WhatsApp number is stored for this lead.');
+    }
+
+    // (6) Provider validation, before any provider contact. The command is COMPLETE and
+    // final here: the recipient comes from the stored contact facts, the sender number
+    // comes from the configuration the capability approved, and the body is the canonical
+    // approved pitch text byte for byte - exactly what Prepare displayed. The provider
+    // gets no discretion and performs no transformation of its own.
+    const whatsappTo = toE164(facts.channels.whatsapp.contact);
+    const message = {
+      to: whatsappTo,
+      from: capability.fromNumber,
+      body: renderPitchText(pitch),
+      // The stable idempotency key travels WITH the command, mirroring the email
+      // boundary. The Cloud API defines no provider-level de-duplication, so this is a
+      // correlation fact only - the ledger above remains the idempotency authority.
+      headers: {
+        'X-ZTech-Send-Key': idempotencyKey
+      }
+    };
+    const valid = this.whatsappProvider.validate(message);
+    if (!valid || valid.valid !== true) {
+      const detail = Array.isArray(valid && valid.errors) && valid.errors.length ? valid.errors[0].message : 'the message is invalid';
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', {
+        reason: 'The WhatsApp message did not validate: ' + detail,
+        channel: 'whatsapp',
+        contentHash: pitch.content_hash
+      });
+      throw new ValidationError('whatsapp message is invalid',
+        (valid && valid.errors ? valid.errors : []).map((e) => ({ path: '$.' + e.field, message: e.message })));
+    }
+
+    // (7) THE DURABLE ATTEMPT, written BEFORE the provider is touched.
+    const sendId = newId('send');
+    const now = this.clock().toISOString();
+    await this.store.sends.record({
+      send_id: sendId,
+      lead_id: pitch.lead_id,
+      pitch_id: pitch.pitch_id,
+      channel: 'whatsapp',
+      content_hash: pitch.content_hash,
+      idempotency_key: idempotencyKey,
+      state: 'attempted',
+      provider_id: capability.providerId,
+      created_at: now,
+      updated_at: now
+    });
+    await this._recordSendEvent(pitchId, 'OUTREACH_SEND_ATTEMPTED', {
+      channel: 'whatsapp',
+      contentHash: pitch.content_hash,
+      providerId: capability.providerId,
+      idempotencyKey
+    });
+
+    // (8) The only call that can reach the outside world.
+    let receipt;
+    try {
+      receipt = await this.whatsappProvider.send(message);
+    } catch (err) {
+      // (9a) Failure. Record ZTech's own code and a ZTech-authored message; the provider's
+      // own text is deliberately NOT copied into the row, a log or the renderer.
+      const at = this.clock().toISOString();
+      const code = err && err.code ? String(err.code) : 'WHATSAPP_SEND_FAILED';
+      const safe = err instanceof LiError ? err.message : 'The WhatsApp provider could not accept the message.';
+      await this.store.sends.fail({ sendId, failureCode: code, failureMessage: safe, at });
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_FAILED', {
+        channel: 'whatsapp', contentHash: pitch.content_hash, providerId: capability.providerId,
+        idempotencyKey, failureCode: code, reason: safe
+      });
+      if (err instanceof LiError) throw err;
+      throw new LiError(code, safe);
+    }
+
+    // (9b) Acknowledgement. Recorded as ACCEPTED - never as delivered, opened or clicked.
+    const at = this.clock().toISOString();
+    const settled = await this.store.sends.accept({
+      sendId,
+      providerId: capability.providerId,
+      providerMessageId: receipt && receipt.messageId ? String(receipt.messageId) : null,
+      at
+    });
+    const winner = settled && settled.ok === false ? settled.row : await this.store.sends.get(sendId);
+    if (settled && settled.ok === false) {
+      // A concurrent send won this key. Report the winner's outcome rather than pretending
+      // this attempt was the one that got through.
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_ACCEPTED', {
+        channel: 'whatsapp', contentHash: pitch.content_hash, providerId: capability.providerId,
+        idempotencyKey, providerMessageId: winner.provider_message_id
+      });
+      return this._sendResult({ pitch, outcome: 'replayed', send: winner, gate: verdict, channel: 'whatsapp' });
+    }
+    await this._recordSendEvent(pitchId, 'OUTREACH_SEND_ACCEPTED', {
+      channel: 'whatsapp', contentHash: pitch.content_hash, providerId: capability.providerId,
+      idempotencyKey, providerMessageId: winner.provider_message_id
+    });
+    return this._sendResult({ pitch, outcome: 'accepted', send: winner, gate: verdict, providerStatus: receipt && receipt.status, channel: 'whatsapp' });
+  }
+
   /**
    * The honest send result. `providerAcknowledged` is the ONLY true fact about the outside
    * world here, and the three delivery facts are explicitly 'unknown' - never false, because
    * ZTech has no observer that could support either answer.
    */
-  _sendResult({ pitch, outcome, send, gate, providerStatus = null }) {
+  _sendResult({ pitch, outcome, send, gate, providerStatus = null, channel = 'email' }) {
     return {
       outcome, // 'accepted' | 'replayed' - never 'delivered'
-      channel: 'email',
+      channel,
       pitchId: pitch.pitch_id,
       leadId: pitch.lead_id,
       contentHash: pitch.content_hash,
@@ -713,8 +1317,16 @@ class OutreachService {
     };
   }
 
-  /** F19: the current, honest email-send capability verdict. Read-only, no side effects. */
-  sendCapability() {
+  /** F19/F20: the current, honest send capability verdict for a given channel. Read-only, no side effects. */
+  sendCapability(channel) {
+    if (channel === 'whatsapp') {
+      return evalWhatsAppCapability({
+        enabled: this.whatsapp.enabled,
+        provider: this.whatsappProvider,
+        fromNumber: this.whatsapp.fromNumber
+      });
+    }
+    // Default to email
     return evaluateSendCapability({
       enabled: this.email.enabled,
       provider: this.emailProvider,

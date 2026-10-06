@@ -133,6 +133,44 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     // `clickStatus` are always 'unknown', never true and never false, because nothing in
     // this build observes an inbox. There is deliberately no sendAll, sendBatch, schedule,
     // queue or campaign method anywhere on this bridge.
-    outreachSend: (payload) => ipcRenderer.invoke('lead-intel:outreach-send', payload || {})
+    outreachSend: (payload) => ipcRenderer.invoke('lead-intel:outreach-send', payload || {}),
+    // F21: read-only send history. F19/F20 already persisted one row per send attempt but
+    // nothing could read it back, so a provider call that really happened could not be
+    // audited or explained. This is that read, and ONLY that read.
+    //
+    // Its payload is limit/offset plus at most one of leadId/pitchId, and the main-process
+    // schema is additionalProperties:false, so the renderer cannot name a recipient, a
+    // provider, a channel or a message payload here. There is deliberately NO sendRetry,
+    // sendAgain, sendBatch, schedule or queue method on this bridge: another attempt goes
+    // back through outreachSend above, so the capability check, the OutreachGate, the
+    // approval and content integrity, the recipient lookup and the idempotency rule all run
+    // again. Nothing on this bridge can mark a row accepted, delete one, or invent one.
+    sends: (payload) => ipcRenderer.invoke('lead-intel:outreach-sends', payload || {})
+  }),
+  // Phase I2: Opportunity Intelligence - read-only research context.
+  //
+  // This is a SEPARATE intelligence system from Zuni-SEO. It answers a different
+  // question (multi-entity, opportunities, competitors, ads, social, timeline)
+  // and has its own channels, its own store and its own contract (IntelligenceReport).
+  // The renderer CANNOT supply a URL, a host, an endpoint or a credential.
+  // The renderer CANNOT trigger a send, an approve, a schedule or a campaign.
+  // The only write is REQUEST: asking the main process to run OI for a lead,
+  // where the identity comes from the main store, never the renderer.
+  opportunity: Object.freeze({
+    health: () => ipcRenderer.invoke('lead-intel:opportunity-health'),
+    engine: () => ipcRenderer.invoke('lead-intel:opportunity-engine'),
+    // Request OI research for a lead. Payload is exactly { leadId, force? }.
+    // The renderer supplies ONLY the leadId and a boolean "force" flag.
+    // Company name, domain, location, industry come from the main store.
+    request: (payload) => ipcRenderer.invoke('lead-intel:opportunity-request', payload || {}),
+    // Get a specific OI report by research_id. Payload is { leadId?, researchId }.
+    report: (payload) => ipcRenderer.invoke('lead-intel:opportunity-report', payload || {}),
+    // The lead's latest OI report, if one was recorded this session.
+    latest: (payload) => ipcRenderer.invoke('lead-intel:opportunity-latest', payload || {}),
+    // Association ledger for a lead: ids only, no report content.
+    associations: (payload) => ipcRenderer.invoke('lead-intel:opportunity-associations', payload || {}),
+    // Pitch Evidence Bridge: bounded context for the existing PitchGenerator.
+    // Returns { available, bridge: { packet, claim_kinds, oi, counts, excluded, boundaries } }.
+    pitchContext: (payload) => ipcRenderer.invoke('lead-intel:opportunity-pitch-context', payload || {}),
   })
 }));

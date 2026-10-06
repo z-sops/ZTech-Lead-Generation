@@ -243,13 +243,15 @@ test('renderer: UMD files attach to the browser global in import order (what ind
   sandbox.self = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  const order = [...fs.readFileSync(path.join(dir, 'index.mjs'), 'utf8').matchAll(/^import '\.\/([\w]+\.js)';$/gm)].map((m) => m[1]);
-  assert.deepEqual(order, ['dom.js', 'researchSection.js', 'listsPanels.js', 'pitchPanel.js', 'enrichmentSection.js']);
-  for (const f of order) vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), sandbox, { filename: f });
-  const LI = sandbox.ZTechLI;
-  assert.equal(typeof LI.dom.h, 'function');
-  assert.equal(typeof LI.researchSection.mountResearchSection, 'function');
-  assert.equal(typeof LI.listsPanels.mountSegmentsPanel, 'function');
-  assert.equal(typeof LI.pitchPanel.mountPitchPanel, 'function');
-  assert.equal(typeof LI.enrichmentSection.mountEnrichmentSection, 'function');
+const order = [...fs.readFileSync(path.join(dir, 'index.mjs'), 'utf8').matchAll(/^import '\.\/([\w]+\.js)';$/gm)].map((m) => m[1]);
+    // Phase I2 adds opportunitySection.js as the 6th module.
+    assert.deepEqual(order, ['dom.js', 'researchSection.js', 'listsPanels.js', 'pitchPanel.js', 'enrichmentSection.js', 'opportunitySection.js']);
+    for (const f of order) vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), sandbox, { filename: f });
+    const LI = sandbox.ZTechLI;
+    assert.equal(typeof LI.dom.h, 'function');
+    assert.equal(typeof LI.researchSection.mountResearchSection, 'function');
+    assert.equal(typeof LI.listsPanels.mountSegmentsPanel, 'function');
+    assert.equal(typeof LI.pitchPanel.mountPitchPanel, 'function');
+    assert.equal(typeof LI.enrichmentSection.mountEnrichmentSection, 'function');
+    assert.equal(typeof LI.opportunitySection.mountOpportunitySection, 'function');
 });
