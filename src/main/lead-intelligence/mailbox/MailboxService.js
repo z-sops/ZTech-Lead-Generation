@@ -9,9 +9,14 @@
  * secret lives in the injected clientConfig. Neither is ever returned, logged or put in an error.
  *
  * Capability is decided by verification (PROVIDER_CAPABILITY), never by configuration:
- *   - Gmail: may connect; may not send or sync until Step 1A passes, and a mailbox is Ready only
- *     after its own Check mailbox passes.
+ *   - Gmail: Step 1A passed live. A mailbox is Ready only after its own Check mailbox passes
+ *     (a self-send whose stored copy keeps List-Unsubscribe and shows a readable Message-ID).
  *   - Microsoft 365: identity only (MAILBOX_PROVIDER_UNVERIFIED) - no connect, send or sync.
+ *
+ * Reply sync is headers-only polling (history.list + messages.get format=metadata). A message
+ * counts as a REPLY only when it cites a provider-STORED Message-ID of this mailbox; an
+ * "unsubscribe" subject suppresses; auto-replies and delivery reports are skipped (bounce
+ * detection is deferred).
  *
  * Nothing here queues, schedules or retries. Pacing answers "may this mailbox send ONE message
  * now?" for one human click.
@@ -25,6 +30,17 @@ const {
 } = require('./mailboxContract');
 const { evaluatePacing, pacingMessage, PACING_CODE } = require('./pacing');
 const { GoogleOAuth, gmailProfile, MailboxAuthError } = require('./gmail/GoogleOAuth');
+const { GmailApi } = require('./gmail/GmailApi');
+const { GmailMailboxTransport } = require('./gmail/GmailMailboxTransport');
+const { parseMessageIds, parseFromAddress, mailboxEventId } = require('./gmail/rfc2822');
+const { unsubscribeHeaders } = require('../trust/unsubscribe');
+
+const CHECK_MIN_INTERVAL_MS = 60 * 1000;
+const SYNC_MAX_PAGES = 10;
+const SYNC_MAX_MESSAGES = 200;
+const REPLY_HEADERS = Object.freeze(['From', 'Subject', 'In-Reply-To', 'References', 'Auto-Submitted', 'Content-Type', 'Precedence', 'X-Autoreply', 'X-Autorespond']);
+const UNSUBSCRIBE_SUBJECT = /\b(unsubscribe|remove me|opt[ -]?out)\b/i;
+const DELIVERY_REPORT_FROM = /^(mailer-daemon|postmaster)@/i;
 
 const DAY_MS = 24 * 3600 * 1000;
 const LIMIT_KEYS = Object.freeze({
@@ -53,7 +69,7 @@ class MailboxService {
    *          defaultTimeZone?: string, newId?: () => string, logger?: object}} deps
    */
   constructor({ store, clock = () => new Date(), tokenStore, clientConfig, googleOAuth = null, fetch: fetchImpl = globalThis.fetch,
-    operator = 'local-user', defaultTimeZone = localTimeZone(), newId = () => 'mbx_' + crypto.randomBytes(12).toString('hex'), logger = null } = {}) {
+    operator = 'local-user', defaultTimeZone = localTimeZone(), newId = () => 'mbx_' + crypto.randomBytes(12).toString('hex'), logger = null, trust = null } = {}) {
     if (!store || !store.mailboxes || !store.marketRules || !store.sends) throw new TypeError('MailboxService needs a store with the F26.6 repositories');
     if (!tokenStore || typeof tokenStore.set !== 'function' || typeof tokenStore.remove !== 'function') throw new TypeError('MailboxService needs a tokenStore');
     if (!clientConfig || typeof clientConfig.get !== 'function') throw new TypeError('MailboxService needs a clientConfig');
@@ -67,8 +83,15 @@ class MailboxService {
     this.defaultTimeZone = isTimeZone(defaultTimeZone) ? defaultTimeZone : 'UTC';
     this.newId = newId;
     this.logger = logger;
+    this.trust = trust;
     this._connecting = null;
+    this._busy = new Set(); // mailbox_ids with a send or check in flight (one at a time per mailbox)
+    this._lastCheck = new Map();
+    this._syncing = null;
   }
+
+  /** The trust service that receives mailbox events (main-only). */
+  setTrust(trust) { this.trust = trust || null; }
 
   _now() { return this.clock(); }
 
@@ -145,14 +168,14 @@ class MailboxService {
    * status -> pacing. Returns { allowed: true, mailbox } or { allowed: false, code, message,
    * nextAllowedAt? }. Read-only; sends nothing.
    */
-  async sendGate(mailboxId) {
+  async sendGate(mailboxId, { pacing = true } = {}) {
     const row = await this._rowOrThrow(mailboxId);
     const cap = PROVIDER_CAPABILITY[row.provider];
     if (!cap || !cap.canSend) return { allowed: false, code: cap ? cap.code : 'MAILBOX_PROVIDER_UNVERIFIED', message: PROVIDER_NOTICE[row.provider] || 'This mailbox provider cannot send yet.' };
     if (row.status !== 'ready') return { allowed: false, code: 'MAILBOX_NOT_READY', message: 'Run "Check mailbox" for this mailbox before sending from it.' };
-    const pacing = await this._pacingFor(row);
-    if (!pacing.allowed) return { allowed: false, code: PACING_CODE, message: pacingMessage(pacing), nextAllowedAt: pacing.nextAllowedAt, reason: pacing.reason };
-    return { allowed: true, mailbox: sanitizeMailbox(row, pacing) };
+    const verdict = await this._pacingFor(row);
+    if (pacing && !verdict.allowed) return { allowed: false, code: PACING_CODE, message: pacingMessage(verdict), nextAllowedAt: verdict.nextAllowedAt, reason: verdict.reason };
+    return { allowed: true, mailbox: sanitizeMailbox(row, verdict) };
   }
 
   /**
@@ -197,7 +220,7 @@ class MailboxService {
       await this.tokenStore.set(mailboxId, tokens.refreshToken);
       row = await this.store.mailboxes.upsert({
         mailbox_id: mailboxId, provider: 'gmail', email_address: profile.emailAddress, display_name: null,
-        status: 'needs_check', status_code: PROVIDER_CAPABILITY.gmail.code, paused_until: null,
+        status: 'needs_check', status_code: 'MAILBOX_CHECK_REQUIRED', paused_until: null,
         ...MAILBOX_DEFAULTS, time_zone: this.defaultTimeZone, is_default: 0, sync_cursor: null,
         connected_at: nowIso, updated_at: nowIso,
       });
@@ -212,6 +235,11 @@ class MailboxService {
     }
     // A reconnect replaces the grant: the superseded refresh token is revoked (best effort).
     if (previous && previous !== tokens.refreshToken) await this.googleOAuth.revoke(previous);
+    // Reply sync starts from "now": nothing that arrived before the connect is read.
+    if (!row.sync_cursor && profile.historyId) {
+      await this.store.mailboxes.setSyncCursor(mailboxId, profile.historyId, nowIso);
+      row = await this.store.mailboxes.get(mailboxId);
+    }
     return sanitizeMailbox(row, await this._pacingFor(row));
   }
 
@@ -252,6 +280,202 @@ class MailboxService {
     if (!check.ok) throw new ValidationError('Invalid limits', [{ path: '$.limits', message: check.error.replace(/^limits: /, '') }]);
     const row = await this.store.mailboxes.setLimits(mailboxId, patch, this._now().toISOString());
     return sanitizeMailbox(row, await this._pacingFor(row));
+  }
+
+  /* ------------------------------ Gmail transport ------------------------------ */
+
+  async _accessToken(row) {
+    const client = this._client();
+    if (!client || !this.googleOAuth) throw new LiError('MAILBOX_CLIENT_NOT_CONFIGURED', 'Add your Google OAuth client ID and secret in Settings > Mailboxes first.');
+    const refreshToken = await this._tokenOf(row.mailbox_id);
+    if (!refreshToken) {
+      await this._mark(row, 'reconnect_needed', 'MAILBOX_RECONNECT_NEEDED');
+      throw new LiError('MAILBOX_RECONNECT_NEEDED', 'This mailbox needs to be reconnected.');
+    }
+    try {
+      return await this.googleOAuth.accessToken({ ...client, refreshToken });
+    } catch (e) {
+      const err = mailboxError(e);
+      if (err && err.code === 'MAILBOX_RECONNECT_NEEDED') await this._mark(row, 'reconnect_needed', 'MAILBOX_RECONNECT_NEEDED');
+      throw err;
+    }
+  }
+
+  async _mark(row, status, code) {
+    try {
+      await this.store.mailboxes.setStatus(row.mailbox_id, { status, status_code: code, updated_at: this._now().toISOString() });
+    } catch { /* the refusal itself still reaches the caller */ }
+  }
+
+  _api(row) {
+    return new GmailApi({
+      fetch: this.fetch,
+      getAccessToken: async () => {
+        const token = await this._accessToken(row);
+        return token;
+      },
+    });
+  }
+
+  /**
+   * The transport for ONE send from ONE mailbox (main-only). Refuses a provider that is not
+   * capability-enabled; the caller (the send boundary) runs sendGate() first.
+   */
+  async transportFor(mailboxId) {
+    const row = await this._rowOrThrow(mailboxId);
+    const cap = PROVIDER_CAPABILITY[row.provider];
+    if (!cap || !cap.canSend || row.provider !== 'gmail') throw new LiError(cap ? cap.code || 'MAILBOX_PROVIDER_UNVERIFIED' : 'MAILBOX_PROVIDER_UNVERIFIED', PROVIDER_NOTICE[row.provider] || 'This mailbox provider cannot send.');
+    const api = this._api(row);
+    return new GmailMailboxTransport({ api, mailbox: row });
+  }
+
+  /** One send or check per mailbox at a time: a second click while one is in flight is refused. */
+  async withMailboxLock(mailboxId, fn) {
+    if (this._busy.has(mailboxId)) throw new LiError('MAILBOX_BUSY', 'This mailbox is already sending one message. Nothing was queued; try again when it finishes.');
+    this._busy.add(mailboxId);
+    try { return await fn(); } finally { this._busy.delete(mailboxId); }
+  }
+
+  /** After a real send: a stripped unsubscribe header takes the mailbox out of Ready. */
+  async noteReadBack(mailboxId, readBack) {
+    if (readBack && readBack.listUnsubscribeKept === false) {
+      const row = await this.store.mailboxes.get(mailboxId);
+      if (row) await this._mark(row, 'needs_check', 'MAILBOX_HEADER_STRIPPED');
+    }
+  }
+
+  /**
+   * "Check mailbox": ONE message from the mailbox to itself, then a read-back of the stored copy.
+   * Ready only when the stored copy keeps List-Unsubscribe and shows a readable Message-ID - the
+   * two things every real send and reply match depend on. Nothing is retried.
+   */
+  async check({ mailboxId } = {}) {
+    const row = await this._rowOrThrow(mailboxId);
+    const cap = PROVIDER_CAPABILITY[row.provider];
+    if (!cap || !cap.canSend) throw new LiError(cap ? cap.code || 'MAILBOX_PROVIDER_UNVERIFIED' : 'MAILBOX_PROVIDER_UNVERIFIED', PROVIDER_NOTICE[row.provider] || 'This mailbox provider is not available.');
+    const last = this._lastCheck.get(mailboxId);
+    const nowMs = this._now().getTime();
+    if (last && nowMs - last < CHECK_MIN_INTERVAL_MS) throw new LiError('MAILBOX_CHECK_TOO_SOON', 'This mailbox was checked less than a minute ago. Nothing was sent.');
+    return this.withMailboxLock(mailboxId, async () => {
+      this._lastCheck.set(mailboxId, nowMs);
+      const transport = await this.transportFor(mailboxId);
+      const headers = unsubscribeHeaders({ mailbox: row.email_address });
+      const message = {
+        to: row.email_address, from: row.email_address, subject: 'ZTech mailbox check',
+        text: 'ZTech sent this message from your mailbox to itself to confirm that Gmail keeps the unsubscribe header and a readable Message-ID. You can delete it.',
+        headers: { ...headers, 'X-ZTech-Check': crypto.randomBytes(8).toString('hex') },
+      };
+      const sent = await transport.send(message);
+      const rb = await transport.readBack(sent.messageId, { expectListUnsubscribe: headers['List-Unsubscribe'] });
+      const passed = rb.listUnsubscribeKept && Boolean(rb.storedMessageId);
+      const code = passed ? null : (!rb.listUnsubscribeKept ? 'MAILBOX_HEADER_STRIPPED' : 'MAILBOX_MESSAGE_ID_UNREADABLE');
+      await this.store.mailboxes.setStatus(mailboxId, { status: passed ? 'ready' : 'needs_check', status_code: code, updated_at: this._now().toISOString() });
+      // Reply sync starts here if it had no cursor yet.
+      const fresh = await this.store.mailboxes.get(mailboxId);
+      if (!fresh.sync_cursor) {
+        const p = await this._api(fresh).profile().catch(() => null);
+        if (p && p.historyId) await this.store.mailboxes.setSyncCursor(mailboxId, p.historyId, this._now().toISOString());
+      }
+      const after = await this.store.mailboxes.get(mailboxId);
+      return { mailbox: sanitizeMailbox(after, await this._pacingFor(after)), check: { passed, listUnsubscribeKept: rb.listUnsubscribeKept, storedMessageIdReadable: Boolean(rb.storedMessageId) } };
+    });
+  }
+
+  /**
+   * Headers-only reply sync for ONE mailbox. Reads what arrived in the Inbox since the cursor and
+   * hands each candidate to the trust intake as a 'mailbox' event:
+   *   - a delivery report (multipart/report, mailer-daemon, postmaster) is SKIPPED - bounces deferred;
+   *   - an automatic message (Auto-Submitted, X-Autoreply, Precedence bulk/auto_reply) is skipped;
+   *   - an "unsubscribe" subject -> 'unsubscribe' (suppresses; needs no match);
+   *   - otherwise a message citing ids -> 'reply' (the intake accepts it ONLY if a cited id is a
+   *     STORED Message-ID of this mailbox's own sends).
+   * The cursor advances only after every candidate was handed over.
+   */
+  async syncReplies({ mailboxId } = {}) {
+    const row = await this._rowOrThrow(mailboxId);
+    const cap = PROVIDER_CAPABILITY[row.provider];
+    if (!cap || !cap.canSyncReplies || row.provider !== 'gmail') throw new LiError(cap ? cap.code || 'MAILBOX_PROVIDER_UNVERIFIED' : 'MAILBOX_PROVIDER_UNVERIFIED', PROVIDER_NOTICE[row.provider] || 'Reply sync is not available for this mailbox.');
+    if (row.status === 'reconnect_needed') throw new LiError('MAILBOX_RECONNECT_NEEDED', 'This mailbox needs to be reconnected.');
+    if (!this.trust || typeof this.trust.intake !== 'function') throw new LiError('TRUST_UNAVAILABLE', 'The do-not-contact records cannot be written, so replies are not read.');
+    const api = this._api(row);
+    const summary = { mailboxId, read: 0, replies: 0, unsubscribes: 0, unmatched: 0, skippedAutomatic: 0, skippedDeliveryReports: 0, cursorReset: false };
+    if (!row.sync_cursor) {
+      const p = await api.profile();
+      if (p.historyId) await this.store.mailboxes.setSyncCursor(mailboxId, p.historyId, this._now().toISOString());
+      return summary;
+    }
+    // Page by page: every message of a page is handed to the intake, THEN the cursor moves to
+    // that page's last history record. A long backlog (app closed for days) is worked through
+    // over several runs; nothing is skipped and nothing is read twice into a second effect
+    // (event ids are stable, so a re-read is a duplicate no-op).
+    const seen = new Set();
+    let cursor = row.sync_cursor;
+    let pageToken = null;
+    for (let page = 0; page < SYNC_MAX_PAGES && summary.read < SYNC_MAX_MESSAGES; page += 1) {
+      let h;
+      try {
+        h = await api.history({ startHistoryId: row.sync_cursor, pageToken });
+      } catch (e) {
+        if (e && e.code === 'MAILBOX_REMOTE_NOT_FOUND' && page === 0) {
+          // The cursor is too old for Gmail's history. Restart from now and SAY so: anything in
+          // the gap is not read, and ZTech never claims a reply it did not see.
+          const p = await api.profile();
+          if (p.historyId) await this.store.mailboxes.setSyncCursor(mailboxId, p.historyId, this._now().toISOString());
+          return { ...summary, cursorReset: true };
+        }
+        throw e;
+      }
+      for (const m of h.added) {
+        if (seen.has(m.id) || m.labelIds.includes('SENT') || m.labelIds.includes('DRAFT')) continue;
+        seen.add(m.id);
+        await this._intakeOne(api, row, m.id, summary);
+      }
+      cursor = h.nextPageToken ? (h.lastRecordId || cursor) : (h.historyId || h.lastRecordId || cursor);
+      if (cursor && cursor !== row.sync_cursor) await this.store.mailboxes.setSyncCursor(mailboxId, cursor, this._now().toISOString());
+      pageToken = h.nextPageToken;
+      if (!pageToken) break;
+    }
+    return summary;
+  }
+
+  async _intakeOne(api, row, id, summary) {
+    let m;
+    try {
+      m = await api.metadata(id, REPLY_HEADERS);
+    } catch (e) {
+      if (e && e.code === 'MAILBOX_REMOTE_NOT_FOUND') { summary.read += 1; return; } // deleted since it arrived
+      throw e;
+    }
+    summary.read += 1;
+    const h = m.headers;
+    const from = parseFromAddress(h.from || '');
+    if (!from || from === row.email_address) return;
+    if (DELIVERY_REPORT_FROM.test(from) || /multipart\/report/i.test(h['content-type'] || '')) { summary.skippedDeliveryReports += 1; return; }
+    const auto = h['auto-submitted'] && h['auto-submitted'].trim().toLowerCase() !== 'no';
+    if (auto || h['x-autoreply'] || h['x-autorespond'] || /^(auto_reply|bulk|junk|list)$/i.test((h.precedence || '').trim())) { summary.skippedAutomatic += 1; return; }
+    const refs = [...parseMessageIds(h['in-reply-to']), ...parseMessageIds(h.references)];
+    const kind = UNSUBSCRIBE_SUBJECT.test(h.subject || '') ? 'unsubscribe' : 'reply';
+    if (kind === 'reply' && !refs.length) return;
+    const r = await this.trust.intake({
+      event_id: mailboxEventId(row.mailbox_id, id), kind, channel: 'email', address: from,
+      received_at: this._now().toISOString(), mailbox_id: row.mailbox_id, reference_ids: refs,
+    }, { source: 'mailbox' });
+    if (r && r.accepted && !r.duplicate) summary[kind === 'reply' ? 'replies' : 'unsubscribes'] += 1;
+    else if (r && r.code === 'REPLY_NOT_MATCHED') summary.unmatched += 1;
+  }
+
+  /** Sync every Gmail mailbox that can be synced. One at a time; a failure never stops the rest. */
+  async syncAll() {
+    if (this._syncing) return this._syncing;
+    this._syncing = (async () => {
+      const out = [];
+      for (const row of await this.store.mailboxes.list()) {
+        if (row.provider !== 'gmail' || row.status === 'reconnect_needed' || !PROVIDER_CAPABILITY.gmail.canSyncReplies) continue;
+        try { out.push(await this.syncReplies({ mailboxId: row.mailbox_id })); } catch (e) { out.push({ mailboxId: row.mailbox_id, error: (e && e.code) || 'MAILBOX_SYNC_FAILED' }); }
+      }
+      return out;
+    })().finally(() => { this._syncing = null; });
+    return this._syncing;
   }
 
   /* -------------------------------- market rules -------------------------------- */

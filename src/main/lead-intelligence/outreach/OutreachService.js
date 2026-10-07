@@ -989,7 +989,10 @@ class OutreachService {
       contactFacts: facts,
       // F26.5: the trust verdict the send boundary WILL apply (suppression, identity, transport,
       // subject, consent, session) - read-only, beside readiness and delivery, never inside them.
-      trust: await this._trustPreview(pitch, channel, recipient.contact, ctx && ctx.view ? ctx.view.country : null)
+      trust: await this._trustPreview(pitch, channel, recipient.contact, ctx && ctx.view ? ctx.view.country : null),
+      // F26.6: the sending mailbox line - the default connected mailbox, its gate (capability,
+      // Ready, pacing) and the trust verdict under ITS transport policy. Read-only; email only.
+      ...(channel === 'email' ? { mailbox: await this._mailboxPreview(pitch, recipient.contact, ctx && ctx.view ? ctx.view.country : null) } : {})
     };
   }
 
@@ -1021,7 +1024,11 @@ class OutreachService {
    * @returns {Promise<object>} the selected channel boundary's own result
    * @throws {ValidationError} when the channel is missing or not one of the two enum values
    */
-  async send({ pitchId, channel }) {
+  async send({ pitchId, channel, mailboxId = undefined }) {
+    // F26.6: an email from the user's own connected mailbox. The transactional-provider path
+    // below is untouched; WhatsApp never takes a mailbox.
+    if (channel === 'email' && mailboxId !== undefined) return this.sendFromMailbox({ pitchId, mailboxId });
+    if (mailboxId !== undefined) throw new ValidationError('mailbox is email-only', [{ path: '$.mailboxId', message: 'a mailbox can only send email' }]);
     if (channel === 'email') return this.sendEmail({ pitchId });
     if (channel === 'whatsapp') return this.sendWhatsApp({ pitchId });
     throw new ValidationError('unknown send channel', [
@@ -1329,6 +1336,182 @@ class OutreachService {
       idempotencyKey, providerMessageId: winner.provider_message_id
     });
     return this._sendResult({ pitch, outcome: 'accepted', send: winner, gate: verdict, providerStatus: receipt && receipt.status });
+  }
+
+  /**
+   * F26.6: what Prepare shows about sending from the default mailbox. Verdicts and the sanitized
+   * mailbox record only - no token, no address of the contact, no ref.
+   */
+  async _mailboxPreview(pitch, recipient, country) {
+    if (!this.mailboxes) return null;
+    const row = await this.mailboxes.store.mailboxes.getDefault();
+    if (!row) return { mailbox: null, gate: null, trust: null, canSend: false };
+    const gate = await this.mailboxes.sendGate(row.mailbox_id);
+    let trust = { allowed: false, code: gate.code || 'MAILBOX_PROVIDER_UNVERIFIED', message: gate.message || null };
+    if (this.trust) {
+      let transport = null;
+      try { transport = await this.mailboxes.transportFor(row.mailbox_id); } catch { transport = null; }
+      if (transport) {
+        const v = await this.trust.evaluate({ channel: 'email', recipient, offer: this.offer, sender: { fromName: this._senderProfile().displayName || row.display_name || null }, subject: pitch.subject, provider: transport, country });
+        trust = { allowed: v.allowed === true, code: v.allowed ? null : v.code, message: v.allowed ? null : v.message };
+      }
+    }
+    const mailbox = gate.allowed ? gate.mailbox : await this.mailboxes.get(row.mailbox_id);
+    return {
+      mailbox,
+      gate: { allowed: gate.allowed === true, code: gate.allowed ? null : gate.code, message: gate.allowed ? null : gate.message, nextAllowedAt: gate.nextAllowedAt || null },
+      trust,
+      canSend: gate.allowed === true && trust.allowed === true,
+    };
+  }
+
+  /** F26.6: the connected-mailbox service (main-only), set by the runtime. */
+  setMailboxes(mailboxes) { this.mailboxes = mailboxes || null; }
+
+  // === F26.6: the connected-mailbox send boundary ===
+  //
+  // The SAME safety order as sendEmail, with the mailbox in place of the configured provider:
+  //   1. mailbox gate - provider capability (verified) and mailbox Ready (its Check passed)
+  //   ...
+  //   6b. PACING for THIS mailbox_id (caps, gap, window), inside the per-mailbox lock, right before
+  //       the attempt is recorded - so a replay (which contacts nobody) is never paced, and two
+  //       racing clicks are judged on the ledger as it is. Refusal = MAILBOX_PACING with the next
+  //       allowed time. Nothing is queued.
+  //   2-5. pitch, Outreach Gate re-check, idempotency (same key as any email of this content, so
+  //        one approved content is accepted once across every transport), stored recipient
+  //   5b. trust checks with the mailbox transport's own policy - suppression, sender identity,
+  //       the market gate, subject lint
+  //   6. validation: from = the mailbox address, List-Unsubscribe mandatory, NO Message-ID
+  //   7. durable attempt row (mailbox_id, provider 'gmail') BEFORE the provider is touched
+  //   8. one provider call, under a per-mailbox lock (a second click while one is in flight is refused)
+  //   9. settle accepted/failed, then READ BACK the stored copy and persist the provider-STORED
+  //      Message-ID (li_mailbox_sent). Replies are matched against that id only.
+  async sendFromMailbox({ pitchId, mailboxId }) {
+    if (!this.mailboxes) {
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: 'Mailboxes are not available here.', channel: 'email', blockedCode: 'MAILBOX_UNAVAILABLE' });
+      throw new LiError('MAILBOX_UNAVAILABLE', 'Mailboxes are not available here.');
+    }
+    // (1) Mailbox gate: capability -> Ready. Read-only. (Pacing is step 6b.)
+    const gate = await this.mailboxes.sendGate(mailboxId, { pacing: false });
+    if (!gate.allowed) {
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: gate.message, channel: 'email', blockedCode: gate.code });
+      const err = new LiError(gate.code, gate.message);
+      if (gate.nextAllowedAt) err.details = { nextAllowedAt: gate.nextAllowedAt };
+      throw err;
+    }
+    const mailbox = gate.mailbox;
+    const transport = await this.mailboxes.transportFor(mailboxId);
+
+    // (2) Existence and (3) the Outreach Gate re-check.
+    const pitch = await this.get(pitchId);
+    const verdict = await this.gate({ pitchId, channel: 'email' });
+    if (!verdict || verdict.decision !== 'allowed') {
+      const first = verdict && Array.isArray(verdict.reasons) && verdict.reasons.length ? verdict.reasons[0] : null;
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: first ? first.message : 'The Outreach Gate does not allow this pitch right now.', channel: 'email', contentHash: pitch.content_hash });
+      throw new LiError('NOT_READY', 'The Outreach Gate does not allow this pitch right now.');
+    }
+
+    // (4) Idempotency across every email transport.
+    const idempotencyKey = sendIdempotencyKey({ channel: 'email', pitchId: pitch.pitch_id, contentHash: pitch.content_hash });
+    const already = await this.store.sends.findAccepted(idempotencyKey);
+    if (already) return this._sendResult({ pitch, outcome: 'replayed', send: already, gate: verdict });
+
+    // (5) Recipient from the STORED contact facts only.
+    const ctx = await this.contexts.getContext(pitch.lead_id, { targetId: pitch.target_id ?? undefined });
+    const facts = ctx && ctx.view ? contactFactsFromView(ctx.view, ctx.view.email_raw_present) : null;
+    if (!facts || facts.channels.email.state !== 'available' || !facts.channels.email.contact) {
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: 'No valid email address is stored for this lead.', channel: 'email', contentHash: pitch.content_hash });
+      throw new LiError('CHANNEL_UNAVAILABLE', 'No valid email address is stored for this lead.');
+    }
+
+    // (5b) Trust: suppression -> identity -> transport policy (the mailbox's) -> MARKET -> subject.
+    const fromName = this._senderProfile().displayName || mailbox.displayName || null;
+    await this._enforceTrust(pitch, 'email', facts.channels.email.contact, {
+      fromName, provider: transport, country: ctx && ctx.view ? ctx.view.country : null,
+    });
+
+    // (6) The complete message. Unsubscribe headers go to the mailbox's OWN address.
+    const recipientAddress = normalizeEmail(facts.channels.email.contact);
+    const oneClick = this._oneClickFor(recipientAddress);
+    const unsubscribe = unsubscribeHeaders({ mailbox: mailbox.emailAddress, oneClickUrl: oneClick ? oneClick.url : null });
+    if (!unsubscribe) {
+      const reason = 'The unsubscribe header could not be built from the mailbox address, so nothing is sent.';
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason, channel: 'email', contentHash: pitch.content_hash, blockedCode: 'UNSUBSCRIBE_HEADERS_UNAVAILABLE' });
+      throw new LiError('UNSUBSCRIBE_HEADERS_UNAVAILABLE', reason);
+    }
+    const message = {
+      to: facts.channels.email.contact,
+      from: mailbox.emailAddress,
+      ...(fromName ? { fromName } : {}),
+      subject: pitch.subject,
+      text: this._emailFinalBody(pitch, { oneClickUrl: oneClick ? oneClick.url : null }),
+      headers: { 'X-ZTech-Pitch': pitch.pitch_id, 'X-ZTech-Send-Key': idempotencyKey, ...unsubscribe },
+    };
+    const valid = transport.validate(message);
+    if (!valid || valid.valid !== true) {
+      const detail = Array.isArray(valid && valid.errors) && valid.errors.length ? valid.errors[0].message : 'the message is invalid';
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: `The email message did not validate: ${detail}`, channel: 'email', contentHash: pitch.content_hash });
+      throw new ValidationError('email message is invalid', (valid && valid.errors ? valid.errors : []).map((e) => ({ path: `$.${e.field}`, message: e.message })));
+    }
+    await this._rememberRef(oneClick, recipientAddress);
+
+    return this.mailboxes.withMailboxLock(mailboxId, async () => {
+      // (6b) Pacing, inside the lock: judged on the ledger as it is now.
+      const again = await this.mailboxes.sendGate(mailboxId);
+      if (!again.allowed) {
+        await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: again.message, channel: 'email', contentHash: pitch.content_hash, blockedCode: again.code });
+        throw new LiError(again.code, again.message);
+      }
+      // (7) The durable attempt.
+      const sendId = newId('send');
+      const now = this.clock().toISOString();
+      await this.store.sends.record({
+        send_id: sendId, lead_id: pitch.lead_id, pitch_id: pitch.pitch_id, channel: 'email', content_hash: pitch.content_hash,
+        idempotency_key: idempotencyKey, state: 'attempted', provider_id: transport.id, mailbox_id: mailboxId, created_at: now, updated_at: now,
+      });
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_ATTEMPTED', { channel: 'email', contentHash: pitch.content_hash, providerId: transport.id, idempotencyKey });
+
+      // (8) The only call that reaches the outside world.
+      let receipt;
+      try {
+        receipt = await transport.send(message);
+      } catch (err) {
+        const at = this.clock().toISOString();
+        const code = err && err.code ? String(err.code) : 'EMAIL_SEND_FAILED';
+        const safe = err instanceof LiError ? err.message : 'The mailbox could not send the message.';
+        await this.store.sends.fail({ sendId, failureCode: code, failureMessage: safe, at });
+        await this._recordSendEvent(pitchId, 'OUTREACH_SEND_FAILED', { channel: 'email', contentHash: pitch.content_hash, providerId: transport.id, idempotencyKey, failureCode: code, reason: safe });
+        throw err instanceof LiError ? err : new LiError(code, safe);
+      }
+
+      // (9) Accepted - never delivered, opened or clicked.
+      const at = this.clock().toISOString();
+      const settled = await this.store.sends.accept({ sendId, providerId: transport.id, providerMessageId: receipt.messageId, at });
+      const winner = settled && settled.ok === false ? settled.row : await this.store.sends.get(sendId);
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_ACCEPTED', { channel: 'email', contentHash: pitch.content_hash, providerId: transport.id, idempotencyKey, providerMessageId: winner.provider_message_id });
+
+      // (9b) READ BACK the stored copy: its Message-ID is the one replies cite (Step 1A).
+      let readBack = null;
+      try {
+        readBack = await transport.readBack(receipt.messageId, { expectListUnsubscribe: unsubscribe['List-Unsubscribe'] });
+      } catch {
+        readBack = null; // the send happened; matching for it is simply unavailable
+      }
+      await this.store.mailboxSent.record({
+        send_id: sendId, mailbox_id: mailboxId, provider_message_id: receipt.messageId,
+        stored_message_id: readBack ? readBack.storedMessageId : null, thread_id: (readBack && readBack.threadId) || receipt.threadId || null,
+        recorded_at: this.clock().toISOString(),
+      });
+      await this.mailboxes.noteReadBack(mailboxId, readBack);
+      const result = this._sendResult({ pitch, outcome: settled && settled.ok === false ? 'replayed' : 'accepted', send: winner, gate: verdict });
+      return {
+        ...result,
+        mailboxId,
+        // Whether a reply to THIS message can be recognised: only with a readable stored Message-ID.
+        replyMatching: readBack && readBack.storedMessageId ? 'ready' : 'unavailable',
+        unsubscribeHeadersKept: readBack ? readBack.listUnsubscribeKept : null,
+      };
+    });
   }
 
   // === F20: the WhatsApp send boundary ===

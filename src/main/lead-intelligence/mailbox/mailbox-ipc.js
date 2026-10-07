@@ -13,11 +13,13 @@
  *   lead-intel:market-rules          {}                                   read
  *   lead-intel:market-rule-set       { countryCode, rule, note }          write
  *   lead-intel:market-rule-remove    { countryCode }                      write
+ *   lead-intel:mailbox-check         { mailboxId }                        ONE self-message + read-back
+ *   lead-intel:mailbox-replies       { mailboxId }                        read replies now (headers only)
  *
  * WHAT CROSSES TO THE RENDERER: sanitized mailbox records (mailbox_id, provider, address,
  * display name, connection status, pacing status), provider capability states, and the Google
  * client ID (not a secret). NEVER a token, an auth code, a PKCE verifier or the client secret:
- * the secret is accepted one way, here, and never echoed. There is no send channel here.
+ * the secret is accepted one way, here, and never echoed. No channel here can send to a lead: a mailbox send to a lead goes only through lead-intel:outreach-send.
  */
 
 const { assertValid } = require('../core/validate');
@@ -36,6 +38,10 @@ const MAILBOX_CHANNELS_IPC = Object.freeze({
   MARKET_LIST: 'lead-intel:market-rules',
   MARKET_SET: 'lead-intel:market-rule-set',
   MARKET_REMOVE: 'lead-intel:market-rule-remove',
+  // F26.6 (Gmail, after Step 1A): "Check mailbox" sends ONE message from the mailbox to itself and
+  // reads the stored copy back; "Check replies now" reads headers only. Neither can reach a lead.
+  CHECK: 'lead-intel:mailbox-check',
+  REPLIES: 'lead-intel:mailbox-replies',
 });
 
 const obj = (properties, required = []) => Object.freeze({ type: 'object', additionalProperties: false, required, properties });
@@ -73,6 +79,8 @@ const MAILBOX_SCHEMAS = Object.freeze({
     note: { type: 'string', minLength: 3, maxLength: 500 },
   }, ['countryCode', 'rule', 'note']),
   [MAILBOX_CHANNELS_IPC.MARKET_REMOVE]: obj({ countryCode: COUNTRY }, ['countryCode']),
+  [MAILBOX_CHANNELS_IPC.CHECK]: obj({ mailboxId: MAILBOX_ID }, ['mailboxId']),
+  [MAILBOX_CHANNELS_IPC.REPLIES]: obj({ mailboxId: MAILBOX_ID }, ['mailboxId']),
 });
 
 function registerMailboxIpc({ ipcMain, mailboxes, isTrustedSender, logger = console }) {
@@ -95,6 +103,8 @@ function registerMailboxIpc({ ipcMain, mailboxes, isTrustedSender, logger = cons
     [MAILBOX_CHANNELS_IPC.MARKET_LIST]: () => mailboxes.marketRules(),
     [MAILBOX_CHANNELS_IPC.MARKET_SET]: (a) => mailboxes.setMarketRule({ countryCode: a.countryCode, rule: a.rule, note: a.note }),
     [MAILBOX_CHANNELS_IPC.MARKET_REMOVE]: (a) => mailboxes.removeMarketRule({ countryCode: a.countryCode }),
+    [MAILBOX_CHANNELS_IPC.CHECK]: (a) => mailboxes.check({ mailboxId: a.mailboxId }),
+    [MAILBOX_CHANNELS_IPC.REPLIES]: (a) => mailboxes.syncReplies({ mailboxId: a.mailboxId }),
   };
   for (const [channel, run] of Object.entries(handlers)) {
     ipcMain.handle(channel, async (event, input) => {

@@ -156,6 +156,9 @@ const INPUT_SCHEMAS = Object.freeze({
   [CHANNELS.OUTREACH_SEND]: obj({
     pitchId,
     channel: { type: 'string', enum: ['email', 'whatsapp'] },
+    // F26.6: the connected mailbox to send this ONE email from, by id only. Everything else
+    // (address, token, provider) is resolved in main; WhatsApp refuses a mailbox.
+    mailboxId: { type: 'string', minLength: 12, maxLength: 68, pattern: /^mbx_[A-Za-z0-9-]{8,64}$/ },
   }, ['pitchId', 'channel']),
   // F21: read-only send history. Deliberately the same narrow shape as the F15 activity
   // channel - paging integers plus an optional id filter, additionalProperties:false - so the
@@ -265,7 +268,7 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
   // selected channel's capability is unavailable the call fails closed with that channel's
   // own factual refusal rather than contacting the lead somewhere else. An unknown channel
   // never reaches a provider - the service throws before any boundary runs.
-  handle(CHANNELS.OUTREACH_SEND, (a) => outreach.send({ pitchId: a.pitchId, channel: a.channel }));
+  handle(CHANNELS.OUTREACH_SEND, (a) => outreach.send({ pitchId: a.pitchId, channel: a.channel, ...(a.mailboxId !== undefined ? { mailboxId: a.mailboxId } : {}) }));
 
   // F21: read-only send history. The renderer can ask "what send attempts are recorded for
   // this pitch" and nothing else. It cannot write a row, mark one accepted, delete one, or

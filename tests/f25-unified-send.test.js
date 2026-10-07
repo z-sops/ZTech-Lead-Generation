@@ -556,7 +556,9 @@ test('E. an invalid or missing channel is refused by the IPC schema AND by the s
   assert.strictEqual(emailSpy.calls.length + waSpy.calls.length, 0, 'still zero provider invocations');
   const schema = INPUT_SCHEMAS[CHANNELS.OUTREACH_SEND];
   assert.deepStrictEqual(schema.required, ['pitchId', 'channel']);
-  assert.deepStrictEqual(Object.keys(schema.properties), ['pitchId', 'channel']);
+  // F26.6 declared lock update: + an OPTIONAL mailboxId (id only; a connected-mailbox email).
+  assert.deepStrictEqual(Object.keys(schema.properties), ['pitchId', 'channel', 'mailboxId']);
+  assert.deepStrictEqual(Object.keys(schema.properties.mailboxId).sort(), ['maxLength', 'minLength', 'pattern', 'type']);
   assert.deepStrictEqual(schema.properties.channel.enum, ['email', 'whatsapp']);
   assert.strictEqual(schema.additionalProperties, false);
 });

@@ -22,9 +22,12 @@ const MARKET_RULES = Object.freeze(['consent_required', 'opt_out_allowed']);
  * List-Unsubscribe; 'verified' only after it does.
  */
 const PROVIDER_CAPABILITY = Object.freeze({
-  // Step 1A (a real Gmail mailbox) must pass before Gmail can send or sync; each mailbox also
-  // passes its own "Check mailbox" before it is Ready. Connecting (OAuth + profile) is allowed.
-  gmail: Object.freeze({ code: 'MAILBOX_PROVIDER_STEP1_PENDING', canConnect: true, canSend: false, canSyncReplies: false, unsubscribeHeaderSupport: 'unknown' }),
+  // Step 1A PASSED live on 7 Oct 2026 (real cross-mailbox probe, gmail.send + gmail.metadata):
+  // List-Unsubscribe (mailto + HTTPS) and List-Unsubscribe-Post survive in the stored copy, the
+  // stored Message-ID is readable, Gmail REPLACES a supplied Message-ID, and a real reply's
+  // In-Reply-To / References cite the STORED id. Each mailbox must still pass its own
+  // "Check mailbox" before it is Ready, and every send passes every gate.
+  gmail: Object.freeze({ code: null, canConnect: true, canSend: true, canSyncReplies: true, unsubscribeHeaderSupport: 'verified' }),
   // Step 1B is deferred: identity and interface only. Nothing is claimed for Microsoft.
   microsoft365: Object.freeze({ code: 'MAILBOX_PROVIDER_UNVERIFIED', canConnect: false, canSend: false, canSyncReplies: false, unsubscribeHeaderSupport: 'unknown' }),
 });
@@ -35,7 +38,7 @@ const PROVIDER_LABEL = Object.freeze({
 });
 
 const PROVIDER_NOTICE = Object.freeze({
-  gmail: 'Gmail sending is waiting for its real-mailbox verification (Step 1A).',
+  gmail: 'Verified for one-message-per-click sending. Each mailbox runs "Check mailbox" once before it is Ready.',
   microsoft365: 'Microsoft 365 — verification required before activation',
 });
 

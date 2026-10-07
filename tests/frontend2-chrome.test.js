@@ -292,9 +292,9 @@ test('19. no IPC, channel, or dependency was added', () => {
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total.
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total; +2 check, checkReplies = 95 total.
   assert.strictEqual(fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
-    .split('ipcRenderer.invoke').length - 1, 93, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read, the eleven A10..F21 Lead Intelligence methods, and the seven Phase I2 Opportunity Intelligence methods');
+    .split('ipcRenderer.invoke').length - 1, 95, 'the preload surface is 32 channels plus seven F6 Lists methods, the F7 research list, the F8 ICP read, the eleven A10..F21 Lead Intelligence methods, and the seven Phase I2 Opportunity Intelligence methods');
 });
 
 test('20. the chrome stays inside the existing CSP', () => {

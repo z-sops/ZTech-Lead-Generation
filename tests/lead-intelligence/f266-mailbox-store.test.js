@@ -30,7 +30,7 @@ async function sqlStore(upTo = Infinity) {
 }
 const mbx = (o = {}) => ({
   mailbox_id: 'mbx_aaaaaaaaaaaa', provider: 'gmail', email_address: 'Dana@Ridgeline.Example', display_name: null,
-  status: 'needs_check', status_code: 'MAILBOX_PROVIDER_STEP1_PENDING', paused_until: null, ...M.MAILBOX_DEFAULTS,
+  status: 'needs_check', status_code: 'MAILBOX_CHECK_REQUIRED', paused_until: null, ...M.MAILBOX_DEFAULTS,
   time_zone: 'Asia/Karachi', is_default: 0, sync_cursor: null, connected_at: '2026-10-07T05:00:00.000Z', updated_at: '2026-10-07T05:00:00.000Z', ...o,
 });
 const send = (o = {}) => ({
@@ -179,8 +179,8 @@ test('R6. the sanitized record carries identity, status and pacing only - never 
   assert.equal(view.pacing.sentToday, 3);
 });
 
-test('R7. provider capability: Gmail may connect but not send or sync yet; Microsoft claims nothing', () => {
-  assert.deepEqual({ ...M.PROVIDER_CAPABILITY.gmail }, { code: 'MAILBOX_PROVIDER_STEP1_PENDING', canConnect: true, canSend: false, canSyncReplies: false, unsubscribeHeaderSupport: 'unknown' });
+test('R7. provider capability: Gmail verified by Step 1A (send + sync); Microsoft claims nothing', () => {
+  assert.deepEqual({ ...M.PROVIDER_CAPABILITY.gmail }, { code: null, canConnect: true, canSend: true, canSyncReplies: true, unsubscribeHeaderSupport: 'verified' });
   assert.deepEqual({ ...M.PROVIDER_CAPABILITY.microsoft365 }, { code: 'MAILBOX_PROVIDER_UNVERIFIED', canConnect: false, canSend: false, canSyncReplies: false, unsubscribeHeaderSupport: 'unknown' });
   assert.equal(M.PROVIDER_NOTICE.microsoft365, 'Microsoft 365 — verification required before activation');
 });

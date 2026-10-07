@@ -121,7 +121,7 @@ test('1a. Gmail connect: system browser + loopback 127.0.0.1 + PKCE S256 + state
   assert.ok(!u.searchParams.has('client_secret'), 'the secret is never in the browser URL');
   assert.strictEqual(view.emailAddress, 'dana@ridgeline.example');
   assert.strictEqual(view.status, 'needs_check', 'a connected mailbox is not Ready until its Check mailbox passes');
-  assert.strictEqual(view.statusCode, 'MAILBOX_PROVIDER_STEP1_PENDING');
+  assert.strictEqual(view.statusCode, 'MAILBOX_CHECK_REQUIRED', 'Ready only after its own Check mailbox');
   assert.strictEqual(view.isDefault, true);
   assert.strictEqual(view.limits.timeZone, 'Asia/Karachi');
   assert.ok(/^mbx_[a-f0-9]{24}$/.test(view.mailboxId));
@@ -237,15 +237,17 @@ test('1h. a reconnect that issues a new refresh token revokes the superseded one
 
 /* ======================== 2-3. capability, readiness, pacing ======================== */
 
-test('2. the send gate: Gmail is refused while Step 1A is pending even for a Ready mailbox; then status; then pacing', async () => {
+test('2. the send gate: a connected Gmail mailbox is refused until its Check passes; then pacing decides', async () => {
   const { svc, store } = service();
   const m = await svc.connect({ provider: 'gmail' });
+  assert.strictEqual((await store.mailboxes.get(m.mailboxId)).sync_cursor, '123', 'reply sync starts from the connect, not from old mail');
   let g = await svc.sendGate(m.mailboxId);
   assert.strictEqual(g.allowed, false);
-  assert.strictEqual(g.code, 'MAILBOX_PROVIDER_STEP1_PENDING', 'capability first: no Gmail mailbox sends before Step 1A');
+  assert.strictEqual(g.code, 'MAILBOX_NOT_READY');
   await store.mailboxes.setStatus(m.mailboxId, { status: 'ready', status_code: null, updated_at: iso(NOW) });
   g = await svc.sendGate(m.mailboxId);
-  assert.strictEqual(g.code, 'MAILBOX_PROVIDER_STEP1_PENDING', 'a Ready status cannot override provider capability');
+  assert.strictEqual(g.allowed, true);
+  assert.strictEqual(g.mailbox.status, 'ready');
 });
 
 test('3. pacing is keyed by mailbox_id: one mailbox at its cap never blocks another; counts come from the ledger', async () => {
@@ -291,7 +293,7 @@ test('4a. IPC: untrusted senders are refused; schemas are closed; there is no se
   assert.strictEqual((await ipc.call(MAILBOX_CHANNELS_IPC.CONNECT, { provider: 'gmail', token: 'x' })).ok, false, 'a token key is refused');
   assert.strictEqual((await ipc.call(MAILBOX_CHANNELS_IPC.CONNECT, { provider: 'smtp' })).ok, false);
   assert.strictEqual((await ipc.call(MAILBOX_CHANNELS_IPC.LIMITS, { mailboxId: 'mbx_aaaaaaaaaaaa', limits: { dailyCap: 500 } })).ok, false);
-  assert.ok(!Object.values(MAILBOX_CHANNELS_IPC).some((c) => /send|sync|queue|schedule|batch/.test(c)), 'no send, sync, queue or schedule channel');
+  assert.ok(!Object.values(MAILBOX_CHANNELS_IPC).some((c) => /send|queue|schedule|batch/.test(c)), 'no send-to-lead, queue or schedule channel');
 });
 
 test('4b. IPC: the Google client secret goes in once and never comes back - not in a result, an error or a log', async () => {
@@ -302,7 +304,7 @@ test('4b. IPC: the Google client secret goes in once and never comes back - not 
   assert.strictEqual(client.get().clientSecret, CLIENT.clientSecret, 'stored in main');
   const caps = await ipc.call(MAILBOX_CHANNELS_IPC.CAPABILITIES, {});
   assert.strictEqual(caps.ok, true);
-  assert.deepStrictEqual(caps.data.map((p) => [p.provider, p.canConnect, p.canSend, p.canSyncReplies, p.unsubscribeHeaderSupport]), [['gmail', true, false, false, 'unknown'], ['microsoft365', false, false, false, 'unknown']]);
+  assert.deepStrictEqual(caps.data.map((p) => [p.provider, p.canConnect, p.canSend, p.canSyncReplies, p.unsubscribeHeaderSupport]), [['gmail', true, true, true, 'verified'], ['microsoft365', false, false, false, 'unknown']]);
   assert.strictEqual(caps.data[1].notice, 'Microsoft 365 — verification required before activation');
   const bad = await ipc.call(MAILBOX_CHANNELS_IPC.GOOGLE_CLIENT, { clientId: 'not-a-client', clientSecret: CLIENT.clientSecret });
   assert.strictEqual(bad.ok, false);
@@ -329,8 +331,8 @@ test('4d. the renderer bridge and main.js keep secrets in main: sealed storage, 
   const preload = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
   const block = preload.slice(preload.indexOf('mailboxes: Object.freeze({'), preload.indexOf('\n  }),', preload.indexOf('mailboxes: Object.freeze({')));
   const methods = [...block.matchAll(/(\w+):\s*\(/g)].map((m) => m[1]);
-  assert.deepStrictEqual(methods, ['capabilities', 'list', 'connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'marketRules', 'setMarketRule', 'removeMarketRule']);
-  assert.ok(!methods.some((m) => /send|sync|token|secret/i.test(m)));
+  assert.deepStrictEqual(methods, ['capabilities', 'list', 'connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'marketRules', 'setMarketRule', 'removeMarketRule', 'check', 'checkReplies']);
+  assert.ok(!methods.some((m) => /send|token|secret/i.test(m)), 'no send-to-lead, token or secret method');
   const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   const deps = main.slice(main.indexOf('function mailboxDepsFromStore()'), main.indexOf('/**', main.indexOf('function mailboxDepsFromStore()')));
   assert.ok(/credentialVault\.seal\(String\(refreshToken\)\)/.test(deps), 'refresh tokens are sealed');

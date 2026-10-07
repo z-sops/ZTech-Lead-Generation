@@ -155,7 +155,7 @@ class GoogleOAuth {
 
 /**
  * The minimal Gmail read used at connect time: users.getProfile, allowed under gmail.metadata.
- * Returns { emailAddress } only.
+ * Returns { emailAddress, historyId } only (historyId = the reply-sync starting cursor).
  */
 async function gmailProfile(fetchImpl, accessToken) {
   let res;
@@ -167,7 +167,7 @@ async function gmailProfile(fetchImpl, accessToken) {
   if (!res.ok) throw new MailboxAuthError('MAILBOX_AUTH_FAILED', 'Gmail did not return the mailbox address.');
   const json = await res.json().catch(() => ({}));
   if (!json || typeof json.emailAddress !== 'string') throw new MailboxAuthError('MAILBOX_AUTH_FAILED', 'Gmail did not return the mailbox address.');
-  return { emailAddress: json.emailAddress };
+  return { emailAddress: json.emailAddress, historyId: json.historyId != null && /^\d{1,30}$/.test(String(json.historyId)) ? String(json.historyId) : null };
 }
 
 module.exports = { GoogleOAuth, gmailProfile, MailboxAuthError, GOOGLE, GMAIL_SCOPES };

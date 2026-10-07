@@ -207,7 +207,8 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
   }),
   // F26.6: connected mailboxes and market rules. Records are sanitized (mailbox_id, provider,
   // address, display name, connection and pacing status). No token, auth code, PKCE verifier or
-  // client secret ever comes back; setGoogleClient is write-only. There is no send method here.
+  // client secret ever comes back; setGoogleClient is write-only. check() sends ONE message from
+  // the mailbox to ITSELF; nothing here can send to a lead (that is outreachSend only).
   mailboxes: Object.freeze({
     capabilities: () => ipcRenderer.invoke('lead-intel:mailbox-capabilities', {}),
     list: () => ipcRenderer.invoke('lead-intel:mailbox-list', {}),
@@ -219,6 +220,8 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     marketRules: () => ipcRenderer.invoke('lead-intel:market-rules', {}),
     setMarketRule: (payload) => ipcRenderer.invoke('lead-intel:market-rule-set', payload || {}),
     removeMarketRule: (payload) => ipcRenderer.invoke('lead-intel:market-rule-remove', payload || {}),
+    check: (payload) => ipcRenderer.invoke('lead-intel:mailbox-check', payload || {}),
+    checkReplies: (payload) => ipcRenderer.invoke('lead-intel:mailbox-replies', payload || {}),
   }),
   // I3: Opportunity Intelligence provider configuration - WRITE-ONLY for keys.
   // setKey sends a key to the main process, which seals it; nothing ever returns it.

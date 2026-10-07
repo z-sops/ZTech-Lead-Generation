@@ -670,8 +670,8 @@ test('20. the drawer markup, CSP, channel set and dependencies are untouched by 
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 93, '93 preload methods');
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total; +2 check, checkReplies = 95 total.
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 95, '95 preload methods');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'], 'no dependency added');
   // F12 declared lock update: the former "Ready" placeholder became the live, read-only

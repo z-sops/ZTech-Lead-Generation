@@ -709,9 +709,9 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     // F26.5 declared lock update: the five trust channels (none of them sends).
     'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-suppress',
     // F26.6 declared lock update: the ten mailbox / market-rule channels (none of them sends).
-    'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules',
+    'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities', 'lead-intel:mailbox-check', 'lead-intel:mailbox-replies', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules',
     ].sort());
-    assert.equal(leadIntel.length, 35, 'exactly thirty-five Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 10 F26.6 mailboxes)');
+    assert.equal(leadIntel.length, 37, 'exactly thirty-seven Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes)');
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 

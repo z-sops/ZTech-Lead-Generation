@@ -900,9 +900,12 @@ test('S5. the renderer has no WhatsApp-specific send surface beyond the reviewed
   }
   // Two bridge calls exist in these blocks - the read-only prepare and the single send - and
   // exactly ONE of them is a send, carrying exactly the pitch id and the reviewed channel.
-  assert.strictEqual((WA_RENDERER.match(/api\.outreach\.\w+\(/g) || []).length, 2,
-    'the renderer makes exactly two bridge calls: prepare (read-only) and send');
-  assert.strictEqual((WA_RENDERER.match(/outreachSend\(/g) || []).length, 1, 'and exactly one of them sends');
+  // F26.6 declared lock update: + ONE email-only mailbox send beside F19 (2 -> 3 calls). Its
+  // channel is the literal 'email', so it can never become a WhatsApp send surface.
+  assert.strictEqual((WA_RENDERER.match(/api\.outreach\.\w+\(/g) || []).length, 3,
+    'the renderer makes exactly three bridge calls: prepare (read-only), the F19 send and the F26.6 email-only mailbox send');
+  assert.strictEqual((WA_RENDERER.match(/outreachSend\(/g) || []).length, 2, 'two of them send');
+  assert.ok(/outreachSend\(\{ pitchId, channel: 'email', mailboxId \}\)/.test(WA_RENDERER), 'the mailbox send is email-only by construction');
   // F25 lock amendment (was: /outreachSend\(\{ pitchId \}\)/ - "carries exactly the pitch
   // id"). The explicit channel now travels with it; the payload shape is pinned, not
   // loosened: two identifiers, no recipient, no body, no provider.

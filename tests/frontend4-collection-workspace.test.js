@@ -336,8 +336,8 @@ test('15. no backend, preload or dependency surface changed', () => {
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total.
-  assert.strictEqual(invokes, 93, 'the preload surface is 93 channels');
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total; +2 check, checkReplies = 95 total.
+  assert.strictEqual(invokes, 95, 'the preload surface is 95 channels');
   const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(htmlSource);
   assert.strictEqual(csp[1],
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'",

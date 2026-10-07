@@ -351,7 +351,8 @@ test('B1. the send channel is registered, and its schema admits exactly { pitchI
   // closed enum - still exactly two properties, still additionalProperties:false, and a
   // payload without a channel is refused rather than defaulted to email.
   assert.deepStrictEqual(schema.required, ['pitchId', 'channel'], 'both properties are required - no implicit channel');
-  assert.deepStrictEqual(Object.keys(schema.properties), ['pitchId', 'channel'], 'pitchId and channel are the ONLY properties defined');
+  // F26.6 declared lock update: + an OPTIONAL mailboxId (an id, never an address or token).
+  assert.deepStrictEqual(Object.keys(schema.properties), ['pitchId', 'channel', 'mailboxId'], 'pitchId, channel and an optional mailboxId are the ONLY properties defined');
   assert.deepStrictEqual(schema.properties.channel.enum, ['email', 'whatsapp'], 'the channel enum is the two factual channels');
   assert.strictEqual(schema.additionalProperties, false, 'nothing else can be expressed');
 
@@ -792,7 +793,7 @@ test('S1. the bridge exposes exactly one send method and no scheduling surface',
   const expectedF265 = ['forLead', 'suppress', 'lift', 'recordConsent', 'handoff']; // F26.5 declared lock update: trust (handoff is not a send)
   // F26.6 declared lock update: the mailbox methods that take a payload (none sends; there is no
   // mailbox send method on the bridge).
-  const expectedF266 = ['connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'setMarketRule', 'removeMarketRule'];
+  const expectedF266 = ['connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'setMarketRule', 'removeMarketRule', 'check', 'checkReplies'];
   assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedF265, ...expectedF266],
     'the bridge method list is exactly the eleven declared channels plus Phase I2 Opportunity Intelligence');
   assert.deepStrictEqual(methods.filter((m) => /send/i.test(m) && !/^sends$/.test(m)), ['outreachSend'],

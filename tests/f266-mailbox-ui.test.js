@@ -162,11 +162,12 @@ test('10d. connecting shows a sanitized record: address, Needs check, the Step 1
   const rows = u.el('mailbox-rows').textContent;
   assert.ok(rows.includes('dana@ridgeline.example'));
   assert.ok(rows.includes('Needs check'));
-  assert.ok(rows.includes('Sending from Gmail waits for its real-mailbox verification'));
+  assert.ok(rows.includes('Run "Check mailbox" once'));
+  assert.ok(u.el('mailbox-rows').all().some((n) => n.tagName === 'BUTTON' && n.textContent === 'Check mailbox'));
   assert.ok(rows.includes('Sent in the last 24 hours: 0 of 30.'));
   assert.ok(rows.includes('Default'));
   assert.ok(!/ya29|1\/\/ui-refresh|GOCSPX/.test(JSON.stringify(m.results)), 'nothing secret crossed IPC');
-  assert.ok(!u.el('mailbox-rows').all().some((n) => n.tagName === 'BUTTON' && /send/i.test(n.textContent)), 'no send control in Settings');
+  assert.ok(!u.el('mailbox-rows').all().some((n) => n.tagName === 'BUTTON' && /send/i.test(n.textContent)), 'no send-to-lead control in Settings');
 });
 
 test('10e. limits are edited through the closed IPC; a refused value shows the main-process reason', async () => {
@@ -219,6 +220,47 @@ test('10f. disconnect asks once more; market rules need a code and a note and ar
   assert.deepStrictEqual(m.sent.find((s) => s.ch === MAILBOX_CHANNELS_IPC.MARKET_SET).p, { countryCode: 'US', rule: 'opt_out_allowed', note: 'Reviewed CAN-SPAM' });
   const t = u.el('market-rule-rows').textContent;
   assert.ok(t.includes('US') && t.includes('Opt-out allowed') && t.includes('reviewed by Zee'));
+});
+
+test('10g. Prepare mailbox line: two clicks, mailbox id only, email only; a refusal shows the main-process reason', async () => {
+  const PSTART = '// === F26.6 Prepare: send ONE email from the connected mailbox ===';
+  const PEND = '// === END F26.6 Prepare ===';
+  const pblock = rendererSource.slice(rendererSource.indexOf(PSTART), rendererSource.indexOf(PEND));
+  assert.ok(pblock.length > 500 && rendererSource.indexOf(PSTART) < rendererSource.indexOf('// === F12 Outreach: the read-only Outreach workspace ==='), 'beside F19, before the read-only F12 block');
+  const pcode = pblock.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.deepStrictEqual([...pcode.matchAll(/outreachSend\(([^)]*)\)/g)].map((m) => m[1]), ["{ pitchId, channel: 'email', mailboxId }"]);
+  assert.ok(!/innerHTML|setTimeout|setInterval/.test(pcode));
+  const calls = [];
+  let rerenders = 0;
+  const footer = new FakeEl('div', 'f18-prepare-footer');
+  const api = { outreach: { outreachSend: async (p) => { calls.push(p); return { ok: true, data: { outcome: 'accepted', replyMatching: 'ready', providerAcknowledged: true } }; } } };
+  const ui = new Function('document', 'window', 'f18PrepareState', 'f18PrepareRenderFooter',
+    `${TRUST_HELPERS}\n${block}\n${pblock}\nreturn { controls: f266MailboxSendControls };`)(
+    { createElement: (t) => new FakeEl(t), getElementById: () => new FakeEl('div') }, { ztechLeadIntel: api }, { pitchId: 'p1' }, () => { rerenders += 1; });
+  const data = (mb) => ({ pitchId: 'p1', content: { subject: 'Idea' }, recipient: { contact: 'owner@acme.example.com' }, mailbox: mb });
+  const okMb = { mailbox: { mailboxId: 'mbx_aaaaaaaaaaaa', emailAddress: 'dana@ridgeline.example' }, gate: { allowed: true }, trust: { allowed: true }, canSend: true };
+  const btn = (label) => footer.all().find((n) => n.tagName === 'BUTTON' && n.textContent === label);
+  ui.controls(footer, data({ ...okMb, canSend: false, trust: { allowed: false, message: 'Market reason from main.' } }));
+  assert.ok(footer.textContent.includes('Market reason from main.'));
+  assert.ok(!btn('Send from my mailbox'));
+  footer.replaceChildren();
+  ui.controls(footer, data(okMb));
+  btn('Send from my mailbox').click();
+  assert.strictEqual(calls.length, 0, 'the first click only arms');
+  footer.replaceChildren();
+  ui.controls(footer, data(okMb));
+  assert.ok(footer.textContent.includes('Send "Idea" to owner@acme.example.com from dana@ridgeline.example? One message.'));
+  btn('Yes, send from my mailbox').click();
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(calls, [{ pitchId: 'p1', channel: 'email', mailboxId: 'mbx_aaaaaaaaaaaa' }]);
+  footer.replaceChildren();
+  ui.controls(footer, data(okMb));
+  assert.ok(footer.textContent.includes('Gmail accepted this email from dana@ridgeline.example. A reply to it will be recognised.'));
+  assert.ok(footer.textContent.includes('Delivery unknown'));
+  assert.ok(!btn('Send from my mailbox'), 'no second send control after a result');
+  footer.replaceChildren();
+  ui.controls(footer, data({ mailbox: null, gate: null, trust: null, canSend: false }));
+  assert.ok(footer.textContent.includes('No mailbox connected.'));
 });
 
 (async () => {

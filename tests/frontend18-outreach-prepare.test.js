@@ -528,7 +528,8 @@ test('I3. through IPC: a valid payload prepares; an extra property is refused; a
 // F25 UPDATE: send() is now the explicit-channel dispatcher, so its signature carries the
 // channel; the anchor follows the signature. The property this slice protects is unchanged:
 // prepare() still contains no send, provider call, schedule or write of any kind.
-const PREPARE_BODY = stripComments(serviceSource.slice(serviceSource.indexOf('async prepare('), serviceSource.indexOf('async send({ pitchId, channel })')));
+// F26.6 UPDATE: send() also takes an optional mailboxId; the anchor follows the signature.
+const PREPARE_BODY = stripComments(serviceSource.slice(serviceSource.indexOf('async prepare('), serviceSource.indexOf('async send({ pitchId, channel, mailboxId = undefined })')));
 
 test('S1. the prepare body writes, sends, queues, schedules, retries and reaches nothing', () => {
   assert.ok(PREPARE_BODY.length > 100, 'the prepare body is located');
@@ -599,7 +600,8 @@ test('S3. the preload bridge adds exactly one read-only prepare method plus the 
   // F26.5 declared lock update: + trust forLead, suppress, lift, recordConsent, handoff = 23.
   // F26.6 declared lock update: + mailbox connect, disconnect, setDefault, setLimits, setGoogleClient,
   // setMarketRule, removeMarketRule = 30. None of them sends.
-  assert.strictEqual(methods.length, 30, 'exactly thirty Lead Intelligence methods: ' + methods.join(','));
+  // F26.6 declared lock update: + check (one self-message) and checkReplies (headers read) = 32.
+  assert.strictEqual(methods.length, 32, 'exactly thirty-two Lead Intelligence methods: ' + methods.join(','));
   assert.strictEqual([...bridge.matchAll(/\bprepare\s*:/g)].length, 1, 'prepare is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\boutreachSend\s*:/g)].length, 1, 'outreachSend is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\bsends\s*:/g)].length, 1, 'the ledger read is declared exactly once');

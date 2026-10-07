@@ -9231,6 +9231,9 @@ function f18PrepareRenderFooter() {
     footer.appendChild(f11El('span', 'f19-send-blocked', delivery.blockedMessage));
   }
   if (trust && trust.handoffAvailable === true && !isWhatsApp && data && data.pitchId) f265HandoffControls(footer, data.pitchId);
+  // F26.6: the sending-mailbox line - the default connected mailbox, its verdicts and, when both
+  // the mailbox gate and the trust checks (under the mailbox's own policy) allow, one send control.
+  if (!isWhatsApp && data && data.pitchId && data.mailbox) f266MailboxSendControls(footer, data);
 
   const back = f11El('button', 'btn btn-sm btn-secondary', 'Back to Ready');
   back.type = 'button';
@@ -9698,6 +9701,73 @@ async function f19ConfirmSend() {
   f19SendState.result = result;
   f18PrepareRenderFooter();
 }
+
+// === F26.6 Prepare: send ONE email from the connected mailbox ===
+// Lives beside the F19 send flow it mirrors: two clicks, the mailbox_id is the only thing the
+// renderer names, and every gate (mailbox, Outreach Gate, trust, market, pacing) runs in main.
+let f266SendState = { forPitchId: null, armed: false, busy: false, result: null, error: null };
+
+/** Prepare: send this ONE email from the default connected mailbox (two clicks, like F19). */
+function f266MailboxSendControls(footer, data) {
+  const mb = data.mailbox;
+  const wrap = trustEl('div', 'f266-send');
+  if (f266SendState.forPitchId !== data.pitchId) f266SendState = { forPitchId: data.pitchId, armed: false, busy: false, result: null, error: null };
+  if (!mb.mailbox) {
+    wrap.appendChild(trustEl('span', 'f266-send-line', 'No mailbox connected. Connect Gmail in Settings > Mailboxes to send from your own address.'));
+    footer.appendChild(wrap);
+    return;
+  }
+  const from = mb.mailbox.emailAddress;
+  wrap.appendChild(trustEl('span', 'f266-send-line', `From your mailbox: ${from}`));
+  const st = f266SendState;
+  if (st.error) wrap.appendChild(trustEl('span', 'lead-trust-error', st.error));
+  if (st.result) {
+    const r = st.result;
+    wrap.appendChild(trustEl('span', 'f266-send-result', r.outcome === 'replayed'
+      ? 'This exact content was already accepted once, so nobody was contacted again.'
+      : `Gmail accepted this email from ${from}. ${r.replyMatching === 'ready' ? 'A reply to it will be recognised.' : 'ZTech could not read the stored copy back, so a reply to it cannot be recognised.'}`));
+    wrap.appendChild(trustEl('span', 'f19-send-unknown', 'Delivery unknown · opened unknown · clicked unknown'));
+  } else if (st.busy) {
+    wrap.appendChild(trustEl('span', 'f266-send-line', 'Submitting to Gmail…'));
+  } else if (!mb.canSend) {
+    const reason = (mb.gate && !mb.gate.allowed && mb.gate.message) || (mb.trust && mb.trust.message) || 'This mailbox cannot send this email right now.';
+    wrap.appendChild(trustEl('span', 'f19-send-blocked', reason));
+  } else if (st.armed) {
+    wrap.appendChild(trustEl('span', 'f19-send-confirm-text', `Send "${data.content.subject}" to ${data.recipient.contact} from ${from}? One message.`));
+    const yes = trustEl('button', 'btn btn-sm btn-danger', 'Yes, send from my mailbox');
+    yes.type = 'button';
+    yes.addEventListener('click', () => f266ConfirmMailboxSend(data.pitchId, mb.mailbox.mailboxId));
+    const no = trustEl('button', 'btn btn-sm btn-secondary', 'Cancel');
+    no.type = 'button';
+    no.addEventListener('click', () => { f266SendState.armed = false; f18PrepareRenderFooter(); });
+    wrap.append(yes, no);
+  } else {
+    const btn = trustEl('button', 'btn btn-sm btn-primary', 'Send from my mailbox');
+    btn.type = 'button';
+    btn.addEventListener('click', () => { f266SendState.armed = true; f18PrepareRenderFooter(); });
+    wrap.appendChild(btn);
+  }
+  footer.appendChild(wrap);
+}
+
+async function f266ConfirmMailboxSend(pitchId, mailboxId) {
+  const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
+  if (f266SendState.busy || !api || !api.outreach || typeof api.outreach.outreachSend !== 'function') return;
+  f266SendState.busy = true;
+  f266SendState.error = null;
+  f18PrepareRenderFooter();
+  try {
+    const res = await api.outreach.outreachSend({ pitchId, channel: 'email', mailboxId });
+    f266SendState.result = f266Unwrap(res, 'The email could not be sent from your mailbox.');
+  } catch (err) {
+    f266SendState.error = (err && err.message) || 'The email could not be sent from your mailbox.';
+  }
+  f266SendState.busy = false;
+  f266SendState.armed = false;
+  if (f18PrepareState.pitchId === pitchId) f18PrepareRenderFooter();
+}
+
+// === END F26.6 Prepare ===
 
 /**
  * The honest outcome line. `providerAcknowledged` is the only claim about the outside world;
@@ -10671,7 +10741,7 @@ function f265HandoffControls(footer, pitchId) {
   wrap.append(open, copy);
   wrap.appendChild(trustEl('span', 'f265-handoff-note', 'Your mail app sends this message, so ZTech cannot add the unsubscribe headers. The footer still gives the contact a way to opt out.'));
   // C1 (revised 7 Oct): the handoff is a TEMPORARY fallback; F26.6 brings connected-mailbox sending.
-  wrap.appendChild(trustEl('span', 'f265-handoff-note', 'Temporary option: sending from a connected Gmail or Microsoft 365 mailbox comes in a later update.'));
+  wrap.appendChild(trustEl('span', 'f265-handoff-note', 'Temporary option: connect a Gmail mailbox in Settings > Mailboxes to send from it directly, with the unsubscribe headers.'));
   footer.appendChild(wrap);
 }
 
@@ -10700,12 +10770,15 @@ async function f265Handoff(pitchId, kind) {
 
 const MAILBOX_STATUS_LABEL = { needs_check: 'Needs check', ready: 'Ready', paused: 'Paused', reconnect_needed: 'Reconnect needed' };
 const MAILBOX_CODE_TEXT = {
-  MAILBOX_PROVIDER_STEP1_PENDING: 'Sending from Gmail waits for its real-mailbox verification. This mailbox is connected but cannot send yet.',
+  MAILBOX_CHECK_REQUIRED: 'Run "Check mailbox" once: ZTech sends one message from this mailbox to itself and confirms Gmail keeps the unsubscribe header and a readable Message-ID.',
+  MAILBOX_HEADER_STRIPPED: 'Gmail did not keep the unsubscribe header on a message from this mailbox, so it is not Ready. Run "Check mailbox" again.',
+  MAILBOX_MESSAGE_ID_UNREADABLE: 'Gmail did not show a readable Message-ID for the check message, so replies could not be matched. Run "Check mailbox" again.',
+  MAILBOX_RECONNECT_NEEDED: 'This mailbox needs to be reconnected (its Google sign-in was revoked or expired).',
   MAILBOX_PROVIDER_UNVERIFIED: 'Microsoft 365 — verification required before activation',
 };
 const MARKET_RULE_LABEL = { consent_required: 'Consent required', opt_out_allowed: 'Opt-out allowed' };
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-let f266State = { caps: null, mailboxes: [], rules: [], busy: false, confirmDisconnect: null };
+let f266State = { caps: null, mailboxes: [], rules: [], busy: false, confirmDisconnect: null, notes: {} };
 
 function mailboxBridge() {
   const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
@@ -10825,6 +10898,7 @@ function f266RenderMailboxes() {
     if (m.isDefault) head.appendChild(trustEl('span', 'f266-mailbox-default', 'Default'));
     row.appendChild(head);
     if (m.statusCode && MAILBOX_CODE_TEXT[m.statusCode]) row.appendChild(trustEl('p', 'form-hint', MAILBOX_CODE_TEXT[m.statusCode]));
+    if (f266State.notes[m.mailboxId]) row.appendChild(trustEl('p', 'form-hint f266-note', f266State.notes[m.mailboxId]));
     row.appendChild(trustEl('p', 'form-hint f266-pacing', f266PacingLine(m)));
 
     const l = m.limits;
@@ -10840,6 +10914,17 @@ function f266RenderMailboxes() {
     row.appendChild(limits);
 
     const actions = trustEl('div', 'f266-mailbox-actions');
+    if (m.provider === 'gmail' && m.status !== 'reconnect_needed') {
+      const check = trustEl('button', 'btn btn-sm btn-secondary', 'Check mailbox');
+      check.type = 'button';
+      check.disabled = f266State.busy;
+      check.addEventListener('click', () => f266Check(m.mailboxId));
+      const replies = trustEl('button', 'btn btn-sm btn-secondary', 'Check replies now');
+      replies.type = 'button';
+      replies.disabled = f266State.busy;
+      replies.addEventListener('click', () => f266Replies(m.mailboxId));
+      actions.append(check, replies);
+    }
     const save = trustEl('button', 'btn btn-sm btn-secondary', 'Save limits');
     save.type = 'button';
     save.disabled = f266State.busy;
@@ -10912,6 +10997,34 @@ async function f266Act(run, fallback, statusId = 'mailbox-status') {
   }
   f266State.busy = false;
   await f266MailboxesLoad();
+}
+
+async function f266Check(mailboxId) {
+  f266State.notes[mailboxId] = 'Sending one check message from this mailbox to itself…';
+  await f266Act(async () => {
+    const res = await mailboxBridge().check({ mailboxId });
+    if (res && res.ok && res.data && res.data.check) {
+      f266State.notes[mailboxId] = res.data.check.passed
+        ? 'Check passed: Gmail kept the unsubscribe header and a readable Message-ID. This mailbox is Ready.'
+        : 'Check did not pass. The mailbox stays out of Ready; see the reason above.';
+    } else {
+      f266State.notes[mailboxId] = '';
+    }
+    return res;
+  }, 'The mailbox could not be checked.');
+}
+
+async function f266Replies(mailboxId) {
+  await f266Act(async () => {
+    const res = await mailboxBridge().checkReplies({ mailboxId });
+    if (res && res.ok && res.data) {
+      const d = res.data;
+      f266State.notes[mailboxId] = d.cursorReset
+        ? 'Gmail no longer had the older history, so reading restarted from now. Check the inbox yourself for anything earlier.'
+        : `Read ${d.read} new message(s): ${d.replies} verified repl${d.replies === 1 ? 'y' : 'ies'}, ${d.unsubscribes} unsubscribe(s). Automatic replies and delivery reports are not counted.`;
+    }
+    return res;
+  }, 'Replies could not be read.');
 }
 
 function f266Connect(provider) {

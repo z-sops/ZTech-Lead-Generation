@@ -583,7 +583,7 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const expectedI3 = ['status', 'setKey', 'clearKey', 'setSetting', 'chooseFolder', 'setMode', 'start', 'stop', 'restart', 'copyLog']; // I3/I4 declared lock update
   const expectedI6 = ['forLead']; // I6 declared lock update: the read-only lead timeline
   const expectedF265 = ['forLead', 'suppress', 'lift', 'recordConsent', 'handoff']; // F26.5 declared lock update: trust (no send)
-  const expectedF266 = ['capabilities', 'list', 'connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'marketRules', 'setMarketRule', 'removeMarketRule']; // F26.6 declared lock update: mailboxes (no send)
+  const expectedF266 = ['capabilities', 'list', 'connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'marketRules', 'setMarketRule', 'removeMarketRule', 'check', 'checkReplies']; // F26.6 declared lock update: mailboxes (no send to a lead)
   assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedF265, ...expectedF266, ...expectedI3].sort(),
     'F17 added no preload method of its own; F18 adds exactly prepare, F19 exactly outreachSend, F21 exactly the reads; Phase I2 adds Opportunity Intelligence');
   for (const forbidden of [/contact/i, /schedule/i, /whatsapp/i, /verify/i]) {

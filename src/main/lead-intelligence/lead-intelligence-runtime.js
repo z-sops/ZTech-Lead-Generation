@@ -233,6 +233,7 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
   // client config ({ tokenStore, clientConfig, openBrowser, fetchImpl, operator }). Tokens, the
   // client secret and the OAuth exchange never leave this process.
   li.mailboxes = null;
+  let mailboxSyncTimer = null;
   if (mailbox) {
     try {
       const { MailboxService } = require('./mailbox/MailboxService');
@@ -241,8 +242,16 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
       li.mailboxes = new MailboxService({
         store, clock, tokenStore: mailbox.tokenStore, clientConfig: mailbox.clientConfig, fetch: fetchImpl,
         googleOAuth: mailbox.openBrowser ? new GoogleOAuth({ fetch: fetchImpl, openExternal: mailbox.openBrowser }) : null,
-        operator: mailbox.operator || config.operatorName || 'local-user', logger,
+        operator: mailbox.operator || config.operatorName || 'local-user', logger, trust: li.trust,
       });
+      li.outreach.setMailboxes(li.mailboxes);
+      // Reply sync (D4): headers-only polling while the app is open. It READS; it never sends,
+      // queues or retries a message. A failure is logged by code and the next tick tries again.
+      const every = Number.isInteger(mailbox.syncIntervalMs) && mailbox.syncIntervalMs >= 60000 ? mailbox.syncIntervalMs : 5 * 60 * 1000;
+      mailboxSyncTimer = setInterval(() => {
+        li.mailboxes.syncAll().catch((err) => { if (logger && logger.warn) logger.warn(`[lead-intelligence] mailbox sync failed: ${(err && err.code) || 'ERROR'}`); });
+      }, every);
+      if (mailboxSyncTimer.unref) mailboxSyncTimer.unref();
     } catch (err) {
       li.mailboxes = null;
       if (logger && logger.warn) logger.warn(`[lead-intelligence] mailboxes disabled: ${err && err.message}`);
@@ -277,6 +286,7 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
       if (closed) return;
       closed = true;
       if (relay) relay.stop();
+      if (mailboxSyncTimer) clearInterval(mailboxSyncTimer);
       li.stop();
       // OI holds no socket and no timer, so this is a no-op that exists so the
       // shutdown path is explicit rather than accidental.
