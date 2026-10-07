@@ -127,6 +127,13 @@ class ResendEmailProvider extends EmailProvider {
   get id() { return 'resend'; }
   /** F19's interlock: this adapter DOES reach a real mail service, so it opts in. */
   get live() { return true; }
+  /**
+   * F26.5: Resend's Acceptable Use Policy (updated 27 Aug 2026) prohibits "unsolicited messages
+   * of any kind, including cold outreach, purchased lists, or scraped contact data". So this
+   * transport may only write to a contact with a recorded consent or a verified reply. A cold
+   * first contact goes through the mail-app handoff instead.
+   */
+  get transportPolicy() { return Object.freeze({ requiresPriorRelationship: true, enforcesUnsubscribeHeaders: true }); }
 
   /**
    * The ONLY method that can touch the outside world. It receives the complete,

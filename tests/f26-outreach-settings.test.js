@@ -90,7 +90,8 @@ const GOOD_WA = { enabled: true, fromNumber: '+92 300 1234567', phoneNumberId: '
 test('1. an unconfigured install reads back empty and every channel refuses with the first thing to fix', async () => {
   const { call } = setup();
   const st = (await call(CH.STATUS, {})).data;
-  assert.deepStrictEqual(st.business, { representativeName: '', companyName: '', valueProposition: '', callToAction: '' });
+  // F26.5 declared lock update: + postalAddress.
+  assert.deepStrictEqual(st.business, { representativeName: '', companyName: '', valueProposition: '', callToAction: '', postalAddress: '' });
   assert.strictEqual(st.email.enabled, false);
   assert.strictEqual(st.email.capability.code, resend.RESEND_REFUSALS.PROVIDER_NOT_SELECTED);
   assert.strictEqual(st.whatsapp.capability.code, wa.WHATSAPP_REFUSALS.PROVIDER_NOT_SELECTED);
@@ -103,7 +104,8 @@ test('2. business profile round-trips through the real readBusinessProfile', asy
   const res = await call(CH.SAVE_BUSINESS, { representativeName: ' Ayesha ', companyName: 'Example Shop', valueProposition: 'Line one\r\nLine two', callToAction: 'Reply to book a call.' });
   assert.strictEqual(res.ok, true);
   const p = readBusinessProfile(store);
-  assert.deepStrictEqual(p, { sender_name: 'Ayesha', sender_company: 'Example Shop', value_proposition: 'Line one\nLine two', call_to_action: 'Reply to book a call.' });
+  // F26.5 declared lock update: + postal_address (empty when not given).
+  assert.deepStrictEqual(p, { sender_name: 'Ayesha', sender_company: 'Example Shop', value_proposition: 'Line one\nLine two', call_to_action: 'Reply to book a call.', postal_address: '' });
   for (const bad of [{ representativeName: 'a'.repeat(81) }, { companyName: 'two\nlines' }, { callToAction: 'x\u0001' }]) {
     const before = JSON.stringify(store.data);
     assert.strictEqual((await call(CH.SAVE_BUSINESS, bad)).ok, false, JSON.stringify(bad).slice(0, 30));

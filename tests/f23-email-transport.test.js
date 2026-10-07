@@ -21,6 +21,7 @@
 // production configuration.
 
 const fs = require('fs');
+const { withTrustOffer, grantTrustForLeadsSync } = require('./trust-fixture'); // F26.5
 const path = require('path');
 const assert = require('assert');
 
@@ -135,6 +136,9 @@ function makeResend(spy) {
 
 function makeRuntime(leads, { emailProvider = null, email = null, emailConfigStore = undefined, whatsappProvider = null } = {}) {
   const store = new MemoryStore();
+  // F26.5 declared update: every fixture lead carries the trust facts a successful send now
+  // needs (recorded consent; for WhatsApp also a relay inbound opening the 24h window).
+  grantTrustForLeadsSync(store, leads, clock());
   const records = Object.values(leads).map((l) => {
     const host = new URL(l.website).host;
     return round1Record({
@@ -155,7 +159,7 @@ function makeRuntime(leads, { emailProvider = null, email = null, emailConfigSto
       research: { mode: 'round1' },
       freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
       outreach: { allowedQualification: ['qualified'], allowPartialEvidence: false, requireIcpFit: false },
-      offer: OFFER,
+      offer: withTrustOffer(OFFER), // F26.5 declared update: + postal_address (sender identity)
       whatsapp: { enabled: true, fromNumber: '+923001111111' },
       // F23: the send boundary's build-level switch comes from the same Plug & Play
       // settings the product reads; tests inject it explicitly.

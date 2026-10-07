@@ -42,6 +42,7 @@
 // S-section: declared surface locks.
 
 const fs = require('fs');
+const { withTrustOffer, grantTrustForLeadsSync } = require('./trust-fixture'); // F26.5
 const path = require('path');
 const assert = require('assert');
 
@@ -121,6 +122,9 @@ function liveWhatsApp(overrides = {}) {
 
 function makeRuntime(leads, { whatsappProvider = null, whatsapp = {}, emailProvider = null, email = {} } = {}) {
   const store = new MemoryStore();
+  // F26.5 declared update: every fixture lead carries the trust facts a successful send now
+  // needs (recorded consent; for WhatsApp also a relay inbound opening the 24h window).
+  grantTrustForLeadsSync(store, leads, clock());
   const records = Object.values(leads).map((l) => {
     const host = new URL(l.website).host;
     return round1Record({
@@ -137,7 +141,7 @@ function makeRuntime(leads, { whatsappProvider = null, whatsapp = {}, emailProvi
       research: { mode: 'round1' },
       freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
       outreach: { allowedQualification: ['qualified'], allowPartialEvidence: false, requireIcpFit: false },
-      offer: OFFER,
+      offer: withTrustOffer(OFFER), // F26.5 declared update: + postal_address (sender identity)
       // F20 default: WhatsApp is OFF unless a test/config opts in. This is the F19 posture.
       whatsapp: Object.assign({ enabled: true, fromNumber: FROM_NUMBER }, whatsapp),
       email: Object.assign({ enabled: false, fromAddress: 'zee@zunitech.example.com' }, email),

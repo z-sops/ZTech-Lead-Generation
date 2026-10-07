@@ -15,6 +15,8 @@ const { evaluateSendCapability: evalWhatsAppCapability } = require('./whatsapp/s
 // (_deliveryBlock's channel-specific configuration override).
 const { evaluateWhatsAppConfig } = require('./whatsapp/whatsappConfig');
 const { WhatsAppProvider } = require('./whatsapp/WhatsAppProvider');
+// F26.5: the trust checks of the send boundary (suppression, identity, transport, lint, consent).
+const { TrustPolicy } = require('../trust/TrustPolicy');
 
 // === F17: factual contact facts for the derived Ready row ===
 //
@@ -154,6 +156,53 @@ class OutreachService {
     // F15: used only to report that an activity row could not be written. It never
     // carries activity content, pitch text or anything from the renderer.
     this.logger = logger;
+    // F26.5: the trust checks. They need the trust repositories of migration 008; a store
+    // without them cannot prove anything, so every send then FAILS CLOSED (TRUST_UNAVAILABLE).
+    this.trust = store && store.suppressions && store.consents && store.trustEvents
+      ? new TrustPolicy({ store, clock })
+      : null;
+  }
+
+  /**
+   * F26.5: run the trust checks for one send and, on refusal, record ONE OUTREACH_SEND_BLOCKED
+   * row (with the stable code, never the address) and throw. Runs after the recipient is known
+   * and BEFORE the message is validated, recorded as attempted or handed to any provider.
+   */
+  async _enforceTrust(pitch, channel, recipient, { fromName = null, provider = null } = {}) {
+    if (!this.trust) {
+      const message = 'The do-not-contact and consent records cannot be read, so nothing is sent.';
+      await this._recordSendEvent(pitch.pitch_id, 'OUTREACH_SEND_BLOCKED', { reason: message, channel, contentHash: pitch.content_hash, blockedCode: 'TRUST_UNAVAILABLE' });
+      throw new LiError('TRUST_UNAVAILABLE', message);
+    }
+    const verdict = await this.trust.evaluate({ channel, recipient, offer: this.offer, sender: { fromName }, subject: pitch.subject, provider });
+    if (verdict.allowed) return verdict;
+    await this._recordSendEvent(pitch.pitch_id, 'OUTREACH_SEND_BLOCKED', { reason: verdict.message, channel, contentHash: pitch.content_hash, blockedCode: verdict.code });
+    throw new LiError(verdict.code, verdict.message);
+  }
+
+  /**
+   * F26.5: the read-only trust preview Prepare shows beside readiness and delivery. It carries
+   * verdicts and dates only - never the normalized address, a recipient_ref or a hash.
+   */
+  async _trustPreview(pitch, channel, recipient) {
+    // The transport's declared policy is read here (a getter, never a call that reaches out),
+    // so Prepare itself names no provider.
+    const provider = channel === 'email' ? this.emailProvider : this.whatsappProvider;
+    const fromName = channel === 'email' ? this._senderProfile().displayName : null;
+    if (!this.trust) return { allowed: false, code: 'TRUST_UNAVAILABLE', message: 'The do-not-contact and consent records cannot be read.', suppressed: null, consent: null, verifiedReply: false, sessionOpenUntil: null, handoffAvailable: false };
+    const v = await this.trust.evaluate({ channel, recipient, offer: this.offer, sender: { fromName }, subject: pitch.subject, provider });
+    const f = v.facts || {};
+    return {
+      allowed: v.allowed === true,
+      code: v.allowed ? null : v.code,
+      message: v.allowed ? null : v.message,
+      suppressed: Boolean(f.suppression),
+      consent: f.consent ? { method: f.consent.method, consentedAt: f.consent.consented_at, recordedBy: f.consent.recorded_by } : null,
+      verifiedReply: Boolean(f.reply),
+      sessionOpenUntil: f.sessionOpenUntil || null,
+      // A mail-app handoff is offered only for email, and never to a suppressed contact.
+      handoffAvailable: channel === 'email' && Boolean(f.address) && !f.suppression,
+    };
   }
 
   // F20: allow the WhatsApp provider to be injected after construction, mirroring
@@ -888,7 +937,10 @@ class OutreachService {
       sender: channel === 'email'
         ? this._senderProfile()
         : (channel === 'whatsapp' ? this._whatsappSenderProfile() : null),
-      contactFacts: facts
+      contactFacts: facts,
+      // F26.5: the trust verdict the send boundary WILL apply (suppression, identity, transport,
+      // subject, consent, session) - read-only, beside readiness and delivery, never inside them.
+      trust: await this._trustPreview(pitch, channel, recipient.contact)
     };
   }
 
@@ -1028,6 +1080,14 @@ class OutreachService {
       });
       throw new LiError('CHANNEL_UNAVAILABLE', 'No valid email address is stored for this lead.');
     }
+
+    // (5b) F26.5 TRUST CHECKS, in the frozen order: suppression -> sender identity -> transport
+    // eligibility (this transport's own policy) -> subject lint. A refusal records one
+    // OUTREACH_SEND_BLOCKED row and contacts nobody.
+    await this._enforceTrust(pitch, 'email', facts.channels.email.contact, {
+      fromName: providerStatus && providerStatus.fromName ? providerStatus.fromName : null,
+      provider: this.emailProvider,
+    });
 
     // (6) Provider validation, before any provider contact. The command is COMPLETE and
     // final here: recipient and sender address come from stored configuration, the subject
@@ -1206,6 +1266,11 @@ class OutreachService {
       });
       throw new LiError('CHANNEL_UNAVAILABLE', 'No valid WhatsApp number is stored for this lead.');
     }
+
+    // (5b) F26.5 TRUST CHECKS, in the frozen order: suppression -> sender identity -> recorded
+    // opt-in for this number -> open 24-hour session. A refusal records one
+    // OUTREACH_SEND_BLOCKED row and contacts nobody.
+    await this._enforceTrust(pitch, 'whatsapp', facts.channels.whatsapp.contact, { provider: this.whatsappProvider });
 
     // (6) Provider validation, before any provider contact. The command is COMPLETE and
     // final here: the recipient comes from the stored contact facts, the sender number

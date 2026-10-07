@@ -33,6 +33,7 @@
 // renderer functions, and the S-section pins the declared surface locks.
 
 const fs = require('fs');
+const { withTrustOffer, grantTrustForLeadsSync } = require('./trust-fixture'); // F26.5
 const path = require('path');
 const assert = require('assert');
 
@@ -114,6 +115,9 @@ function liveProvider(overrides = {}) {
 
 function makeRuntime(leads, { emailProvider = null, email = {} } = {}) {
   const store = new MemoryStore();
+  // F26.5 declared update: every fixture lead carries the trust facts a successful send now
+  // needs (recorded consent; for WhatsApp also a relay inbound opening the 24h window).
+  grantTrustForLeadsSync(store, leads, clock());
   const records = Object.values(leads).map((l) => {
     const host = new URL(l.website).host;
     return round1Record({
@@ -130,7 +134,7 @@ function makeRuntime(leads, { emailProvider = null, email = {} } = {}) {
       research: { mode: 'round1' },
       freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
       outreach: { allowedQualification: ['qualified'], allowPartialEvidence: false, requireIcpFit: false },
-      offer: OFFER,
+      offer: withTrustOffer(OFFER), // F26.5 declared update: + postal_address (sender identity)
       email: Object.assign({ enabled: true, fromAddress: 'zee@zunitech.example.com' }, email),
     },
     clock,

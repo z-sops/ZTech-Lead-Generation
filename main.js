@@ -1196,13 +1196,14 @@ function emailConfigFromSettings() {
 //   settings.businessCompanyName          the sender company, plain text, <=120 chars
 //   settings.businessValueProposition     the offer's value proposition, <=1200 chars
 //   settings.businessCallToAction         the offer's call to action, <=400 chars
+//   settings.businessPostalAddress        F26.5: physical postal address, <=300 chars (required to send)
 function businessProfileFromSettings() {
   try {
     const { readBusinessProfile } = require('./src/main/lead-intelligence/outreach/businessProfile');
     return readBusinessProfile(electronStore);
   } catch {
     // A profile that cannot be read is "not configured" - never a default identity.
-    return { sender_name: '', sender_company: '', value_proposition: '', call_to_action: '' };
+    return { sender_name: '', sender_company: '', value_proposition: '', call_to_action: '', postal_address: '' };
   }
 }
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const test = require('node:test');
+const { grantTrust } = require('../trust-fixture'); // F26.5
 const assert = require('node:assert/strict');
 const { build, researchToCompletion, DAY } = require('./helpers');
 const { detectUnsupportedClaims, generatePitch, renderPitchText } = require('../../src/main/lead-intelligence/outreach/PitchGenerator');
@@ -128,7 +129,10 @@ test('email: fake provider sends only when enabled and the gate allows', async (
   // provider shim that implements the same send/validate/getStatus behaviour.
   const liveEmail = Object.create(email);
   Object.defineProperty(liveEmail, 'live', { value: true, writable: false });
-  const { ctx, pitch } = await readyPitch({ emailProvider: liveEmail, config: { email: { enabled: true, fromAddress: 'ztech@example.com' } } });
+  // F26.5 declared update: + postal_address (sender identity) and a recorded email consent,
+  // because a transport that declares no policy is treated as requiring one.
+  const { ctx, pitch } = await readyPitch({ emailProvider: liveEmail, config: { email: { enabled: true, fromAddress: 'ztech@example.com' }, offer: { postal_address: '12 Test Street, Karachi' } } });
+  await grantTrust(ctx.store, { email: 'hello@acme.com', leadId: 'L1', now: '2026-10-07T00:00:00.000Z' });
   // F19: the gate is re-checked immediately before sending, so an unapproved pitch is
   // refused outright - it never becomes a partial or speculative send.
   await assert.rejects(ctx.li.outreach.sendEmail({ pitchId: pitch.pitch_id }),

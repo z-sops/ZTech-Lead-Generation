@@ -203,6 +203,7 @@ function createOutreachSettings({ store, safeStorage = defaultSafeStorage(), fet
         companyName: profile.sender_company,
         valueProposition: profile.value_proposition,
         callToAction: profile.call_to_action,
+        postalAddress: profile.postal_address,
       },
       email: {
         enabled: s.emailEnabled === true,
@@ -234,7 +235,7 @@ function createOutreachSettings({ store, safeStorage = defaultSafeStorage(), fet
 
   function saveBusiness(input) {
     const i = input && typeof input === 'object' ? input : {};
-    const map = { representativeName: 'businessRepresentativeName', companyName: 'businessCompanyName', valueProposition: 'businessValueProposition', callToAction: 'businessCallToAction' };
+    const map = { representativeName: 'businessRepresentativeName', companyName: 'businessCompanyName', valueProposition: 'businessValueProposition', callToAction: 'businessCallToAction', postalAddress: 'businessPostalAddress' };
     const patch = {};
     for (const [field, setting] of Object.entries(map)) {
       const spec = BUSINESS_PROFILE_FIELDS.find((f) => f.setting === setting);

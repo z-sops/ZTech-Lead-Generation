@@ -30,7 +30,7 @@ const CHANNEL_PROVIDER = Object.freeze({ email: PROVIDERS.resend, whatsapp: PROV
 const OUTREACH_SETTINGS_SCHEMAS = Object.freeze({
   [OUTREACH_SETTINGS_CHANNELS.STATUS]: obj({}),
   [OUTREACH_SETTINGS_CHANNELS.SAVE_BUSINESS]: obj({
-    representativeName: text(200), companyName: text(300), valueProposition: text(3000), callToAction: text(1000),
+    representativeName: text(200), companyName: text(300), valueProposition: text(3000), callToAction: text(1000), postalAddress: text(800),
   }),
   [OUTREACH_SETTINGS_CHANNELS.SAVE_EMAIL]: obj({
     enabled: { type: 'boolean' }, fromName: text(300), fromAddress: text(320), replyTo: text(320), domain: text(253), signature: text(1000),

@@ -20,6 +20,7 @@
 // test: capability unavailable, zero invocations.
 
 const fs = require('fs');
+const { withTrustOffer, grantTrustForLeadsSync } = require('./trust-fixture'); // F26.5
 const path = require('path');
 const assert = require('assert');
 
@@ -154,6 +155,9 @@ function makeMetaCapturing(spy) {
 
 function makeRuntime(leads, { whatsappProvider = null, whatsapp = null, whatsappConfigStore = undefined, emailProvider = null, email = null, emailConfigStore = undefined } = {}) {
   const store = new MemoryStore();
+  // F26.5 declared update: every fixture lead carries the trust facts a successful send now
+  // needs (recorded consent; for WhatsApp also a relay inbound opening the 24h window).
+  grantTrustForLeadsSync(store, leads, clock());
   const records = Object.values(leads).map((l) => {
     const host = new URL(l.website).host;
     return round1Record({
@@ -174,7 +178,7 @@ function makeRuntime(leads, { whatsappProvider = null, whatsapp = null, whatsapp
       research: { mode: 'round1' },
       freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
       outreach: { allowedQualification: ['qualified'], allowPartialEvidence: false, requireIcpFit: false },
-      offer: OFFER,
+      offer: withTrustOffer(OFFER), // F26.5 declared update: + postal_address (sender identity)
       // The instance-level switch, mirroring the email one; tests inject it explicitly.
       whatsapp: Object.assign({ enabled: true, fromNumber: FROM_NUMBER }, whatsapp || {}),
       email: Object.assign({ enabled: false, fromAddress: null }, email || {}),
@@ -464,6 +468,7 @@ test('N. the access token never appears in the status, Prepare, result, ledger, 
   const loggerCalls = [];
   const logger = { info: (...a) => loggerCalls.push(a), warn: (...a) => loggerCalls.push(a), error: (...a) => loggerCalls.push(a) };
   const store = new MemoryStore();
+  grantTrustForLeadsSync(store, { L1: lead({}) }, clock()); // F26.5 declared update: consent + open session
   const li = createLeadIntelligence({
     store,
     leadSource: { getLead: async (id) => (id === 'L1' ? lead({}) : null), listLeads: async () => [lead({})] },
@@ -478,7 +483,7 @@ test('N. the access token never appears in the status, Prepare, result, ledger, 
       research: { mode: 'round1' },
       freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
       outreach: { allowedQualification: ['qualified'], allowPartialEvidence: false, requireIcpFit: false },
-      offer: OFFER,
+      offer: withTrustOffer(OFFER), // F26.5 declared update: + postal_address
       whatsapp: { enabled: true, fromNumber: FROM_NUMBER },
       email: { enabled: false, fromAddress: null },
     },

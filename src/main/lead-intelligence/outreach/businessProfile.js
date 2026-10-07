@@ -38,7 +38,7 @@
 // The PitchGenerator's own slice bounds, repeated as compile-time constants so the
 // reader and the generator cannot drift silently (same convention as the lead-field
 // validators in main.js).
-const MAX = Object.freeze({ sender_name: 80, sender_company: 120, value_proposition: 1200, call_to_action: 400 });
+const MAX = Object.freeze({ sender_name: 80, sender_company: 120, value_proposition: 1200, call_to_action: 400, postal_address: 300 });
 
 /**
  * The profile shape and the settings key each field is read from. Frozen, so a caller
@@ -50,6 +50,10 @@ const BUSINESS_PROFILE_FIELDS = Object.freeze([
   Object.freeze({ key: 'sender_company', setting: 'businessCompanyName', max: MAX.sender_company, multiline: false }),
   Object.freeze({ key: 'value_proposition', setting: 'businessValueProposition', max: MAX.value_proposition, multiline: true }),
   Object.freeze({ key: 'call_to_action', setting: 'businessCallToAction', max: MAX.call_to_action, multiline: true }),
+  // F26.5: the sender's physical postal address. CAN-SPAM requires a valid postal address in
+  // every commercial email, and every ZTech email footer carries it. The send boundary refuses
+  // to send without it (SENDER_IDENTITY_INCOMPLETE). It is never invented or defaulted.
+  Object.freeze({ key: 'postal_address', setting: 'businessPostalAddress', max: MAX.postal_address, multiline: true }),
 ]);
 
 /** The unconfigured profile: every field present, every field empty. Never a default identity. */
@@ -59,6 +63,7 @@ function emptyBusinessProfile() {
     sender_company: '',
     value_proposition: '',
     call_to_action: '',
+    postal_address: '',
   };
 }
 

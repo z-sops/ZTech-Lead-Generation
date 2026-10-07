@@ -71,6 +71,14 @@ class EmailProvider {
   get id() { return 'abstract'; }
   /** F19: false by default, so nothing becomes sendable without an explicit override. */
   get live() { return false; }
+
+  /**
+   * F26.5: what this TRANSPORT's own terms allow. The send boundary reads it; the product never
+   * hard-codes one provider's rule for all of them. The base class is the strict default: a
+   * transport that has not declared otherwise may only write to people with a recorded
+   * consent or a verified reply, and must carry the unsubscribe headers.
+   */
+  get transportPolicy() { return Object.freeze({ requiresPriorRelationship: true, enforcesUnsubscribeHeaders: true }); }
   validate(message) { return validateEmailMessage(message); }
   async send() { throw new LiError('EMAIL_PROVIDER_NOT_CONFIGURED', 'No email provider is configured'); }
   async getStatus(messageId) { return { messageId, status: 'unknown' }; }

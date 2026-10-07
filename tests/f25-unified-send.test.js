@@ -30,6 +30,7 @@
 // module-level fetch guard fails loudly if anything reaches for the network.
 
 const fs = require('fs');
+const { withTrustOffer, grantTrust, grantTrustForLeadsSync } = require('./trust-fixture'); // F26.5
 const path = require('path');
 const crypto = require('crypto');
 const assert = require('assert');
@@ -164,6 +165,9 @@ function makeRuntime(leads, {
   when = clock,
 } = {}) {
   const store = new MemoryStore();
+  // F26.5 declared update: every fixture lead carries the trust facts a successful send now
+  // needs (recorded consent; for WhatsApp also a relay inbound opening the 24h window).
+  grantTrustForLeadsSync(store, leads, clock());
   const records = Object.values(leads).map((l) => {
     const host = new URL(l.website).host;
     return round1Record({
@@ -184,7 +188,7 @@ function makeRuntime(leads, {
       research: { mode: 'round1' },
       freshness: { completeMaxAgeDays: 30, partialMaxAgeDays: 7 },
       outreach: { allowedQualification: ['qualified'], allowPartialEvidence: false, requireIcpFit: false },
-      offer: OFFER,
+      offer: withTrustOffer(OFFER), // F26.5 declared update: + postal_address (sender identity)
       whatsapp: Object.assign({ enabled: true, fromNumber: FROM_NUMBER }, whatsapp || {}),
       email: Object.assign({ enabled: false, fromAddress: null }, email || {}),
     },
@@ -946,13 +950,16 @@ test('AC. changed pitch content between preview and confirm is re-checked, not s
 
 test('AD. changed contact facts are re-evaluated at send time - the recipient is re-read, never cached', async () => {
   const leads = { L1: lead({}) };
-  const { li, emailSpy } = bothChannelsRuntime(leads);
+  const { li, store, emailSpy } = bothChannelsRuntime(leads);
   const { pitch } = await runLead(li, 'L1');
   const prep = await li.outreach.prepare({ pitchId: pitch.pitch_id, channel: 'email' });
   assert.strictEqual(prep.recipient.contact, 'hello@acme.example.com', 'the preview showed the stored value');
 
   // The stored contact changes between Prepare and Confirm.
   leads.L1.email = 'ops@acme.example.com';
+  // F26.5 declared update: consent is bound to an ADDRESS, so the new address needs its own
+  // recorded consent - without it this send is (correctly) refused as cold.
+  await grantTrust(store, { email: 'ops@acme.example.com', leadId: 'L1', now: clock() });
   await li.outreach.send({ pitchId: pitch.pitch_id, channel: 'email' });
   const wire = payloadOf(emailSpy.calls[0]);
   assert.ok(JSON.stringify(wire.to).includes('ops@acme.example.com'),

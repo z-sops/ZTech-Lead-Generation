@@ -164,14 +164,15 @@ test('1. no Zee/ZuniTech identity remains in the ACTIVE offer path', () => {
   }
 });
 
-test('2. the Business Profile is EXACTLY four non-secret fields', () => {
+test('2. the Business Profile is EXACTLY five non-secret fields', () => {
+  // F26.5 declared lock update: four -> five, adding postal_address (CAN-SPAM; required to send).
   assert.deepStrictEqual(
     BUSINESS_PROFILE_FIELDS.map((f) => f.key).sort(),
-    ['call_to_action', 'sender_company', 'sender_name', 'value_proposition'],
+    ['call_to_action', 'postal_address', 'sender_company', 'sender_name', 'value_proposition'],
     'the profile enumerates only the fields existing product behaviour reads');
   assert.deepStrictEqual(Object.keys(emptyBusinessProfile()).sort(),
-    ['call_to_action', 'sender_company', 'sender_name', 'value_proposition'],
-    'the empty profile has the same four keys and nothing else');
+    ['call_to_action', 'postal_address', 'sender_company', 'sender_name', 'value_proposition'],
+    'the empty profile has the same five keys and nothing else');
   // A configuration source carrying credential-shaped keys next to the identity keys
   // never leaks them into the profile.
   const secret = 'sk_f24_profile_secret_never_leak_99';
@@ -182,7 +183,7 @@ test('2. the Business Profile is EXACTLY four non-secret fields', () => {
   const json = JSON.stringify(profile);
   assert.ok(!json.includes(secret), 'no secret value enters the Business Profile');
   assert.deepStrictEqual(Object.keys(profile).sort(),
-    ['call_to_action', 'sender_company', 'sender_name', 'value_proposition'],
+    ['call_to_action', 'postal_address', 'sender_company', 'sender_name', 'value_proposition'],
     'and no credential-shaped key is carried either');
   // The reader touches ONLY `settings` - never the providers/credentials record.
   assert.deepStrictEqual([...new Set(store.calls.gets)], ['settings'], 'the reader reads only settings');

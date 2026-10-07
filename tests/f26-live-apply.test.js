@@ -14,6 +14,7 @@
 // domain check uses a fake fetch.
 
 const fs = require('fs');
+const { grantTrustForLeadsSync } = require('./trust-fixture'); // F26.5
 const path = require('path');
 const assert = require('assert');
 
@@ -97,8 +98,12 @@ function build() {
     packet: zuniV1Packet({ domain: 'acme.example.com', capturedAt: CAPTURED_AT }), createdAt: CAPTURED_AT, updatedAt: CAPTURED_AT,
   });
   // Startup: exactly what initLeadIntelligence does - read the (empty) settings once.
+  // F26.5 declared update: the lead's email carries a recorded consent, because Resend may only
+  // write to a contact with one (its AUP forbids cold outreach).
+  const liStore = new MemoryStore();
+  grantTrustForLeadsSync(liStore, { L1: lead }, clock());
   const li = createLeadIntelligence({
-    store: new MemoryStore(),
+    store: liStore,
     leadSource: { getLead: async (id) => (String(id) === 'L1' ? lead : null), listLeads: async () => [lead] },
     round1: {
       async getLatest(id) { return id === 'L1' ? record : null; },
@@ -132,6 +137,9 @@ async function approvedPitch(li) {
 }
 
 async function configureEmail(settings) {
+  // F26.5 declared update: a send now needs a sender identity (company + postal address),
+  // saved through Settings exactly as a person would.
+  await settings.saveBusiness({ representativeName: 'Dana', companyName: 'Ridgeline Supply', postalAddress: '12 Test Street, Karachi' });
   await settings.saveEmail({ enabled: true, fromName: 'Ridgeline', fromAddress: 'sender@live-apply.test', domain: 'live-apply.test' });
   await settings.setKey('resend', KEY);
   const v = await settings.verify('resend');

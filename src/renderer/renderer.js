@@ -1219,7 +1219,7 @@ for (const jump of document.querySelectorAll('[data-settings-jump]')) {
 // Every value is set with textContent or an input's value.
 
 const OUTREACH_FIELDS = {
-  business: ['representativeName', 'companyName', 'valueProposition', 'callToAction'],
+  business: ['representativeName', 'companyName', 'valueProposition', 'callToAction', 'postalAddress'],
   email: ['fromName', 'domain', 'fromAddress', 'replyTo', 'signature'],
   whatsapp: ['fromNumber', 'phoneNumberId', 'businessAccountId'],
 };
