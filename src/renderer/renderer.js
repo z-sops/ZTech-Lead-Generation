@@ -3913,6 +3913,8 @@ function renderLeadDrawer(lead) {
   if (leadDrawerTab === 'timeline' && leadDrawerLeadId) loadLeadDrawerTimeline(leadDrawerLeadId, false);
   // F26.5: consent, do-not-contact and provenance for this lead (local read, no provider).
   if (leadDrawerLeadId) loadLeadTrust(leadDrawerLeadId);
+  // F28: the lead's follow-up sequence (local read; nothing is sent from the drawer).
+  if (leadDrawerLeadId) loadLeadSequence(leadDrawerLeadId);
 }
 
 function renderLeadDrawerResearchViews() {
@@ -7851,6 +7853,303 @@ initSegmentRuleSelects();
 // 初始化补充
 loadNumbers();
 checkStorageStatus();
+
+// === F28 Follow-ups: sequences of approved follow-up emails ===
+// F28 decision D1: a human drafts, edits and approves EVERY follow-up and then activates the
+// sequence; after that ZTech's scheduler (main process, only while the app is open) sends each due
+// step by itself, re-checking every rule at each send. This block only reads and asks main to
+// draft / activate / pause / resume / stop - it cannot send, pick a step, a time, a recipient or a
+// mailbox. Text is set with textContent only.
+const F28_STATE_LABEL = Object.freeze({ waiting: 'Waits for the previous follow-up', scheduled: 'Scheduled', sending: 'Being sent now', sent: 'Accepted by Gmail', stopped: 'Not sent (stopped)' });
+const F28_STOP_LABEL = Object.freeze({ replied: 'they replied', suppressed: 'the contact is on the do-not-contact list', manual: 'you stopped it', contact_changed: 'the lead\'s email address changed' });
+const F28_STATUS_LABEL = Object.freeze({ draft: 'Draft', active: 'Active', paused: 'Paused', stopped: 'Stopped', completed: 'Completed' });
+const F28_PLANS = Object.freeze([
+  { label: '3 follow-ups (after 3, 7 and 14 days)', delays: [3, 7, 14] },
+  { label: '2 follow-ups (after 3 and 7 days)', delays: [3, 7] },
+  { label: '1 follow-up (after 3 days)', delays: [3] },
+]);
+let f28Lead = { leadId: null, view: null, loading: false, error: null, notice: null, busy: false, confirm: null, editing: null, plan: 0, checkedSent: false };
+let f28LeadSeq = 0;
+let f28List = { data: null, loading: false, error: null, busy: false };
+
+function f28Bridge() {
+  const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
+  return api && api.sequences && typeof api.sequences.forLead === 'function' ? api.sequences : null;
+}
+
+function f28Api() { return typeof window !== 'undefined' ? window.ztechLeadIntel : null; }
+
+function f28Unwrap(res, fallback) {
+  if (res && res.ok === true) return res.data;
+  const err = res && res.error ? res.error : {};
+  const detail = Array.isArray(err.errors) && err.errors[0] && typeof err.errors[0].message === 'string' ? err.errors[0].message : '';
+  throw new Error(detail || (typeof err.message === 'string' && err.message ? err.message : fallback));
+}
+
+function f28When(iso) {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t).toLocaleString() : '—';
+}
+
+function f28Button(label, onClick, kind, disabled) {
+  const b = trustEl('button', 'btn btn-sm ' + (kind || 'btn-secondary'), label);
+  b.type = 'button';
+  b.disabled = Boolean(disabled);
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+/** One plain sentence about where the sequence stands. */
+function f28StatusText(v) {
+  if (v.status === 'draft') return 'Draft. Approve every follow-up, then activate. Once active, ZTech sends each one by itself when it is due, from the mailbox that sent the first email, re-checking every rule at each send.';
+  if (v.status === 'active') {
+    const next = (v.steps || []).find((s) => s.state === 'scheduled');
+    return next ? `Active. Next: follow-up ${next.stepNo} of ${v.steps.length}, not before ${f28When(next.nextAttemptAt)}.` : 'Active.';
+  }
+  if (v.status === 'paused') return `Paused. ${v.holdMessage || ''}${v.autoResume && v.resumeAt ? ` Next try: ${f28When(v.resumeAt)}.` : ''}`;
+  if (v.status === 'stopped') return `Stopped for good: ${F28_STOP_LABEL[v.stopReason] || 'stopped'}. A new sequence needs a new first email.`;
+  return 'Completed. Every follow-up was accepted by Gmail.';
+}
+
+function resetLeadSequence() {
+  f28LeadSeq += 1;
+  f28Lead = { leadId: null, view: null, loading: false, error: null, notice: null, busy: false, confirm: null, editing: null, plan: 0, checkedSent: false };
+  renderLeadSequence();
+}
+
+async function loadLeadSequence(leadId) {
+  const bridge = f28Bridge();
+  const seq = ++f28LeadSeq;
+  if (!bridge) {
+    f28Lead = { ...f28Lead, leadId, view: null, loading: false, error: null };
+    renderLeadSequence();
+    return;
+  }
+  f28Lead = { ...f28Lead, leadId, loading: true, error: null, notice: null, confirm: null, editing: null, checkedSent: false };
+  renderLeadSequence();
+  let next;
+  try {
+    next = { ...f28Lead, view: f28Unwrap(await bridge.forLead({ leadId }), 'Follow-ups could not be read.'), loading: false };
+  } catch (err) {
+    next = { ...f28Lead, view: null, loading: false, error: (err && err.message) || 'Follow-ups could not be read.' };
+  }
+  if (seq !== f28LeadSeq || leadDrawerLeadId !== leadId) return;
+  f28Lead = next;
+  renderLeadSequence();
+}
+
+/** Run one request for the drawer's lead, then re-read the sequence. */
+async function f28Act(run, notice, fallback) {
+  const leadId = f28Lead.leadId;
+  if (!leadId || f28Lead.busy) return;
+  f28Lead = { ...f28Lead, busy: true, error: null, notice: null };
+  renderLeadSequence();
+  try {
+    await run();
+    f28Lead = { ...f28Lead, busy: false, confirm: null, editing: null, checkedSent: false };
+    await loadLeadSequence(leadId);
+    if (f28Lead.leadId === leadId) { f28Lead = { ...f28Lead, notice }; renderLeadSequence(); }
+  } catch (err) {
+    if (f28Lead.leadId !== leadId) return;
+    f28Lead = { ...f28Lead, busy: false, error: (err && err.message) || fallback };
+    renderLeadSequence();
+  }
+}
+
+function f28StepBlock(v, s) {
+  const box = trustEl('div', 'f28-step');
+  const head = trustEl('div', 'f28-step-head');
+  head.appendChild(trustEl('span', 'f28-step-title', `Follow-up ${s.stepNo} of ${v.steps.length} · ${s.delayDays} days after the previous email`));
+  head.appendChild(trustEl('span', 'f28-step-state', F28_STATE_LABEL[s.state] || s.state));
+  if (s.state !== 'sent' && s.state !== 'stopped') head.appendChild(trustEl('span', s.approved ? 'f28-approved' : 'f28-unapproved', s.approved ? 'Approved' : 'Not approved'));
+  box.appendChild(head);
+  if (s.state === 'sent') box.appendChild(trustEl('div', 'f28-step-when', `Accepted by Gmail ${f28When(s.sentAt)} · delivery unknown`));
+  else if (s.state === 'scheduled') box.appendChild(trustEl('div', 'f28-step-when', `Not before ${f28When(s.nextAttemptAt)}`));
+  box.appendChild(trustEl('div', 'f28-step-subject', s.subject));
+  const open = v.status !== 'stopped' && v.status !== 'completed' && (s.state === 'waiting' || s.state === 'scheduled');
+  if (f28Lead.editing === s.stepNo && open) {
+    const opening = trustEl('textarea', 'f28-edit');
+    opening.maxLength = 600;
+    opening.value = s.opening || '';
+    opening.setAttribute('aria-label', 'Opening line');
+    const cta = trustEl('textarea', 'f28-edit');
+    cta.maxLength = 400;
+    cta.value = s.callToAction || '';
+    cta.setAttribute('aria-label', 'Call to action');
+    box.append(trustEl('label', 'f28-edit-label', 'Opening line'), opening, trustEl('label', 'f28-edit-label', 'Call to action'), cta);
+    const api = f28Api();
+    box.appendChild(f28Button('Save', () => f28Act(async () => f28Unwrap(await api.pitch.update({ pitchId: s.pitchId, opening: opening.value, callToAction: cta.value }), 'The follow-up could not be saved.'),
+      'Saved. Approve it again before it can be sent.', 'The follow-up could not be saved.'), 'btn-primary', f28Lead.busy));
+    box.appendChild(f28Button('Cancel', () => { f28Lead = { ...f28Lead, editing: null }; renderLeadSequence(); }, 'btn-secondary', f28Lead.busy));
+    return box;
+  }
+  box.appendChild(trustEl('div', 'f28-step-text', s.text));
+  if (open) {
+    const api = f28Api();
+    const row = trustEl('div', 'f28-step-actions');
+    row.appendChild(f28Button('Edit', () => { f28Lead = { ...f28Lead, editing: s.stepNo, notice: null }; renderLeadSequence(); }, 'btn-secondary', f28Lead.busy));
+    if (!s.approved) {
+      row.appendChild(f28Button('Approve', () => f28Act(async () => f28Unwrap(await api.outreach.approve({ pitchId: s.pitchId }), 'The follow-up could not be approved.'),
+        `Follow-up ${s.stepNo} approved.`, 'The follow-up could not be approved.'), 'btn-primary', f28Lead.busy || s.draftStatus !== 'draft'));
+      if (s.draftStatus !== 'draft') row.appendChild(trustEl('span', 'lead-trust-error', 'This follow-up needs evidence-backed text before it can be approved.'));
+    }
+    box.appendChild(row);
+  }
+  return box;
+}
+
+function f28Controls(v) {
+  const bridge = f28Bridge();
+  const row = trustEl('div', 'f28-controls');
+  const id = { sequenceId: v.sequenceId };
+  const confirm = f28Lead.confirm;
+  if (confirm === 'activate') {
+    row.appendChild(trustEl('span', 'f28-confirm', `Activate? ZTech will then send these ${v.steps.length} follow-up(s) by itself, each when it is due, as a reply in the first email's thread. Any reply, unsubscribe or do-not-contact stops them for good.`));
+    row.appendChild(f28Button('Yes, activate', () => f28Act(async () => f28Unwrap(await bridge.activate(id), 'The follow-ups could not be activated.'), 'Follow-ups activated.', 'The follow-ups could not be activated.'), 'btn-primary', f28Lead.busy));
+    row.appendChild(f28Button('Cancel', () => { f28Lead = { ...f28Lead, confirm: null }; renderLeadSequence(); }));
+    return row;
+  }
+  if (confirm === 'stop') {
+    row.appendChild(trustEl('span', 'f28-confirm', 'Stop these follow-ups for good? A stopped sequence never restarts.'));
+    row.appendChild(f28Button('Yes, stop', () => f28Act(async () => f28Unwrap(await bridge.stop(id), 'The follow-ups could not be stopped.'), 'Follow-ups stopped.', 'The follow-ups could not be stopped.'), 'btn-danger', f28Lead.busy));
+    row.appendChild(f28Button('Cancel', () => { f28Lead = { ...f28Lead, confirm: null }; renderLeadSequence(); }));
+    return row;
+  }
+  if (v.status === 'draft') {
+    const ready = (v.steps || []).every((s) => s.approved);
+    row.appendChild(f28Button('Activate follow-ups', () => { f28Lead = { ...f28Lead, confirm: 'activate' }; renderLeadSequence(); }, 'btn-primary', f28Lead.busy || !ready));
+    if (!ready) row.appendChild(trustEl('span', 'f28-hint', 'Approve every follow-up first.'));
+  }
+  if (v.status === 'active') row.appendChild(f28Button('Pause', () => f28Act(async () => f28Unwrap(await bridge.pause(id), 'The follow-ups could not be paused.'), 'Paused.', 'The follow-ups could not be paused.'), 'btn-secondary', f28Lead.busy));
+  if (v.status === 'paused') {
+    const unknown = v.holdCode === 'SEND_OUTCOME_UNKNOWN';
+    if (unknown) {
+      const label = trustEl('label', 'f28-check');
+      const box = trustEl('input');
+      box.type = 'checkbox';
+      box.checked = f28Lead.checkedSent;
+      box.addEventListener('change', () => { f28Lead = { ...f28Lead, checkedSent: box.checked }; renderLeadSequence(); });
+      label.append(box, trustEl('span', null, 'I checked Gmail\'s Sent folder: this follow-up was NOT sent.'));
+      row.appendChild(label);
+    }
+    row.appendChild(f28Button('Resume', () => f28Act(async () => f28Unwrap(await bridge.resume(unknown ? { ...id, confirmNotSent: true } : id), 'The follow-ups could not be resumed.'), 'Resumed. Every rule is checked again before the next follow-up.', 'The follow-ups could not be resumed.'),
+      'btn-primary', f28Lead.busy || (unknown && !f28Lead.checkedSent)));
+  }
+  if (v.status === 'draft' || v.status === 'active' || v.status === 'paused') {
+    row.appendChild(f28Button('Stop sequence', () => { f28Lead = { ...f28Lead, confirm: 'stop' }; renderLeadSequence(); }, 'btn-danger', f28Lead.busy));
+  }
+  return row;
+}
+
+function renderLeadSequence() {
+  const host = typeof document !== 'undefined' ? document.getElementById('lead-drawer-sequence') : null;
+  if (!host) return;
+  host.replaceChildren();
+  host.appendChild(trustEl('div', 'lead-drawer-section-title', 'Follow-ups'));
+  const bridge = f28Bridge();
+  if (!bridge) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Follow-ups are not available in this build.')); return; }
+  if (f28Lead.loading) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Loading…')); return; }
+  if (f28Lead.error) host.appendChild(trustEl('p', 'lead-trust-error', f28Lead.error));
+  if (f28Lead.notice) host.appendChild(trustEl('p', 'lead-trust-notice', f28Lead.notice));
+  const v = f28Lead.view;
+  const canStartNew = !v || v.status === 'stopped' || v.status === 'completed';
+  if (v) {
+    host.appendChild(trustEl('p', 'f28-status', `${F28_STATUS_LABEL[v.status] || v.status} · ${f28StatusText(v)}`));
+    host.appendChild(trustEl('p', 'f28-first', `First email: "${v.firstSubject}", accepted by Gmail ${f28When(v.firstSentAt)}.`));
+    for (const s of v.steps || []) host.appendChild(f28StepBlock(v, s));
+    if (!canStartNew) host.appendChild(f28Controls(v));
+  }
+  if (canStartNew) {
+    if (!v) host.appendChild(trustEl('p', 'lead-drawer-muted', 'No follow-ups. They can be added after a first email from your mailbox was accepted by Gmail.'));
+    const row = trustEl('div', 'f28-controls');
+    const select = trustEl('select', 'f28-plan');
+    select.setAttribute('aria-label', 'How many follow-ups');
+    F28_PLANS.forEach((p, i) => { const o = trustEl('option', null, p.label); o.value = String(i); if (i === f28Lead.plan) o.selected = true; select.appendChild(o); });
+    select.addEventListener('change', () => { f28Lead = { ...f28Lead, plan: Number(select.value) || 0 }; });
+    const leadId = f28Lead.leadId;
+    row.append(select, f28Button('Add follow-ups', () => f28Act(async () => f28Unwrap(await bridge.create({ leadId, delays: [...F28_PLANS[f28Lead.plan].delays] }), 'Follow-ups could not be added.'),
+      'Follow-ups drafted. Review, edit and approve each one, then activate.', 'Follow-ups could not be added.'), 'btn-primary', f28Lead.busy || !leadId));
+    host.appendChild(row);
+  }
+}
+
+/* ---- Outreach > Follow-ups: every open sequence, and the global "Pause all follow-ups" switch ---- */
+
+async function f28ListLoad() {
+  const bridge = f28Bridge();
+  if (!bridge) { f28List = { data: null, loading: false, error: null, busy: false }; renderF28List(); return; }
+  f28List = { ...f28List, loading: true, error: null };
+  renderF28List();
+  try {
+    f28List = { ...f28List, data: f28Unwrap(await bridge.list(), 'Follow-ups could not be read.'), loading: false };
+  } catch (err) {
+    f28List = { ...f28List, loading: false, error: (err && err.message) || 'Follow-ups could not be read.' };
+  }
+  renderF28List();
+}
+
+async function f28ListAct(run, fallback) {
+  if (f28List.busy) return;
+  f28List = { ...f28List, busy: true, error: null };
+  renderF28List();
+  try {
+    await run();
+    f28List = { ...f28List, busy: false };
+    await f28ListLoad();
+  } catch (err) {
+    f28List = { ...f28List, busy: false, error: (err && err.message) || fallback };
+    renderF28List();
+  }
+}
+
+function renderF28List() {
+  const host = typeof document !== 'undefined' ? document.getElementById('f28-followups') : null;
+  if (!host) return;
+  host.replaceChildren();
+  const bridge = f28Bridge();
+  const head = trustEl('div', 'f28-list-head');
+  head.appendChild(trustEl('h3', 'f28-list-title', 'Follow-ups'));
+  host.appendChild(head);
+  if (!bridge) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Follow-ups are not available in this build.')); return; }
+  host.appendChild(trustEl('p', 'f28-list-note', 'Follow-ups you activated. While ZTech is open it sends each due follow-up by itself, re-checking every rule; a reply, unsubscribe or do-not-contact stops them for good.'));
+  if (f28List.error) host.appendChild(trustEl('p', 'lead-trust-error', f28List.error));
+  if (f28List.loading && !f28List.data) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Loading…')); return; }
+  const data = f28List.data;
+  if (!data) return;
+  const paused = data.pausedAll === true;
+  head.appendChild(f28Button(paused ? 'Resume all follow-ups' : 'Pause all follow-ups',
+    () => f28ListAct(async () => f28Unwrap(await bridge.setPauseAll({ paused: !paused }), 'The switch could not be changed.'), 'The switch could not be changed.'), paused ? 'btn-primary' : 'btn-secondary', f28List.busy));
+  if (paused) host.appendChild(trustEl('p', 'f28-paused-all', 'All follow-ups are paused. Nothing is sent until you resume them.'));
+  const rows = Array.isArray(data.sequences) ? data.sequences : [];
+  if (!rows.length) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'No open follow-ups.')); return; }
+  const list = trustEl('div', 'f28-list-rows');
+  for (const v of rows) {
+    const r = trustEl('div', 'f28-list-row');
+    const next = (v.steps || []).find((s) => s.state === 'scheduled' || s.state === 'waiting');
+    r.appendChild(trustEl('span', 'f28-list-lead', v.leadName || `Lead ${v.leadId}`));
+    r.appendChild(trustEl('span', 'f28-list-subject', v.firstSubject));
+    r.appendChild(trustEl('span', 'f28-list-status', F28_STATUS_LABEL[v.status] || v.status));
+    r.appendChild(trustEl('span', 'f28-list-next', v.status === 'paused' ? (v.holdMessage || '') : (next ? `Follow-up ${next.stepNo} of ${v.steps.length}${next.nextAttemptAt ? `, not before ${f28When(next.nextAttemptAt)}` : ''}` : '')));
+    const id = { sequenceId: v.sequenceId };
+    if (v.status === 'paused' && v.holdCode !== 'SEND_OUTCOME_UNKNOWN') r.appendChild(f28Button('Resume', () => f28ListAct(async () => f28Unwrap(await bridge.resume(id), 'Could not resume.'), 'Could not resume.'), 'btn-secondary', f28List.busy));
+    if (v.holdCode === 'SEND_OUTCOME_UNKNOWN') r.appendChild(trustEl('span', 'f28-hint', 'Open the lead to decide.'));
+    if (v.status === 'active') r.appendChild(f28Button('Pause', () => f28ListAct(async () => f28Unwrap(await bridge.pause(id), 'Could not pause.'), 'Could not pause.'), 'btn-secondary', f28List.busy));
+    list.appendChild(r);
+  }
+  host.appendChild(list);
+}
+
+function f28FollowupsInit() {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function' || typeof document.getElementById !== 'function') return;
+  const nav = document.querySelector('.nav-item[data-view="outreach"]');
+  if (nav) nav.addEventListener('click', () => f28ListLoad());
+  const refresh = document.getElementById('outreach-refresh');
+  if (refresh) refresh.addEventListener('click', () => f28ListLoad());
+}
+// Listeners only, attached here: every binding this block reads is declared above, so this
+// cannot run inside a temporal dead zone (the F12 rule for end-of-module init calls).
+f28FollowupsInit();
+// === END F28 Follow-ups ===
 
 // === F11 Outreach: Lead Drawer Pitch tab ===
 //

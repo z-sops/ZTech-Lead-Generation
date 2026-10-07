@@ -25,6 +25,7 @@ const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/ma
 const { registerTimelineIpc } = require('./src/main/lead-intelligence/timeline/timeline-ipc');
 const { registerTrustIpc } = require('./src/main/lead-intelligence/trust/trust-ipc');
 const { registerMailboxIpc } = require('./src/main/lead-intelligence/mailbox/mailbox-ipc');
+const { registerSequenceIpc } = require('./src/main/lead-intelligence/sequences/sequence-ipc');
 
 let mainWindow = null;
 let providerManager = null;
@@ -1558,6 +1559,27 @@ function registerLeadIntelIpcHandlers() {
     }
   } catch (err) {
     logger.error('lead-intel', 'mailbox IPC registration failed', { error: err.message });
+  }
+
+  // F28: follow-up sequences (draft, activate, pause, resume, stop, Pause all). No channel sends;
+  // the main-process scheduler alone sends an approved step of an activated sequence.
+  try {
+    if (leadIntelRuntime.li && leadIntelRuntime.li.sequences) {
+      registerSequenceIpc({
+        ipcMain,
+        sequences: leadIntelRuntime.li.sequences,
+        isTrustedSender: (event) => {
+          try {
+            return leadIntelTrustedSender(event) === true;
+          } catch {
+            return false;
+          }
+        },
+        logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
+      });
+    }
+  } catch (err) {
+    logger.error('lead-intel', 'sequence IPC registration failed', { error: err.message });
   }
 }
 

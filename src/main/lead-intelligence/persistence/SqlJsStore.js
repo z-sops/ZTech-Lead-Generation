@@ -4,6 +4,7 @@ const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = requi
 const { MIGRATIONS } = require('./migrations');
 const { SqlSuppressions, SqlConsents, SqlProvenance, SqlTrustEvents, SqlRecipientRefs } = require('./trustRepos');
 const { SqlMailboxes, SqlMailboxSent, SqlMarketRules, SqlReplyReviews } = require('./mailboxRepos');
+const { SqlSequences } = require('./sequenceRepos');
 const { MAILBOX_ID_RE } = require('../mailbox/mailboxContract');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
@@ -76,6 +77,8 @@ class SqlJsStore {
     this.marketRules = new SqlMarketRules(this);
     // F26.6 follow-up (migration 011): human review of verified mailbox replies.
     this.replyReviews = new SqlReplyReviews(this);
+    // F28 (migration 012): follow-up sequences, their steps, the sequence audit and Pause all.
+    this.sequences = new SqlSequences(this);
   }
 
   /** Apply pending migrations in one transaction each. Idempotent. */
@@ -129,6 +132,8 @@ class SqlJsStore {
     const id = String(leadId);
     return this.tx(() => {
       this.db.run('DELETE FROM li_outreach_approvals WHERE pitch_id IN (SELECT pitch_id FROM li_pitch_drafts WHERE lead_id = ?)', [id]);
+      // F28: the lead's sequences and steps (and their step approvals) go; the audit stays.
+      this.sequences._deleteByLeadSql(id);
       this.db.run('DELETE FROM li_pitch_drafts WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_research_changes WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_evidence_packets WHERE lead_id = ?', [id]);

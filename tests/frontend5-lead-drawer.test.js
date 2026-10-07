@@ -204,9 +204,11 @@ function makeEnv(opts) {
   // F26.5 declared harness update: the drawer now also calls the F26.5 trust block
   // (consent, do-not-contact, provenance) when a lead renders, so it is evaluated too.
   const trustBlock = between(rendererSource, '// === F26.5 Trust: consent, do-not-contact, provenance and the mail-app handoff ===', '// === END F26.5 Trust ===');
+  // F28 declared harness update: the drawer also loads the lead's follow-up sequence (F28 block).
+  const f28Block = between(rendererSource, '// === F28 Follow-ups: sequences of approved follow-up emails ===', '// === END F28 Follow-ups ===');
   const names = Object.keys(deps);
   const api = new Function(...names,
-    escapeHtmlSrc + '\n' + renderWebsiteSrc + '\n' + mobile + '\n' + researchConsts + '\n' + p1a + '\n' + f5 + '\n' + oiPanel + '\n' + trustBlock +
+    escapeHtmlSrc + '\n' + renderWebsiteSrc + '\n' + mobile + '\n' + researchConsts + '\n' + p1a + '\n' + f5 + '\n' + oiPanel + '\n' + trustBlock + '\n' + f28Block +
     '\nreturn { showLeadDrawer, renderLeadDrawer, renderLeadDrawerResearch, resetLeadDrawer, selectLeadDrawerTab,' +
     ' updateLeadDrawerNav, setLeadDrawerSaveState, updateLeadDrawerQualificationBadge,' +
     ' get leadId() { return leadDrawerLeadId; }, get tab() { return leadDrawerTab; } };'
@@ -640,7 +642,7 @@ test('21. the IPC channel set and dependencies are unchanged', () => {
   // F21 declared lock update: 51 -> 52, the read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
   // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total; +2 check, checkReplies = 95 total; +1 trust reviewReply = 96 total.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 96, '96 preload invocations');
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 104, '104 preload invocations'); // F28 declared lock update: + 8 sequence methods
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'the F5 block performs no I/O');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);

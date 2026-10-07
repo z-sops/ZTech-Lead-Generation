@@ -128,6 +128,57 @@ function generatePitch({ view, packet, icpFit = null, offer = {}, now = new Date
   return finalize(d);
 }
 
+/**
+ * F28: a deterministic follow-up draft for step `stepNo` (1-3) of a sequence started by `first`
+ * (the first email's pitch, unchanged since it was sent). It carries the SAME evidence link
+ * (packet) and ONE of the first email's evidence-backed observations, so it passes the same
+ * Outreach Gate checks as any pitch. The subject is the first email's subject: the threaded send
+ * adds "Re: " (D4); it is never editable. Nothing here claims anything about the prospect.
+ */
+const FOLLOWUP_OPENINGS = Object.freeze([
+  (g, about, date) => `${g} I'm following up on my note${date ? ` from ${date}` : ''} about ${about}.`,
+  (g, about) => `${g} a short follow-up on ${about}, in case my earlier emails were missed.`,
+  (g, about) => `${g} a last note on ${about}. I won't write about it again unless you reply.`,
+]);
+
+function generateFollowUp({ first, packet, view, stepNo, sequenceId, firstSentAt = null, now = new Date() }) {
+  if (!first || !Number.isInteger(stepNo) || stepNo < 1 || stepNo > FOLLOWUP_OPENINGS.length) throw new TypeError('generateFollowUp: first pitch and step 1-3 are required');
+  const nowIso = now.toISOString();
+  const nameRes = sanitizeUntrusted((view && view.name) || '', 120);
+  const name = nameRes.flagged ? '' : nameRes.text;
+  const greeting = name ? `Hi ${name} team,` : 'Hello,';
+  const domain = packet ? packet.audited_domain || packet.requested_domain : null;
+  const about = domain || 'my earlier email';
+  const date = typeof firstSentAt === 'string' ? firstSentAt.slice(0, 10) : null;
+  const observations = (first.observations || []).slice(0, 1).map((o) => ({ ...o, refs: [...(o.refs || [])] }));
+  const allRefs = [...new Set(observations.flatMap((o) => o.refs))];
+  const d = {
+    pitch_id: newId('pitch'),
+    kind: 'followup',
+    sequence_id: sequenceId,
+    step_no: stepNo,
+    parent_pitch_id: first.pitch_id,
+    lead_id: first.lead_id,
+    packet_id: first.packet_id,
+    research_status: first.research_status ?? (packet ? packet.research_status : null),
+    target_id: first.target_id ?? null,
+    icp_fit_status: first.icp_fit_status ?? null,
+    subject: String(first.subject).slice(0, MAX.subject),
+    opening: FOLLOWUP_OPENINGS[stepNo - 1](greeting, about, date).slice(0, MAX.opening),
+    observations,
+    valueProposition: '',
+    callToAction: String(first.callToAction || '').slice(0, MAX.callToAction),
+    evidenceReferences: packet ? provenanceList(packet, allRefs) : [],
+    unsupportedClaims: [],
+    status: 'draft',
+    content_hash: '',
+    created_at: nowIso,
+    updated_at: nowIso,
+    _packet: packet,
+  };
+  return finalize(d);
+}
+
 /** Apply user edits to text fields and re-check. Observations are not editable (evidence). */
 function editPitch(pitch, edits, packet, now = new Date()) {
   const d = { ...pitch, observations: pitch.observations.map((o) => ({ ...o })) };
@@ -154,4 +205,4 @@ function renderPitchText(p) {
   return lines.join('\n');
 }
 
-module.exports = { generatePitch, editPitch, detectUnsupportedClaims, renderPitchText, contentHash, PROBLEM_CLAIM, PROHIBITED_CLAIM };
+module.exports = { generatePitch, generateFollowUp, editPitch, detectUnsupportedClaims, renderPitchText, contentHash, PROBLEM_CLAIM, PROHIBITED_CLAIM };

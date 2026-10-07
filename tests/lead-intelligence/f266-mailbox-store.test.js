@@ -48,7 +48,7 @@ const checkOf = (sql, table, col) => {
 /* ================================ migration 010 ================================ */
 
 test('M1. 010 is the tenth migration; its CHECK lists equal the mailbox contract (one vocabulary)', () => {
-  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // F28 declared lock update: + 012 sequences
   assert.deepEqual(checkOf(SQL10, 'CREATE TABLE IF NOT EXISTS li_mailboxes', 'provider'), [...M.MAILBOX_PROVIDERS]);
   assert.deepEqual(checkOf(SQL10, 'CREATE TABLE IF NOT EXISTS li_mailboxes', 'status'), [...M.MAILBOX_STATUSES]);
   assert.deepEqual(checkOf(SQL10, 'CREATE TABLE IF NOT EXISTS li_market_rules', 'rule'), [...M.MARKET_RULES]);
@@ -85,7 +85,7 @@ test('M3. 010 on a populated v9 database: legacy sends keep mailbox_id NULL, tru
   const store = new SqlJsStore({ db, logger: SILENT });
   await store.migrate();
   await store.migrate();
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // F28 declared lock update: + 012 sequences
   assert.deepEqual(db.exec('SELECT * FROM li_trust_events ORDER BY row_id')[0].values, before.ev, 'trust events byte for byte');
   assert.deepEqual(db.exec('SELECT * FROM li_suppressions ORDER BY suppression_id')[0].values, before.sup, 'suppressions byte for byte');
   const old = await store.sends.get('s_old');

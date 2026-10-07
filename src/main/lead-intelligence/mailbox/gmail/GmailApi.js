@@ -64,10 +64,15 @@ class GmailApi {
     return { emailAddress: typeof j.emailAddress === 'string' ? j.emailAddress : null, historyId: j.historyId != null ? String(j.historyId) : null };
   }
 
-  /** Send one raw (base64url) message. Returns Gmail's own ids only. */
-  async sendRaw(rawBase64Url) {
-    const j = await this._call('POST', '/messages/send', { raw: rawBase64Url });
-    if (!idOk(j.id)) throw new LiError('MAILBOX_PROVIDER_REJECTED', 'Gmail did not return a message id.');
+  /**
+   * Send one raw (base64url) message. Returns Gmail's own ids only. F28: `threadId` (a thread
+   * Gmail gave an earlier send of the same sequence) puts a follow-up into that thread.
+   */
+  async sendRaw(rawBase64Url, { threadId = null } = {}) {
+    if (threadId !== null && !idOk(threadId)) throw new LiError('MAILBOX_PROVIDER_REJECTED', 'Invalid Gmail thread id.');
+    const j = await this._call('POST', '/messages/send', threadId ? { raw: rawBase64Url, threadId } : { raw: rawBase64Url });
+    // A 2xx without an id: Gmail may well have sent it. That is an UNKNOWN outcome, never "refused".
+    if (!idOk(j.id)) throw new LiError('MAILBOX_SEND_UNCONFIRMED', 'Gmail answered without a message id, so ZTech cannot tell whether it was sent. Nothing was retried.');
     return { id: j.id, threadId: idOk(j.threadId) ? j.threadId : null, labelIds: Array.isArray(j.labelIds) ? j.labelIds.slice(0, 20).map(String) : [] };
   }
 

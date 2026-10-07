@@ -1048,6 +1048,8 @@
                   <!-- F26.5: consent, do-not-contact and where the contact details came from.
                        Filled by the F26.5 renderer block with textContent only. -->
                   <div class="lead-drawer-section lead-trust" id="lead-drawer-trust" aria-live="polite"></div>
+                  <!-- F28: the lead's follow-up sequence. Filled by the F28 renderer block with textContent only. -->
+                  <div class="lead-drawer-section f28-sequence" id="lead-drawer-sequence" aria-live="polite"></div>
                   <!-- The complete stored record, rendered by the unchanged B3 template. -->
                   <details class="lead-drawer-section lead-drawer-record">
                     <summary class="lead-drawer-section-title">All stored fields</summary>
@@ -1565,6 +1567,9 @@
                 <button class="btn btn-sm" id="outreach-next" type="button">Next</button>
               </div>
             </div>
+            <!-- F28: open follow-up sequences and the "Pause all follow-ups" switch. Filled by the F28
+                 renderer block (textContent only); the pitch table above stays read-only. -->
+            <div class="f28-followups" id="f28-followups" aria-live="polite"></div>
           </div>
         </section>
 

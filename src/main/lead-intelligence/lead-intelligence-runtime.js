@@ -68,6 +68,12 @@ const LI_TABLES = Object.freeze([
   'li_market_rules',
   // F26.6 follow-up (migration 011): the human review of a verified mailbox reply.
   'li_reply_reviews',
+  // F28 (migration 012): follow-up sequences and their steps (each with its own follow-up pitch),
+  // the append-only sequence audit (ids, codes, times) and the one "Pause all follow-ups" switch.
+  'li_sequences',
+  'li_sequence_steps',
+  'li_sequence_events',
+  'li_sequence_control',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';
@@ -260,6 +266,27 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
     }
   }
 
+  // F28: follow-up sequences. The service always exists (drafting, review, stop); the scheduler -
+  // the ONE thing that sends an approved step of an activated sequence by itself (D1) - runs only
+  // when connected mailboxes exist, and only while the app is open.
+  li.sequences = null;
+  let sequenceScheduler = null;
+  try {
+    const { SequenceService } = require('./sequences/SequenceService');
+    li.sequences = new SequenceService({ store, outreach: li.outreach, mailboxes: li.mailboxes, clock: clock || (() => new Date()), logger });
+    li.outreach.setSequences(li.sequences);
+    if (li.mailboxes) {
+      const { SequenceScheduler } = require('./sequences/SequenceScheduler');
+      sequenceScheduler = new SequenceScheduler({ sequences: li.sequences, store, clock: clock || (() => new Date()), logger });
+      sequenceScheduler.start(mailbox && Number.isInteger(mailbox.sequenceIntervalMs) ? mailbox.sequenceIntervalMs : undefined);
+    }
+  } catch (err) {
+    li.sequences = null;
+    sequenceScheduler = null;
+    if (logger && logger.warn) logger.warn(`[lead-intelligence] follow-ups disabled: ${err && err.message}`);
+  }
+  li.sequenceScheduler = sequenceScheduler;
+
   let closed = false;
 
   // --- Phase I2: Opportunity Intelligence -----------------------------------
@@ -289,6 +316,7 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
       closed = true;
       if (relay) relay.stop();
       if (mailboxSyncTimer) clearInterval(mailboxSyncTimer);
+      if (sequenceScheduler) sequenceScheduler.stop();
       li.stop();
       // OI holds no socket and no timer, so this is a no-op that exists so the
       // shutdown path is explicit rather than accidental.

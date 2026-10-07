@@ -6217,3 +6217,111 @@ textarea {
   font-size: var(--font-12);
   color: var(--text-1);
 }
+
+/* F28 Follow-ups: the lead's sequence (drawer) and open sequences (Outreach view) */
+.f28-status,
+.f28-first,
+.f28-list-note,
+.f28-paused-all {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.f28-first,
+.f28-list-note,
+.f28-hint,
+.f28-step-when {
+  color: var(--text-2);
+  font-size: var(--font-12);
+}
+
+.f28-step {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.f28-step-head,
+.f28-step-actions,
+.f28-controls,
+.f28-list-head,
+.f28-list-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.f28-step-title,
+.f28-list-lead,
+.f28-list-title {
+  font-size: var(--font-12);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.f28-step-state,
+.f28-approved,
+.f28-unapproved,
+.f28-list-status {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.f28-unapproved {
+  color: var(--text-1);
+}
+
+.f28-step-subject {
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.f28-step-text {
+  font-size: var(--font-12);
+  color: var(--text-1);
+  white-space: pre-wrap;
+}
+
+.f28-edit {
+  width: 100%;
+  min-height: 4em;
+}
+
+.f28-edit-label,
+.f28-confirm,
+.f28-check {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.f28-controls {
+  margin-top: var(--space-2);
+}
+
+.f28-followups {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.f28-list-rows {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.f28-list-row {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.f28-list-subject,
+.f28-list-next {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}

@@ -263,9 +263,22 @@ class OutreachService {
   }
 
   async get(pitchId) {
-    const p = await this.store.pitches.get(pitchId);
+    const p = await this._pitchById(pitchId);
     if (!p) throw new NotFoundError('Pitch', pitchId);
     return p;
+  }
+
+  /**
+   * F28: a pitch is either an ordinary draft (li_pitch_drafts) or a follow-up step's draft
+   * (li_sequence_steps). Follow-ups never appear in the pitch list, the Ready queue or a lead's
+   * latest pitch; they are reachable by id only, for edit / approve / their sequence's send.
+   */
+  async _pitchById(pitchId) {
+    const p = await this.store.pitches.get(pitchId);
+    if (p) return p;
+    if (!this.store.sequences) return null;
+    const step = await this.store.sequences.stepByPitch(pitchId);
+    return step && step.draft ? step.draft : null;
   }
 
   async latestForLead(leadId) {
@@ -630,8 +643,18 @@ class OutreachService {
   async update({ pitchId, edits }) {
     const p = await this.get(pitchId);
     const packet = p.packet_id ? await this.store.packets.get(p.packet_id) : null;
+    // F28: a follow-up keeps the first email's subject (the threaded send adds "Re: "), and a step
+    // that was sent, or whose sequence ended, is history and cannot change.
+    if (p.kind === 'followup' && edits && edits.subject !== undefined && String(edits.subject) !== p.subject) {
+      throw new ValidationError('a follow-up keeps the first email subject', [{ path: '$.edits.subject', message: 'a follow-up is sent as a reply in the same thread, so its subject cannot change' }]);
+    }
     const next = editPitch(p, edits, packet, this.clock());
-    await this.store.pitches.upsert(next);
+    if (p.kind === 'followup') {
+      if (!this.sequences) throw new LiError('SEQUENCES_UNAVAILABLE', 'Follow-ups are not available here.');
+      await this.sequences.saveStepDraft(next);
+    } else {
+      await this.store.pitches.upsert(next);
+    }
 
     // F15: the content changed, so any approval made for the OLD content no longer
     // applies. That is provable here, at the mutation boundary - the approval row is
@@ -660,6 +683,12 @@ class OutreachService {
     await this.store.approvals.insert(rec);
     // F15: the approval exists now, so PITCH_APPROVED is a fact.
     await this._recordActivity(p, 'PITCH_APPROVED', { approvedBy: rec.approved_by, contentHash: rec.content_hash });
+    // F28: approving the last unapproved step of a sequence held for approval lets it continue.
+    if (p.kind === 'followup' && this.sequences) {
+      try { await this.sequences.onStepApproved(p); } catch (err) {
+        if (this.logger && typeof this.logger.warn === 'function') this.logger.warn('[lead-intelligence] sequence approval note failed', { error: err && err.code ? err.code : 'ERROR' });
+      }
+    }
 
     // OUTREACH_READY is only recorded when the gate genuinely allows this content right
     // now, and only when this exact content has not already been recorded as ready - so
@@ -756,7 +785,7 @@ class OutreachService {
     };
   }
 
-  async gate({ pitchId, channel = 'email' }) {
+  async gate({ pitchId, channel = 'email' }, { sequenceSend = false } = {}) {
     const pitch = await this.get(pitchId);
     const ctx = await this.contexts.getContext(pitch.lead_id, { targetId: pitch.target_id ?? undefined });
     const packet = pitch.packet_id ? await this.store.packets.get(pitch.packet_id) : null;
@@ -786,6 +815,13 @@ class OutreachService {
     // the one flag a renderer should gate a send control on; `code`/`message` say exactly
     // which configuration gap is responsible.
     //
+    // F28: a follow-up step is sent ONLY by its own activated sequence (as a reply in the first
+    // email's thread). Every other path - Prepare, a human send on any channel, the mail-app
+    // handoff - finds it blocked here, so it can never go out unthreaded or out of turn.
+    if (pitch.kind === 'followup' && sequenceSend !== true) {
+      gate.reasons.push({ code: 'FOLLOWUP_SEQUENCE_ONLY', message: 'This follow-up is sent only by its sequence, as a reply in the same thread.' });
+      gate.decision = 'blocked';
+    }
     return {
       ...gate,
       delivery: this._deliveryBlock(channel)
@@ -1388,6 +1424,9 @@ class OutreachService {
   /** F26.6: the connected-mailbox service (main-only), set by the runtime. */
   setMailboxes(mailboxes) { this.mailboxes = mailboxes || null; }
 
+  /** F28: the follow-up sequence service (main-only), set by the runtime. */
+  setSequences(sequences) { this.sequences = sequences || null; }
+
   // === F26.6: the connected-mailbox send boundary ===
   //
   // The SAME safety order as sendEmail, with the mailbox in place of the configured provider:
@@ -1406,7 +1445,15 @@ class OutreachService {
   //   8. one provider call, under a per-mailbox lock (a second click while one is in flight is refused)
   //   9. settle accepted/failed, then READ BACK the stored copy and persist the provider-STORED
   //      Message-ID (li_mailbox_sent). Replies are matched against that id only.
-  async sendFromMailbox({ pitchId, mailboxId }) {
+  //
+  // F28: `followUp` is set ONLY by the SequenceService (main process) for a due step of an
+  // activated sequence; no IPC caller can supply it (send() passes one argument). It adds:
+  //   - the step's pitch must be that follow-up, and the mailbox the sequence's own mailbox;
+  //   - the recipient must still be the address the first email went to (CONTACT_CHANGED);
+  //   - threading: the first email's Gmail thread, In-Reply-To = the previous message's STORED
+  //     Message-ID, References = every earlier stored id, Subject "Re: <first subject>" (D4).
+  // Every other step above and below is unchanged.
+  async sendFromMailbox({ pitchId, mailboxId }, { followUp = null } = {}) {
     if (!this.mailboxes) {
       await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: 'Mailboxes are not available here.', channel: 'email', blockedCode: 'MAILBOX_UNAVAILABLE' });
       throw new LiError('MAILBOX_UNAVAILABLE', 'Mailboxes are not available here.');
@@ -1424,7 +1471,10 @@ class OutreachService {
 
     // (2) Existence and (3) the Outreach Gate re-check.
     const pitch = await this.get(pitchId);
-    const verdict = await this.gate({ pitchId, channel: 'email' });
+    if (followUp && (pitch.kind !== 'followup' || followUp.pitchId !== pitch.pitch_id || followUp.mailboxId !== mailboxId || followUp.firstSubject !== pitch.subject)) {
+      throw new LiError('SEQUENCE_MISMATCH', 'This follow-up does not belong to that sequence or mailbox. Nothing was sent.');
+    }
+    const verdict = await this.gate({ pitchId, channel: 'email' }, { sequenceSend: Boolean(followUp) });
     if (!verdict || verdict.decision !== 'allowed') {
       const first = verdict && Array.isArray(verdict.reasons) && verdict.reasons.length ? verdict.reasons[0] : null;
       await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: first ? first.message : 'The Outreach Gate does not allow this pitch right now.', channel: 'email', contentHash: pitch.content_hash });
@@ -1442,6 +1492,12 @@ class OutreachService {
     if (!facts || facts.channels.email.state !== 'available' || !facts.channels.email.contact) {
       await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: 'No valid email address is stored for this lead.', channel: 'email', contentHash: pitch.content_hash });
       throw new LiError('CHANNEL_UNAVAILABLE', 'No valid email address is stored for this lead.');
+    }
+
+    // F28: a follow-up goes only to the address the first email went to.
+    if (followUp && normalizeEmail(facts.channels.email.contact) !== followUp.recipient) {
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: 'The lead\'s email address changed since the first email.', channel: 'email', contentHash: pitch.content_hash, blockedCode: 'CONTACT_CHANGED' });
+      throw new LiError('CONTACT_CHANGED', 'The lead\'s email address changed since the first email, so this follow-up is not sent.');
     }
 
     // (5b) Trust: suppression -> identity -> transport policy (the mailbox's) -> MARKET -> subject.
@@ -1463,9 +1519,10 @@ class OutreachService {
       to: facts.channels.email.contact,
       from: mailbox.emailAddress,
       ...(fromName ? { fromName } : {}),
-      subject: pitch.subject,
+      subject: followUp ? `Re: ${pitch.subject}` : pitch.subject,
       text: this._emailFinalBody(pitch, { oneClickUrl: oneClick ? oneClick.url : null }),
       headers: { 'X-ZTech-Pitch': pitch.pitch_id, 'X-ZTech-Send-Key': idempotencyKey, ...unsubscribe },
+      ...(followUp ? { thread: { threadId: followUp.threadId, inReplyTo: followUp.inReplyTo, references: [...followUp.references] } } : {}),
     };
     const valid = transport.validate(message);
     if (!valid || valid.valid !== true) {
@@ -1482,7 +1539,10 @@ class OutreachService {
       const again = await this.mailboxes.sendGate(mailboxId);
       if (!again.allowed) {
         await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason: again.message, channel: 'email', contentHash: pitch.content_hash, blockedCode: again.code });
-        throw new LiError(again.code, again.message);
+        const refusal = new LiError(again.code, again.message);
+        // F28: the scheduler moves the step to exactly this time (never a blind retry).
+        if (again.nextAllowedAt !== undefined) refusal.details = { nextAllowedAt: again.nextAllowedAt || null };
+        throw refusal;
       }
       // (7) The durable attempt.
       const sendId = newId('send');
@@ -1536,6 +1596,9 @@ class OutreachService {
       return {
         ...result,
         mailboxId,
+        // F28: the provider-STORED Message-ID and thread of THIS message (main-only use: the
+        // sequence threads its next step on it). Not sensitive, but only the sequence reads it.
+        ...(followUp ? { threaded: true } : {}),
         // Whether a reply to THIS message can be recognised: only with a readable stored Message-ID.
         replyMatching: matchable ? 'ready' : 'unavailable',
         unsubscribeHeadersKept: readBack ? readBack.listUnsubscribeKept : null,
@@ -1782,7 +1845,7 @@ class OutreachService {
   async _recordSendEvent(pitchId, type, metadata) {
     let pitch = null;
     try {
-      pitch = await this.store.pitches.get(pitchId);
+      pitch = await this._pitchById(pitchId);
     } catch (err) {
       return null;
     }

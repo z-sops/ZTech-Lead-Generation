@@ -1036,9 +1036,15 @@ test('AG. Campaigns remains disabled - no bulk or campaign surface exists anywhe
   assert.ok(/\bdisabled\b/.test(block[0][0]), 'Campaigns stays disabled');
   assert.ok(/nav-item-soon/.test(block[0][0]), 'Campaigns keeps its later-release state');
   assert.ok(/aria-disabled="true"/.test(block[0][0]), 'and is announced as disabled');
-  for (const banned of [/campaign/i, /bulk/i, /sequence/i, /drip/i]) {
+  // F28 declared lock update (D1, Zee 7 Oct 2026): follow-up SEQUENCES are the one declared
+  // exception - the service only refuses a follow-up outside its own sequence and threads the
+  // sequence's send. Campaign, bulk and drip surfaces stay banned.
+  for (const banned of [/campaign/i, /bulk/i, /drip/i]) {
     assert.ok(!banned.test(stripComments(serviceSource)), 'the service contains no ' + banned + ' surface');
   }
+  const seqMentions = stripComments(serviceSource).split('\n').filter((l) => /sequence/i.test(l));
+  assert.ok(seqMentions.length > 0 && seqMentions.every((l) => /store\.sequences|this\.sequences|setSequences|sequenceSend|FOLLOWUP_SEQUENCE_ONLY|SEQUENCE_MISMATCH|SEQUENCES_UNAVAILABLE|sequence approval note/.test(l)),
+    'every sequence mention in the service is an F28 follow-up hook: ' + seqMentions.join(' | '));
   assert.ok(!/\bcampaign/i.test(stripComments(ipcSource)), 'no campaign channel exists');
 });
 

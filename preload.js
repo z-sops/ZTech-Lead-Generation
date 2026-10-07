@@ -225,6 +225,20 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     check: (payload) => ipcRenderer.invoke('lead-intel:mailbox-check', payload || {}),
     checkReplies: (payload) => ipcRenderer.invoke('lead-intel:mailbox-replies', payload || {}),
   }),
+  // F28: email follow-up sequences. A human drafts, approves (pitch.update / outreach.approve)
+  // and ACTIVATES them; then ZTech's scheduler in main sends each due step by itself, re-checking
+  // every gate (F28 decision D1). Nothing on this bridge sends a message or can make the
+  // scheduler send anything; there is no step, time, recipient, mailbox or content parameter anywhere.
+  sequences: Object.freeze({
+    create: (payload) => ipcRenderer.invoke('lead-intel:sequence-create', payload || {}),
+    forLead: (payload) => ipcRenderer.invoke('lead-intel:sequence-for-lead', payload || {}),
+    list: () => ipcRenderer.invoke('lead-intel:sequence-list', {}),
+    activate: (payload) => ipcRenderer.invoke('lead-intel:sequence-activate', payload || {}),
+    pause: (payload) => ipcRenderer.invoke('lead-intel:sequence-pause', payload || {}),
+    resume: (payload) => ipcRenderer.invoke('lead-intel:sequence-resume', payload || {}),
+    stop: (payload) => ipcRenderer.invoke('lead-intel:sequence-stop', payload || {}),
+    setPauseAll: (payload) => ipcRenderer.invoke('lead-intel:sequence-pause-all', payload || {}),
+  }),
   // I3: Opportunity Intelligence provider configuration - WRITE-ONLY for keys.
   // setKey sends a key to the main process, which seals it; nothing ever returns it.
   // status returns booleans per provider (stored / readable / loaded by OI) and the

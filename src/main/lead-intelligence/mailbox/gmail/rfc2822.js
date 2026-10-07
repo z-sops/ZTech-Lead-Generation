@@ -14,6 +14,7 @@
 const crypto = require('crypto');
 
 const SAFE_ATOM = /^[\x20-\x7e]*$/;
+const STORED_ID = /^<[^<>\s]{3,298}>$/;
 
 function assertSingleLine(name, value) {
   if (/[\r\n]/.test(String(value))) throw new TypeError(`header ${name} must be a single line`);
@@ -72,8 +73,18 @@ function buildRawMessage(m) {
   lines.push(`Subject: ${foldedSubject(m.subject)}`);
   add('Date', (m.date instanceof Date ? m.date : new Date()).toUTCString().replace('GMT', '+0000'));
   for (const [k, v] of Object.entries(m.headers || {})) {
-    if (/^message-id$/i.test(k)) throw new TypeError('a Message-ID is never supplied: Gmail stores its own');
+    if (/^(message-id|in-reply-to|references)$/i.test(k)) throw new TypeError(`header ${k} is never supplied this way`);
     add(k, v);
+  }
+  // F28: a threaded follow-up. Only provider-STORED Message-IDs (read back after each earlier
+  // send) reach here; References is folded one id per line (RFC 5322 2.2.3).
+  if (m.thread) {
+    const ids = [...(m.thread.references || [])];
+    if (!STORED_ID.test(m.thread.inReplyTo || '') || !ids.length || !ids.every((x) => STORED_ID.test(x)) || ids[ids.length - 1] !== m.thread.inReplyTo) {
+      throw new TypeError('thread headers must be stored Message-IDs, ending with In-Reply-To');
+    }
+    lines.push(`In-Reply-To: ${m.thread.inReplyTo}`);
+    lines.push(`References: ${ids.join('\r\n ')}`);
   }
   add('MIME-Version', '1.0');
   add('Content-Type', 'text/plain; charset=UTF-8');

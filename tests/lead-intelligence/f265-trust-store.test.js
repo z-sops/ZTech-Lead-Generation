@@ -105,7 +105,7 @@ test('11d. 009 copies every existing activity row byte for byte, and the new typ
   assert.equal(db.exec("SELECT COUNT(*) FROM li_outreach_activity WHERE activity_type = 'OUTREACH_HANDOFF_CREATED'")[0].values[0][0], 1);
   await store.migrate();
   // F26.6 declared lock update: the migration list now ends at 010.
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // F28 declared lock update: + 012 sequences
 });
 
 test('11e. every CHECK list in 008 equals the trust contract list (one vocabulary)', () => {

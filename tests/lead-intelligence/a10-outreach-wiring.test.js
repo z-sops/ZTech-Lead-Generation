@@ -380,7 +380,7 @@ test('A10 runtime: initialises only after AccountStore readiness, on the shared 
   assert.equal(runtime.available, false);
 });
 
-test('A10 runtime: runs the additive li_* migrations (001-011) on whatsapp.db and changes no ZTech table', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
+test('A10 runtime: runs the additive li_* migrations (001-012) on whatsapp.db and changes no ZTech table', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
   const SQL = await initSqlJs();
   const db = new SQL.Database();
   db.run('CREATE TABLE numbers (id INTEGER PRIMARY KEY, phone TEXT, title TEXT)');
@@ -401,9 +401,10 @@ test('A10 runtime: runs the additive li_* migrations (001-011) on whatsapp.db an
   // F26.5 declared lock update: 15 -> 20, adding the five trust tables of migration 008.
   // F26.6 declared lock update: 20 -> 23, adding li_mailboxes, li_mailbox_sent, li_market_rules (010).
   // F26.6 follow-up declared lock update: 23 -> 24, adding li_reply_reviews (011).
-  assert.equal(LI_TABLES.length, 24, 'twenty-four additive LI tables are declared');
+  // F28 declared lock update: 24 -> 28, adding li_sequences, li_sequence_steps, li_sequence_events, li_sequence_control (012).
+  assert.equal(LI_TABLES.length, 28, 'twenty-eight additive LI tables are declared');
   for (const t of LI_TABLES) assert.ok(tables.includes(t), 'missing additive table: ' + t);
-  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 24, 'exactly the twenty-four li_* tables were added');
+  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 28, 'exactly the twenty-eight li_* tables were added');
 
   // Every pre-existing ZTech table is still present and its data is intact.
   const ztechAfter = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
@@ -415,7 +416,7 @@ test('A10 runtime: runs the additive li_* migrations (001-011) on whatsapp.db an
 
   // Migrations are idempotent: a second init adds nothing.
   const again = await initializeLeadIntelligenceRuntime({ accountStore, logger: SILENT });
-  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 24); // F26.6 follow-up 23 -> 24; F19 12 -> 13; I3 13 -> 14; I5 14 -> 15; F26.5 15 -> 20 (five trust tables); F26.6 20 -> 23
+  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 28); // F28 declared lock update 24 -> 28 (four sequence tables); F26.6 follow-up 23 -> 24; F19 12 -> 13; I3 13 -> 14; I5 14 -> 15; F26.5 15 -> 20 (five trust tables); F26.6 20 -> 23
   await again.shutdown();
 });
 
@@ -711,8 +712,10 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-review', 'lead-intel:trust-suppress',
     // F26.6 declared lock update: the ten mailbox / market-rule channels (none of them sends).
     'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities', 'lead-intel:mailbox-check', 'lead-intel:mailbox-replies', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules',
+    // F28 declared lock update: the eight sequence channels (none of them sends).
+    'lead-intel:sequence-activate', 'lead-intel:sequence-create', 'lead-intel:sequence-for-lead', 'lead-intel:sequence-list', 'lead-intel:sequence-pause', 'lead-intel:sequence-pause-all', 'lead-intel:sequence-resume', 'lead-intel:sequence-stop',
     ].sort());
-    assert.equal(leadIntel.length, 38, 'exactly thirty-eight Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes + 1 F26.6 reply review)');
+    assert.equal(leadIntel.length, 46, 'exactly forty-six Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes + 1 F26.6 reply review + 8 F28 sequences)');
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 

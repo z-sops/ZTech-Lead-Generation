@@ -43,6 +43,15 @@ class GmailMailboxTransport extends EmailProvider {
       errors.push({ field: 'from', message: 'must be the connected mailbox address' });
     }
     if (!message || !message.headers || !message.headers['List-Unsubscribe']) errors.push({ field: 'headers.List-Unsubscribe', message: 'is required' });
+    // F28: a threaded follow-up names its Gmail thread and the STORED ids it answers.
+    if (message && message.thread !== undefined) {
+      const t = message.thread;
+      const refs = t && Array.isArray(t.references) ? t.references : [];
+      if (!t || typeof t.threadId !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(t.threadId)) errors.push({ field: 'thread.threadId', message: 'is not a Gmail thread id' });
+      if (!t || !STORED_ID_RE.test(String(t.inReplyTo || '')) || !refs.length || refs.length > 10 || !refs.every((x) => STORED_ID_RE.test(String(x))) || refs[refs.length - 1] !== t.inReplyTo) {
+        errors.push({ field: 'thread.references', message: 'must be stored Message-IDs ending with In-Reply-To' });
+      }
+    }
     return { valid: errors.length === 0, errors };
   }
 
@@ -50,8 +59,9 @@ class GmailMailboxTransport extends EmailProvider {
   async send(message) {
     const v = this.validate(message);
     if (!v.valid) throw new LiError('VALIDATION_FAILED', 'The email message is invalid.');
-    const raw = buildRawMessage({ from: this.mailbox.email_address, fromName: message.fromName, to: message.to, subject: message.subject, text: message.text, headers: message.headers });
-    const r = await this.api.sendRaw(toBase64Url(raw));
+    const thread = message.thread ? { inReplyTo: message.thread.inReplyTo, references: message.thread.references } : undefined;
+    const raw = buildRawMessage({ from: this.mailbox.email_address, fromName: message.fromName, to: message.to, subject: message.subject, text: message.text, headers: message.headers, thread });
+    const r = await this.api.sendRaw(toBase64Url(raw), { threadId: message.thread ? message.thread.threadId : null });
     return { messageId: r.id, threadId: r.threadId, status: null };
   }
 

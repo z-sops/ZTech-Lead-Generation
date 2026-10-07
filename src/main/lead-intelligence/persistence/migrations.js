@@ -354,6 +354,13 @@ const MIGRATION_011 = fs.readFileSync(
   'utf8'
 );
 
+// F28: email follow-up sequences, their steps (each with its own follow-up pitch), the
+// append-only sequence audit and the one "Pause all follow-ups" switch.
+const MIGRATION_012 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '012_sequences.sql'),
+  'utf8'
+);
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
@@ -366,6 +373,7 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 9, name: '009_outreach_handoff_activity.sql', sql: MIGRATION_009 }),
   Object.freeze({ version: 10, name: '010_mailbox_transport.sql', sql: MIGRATION_010 }),
   Object.freeze({ version: 11, name: '011_reply_reviews.sql', sql: MIGRATION_011 }),
+  Object.freeze({ version: 12, name: '012_sequences.sql', sql: MIGRATION_012 }),
 ]);
 
 module.exports = { MIGRATIONS };

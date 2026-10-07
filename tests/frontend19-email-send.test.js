@@ -794,7 +794,8 @@ test('S1. the bridge exposes exactly one send method and no scheduling surface',
   // F26.6 declared lock update: the mailbox methods that take a payload (none sends; there is no
   // mailbox send method on the bridge).
   const expectedF266 = ['connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'setMarketRule', 'removeMarketRule', 'check', 'checkReplies'];
-  assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedF265, ...expectedF266],
+  const expectedF28 = ['create', 'forLead', 'activate', 'pause', 'resume', 'stop', 'setPauseAll']; // F28 declared lock update: follow-up sequences (none sends)
+  assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedF265, ...expectedF266, ...expectedF28],
     'the bridge method list is exactly the eleven declared channels plus Phase I2 Opportunity Intelligence');
   assert.deepStrictEqual(methods.filter((m) => /send/i.test(m) && !/^sends$/.test(m)), ['outreachSend'],
     'outreachSend is still the only sending method; `sends` is the ledger read');
