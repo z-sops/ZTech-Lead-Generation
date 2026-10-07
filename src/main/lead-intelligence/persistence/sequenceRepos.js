@@ -10,10 +10,10 @@
 
 const { normalizeSequence, normalizeStep, normalizeEvent, OPEN_STATUSES } = require('../sequences/sequenceContract');
 
-const SEQ_COLS = ['sequence_id', 'lead_id', 'mailbox_id', 'first_send_id', 'first_pitch_id', 'thread_id', 'first_subject', 'recipient_address', 'first_accepted_at', 'status', 'hold_code', 'resume_at', 'stop_reason', 'activated_at', 'created_at', 'updated_at'];
+const SEQ_COLS = ['sequence_id', 'lead_id', 'mailbox_id', 'first_send_id', 'first_pitch_id', 'thread_id', 'first_subject', 'recipient_address', 'first_accepted_at', 'status', 'hold_code', 'resume_at', 'replies_gap_at', 'stop_reason', 'activated_at', 'created_at', 'updated_at'];
 const STEP_COLS = ['sequence_id', 'step_no', 'pitch_id', 'delay_days', 'state', 'due_at', 'next_attempt_at', 'send_id', 'sent_at', 'last_code', 'limit_strikes', 'draft_json', 'updated_at'];
 const EVENT_COLS = ['event_id', 'sequence_id', 'step_no', 'actor', 'event', 'code', 'at'];
-const SEQ_PATCHABLE = new Set(['status', 'hold_code', 'resume_at', 'stop_reason', 'activated_at', 'updated_at']);
+const SEQ_PATCHABLE = new Set(['status', 'hold_code', 'resume_at', 'replies_gap_at', 'stop_reason', 'activated_at', 'updated_at']);
 const STEP_PATCHABLE = new Set(['state', 'due_at', 'next_attempt_at', 'send_id', 'sent_at', 'last_code', 'limit_strikes', 'draft', 'updated_at']);
 const MAX_LIST = 500;
 
@@ -91,17 +91,37 @@ class SqlSequences {
     return sqlRows(this.s.db, `SELECT ${SEQ_COLS.join(', ')} FROM li_sequences WHERE status IN ('draft', 'active', 'paused') ORDER BY updated_at DESC, sequence_id DESC LIMIT ?`, [clampLimit(limit)]).map(freeze);
   }
 
-  /** Compare-and-set on status. Returns the new row, or null when `expect` no longer holds. */
-  async update(sequenceId, patch, { expect = null } = {}) {
+  /**
+   * Compare-and-set on status (and, with `expectHold`, on the exact hold code). Returns the new row,
+   * or null when the expectation no longer holds.
+   */
+  async update(sequenceId, patch, { expect = null, expectHold = undefined } = {}) {
     checkPatch(patch, SEQ_PATCHABLE);
     return this.s.tx(() => {
       const cur = this._seq(sequenceId);
       if (!cur) return null;
       if (expect && !expect.includes(cur.status)) return null;
+      if (expectHold !== undefined && cur.hold_code !== expectHold) return null;
       const next = normalizeSequence({ ...cur, ...patch });
-      this.s.db.run('UPDATE li_sequences SET status = ?, hold_code = ?, resume_at = ?, stop_reason = ?, activated_at = ?, updated_at = ? WHERE sequence_id = ?',
-        [next.status, next.hold_code, next.resume_at, next.stop_reason, next.activated_at, next.updated_at, next.sequence_id]);
+      this.s.db.run('UPDATE li_sequences SET status = ?, hold_code = ?, resume_at = ?, replies_gap_at = ?, stop_reason = ?, activated_at = ?, updated_at = ? WHERE sequence_id = ?',
+        [next.status, next.hold_code, next.resume_at, next.replies_gap_at, next.stop_reason, next.activated_at, next.updated_at, next.sequence_id]);
       return this._seq(sequenceId);
+    });
+  }
+
+  /**
+   * The ONE transition into 'sending', atomic with its preconditions: the step is still
+   * 'scheduled', its sequence is still 'active' with no reply gap, and "Pause all" is off.
+   * A human Pause / Stop / Pause all that lands first always wins.
+   */
+  async claimStep(sequenceId, stepNo, updatedAt) {
+    return this.s.tx(() => {
+      const seq = this._seq(sequenceId);
+      const ctl = sqlRow(this.s.db, 'SELECT paused FROM li_sequence_control WHERE id = 1');
+      const cur = this._step(sequenceId, stepNo);
+      if (!seq || seq.status !== 'active' || seq.replies_gap_at || (ctl && ctl.paused === 1) || !cur || cur.state !== 'scheduled') return null;
+      this.s.db.run("UPDATE li_sequence_steps SET state = 'sending', updated_at = ? WHERE sequence_id = ? AND step_no = ? AND state = 'scheduled'", [String(updatedAt), String(sequenceId), stepNo]);
+      return this._step(sequenceId, stepNo);
     });
   }
 
@@ -132,7 +152,7 @@ class SqlSequences {
   }
 
   async stepsInState(state, limit = MAX_LIST) {
-    return sqlRows(this.s.db, `SELECT ${STEP_COLS.join(', ')} FROM li_sequence_steps WHERE state = ? ORDER BY updated_at ASC LIMIT ?`, [String(state), clampLimit(limit)]).map(stepFromRow);
+    return sqlRows(this.s.db, `SELECT ${STEP_COLS.join(', ')} FROM li_sequence_steps WHERE state = ? ORDER BY updated_at ASC, sequence_id ASC, step_no ASC LIMIT ?`, [String(state), clampLimit(limit)]).map(stepFromRow);
   }
 
   async appendEvent(rec) {
@@ -211,13 +231,24 @@ class MemSequences {
       .slice(0, clampLimit(limit)).map(freeze);
   }
 
-  async update(sequenceId, patch, { expect = null } = {}) {
+  async update(sequenceId, patch, { expect = null, expectHold = undefined } = {}) {
     checkPatch(patch, SEQ_PATCHABLE);
     const cur = this.seqs.get(String(sequenceId));
     if (!cur) return null;
     if (expect && !expect.includes(cur.status)) return null;
+    if (expectHold !== undefined && cur.hold_code !== expectHold) return null;
     const next = normalizeSequence({ ...cur, ...patch });
     this.seqs.set(next.sequence_id, next);
+    return freeze(next);
+  }
+
+  async claimStep(sequenceId, stepNo, updatedAt) {
+    const seq = this.seqs.get(String(sequenceId));
+    const k = this._key(String(sequenceId), stepNo);
+    const cur = this.stepRows.get(k);
+    if (!seq || seq.status !== 'active' || seq.replies_gap_at || this.ctl.paused || !cur || cur.state !== 'scheduled') return null;
+    const next = normalizeStep({ ...cur, state: 'sending', updated_at: String(updatedAt) });
+    this.stepRows.set(k, next);
     return freeze(next);
   }
 
@@ -242,7 +273,9 @@ class MemSequences {
   }
 
   async stepsInState(state, limit = MAX_LIST) {
-    return [...this.stepRows.values()].filter((s) => s.state === String(state)).slice(0, clampLimit(limit)).map(freeze);
+    return [...this.stepRows.values()].filter((s) => s.state === String(state))
+      .sort((a, b) => (a.updated_at === b.updated_at ? (a.sequence_id === b.sequence_id ? a.step_no - b.step_no : (a.sequence_id < b.sequence_id ? -1 : 1)) : (a.updated_at < b.updated_at ? -1 : 1)))
+      .slice(0, clampLimit(limit)).map(freeze);
   }
 
   async appendEvent(rec) {

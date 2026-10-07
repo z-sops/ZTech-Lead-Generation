@@ -1591,7 +1591,10 @@ class OutreachService {
         matchable = false;
         if (this.logger && typeof this.logger.warn === 'function') this.logger.warn('[lead-intelligence] mailbox sent id not recorded', { error: err && err.code ? err.code : 'ERROR' });
       }
-      await this.mailboxes.noteReadBack(mailboxId, readBack);
+      // The email DID go out: a failure to note the read-back must never turn into "not sent".
+      try { await this.mailboxes.noteReadBack(mailboxId, readBack); } catch (err) {
+        if (this.logger && typeof this.logger.warn === 'function') this.logger.warn('[lead-intelligence] mailbox read-back note failed', { error: err && err.code ? err.code : 'ERROR' });
+      }
       const result = this._sendResult({ pitch, outcome: settled && settled.ok === false ? 'replayed' : 'accepted', send: winner, gate: verdict });
       return {
         ...result,

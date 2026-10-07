@@ -548,10 +548,12 @@ test('7i. crash recovery: a step left "sending" is never re-sent blindly', async
 
 test('9e. runtime (static): the scheduler starts only with connected mailboxes and stops on shutdown', () => {
   const rt = fs.readFileSync(path.join(LI, 'lead-intelligence-runtime.js'), 'utf8');
-  const i = rt.indexOf('if (li.mailboxes) {\n      const { SequenceScheduler }');
+  const i = rt.indexOf('    if (li.mailboxes) {\n      // A reply-history gap');
   assert.ok(i > -1, 'the scheduler is built only when mailboxes exist');
-  assert.ok(/sequenceScheduler\.start\(/.test(rt.slice(i, i + 600)));
-  assert.ok(/if \(sequenceScheduler\) sequenceScheduler\.stop\(\);/.test(rt), 'shutdown stops it');
+  const block = rt.slice(i, i + 900);
+  assert.ok(/setRepliesGapListener\(\(mailboxId, at\) => li\.sequences\.noteRepliesGap\(mailboxId, at\)\)/.test(block), 'a reply gap seen by any sync holds the follow-ups');
+  assert.ok(/new SequenceScheduler\(/.test(block) && /sequenceScheduler\.start\(/.test(block));
+  assert.ok(/if \(sequenceScheduler\) await sequenceScheduler\.stop\(\);/.test(rt), 'shutdown stops it and waits for a send in flight');
   assert.ok(/li\.outreach\.setSequences\(li\.sequences\)/.test(rt));
 });
 
@@ -644,6 +646,181 @@ test('9d. every refusal and every send is in the sequence audit (codes only, nev
   assert.deepStrictEqual(ev, ['operator:created:', 'operator:activated:', 'scheduler:paused:PROVIDER_LIMIT', 'scheduler:resumed:PROVIDER_LIMIT', 'scheduler:sent:']);
   const json = JSON.stringify(await s.store.sequences.events(sequenceId));
   assert.ok(!json.includes(LEAD_EMAIL) && !json.includes('Acme'));
+});
+
+/* ================================ R. independent-review findings ================================ */
+
+test('R1a. a human Pause that lands while replies are being read wins: nothing is sent', async () => {
+  const s = await setup();
+  const { sequenceId } = await active(s);
+  const real = s.svc.syncReplies.bind(s.svc);
+  s.svc.syncReplies = async (a) => { const r = await real(a); await s.sequences.pause({ sequenceId }); return r; };
+  s.advance(3 * DAY + 1000);
+  const r = await s.scheduler.tick();
+  assert.deepStrictEqual(r.outcomes, ['skipped']);
+  const v = await seqOf(s);
+  assert.strictEqual(v.holdCode, 'MANUAL');
+  assert.strictEqual(v.steps[0].state, 'scheduled');
+  assert.strictEqual(sendCalls(s.gmail).length, 1);
+});
+
+test('R1b. "Pause all" switched on while replies are being read wins: nothing is sent', async () => {
+  const s = await setup();
+  await active(s);
+  const real = s.svc.syncReplies.bind(s.svc);
+  s.svc.syncReplies = async (a) => { const r = await real(a); await s.sequences.setPauseAll({ paused: true }); return r; };
+  s.advance(3 * DAY + 1000);
+  assert.deepStrictEqual((await s.scheduler.tick()).outcomes, ['skipped']);
+  assert.strictEqual(sendCalls(s.gmail).length, 1);
+});
+
+test('R1c. an automatic resume never undoes a human Pause that landed while it was checking', async () => {
+  const s = await setup();
+  const { sequenceId } = await active(s);
+  await s.store.sequences.update(sequenceId, { status: 'paused', hold_code: 'MAILBOX_RECONNECT_REQUIRED', updated_at: iso(s.clock.t) });
+  const real = s.svc.sendGate.bind(s.svc);
+  s.svc.sendGate = async (id, o) => { if (o && o.pacing === false) await s.sequences.pause({ sequenceId }); return real(id, o); };
+  s.advance(3 * DAY + 1000);
+  await s.scheduler.tick();
+  const v = await seqOf(s);
+  assert.strictEqual(v.status, 'paused');
+  assert.strictEqual(v.holdCode, 'MANUAL');
+  assert.strictEqual(sendCalls(s.gmail).length, 1);
+});
+
+test('R2. a reply behind a long inbox backlog still stops the follow-up: nothing is sent on a partial read', async () => {
+  const s = await setup();
+  await active(s);
+  for (let i = 0; i < 250; i += 1) s.gmail.deliver(`n${i}`, { From: `"News" <news${i}@other.example>`, Subject: `Issue ${i}` });
+  s.gmail.deliver('rep', { From: `"Owner" <${LEAD_EMAIL}>`, Subject: 'Re: A few notes', 'In-Reply-To': '<CAstored-1@mail.gmail.com>', References: '<CAstored-1@mail.gmail.com>' });
+  s.advance(3 * DAY + 1000);
+  const first = await s.scheduler.tick();
+  assert.deepStrictEqual(first.outcomes, ['rescheduled'], 'the read was partial, so the step waits');
+  assert.strictEqual((await seqOf(s)).steps[0].lastCode, 'REPLY_CHECK_INCOMPLETE');
+  s.advance(61 * 1000);
+  await s.scheduler.tick();
+  const v = await seqOf(s);
+  assert.strictEqual(v.stopReason, 'replied');
+  assert.strictEqual(sendCalls(s.gmail).length, 1);
+});
+
+test('R3a. a failure AFTER Gmail accepted the step records it as sent - never "nothing was sent"', async () => {
+  const s = await setup();
+  await active(s);
+  s.svc.noteReadBack = async () => { const e = new Error('disk'); e.code = 'SQLITE_FULL'; throw e; };
+  s.advance(3 * DAY + 1000);
+  assert.deepStrictEqual((await s.scheduler.tick()).outcomes, ['sent']);
+  const t = await setup();
+  await active(t);
+  const real = t.li.outreach.sendFromMailbox.bind(t.li.outreach);
+  t.li.outreach.sendFromMailbox = async (...a) => { await real(...a); const e = new Error('late'); e.code = 'INTERNAL_ERROR'; throw e; };
+  t.advance(3 * DAY + 1000);
+  assert.deepStrictEqual((await t.scheduler.tick()).outcomes, ['sent']);
+  const v = await seqOf(t);
+  assert.strictEqual(v.steps[0].state, 'sent');
+  assert.strictEqual(v.status, 'active');
+  assert.strictEqual(sendCalls(t.gmail).length, 2);
+});
+
+test('R3b. a step that may already have gone out can never be re-worded (a new hash would send it again)', async () => {
+  const s = await setup();
+  const { view } = await active(s);
+  s.gmail.next = [{ status: 503 }];
+  s.advance(3 * DAY + 1000);
+  await s.scheduler.tick();
+  assert.strictEqual((await seqOf(s)).holdCode, 'SEND_OUTCOME_UNKNOWN');
+  await rejectsCode(s.li.outreach.update({ pitchId: view.steps[0].pitchId, edits: { callToAction: 'Another try?' } }), 'STEP_LOCKED');
+  await assert.doesNotReject(s.li.outreach.update({ pitchId: view.steps[1].pitchId, edits: { callToAction: 'Later step?' } }), 'later steps stay editable');
+});
+
+test('R4. a crash between "hold" and "release the step" never leads to a blind retry', async () => {
+  const s = await setup();
+  const { sequenceId } = await active(s);
+  s.gmail.next = [{ status: 503 }];
+  // The process dies at the worst moment: while recording the hold. The step must still be
+  // 'sending' at that point (hold first, release second), so recovery holds it instead of resending.
+  const realUpdate = s.store.sequences.update.bind(s.store.sequences);
+  let armed = true;
+  s.store.sequences.update = async (id, patch, o) => {
+    if (armed && patch.hold_code === 'SEND_OUTCOME_UNKNOWN') { armed = false; throw new Error('crash'); }
+    return realUpdate(id, patch, o);
+  };
+  s.advance(3 * DAY + 1000);
+  await s.scheduler.tick();
+  const { SequenceScheduler } = require(path.join(LI, 'sequences', 'SequenceScheduler.js'));
+  const restarted = new SequenceScheduler({ sequences: s.sequences, store: s.store, clock: () => new Date(s.clock.t) });
+  for (let i = 0; i < 3; i += 1) { s.advance(HOUR); await restarted.tick(); }
+  assert.strictEqual((await s.store.sequences.get(sequenceId)).hold_code, 'SEND_OUTCOME_UNKNOWN');
+  assert.strictEqual(sendCalls(s.gmail).length, 2, 'the uncertain attempt only');
+});
+
+test('R5. a reply-history gap seen by ANY sync (the 5-minute timer too) holds the follow-ups for a human', async () => {
+  const s = await setup();
+  const { sequenceId } = await active(s);
+  s.gmail.historyGone = true;
+  await s.svc.syncAll();
+  s.gmail.historyGone = false;
+  let v = await seqOf(s);
+  assert.strictEqual(v.holdCode, 'REPLIES_UNCHECKED');
+  assert.ok(v.repliesGapAt);
+  s.advance(3 * DAY + 1000);
+  await s.scheduler.tick();
+  assert.strictEqual(sendCalls(s.gmail).length, 1);
+  await s.sequences.resume({ sequenceId });
+  v = await seqOf(s);
+  assert.strictEqual(v.repliesGapAt, null, 'a human resume clears it');
+  await s.scheduler.tick();
+  assert.strictEqual(sendCalls(s.gmail).length, 2);
+});
+
+test('R6. every Gmail call is bounded: a send that never answers is "unconfirmed" (a human decides), a read is "unavailable"', async () => {
+  const { GmailApi } = require(path.join(LI, 'mailbox', 'gmail', 'GmailApi.js'));
+  const hang = (url, init) => new Promise((resolve, reject) => { if (init && init.signal) init.signal.addEventListener('abort', () => reject(new Error('aborted'))); });
+  const api = new GmailApi({ fetch: hang, getAccessToken: async () => 't', timeoutMs: 30 });
+  await rejectsCode(api.sendRaw('abc'), 'MAILBOX_SEND_UNCONFIRMED');
+  await rejectsCode(api.metadata('m1', ['Message-ID']), 'MAILBOX_PROVIDER_UNAVAILABLE');
+});
+
+test('R7. stopping the scheduler waits for a send in flight and starts no new tick', async () => {
+  const s = await setup();
+  await active(s);
+  const real = s.li.outreach.sendFromMailbox.bind(s.li.outreach);
+  let release;
+  s.li.outreach.sendFromMailbox = async (...a) => { await new Promise((r) => { release = r; }); return real(...a); };
+  s.advance(3 * DAY + 1000);
+  const ticking = s.scheduler.tick();
+  for (let i = 0; i < 50 && !release; i += 1) await new Promise((r) => setImmediate(r));
+  let stopped = false;
+  const stopping = s.scheduler.stop().then(() => { stopped = true; });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(stopped, false, 'stop waits');
+  release();
+  await stopping;
+  await ticking;
+  assert.strictEqual((await seqOf(s)).steps[0].state, 'sent', 'the send in flight was recorded before stop resolved');
+  assert.strictEqual((await s.scheduler.tick()).stopped, true);
+});
+
+test('R8. a disconnected mailbox is said plainly (MAILBOX_GONE) instead of waiting forever; a 4th Gmail limit holds the mailbox\'s other sequences too', async () => {
+  const s = await setup();
+  const { sequenceId } = await active(s);
+  await s.store.mailboxes.remove(MBX);
+  s.advance(3 * DAY + 1000);
+  await s.scheduler.tick();
+  assert.strictEqual((await seqOf(s)).holdCode, 'MAILBOX_GONE');
+  await rejectsCode(s.sequences.resume({ sequenceId }), 'MAILBOX_NOT_FOUND');
+
+  const leads = { L1: lead({}), L2: lead({ id: 'L2', email: 'two@acme.example.com', website: 'https://two.example.com' }) };
+  const t = await setup({ leads });
+  const a = await active(t);
+  t.advance(5 * 60 * 1000);
+  await active(t, { leadId: 'L2' });
+  await t.store.sequences.updateStep(a.sequenceId, 1, { limit_strikes: 3, updated_at: iso(t.clock.t) });
+  t.gmail.next = [{ status: 429 }];
+  t.advance(3 * DAY + 10 * 60 * 1000);
+  await t.scheduler.tick();
+  assert.strictEqual((await seqOf(t, 'L1')).holdCode, 'PROVIDER_LIMIT_REPEATED');
+  assert.strictEqual((await seqOf(t, 'L2')).holdCode, 'PROVIDER_LIMIT_REPEATED');
 });
 
 (async () => {

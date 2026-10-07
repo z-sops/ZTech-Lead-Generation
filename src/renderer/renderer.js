@@ -8056,6 +8056,7 @@ function renderLeadSequence() {
   if (v) {
     host.appendChild(trustEl('p', 'f28-status', `${F28_STATUS_LABEL[v.status] || v.status} · ${f28StatusText(v)}`));
     host.appendChild(trustEl('p', 'f28-first', `First email: "${v.firstSubject}", accepted by Gmail ${f28When(v.firstSentAt)}.`));
+    if (v.status === 'draft' && v.repliesGapAt) host.appendChild(trustEl('p', 'lead-trust-error', `Gmail could not show every reply since ${f28When(v.repliesGapAt)}. Check your inbox for a reply from this lead before activating.`));
     for (const s of v.steps || []) host.appendChild(f28StepBlock(v, s));
     if (!canStartNew) host.appendChild(f28Controls(v));
   }

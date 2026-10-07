@@ -96,6 +96,19 @@ class MailboxService {
   /** The trust service that receives mailbox events (main-only). */
   setTrust(trust) { this.trust = trust || null; }
 
+  /**
+   * F28: told when Gmail could no longer give the reply history (cursor reset), whoever ran the
+   * sync (timer, button or the scheduler), so follow-ups of that mailbox wait for a human.
+   */
+  setRepliesGapListener(fn) { this._onRepliesGap = typeof fn === 'function' ? fn : null; }
+
+  async _repliesGap(mailboxId) {
+    if (!this._onRepliesGap) return;
+    try { await this._onRepliesGap(mailboxId, this._now().toISOString()); } catch (err) {
+      if (this.logger && this.logger.warn) this.logger.warn(`[mailbox] reply-gap note failed: ${(err && err.code) || 'ERROR'}`);
+    }
+  }
+
   _now() { return this.clock(); }
 
   /* --------------------------------- providers --------------------------------- */
@@ -420,7 +433,7 @@ class MailboxService {
     if (row.status === 'reconnect_needed') throw new LiError('MAILBOX_RECONNECT_NEEDED', 'This mailbox needs to be reconnected.');
     if (!this.trust || typeof this.trust.intake !== 'function') throw new LiError('TRUST_UNAVAILABLE', 'The do-not-contact records cannot be written, so replies are not read.');
     const api = this._api(row);
-    const summary = { mailboxId, read: 0, replies: 0, unsubscribes: 0, unmatched: 0, skippedAutomatic: 0, skippedDeliveryReports: 0, cursorReset: false };
+    const summary = { mailboxId, read: 0, replies: 0, unsubscribes: 0, unmatched: 0, skippedAutomatic: 0, skippedDeliveryReports: 0, cursorReset: false, complete: true };
     if (!row.sync_cursor) {
       const p = await api.profile();
       if (p.historyId) await this.store.mailboxes.setSyncCursor(mailboxId, p.historyId, this._now().toISOString());
@@ -443,7 +456,8 @@ class MailboxService {
           // the gap is not read, and ZTech never claims a reply it did not see.
           const p = await api.profile();
           if (p.historyId) await this.store.mailboxes.setSyncCursor(mailboxId, p.historyId, this._now().toISOString());
-          return { ...summary, cursorReset: true };
+          await this._repliesGap(mailboxId);
+          return { ...summary, cursorReset: true, complete: true };
         }
         throw e;
       }
@@ -457,7 +471,9 @@ class MailboxService {
       pageToken = h.nextPageToken;
       if (!pageToken) break;
     }
-    return summary;
+    // F28: `complete` says whether EVERYTHING up to now was read. A backlog beyond one run's limits
+    // is read on the next run; until then a follow-up is not sent (a reply may be in it).
+    return { ...summary, complete: !pageToken };
   }
 
   async _intakeOne(api, row, id, summary) {

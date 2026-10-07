@@ -18,14 +18,16 @@ const { GOOGLE } = require('./GoogleOAuth');
 
 const LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded', 'dailyLimitExceeded', 'quotaExceeded']);
 const MAX_ID = 200;
+const REQUEST_TIMEOUT_MS = 60 * 1000;
 
 function idOk(id) { return typeof id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(id); }
 
 class GmailApi {
   /** @param {{fetch?: Function, getAccessToken: () => Promise<string>, onAuthFailure?: () => Promise<void>}} deps */
-  constructor({ fetch: fetchImpl = globalThis.fetch, getAccessToken, onAuthFailure = null } = {}) {
+  constructor({ fetch: fetchImpl = globalThis.fetch, getAccessToken, onAuthFailure = null, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
     if (typeof getAccessToken !== 'function') throw new TypeError('GmailApi needs getAccessToken');
     this.fetch = fetchImpl;
+    this.timeoutMs = Number.isInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : REQUEST_TIMEOUT_MS;
     this.getAccessToken = getAccessToken;
     this.onAuthFailure = typeof onAuthFailure === 'function' ? onAuthFailure : null;
   }
@@ -37,15 +39,26 @@ class GmailApi {
 
   async _call(method, path, body = undefined) {
     const token = await this.getAccessToken();
+    // F28: every call is bounded. A request that never answers would otherwise hold the mailbox
+    // lock and the follow-up scheduler forever. A SEND that times out may still have gone out, so
+    // it is reported as unconfirmed (a human decides), never as refused.
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer = null;
+    const timeout = new Promise((_, reject) => { timer = setTimeout(() => { if (controller) controller.abort(); reject(new Error('timeout')); }, this.timeoutMs); });
+    const isSend = method === 'POST' && path === '/messages/send';
     let res;
     try {
-      res = await this.fetch(`${GOOGLE.GMAIL_API}${path}`, {
+      res = await Promise.race([this.fetch(`${GOOGLE.GMAIL_API}${path}`, {
         method,
         headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      });
+        ...(controller ? { signal: controller.signal } : {}),
+      }), timeout]);
     } catch {
+      if (isSend) throw new LiError('MAILBOX_SEND_UNCONFIRMED', 'Gmail did not answer in time, so ZTech cannot tell whether it was sent. Nothing was retried.');
       throw new LiError('MAILBOX_PROVIDER_UNAVAILABLE', 'Gmail could not be reached. Nothing was retried.');
+    } finally {
+      clearTimeout(timer);
     }
     let json = {};
     try { json = await res.json(); } catch { json = {}; }

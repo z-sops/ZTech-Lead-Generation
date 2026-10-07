@@ -77,8 +77,14 @@ function fakeGmail() {
     m = api.match(/^\/history\?(.*)$/);
     if (m) {
       const q = new URLSearchParams(m[1]);
-      const after = st.history.filter((h) => Number(h.id) > Number(q.get('startHistoryId')));
-      return json(200, { history: after.map((h) => ({ id: h.id, messagesAdded: [{ message: { id: h.msgId, labelIds: h.labelIds } }] })), historyId: st.historyId });
+      if (st.historyGone) return json(404, {}); // the cursor is older than Gmail keeps
+      // Pages of `pageSize` records, like the real API (100 per page).
+      const all = st.history.filter((h) => Number(h.id) > Number(q.get('startHistoryId')));
+      const offset = q.get('pageToken') ? Number(q.get('pageToken').slice(1)) : 0;
+      const size = st.pageSize || 100;
+      const page = all.slice(offset, offset + size);
+      const next = offset + size < all.length ? `p${offset + size}` : null;
+      return json(200, { history: page.map((h) => ({ id: h.id, messagesAdded: [{ message: { id: h.msgId, labelIds: h.labelIds } }] })), historyId: st.historyId, ...(next ? { nextPageToken: next } : {}) });
     }
     return json(404, {});
   };
@@ -113,6 +119,7 @@ async function setup({ gmail = fakeGmail(), leads, windowDays = '0,1,2,3,4,5,6',
   const logs = [];
   const sequences = new SequenceService({ store: rt.store, outreach: rt.li.outreach, mailboxes: svc, clock: () => new Date(now()), logger: { warn: (m) => logs.push(m) } });
   rt.li.outreach.setSequences(sequences);
+  svc.setRepliesGapListener((id, at) => sequences.noteRepliesGap(id, at)); // as the runtime wires it
   const scheduler = new SequenceScheduler({ sequences, store: rt.store, clock: () => new Date(now()), logger: { warn: (m) => logs.push(m) } });
   return { ...rt, svc, gmail, tokens, sequences, scheduler, clock, logs, advance: (ms) => { clock.t += ms; } };
 }

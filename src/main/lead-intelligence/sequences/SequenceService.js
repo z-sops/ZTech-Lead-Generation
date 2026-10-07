@@ -39,7 +39,7 @@ const RECONNECT_CODES = new Set([
   'MAILBOX_CLIENT_NOT_CONFIGURED', 'MAILBOX_VAULT_UNAVAILABLE',
 ]);
 // Gmail did NOT accept the message, for certain: safe to treat as "not sent".
-const DEFINITELY_NOT_SENT = new Set([...RECONNECT_CODES, 'MAILBOX_PROVIDER_LIMIT', 'MAILBOX_PROVIDER_REJECTED', 'MAILBOX_REMOTE_NOT_FOUND', 'VALIDATION_FAILED']);
+const DEFINITELY_NOT_SENT = new Set([...RECONNECT_CODES, 'MAILBOX_PROVIDER_LIMIT', 'MAILBOX_PROVIDER_REJECTED', 'MAILBOX_REMOTE_NOT_FOUND', 'VALIDATION_FAILED', 'MAILBOX_PACING', 'MAILBOX_BUSY', 'SEND_IN_PROGRESS']);
 // Gmail may or may not have accepted it.
 const OUTCOME_UNKNOWN = new Set(['MAILBOX_PROVIDER_UNAVAILABLE', 'MAILBOX_SEND_UNCONFIRMED', 'EMAIL_SEND_FAILED']);
 const RETRY_NEXT_TICK = new Set(['MAILBOX_BUSY', 'SEND_IN_PROGRESS']);
@@ -55,6 +55,7 @@ const HOLD_MESSAGES = Object.freeze({
   [HOLD.PACING_NO_WINDOW]: 'The mailbox\'s sending window never opens. Fix the sending days or hours, then resume.',
   [HOLD.NEEDS_APPROVAL]: 'A follow-up changed after it was approved. Approve it again to continue.',
   [HOLD.THREAD_UNAVAILABLE]: 'An earlier message\'s Gmail id could not be read back, so this follow-up cannot be sent in the same thread.',
+  [HOLD.MAILBOX_GONE]: 'The mailbox that sent the first email was disconnected. Follow-ups can only be sent from it, as replies in its thread. Stop these follow-ups.',
   [HOLD.REPLIES_UNCHECKED]: 'Gmail no longer had the history ZTech needed to check for a reply. Look in your inbox for a reply from this lead, then resume or stop.',
   [HOLD.BLOCKED]: 'A check refused this follow-up. Nothing was sent. Resume to re-run every check once, or stop.',
   [HOLD.MANUAL]: 'Paused by you.',
@@ -119,7 +120,7 @@ class SequenceService {
     return {
       sequenceId: seq.sequence_id, leadId: seq.lead_id, mailboxId: seq.mailbox_id, status: seq.status,
       holdCode: seq.hold_code, holdMessage: seq.hold_code ? HOLD_MESSAGES[seq.hold_code] || null : null,
-      autoResume: AUTO_HOLDS.includes(seq.hold_code), resumeAt: seq.resume_at, stopReason: seq.stop_reason,
+      autoResume: AUTO_HOLDS.includes(seq.hold_code), resumeAt: seq.resume_at, stopReason: seq.stop_reason, repliesGapAt: seq.replies_gap_at || null,
       firstSubject: seq.first_subject, firstSentAt: seq.first_accepted_at, activatedAt: seq.activated_at,
       createdAt: seq.created_at, updatedAt: seq.updated_at, steps: out,
     };
@@ -189,15 +190,39 @@ class SequenceService {
     return (await this.store.sequences.steps(sequenceId)).find((s) => s.state !== 'sent' && s.state !== 'stopped') || null;
   }
 
-  async _rearm(seq, actor, code) {
-    const st = await this._currentStep(seq.sequence_id);
+  /**
+   * Back to active, ONLY if the sequence is still paused for exactly the hold that was judged
+   * (compare-and-set on the hold code): a human Pause that lands meanwhile always wins. Only a
+   * human (`clearGap`) clears a reply-history gap.
+   */
+  async _rearm(seq, actor, code, { clearGap = false } = {}) {
     const at = this._nowIso();
+    const patch = { status: 'active', hold_code: null, resume_at: null, updated_at: at, ...(clearGap ? { replies_gap_at: null } : {}) };
+    const done = await this.store.sequences.update(seq.sequence_id, patch, { expect: ['paused'], expectHold: seq.hold_code });
+    if (!done) return null;
+    const st = await this._currentStep(seq.sequence_id);
     if (st && st.state === 'scheduled') {
       await this.store.sequences.updateStep(seq.sequence_id, st.step_no, { next_attempt_at: maxIso(st.due_at || at, at), updated_at: at }, { expect: ['scheduled'] });
     }
-    const done = await this.store.sequences.update(seq.sequence_id, { status: 'active', hold_code: null, resume_at: null, updated_at: at }, { expect: ['paused'] });
-    if (done) await this._event(seq.sequence_id, 'resumed', { actor, code });
+    await this._event(seq.sequence_id, 'resumed', { actor, code });
     return done;
+  }
+
+  /**
+   * Gmail could no longer give this mailbox's reply history (cursor reset). Every open sequence of
+   * the mailbox records the gap; a running one, or one waiting on an AUTO hold, is held for a human
+   * (REPLIES_UNCHECKED). A draft shows the gap and Activate clears it; Resume clears it otherwise.
+   */
+  async noteRepliesGap(mailboxId, atIso = this._nowIso()) {
+    for (const seq of await this.store.sequences.listOpen()) {
+      if (seq.mailbox_id !== mailboxId) continue;
+      const marked = await this.store.sequences.update(seq.sequence_id, { replies_gap_at: atIso, updated_at: this._nowIso() }, { expect: [seq.status], expectHold: seq.hold_code });
+      if (!marked) continue;
+      if (seq.status === 'active' || (seq.status === 'paused' && AUTO_HOLDS.includes(seq.hold_code))) {
+        await this.store.sequences.update(seq.sequence_id, { status: 'paused', hold_code: HOLD.REPLIES_UNCHECKED, resume_at: null, updated_at: this._nowIso() }, { expect: [seq.status], expectHold: seq.hold_code });
+        await this._event(seq.sequence_id, 'paused', { actor: 'scheduler', code: HOLD.REPLIES_UNCHECKED });
+      }
+    }
   }
 
   /* ------------------------------ human actions ------------------------------ */
@@ -264,6 +289,12 @@ class SequenceService {
     if (!step) throw new NotFoundError('Pitch', draft.pitch_id);
     const seq = await this._require(step.sequence_id);
     if (!OPEN_STATUSES.includes(seq.status)) throw new LiError('SEQUENCE_CLOSED', 'These follow-ups have ended and can no longer change.');
+    // A step that may already be in the recipient's inbox is never re-worded: new content would
+    // mean a new idempotency key, so the same follow-up could go out twice.
+    const ledger = (await this.store.sends.list({ pitchId: step.pitch_id, limit: 20 })).rows || [];
+    if (step.last_code === HOLD.SEND_OUTCOME_UNKNOWN || step.state === 'sending' || ledger.some((r) => r.state === 'accepted' || r.state === 'attempted')) {
+      throw new LiError('STEP_LOCKED', 'This follow-up may already have been sent, so it can no longer change. Check Gmail\'s Sent folder, then stop or resume.');
+    }
     const saved = await this.store.sequences.updateStep(step.sequence_id, step.step_no, { draft, updated_at: this._nowIso() }, { expect: ['waiting', 'scheduled'] });
     if (!saved) throw new LiError('STEP_LOCKED', 'This follow-up is being sent or was sent, so it can no longer change.');
     // D2: an active sequence never sends a step whose approval no longer matches its content.
@@ -315,7 +346,7 @@ class SequenceService {
     const due = maxIso(iso(Date.parse(seq.first_accepted_at) + steps[0].delay_days * DAY_MS), nowIso);
     const armed = await this.store.sequences.updateStep(seq.sequence_id, 1, { state: 'scheduled', due_at: due, next_attempt_at: due, updated_at: nowIso }, { expect: ['waiting'] });
     if (!armed) throw new LiError('SEQUENCE_CHANGED', 'These follow-ups changed. Look again, then activate.');
-    const done = await this.store.sequences.update(seq.sequence_id, { status: 'active', activated_at: nowIso, updated_at: nowIso }, { expect: ['draft'] });
+    const done = await this.store.sequences.update(seq.sequence_id, { status: 'active', activated_at: nowIso, replies_gap_at: null, updated_at: nowIso }, { expect: ['draft'] });
     if (!done) throw new LiError('SEQUENCE_CHANGED', 'These follow-ups changed. Look again, then activate.');
     await this._event(seq.sequence_id, 'activated');
     return this._view(done);
@@ -347,7 +378,15 @@ class SequenceService {
     }
     const missing = await this._unapprovedSteps(seq);
     if (missing) throw new LiError('STEPS_NOT_APPROVED', `Approve every remaining follow-up first (not approved: ${missing.join(', ')}).`);
-    const done = await this._rearm(seq, 'operator', seq.hold_code);
+    if (seq.hold_code === HOLD.MAILBOX_GONE && !(this.store.mailboxes && await this.store.mailboxes.get(seq.mailbox_id))) {
+      throw new LiError('MAILBOX_NOT_FOUND', 'The mailbox that sent the first email is no longer connected. These follow-ups can only be sent from it; stop them.');
+    }
+    const done = await this._rearm(seq, 'operator', seq.hold_code, { clearGap: true });
+    if (done && seq.hold_code === HOLD.SEND_OUTCOME_UNKNOWN) {
+      // The human looked in Gmail and confirmed it was NOT sent: the step is an ordinary step again.
+      const cur = await this._currentStep(seq.sequence_id);
+      if (cur && cur.last_code === HOLD.SEND_OUTCOME_UNKNOWN) await this.store.sequences.updateStep(seq.sequence_id, cur.step_no, { last_code: null, updated_at: this._nowIso() }, { expect: ['scheduled'] });
+    }
     if (!done) throw new LiError('SEQUENCE_CHANGED', 'These follow-ups changed. Look again.');
     return this._view(done);
   }
@@ -381,6 +420,13 @@ class SequenceService {
       if (seq.hold_code === HOLD.PROVIDER_LIMIT && seq.resume_at && Date.parse(seq.resume_at) <= now) {
         await this._rearm(seq, 'scheduler', HOLD.PROVIDER_LIMIT);
       } else if (seq.hold_code === HOLD.MAILBOX_RECONNECT_REQUIRED && this.mailboxes) {
+        if (this.store.mailboxes && !(await this.store.mailboxes.get(seq.mailbox_id))) {
+          // Disconnected (not just signed out): a new connection is a new mailbox, and the thread
+          // belongs to this one. Say so instead of waiting forever.
+          const gone = await this.store.sequences.update(seq.sequence_id, { hold_code: HOLD.MAILBOX_GONE, updated_at: this._nowIso() }, { expect: ['paused'], expectHold: HOLD.MAILBOX_RECONNECT_REQUIRED });
+          if (gone) await this._event(seq.sequence_id, 'paused', { actor: 'scheduler', code: HOLD.MAILBOX_GONE });
+          continue;
+        }
         let ready = false;
         try { ready = (await this.mailboxes.sendGate(seq.mailbox_id, { pacing: false })).allowed === true; } catch { ready = false; }
         if (ready) await this._rearm(seq, 'scheduler', HOLD.MAILBOX_RECONNECT_REQUIRED);
@@ -402,8 +448,9 @@ class SequenceService {
       const accepted = await this.store.sends.findAccepted(key);
       if (accepted) { await this._accepted(seq, st, accepted.send_id, 'scheduler'); continue; }
       const attempt = await this._attemptSince(st.pitch_id, st.updated_at);
-      await this.store.sequences.updateStep(seq.sequence_id, st.step_no, { state: 'scheduled', last_code: attempt ? HOLD.SEND_OUTCOME_UNKNOWN : st.last_code, updated_at: this._nowIso() }, { expect: ['sending'] });
+      // Hold FIRST, then release the step: a second crash in between still leaves it held.
       if (attempt && OPEN_STATUSES.includes(seq.status)) await this._pause(seq, HOLD.SEND_OUTCOME_UNKNOWN, { expect: ['active', 'paused'] });
+      await this.store.sequences.updateStep(seq.sequence_id, st.step_no, { state: 'scheduled', last_code: attempt ? HOLD.SEND_OUTCOME_UNKNOWN : st.last_code, updated_at: this._nowIso() }, { expect: ['sending'] });
     }
   }
 
@@ -455,26 +502,29 @@ class SequenceService {
   }
 
   /** Gmail refused because of a limit: every active sequence of that mailbox waits; strikes grow. */
+  /** Gmail refused because of a limit: every active sequence of that mailbox waits; strikes grow. */
   async _providerLimit(seq, step) {
     const strikes = (step.limit_strikes || 0) + 1;
-    const at = this._nowIso();
-    if (strikes > LIMITS.LIMIT_BACKOFF_MS.length) {
-      await this.store.sequences.updateStep(seq.sequence_id, step.step_no, { state: 'scheduled', limit_strikes: Math.min(strikes, 10), last_code: 'MAILBOX_PROVIDER_LIMIT', updated_at: at }, { expect: ['sending', 'scheduled'] });
-      await this._pause(seq, HOLD.PROVIDER_LIMIT_REPEATED);
-      return;
-    }
-    const until = iso(this._now().getTime() + LIMITS.LIMIT_BACKOFF_MS[strikes - 1]);
-    await this.store.sequences.updateStep(seq.sequence_id, step.step_no, { state: 'scheduled', limit_strikes: strikes, last_code: 'MAILBOX_PROVIDER_LIMIT', next_attempt_at: until, updated_at: at }, { expect: ['sending', 'scheduled'] });
+    const repeated = strikes > LIMITS.LIMIT_BACKOFF_MS.length;
+    const until = repeated ? null : iso(this._now().getTime() + LIMITS.LIMIT_BACKOFF_MS[strikes - 1]);
+    // Pause FIRST, then move the step back: a crash in between leaves a paused sequence.
+    await this._pause(seq, repeated ? HOLD.PROVIDER_LIMIT_REPEATED : HOLD.PROVIDER_LIMIT, { resumeAt: until });
+    await this.store.sequences.updateStep(seq.sequence_id, step.step_no, {
+      state: 'scheduled', limit_strikes: Math.min(strikes, 10), last_code: 'MAILBOX_PROVIDER_LIMIT', ...(until ? { next_attempt_at: until } : {}), updated_at: this._nowIso(),
+    }, { expect: ['sending', 'scheduled'] });
+    // The limit belongs to the mailbox, so its other running sequences wait too (for a human once
+    // the limit has repeated).
     for (const other of await this.store.sequences.listOpen()) {
-      if (other.mailbox_id !== seq.mailbox_id || other.status !== 'active') continue;
-      await this._pause(other, HOLD.PROVIDER_LIMIT, { resumeAt: until, expect: ['active'] });
+      if (other.sequence_id === seq.sequence_id || other.mailbox_id !== seq.mailbox_id || other.status !== 'active') continue;
+      await this._pause(other, repeated ? HOLD.PROVIDER_LIMIT_REPEATED : HOLD.PROVIDER_LIMIT, { resumeAt: until, expect: ['active'] });
     }
   }
 
   /**
    * Send ONE due step (scheduler only). Returns a short outcome word for the scheduler's log.
-   * Order: still active -> approval -> thread -> read replies + stop rules -> mailbox gate incl. pacing ->
-   * mark 'sending' -> the send boundary (which re-runs EVERY gate) -> record what happened.
+   * Order: still active -> approval -> thread -> read replies + stop rules + reply gap -> mailbox
+   * gate incl. pacing -> ATOMIC claim ('sending' only if the sequence is still active and "Pause
+   * all" is off) -> the send boundary (which re-runs EVERY gate) -> record what happened.
    */
   async sendDueStep(step) {
     const seq = await this.store.sequences.get(step.sequence_id);
@@ -482,32 +532,41 @@ class SequenceService {
     // (The stop rules ran in this tick's sweep, and run again below once replies are read.)
     const cur = await this._currentStep(seq.sequence_id);
     if (!cur || cur.step_no !== step.step_no || cur.state !== 'scheduled') return 'skipped';
-    if (!(await this._approved(cur.draft))) { await this._pause(seq, HOLD.NEEDS_APPROVAL); return 'held'; }
+    if (!(await this._approved(cur.draft))) { await this._pause(seq, HOLD.NEEDS_APPROVAL, { expect: ['active'] }); return 'held'; }
     const thread = await this._threadFor(seq, cur);
-    if (!thread) { await this._pause(seq, HOLD.THREAD_UNAVAILABLE); return 'held'; }
-    if (!this.mailboxes) { await this._pause(seq, HOLD.MAILBOX_RECONNECT_REQUIRED); return 'paused'; }
+    if (!thread) { await this._pause(seq, HOLD.THREAD_UNAVAILABLE, { expect: ['active'] }); return 'held'; }
+    if (!this.mailboxes) { await this._pause(seq, HOLD.MAILBOX_RECONNECT_REQUIRED, { expect: ['active'] }); return 'paused'; }
 
     // D5: a reply Gmail already holds but ZTech has not read yet must still stop this follow-up, so
-    // the mailbox's replies are read (headers only) right before every follow-up is sent.
+    // the mailbox's replies are read (headers only) right before every follow-up - completely.
     let check;
     try {
       check = await this.mailboxes.syncReplies({ mailboxId: seq.mailbox_id });
     } catch (err) {
       const code = err && typeof err.code === 'string' ? err.code : 'REPLY_CHECK_FAILED';
-      if (RECONNECT_CODES.has(code)) { await this._pause(seq, HOLD.MAILBOX_RECONNECT_REQUIRED); return 'paused'; }
+      if (code === 'MAILBOX_NOT_FOUND') { await this._pause(seq, HOLD.MAILBOX_GONE, { expect: ['active'] }); return 'held'; }
+      if (RECONNECT_CODES.has(code)) { await this._pause(seq, HOLD.MAILBOX_RECONNECT_REQUIRED, { expect: ['active'] }); return 'paused'; }
       await this._reschedule(seq, cur, iso(this._now().getTime() + REPLY_CHECK_RETRY_MS), 'REPLY_CHECK_FAILED');
       return 'rescheduled';
     }
     const late = await this._stopReason(seq);
     if (late) { await this._stop(seq, late, 'scheduler'); return 'stopped'; }
-    if (check && check.cursorReset) { await this._pause(seq, HOLD.REPLIES_UNCHECKED); return 'held'; }
+    if (check && check.cursorReset) await this.noteRepliesGap(seq.mailbox_id);
+    const now = await this.store.sequences.get(seq.sequence_id);
+    if (!now || now.status !== 'active') return 'skipped';
+    if (now.replies_gap_at) { await this._pause(now, HOLD.REPLIES_UNCHECKED, { expect: ['active'] }); return 'held'; }
+    if (check && check.complete === false) {
+      // A backlog beyond one read: the next tick reads on from where this one stopped.
+      await this._reschedule(seq, cur, iso(this._now().getTime() + 60 * 1000), 'REPLY_CHECK_INCOMPLETE');
+      return 'rescheduled';
+    }
 
     let gate;
     try { gate = await this.mailboxes.sendGate(seq.mailbox_id); } catch (err) { gate = { allowed: false, code: (err && err.code) || 'MAILBOX_NOT_FOUND' }; }
     if (!gate.allowed) return this._onRefusal(seq, cur, gate.code, { nextAllowedAt: gate.nextAllowedAt, attempted: false });
 
-    const sending = await this.store.sequences.updateStep(seq.sequence_id, cur.step_no, { state: 'sending', updated_at: this._nowIso() }, { expect: ['scheduled'] });
-    if (!sending) return 'skipped';
+    const sending = await this.store.sequences.claimStep(seq.sequence_id, cur.step_no, this._nowIso());
+    if (!sending) return 'skipped'; // a human Pause / Stop / Pause all landed first
     const followUp = {
       pitchId: cur.pitch_id, mailboxId: seq.mailbox_id, recipient: seq.recipient_address, firstSubject: seq.first_subject,
       threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
@@ -525,29 +584,42 @@ class SequenceService {
   }
 
   async _onRefusal(seq, step, code, { nextAllowedAt = undefined, attempted = false } = {}) {
-    // A stop rule always wins over any other reading of the refusal.
+    // 1. Whatever was thrown: if Gmail accepted this exact content, it WAS sent. Record that truth.
+    if (attempted) {
+      const key = sendIdempotencyKey({ channel: 'email', pitchId: step.pitch_id, contentHash: step.draft.content_hash });
+      const accepted = await this.store.sends.findAccepted(key);
+      if (accepted) { await this._accepted(seq, step, accepted.send_id, 'scheduler'); return 'sent'; }
+    }
+    // 2. Did a request reach Gmail without a clear answer? Then only a human may decide.
+    const unknown = attempted && !DEFINITELY_NOT_SENT.has(code) && (OUTCOME_UNKNOWN.has(code) || Boolean(await this._attemptSince(step.pitch_id, step.updated_at)));
+    const lastCode = unknown ? HOLD.SEND_OUTCOME_UNKNOWN : code;
+    const back = async (patch = {}) => this.store.sequences.updateStep(seq.sequence_id, step.step_no, { state: 'scheduled', last_code: lastCode, updated_at: this._nowIso(), ...patch }, { expect: ['sending', 'scheduled'] });
+    // 3. A stop rule always wins over any other reading of the refusal.
     const stop = (await this._stopReason(seq)) || STOP_CODES[code] || null;
     if (stop) {
-      await this.store.sequences.updateStep(seq.sequence_id, step.step_no, { state: 'scheduled', last_code: code, updated_at: this._nowIso() }, { expect: ['sending'] });
       await this._stop(seq, stop, 'scheduler');
+      await back();
       return 'stopped';
     }
+    if (unknown) { await this._pause(seq, HOLD.SEND_OUTCOME_UNKNOWN); await back(); return 'held'; }
     if (code === 'MAILBOX_PACING') {
       if (nextAllowedAt) { await this._reschedule(seq, step, nextAllowedAt, code); return 'rescheduled'; }
-      await this.store.sequences.updateStep(seq.sequence_id, step.step_no, { state: 'scheduled', last_code: code, updated_at: this._nowIso() }, { expect: ['sending', 'scheduled'] });
       await this._pause(seq, HOLD.PACING_NO_WINDOW);
+      await back();
       return 'held';
     }
     if (RETRY_NEXT_TICK.has(code)) { await this._reschedule(seq, step, iso(this._now().getTime() + 60 * 1000), code); return 'rescheduled'; }
     if (code === 'MAILBOX_PROVIDER_LIMIT') { await this._providerLimit(seq, step); return 'paused'; }
-    const back = async () => this.store.sequences.updateStep(seq.sequence_id, step.step_no, { state: 'scheduled', last_code: code, updated_at: this._nowIso() }, { expect: ['sending', 'scheduled'] });
-    if (RECONNECT_CODES.has(code)) { await back(); await this._pause(seq, HOLD.MAILBOX_RECONNECT_REQUIRED); return 'paused'; }
-    if (code === 'THREAD_UNAVAILABLE') { await back(); await this._pause(seq, HOLD.THREAD_UNAVAILABLE); return 'held'; }
-    // Did a request reach Gmail without a clear answer? Then only a human may decide.
-    const unknown = attempted && !DEFINITELY_NOT_SENT.has(code) && (OUTCOME_UNKNOWN.has(code) || Boolean(await this._attemptSince(step.pitch_id, step.updated_at)));
+    // Every hold below: pause FIRST, then put the step back, so a crash in between can never leave
+    // an active sequence with a step the next tick would send again.
+    let hold = HOLD.BLOCKED;
+    if (code === 'MAILBOX_NOT_FOUND') hold = HOLD.MAILBOX_GONE;
+    else if (RECONNECT_CODES.has(code)) hold = HOLD.MAILBOX_RECONNECT_REQUIRED;
+    else if (code === 'THREAD_UNAVAILABLE') hold = HOLD.THREAD_UNAVAILABLE;
+    else if (code === 'NOT_READY' && !(await this._approved((await this._currentStep(seq.sequence_id) || step).draft))) hold = HOLD.NEEDS_APPROVAL;
+    await this._pause(seq, hold);
     await back();
-    await this._pause(seq, unknown ? HOLD.SEND_OUTCOME_UNKNOWN : HOLD.BLOCKED);
-    return 'held';
+    return hold === HOLD.MAILBOX_RECONNECT_REQUIRED ? 'paused' : 'held';
   }
 }
 

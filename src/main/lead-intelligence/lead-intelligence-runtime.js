@@ -276,6 +276,8 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
     li.sequences = new SequenceService({ store, outreach: li.outreach, mailboxes: li.mailboxes, clock: clock || (() => new Date()), logger });
     li.outreach.setSequences(li.sequences);
     if (li.mailboxes) {
+      // A reply-history gap seen by ANY sync (timer, button, scheduler) holds that mailbox's follow-ups.
+      li.mailboxes.setRepliesGapListener((mailboxId, at) => li.sequences.noteRepliesGap(mailboxId, at));
       const { SequenceScheduler } = require('./sequences/SequenceScheduler');
       sequenceScheduler = new SequenceScheduler({ sequences: li.sequences, store, clock: clock || (() => new Date()), logger });
       sequenceScheduler.start(mailbox && Number.isInteger(mailbox.sequenceIntervalMs) ? mailbox.sequenceIntervalMs : undefined);
@@ -316,7 +318,8 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
       closed = true;
       if (relay) relay.stop();
       if (mailboxSyncTimer) clearInterval(mailboxSyncTimer);
-      if (sequenceScheduler) sequenceScheduler.stop();
+      // Let a follow-up that is mid-send finish recording before the store closes.
+      if (sequenceScheduler) await sequenceScheduler.stop();
       li.stop();
       // OI holds no socket and no timer, so this is a no-op that exists so the
       // shutdown path is explicit rather than accidental.

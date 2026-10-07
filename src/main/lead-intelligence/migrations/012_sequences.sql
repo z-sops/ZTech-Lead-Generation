@@ -17,6 +17,9 @@
 --   completed  every step was accepted
 -- At most ONE open (draft / active / paused) sequence per lead, and one sequence per first email
 -- ever: a new sequence needs a new first email.
+-- replies_gap_at: set when Gmail could no longer give the reply history (a cursor reset) while
+-- this sequence was open. A reply in that gap was never read, so nothing is sent until a human
+-- has looked (Resume, or Activate for a draft, clears it).
 --
 -- Retention: purgeLead removes a lead's sequences and steps (lead data). li_sequence_events is an
 -- append-only audit (ids, codes, times - never content or an address) and is KEPT, like the send
@@ -35,6 +38,7 @@ CREATE TABLE IF NOT EXISTS li_sequences (
   status            TEXT NOT NULL CHECK (status IN ('draft', 'active', 'paused', 'stopped', 'completed')),
   hold_code         TEXT,
   resume_at         TEXT,
+  replies_gap_at    TEXT,
   stop_reason       TEXT CHECK (stop_reason IS NULL OR stop_reason IN ('replied', 'suppressed', 'manual', 'contact_changed')),
   activated_at      TEXT,
   created_at        TEXT NOT NULL,

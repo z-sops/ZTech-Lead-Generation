@@ -110,3 +110,21 @@ test('S4. events carry codes only; an invalid record never reaches the table', a
     await assert.rejects(store.sequences.create(seq(), [step(1, { draft: { pitch_id: 'pitch_f1', kind: 'pitch' } })]), names('draft'), kind);
   }
 });
+
+test('S5. both twins: claimStep is atomic with "still active", "no reply gap" and "Pause all off"; expectHold guards automatic resumes', async () => {
+  for (const [kind, store] of await stores()) {
+    await store.sequences.create(seq({ status: 'active', activated_at: T }), [step(1, { state: 'scheduled', due_at: T, next_attempt_at: T })]);
+    await store.sequences.setControl({ paused: true, updatedAt: T });
+    assert.equal(await store.sequences.claimStep('seq_aaaaaaaa-0001', 1, T), null, kind + ': Pause all wins');
+    await store.sequences.setControl({ paused: false, updatedAt: T });
+    await store.sequences.update('seq_aaaaaaaa-0001', { replies_gap_at: T, updated_at: T });
+    assert.equal(await store.sequences.claimStep('seq_aaaaaaaa-0001', 1, T), null, kind + ': a reply gap wins');
+    await store.sequences.update('seq_aaaaaaaa-0001', { replies_gap_at: null, status: 'paused', hold_code: 'MANUAL', updated_at: T });
+    assert.equal(await store.sequences.claimStep('seq_aaaaaaaa-0001', 1, T), null, kind + ': a human pause wins');
+    assert.equal(await store.sequences.update('seq_aaaaaaaa-0001', { status: 'active', hold_code: null, updated_at: T }, { expect: ['paused'], expectHold: 'PROVIDER_LIMIT' }), null, kind + ': an auto-resume never undoes a manual pause');
+    await store.sequences.update('seq_aaaaaaaa-0001', { status: 'active', hold_code: null, updated_at: T }, { expect: ['paused'], expectHold: 'MANUAL' });
+    const claimed = await store.sequences.claimStep('seq_aaaaaaaa-0001', 1, T);
+    assert.equal(claimed.state, 'sending', kind);
+    assert.equal(await store.sequences.claimStep('seq_aaaaaaaa-0001', 1, T), null, kind + ': only once');
+  }
+});

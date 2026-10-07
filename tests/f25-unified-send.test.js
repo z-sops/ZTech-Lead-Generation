@@ -1043,8 +1043,9 @@ test('AG. Campaigns remains disabled - no bulk or campaign surface exists anywhe
     assert.ok(!banned.test(stripComments(serviceSource)), 'the service contains no ' + banned + ' surface');
   }
   const seqMentions = stripComments(serviceSource).split('\n').filter((l) => /sequence/i.test(l));
-  assert.ok(seqMentions.length > 0 && seqMentions.every((l) => /store\.sequences|this\.sequences|setSequences|sequenceSend|FOLLOWUP_SEQUENCE_ONLY|SEQUENCE_MISMATCH|SEQUENCES_UNAVAILABLE|sequence approval note/.test(l)),
+  assert.ok(seqMentions.length > 0 && seqMentions.every((l) => /this\.store\.sequences\.stepByPitch\(|!this\.store\.sequences\)|this\.sequences\.(saveStepDraft|onStepApproved)\(|!this\.sequences\)|&& this\.sequences\)|setSequences\(sequences\)|sequenceSend|FOLLOWUP_SEQUENCE_ONLY|SEQUENCE_MISMATCH|SEQUENCES_UNAVAILABLE|sequence approval note/.test(l)),
     'every sequence mention in the service is an F28 follow-up hook: ' + seqMentions.join(' | '));
+  assert.ok(seqMentions.length <= 14, 'and there are only the declared hooks: ' + seqMentions.length);
   assert.ok(!/\bcampaign/i.test(stripComments(ipcSource)), 'no campaign channel exists');
 });
 

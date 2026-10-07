@@ -34,6 +34,7 @@ class SequenceScheduler {
 
   /** One tick. Returns a summary (codes and counts only). Concurrent calls share the running tick. */
   tick() {
+    if (this._stopped) return Promise.resolve({ pausedAll: false, outcomes: [], stopped: true });
     if (this._running) return this._running;
     this._running = this._tick().finally(() => { this._running = null; });
     return this._running;
@@ -76,9 +77,12 @@ class SequenceScheduler {
     if (this._timer.unref) this._timer.unref();
   }
 
-  stop() {
+  /** No new tick starts after this; resolves once a tick that is mid-send has finished recording. */
+  async stop() {
+    this._stopped = true;
     if (this._timer) clearInterval(this._timer);
     this._timer = null;
+    if (this._running) { try { await this._running; } catch { /* already logged */ } }
   }
 }
 

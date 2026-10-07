@@ -27,6 +27,7 @@ const HOLD = Object.freeze({
   NEEDS_APPROVAL: 'NEEDS_APPROVAL',
   THREAD_UNAVAILABLE: 'THREAD_UNAVAILABLE',
   REPLIES_UNCHECKED: 'REPLIES_UNCHECKED',
+  MAILBOX_GONE: 'MAILBOX_GONE',
   BLOCKED: 'BLOCKED',
   MANUAL: 'MANUAL',
 });
@@ -77,12 +78,12 @@ function normalizeSequence(rec) {
   if (hold !== null && !HOLD_CODES.includes(hold)) bad('hold_code');
   if ((rec.status === 'paused') !== (hold !== null)) bad('hold_code/status');
   for (const k of ['first_accepted_at', 'created_at', 'updated_at']) if (!ISO_OK(rec[k])) bad(k);
-  for (const k of ['resume_at', 'activated_at']) if (rec[k] != null && !ISO_OK(rec[k])) bad(k);
+  for (const k of ['resume_at', 'activated_at', 'replies_gap_at']) if (rec[k] != null && !ISO_OK(rec[k])) bad(k);
   return {
     sequence_id: rec.sequence_id, lead_id: String(rec.lead_id), mailbox_id: rec.mailbox_id, first_send_id: rec.first_send_id,
     first_pitch_id: rec.first_pitch_id, thread_id: rec.thread_id, first_subject: rec.first_subject,
     recipient_address: rec.recipient_address.trim().toLowerCase(), first_accepted_at: rec.first_accepted_at,
-    status: rec.status, hold_code: hold, resume_at: rec.resume_at == null ? null : rec.resume_at, stop_reason: stopReason,
+    status: rec.status, hold_code: hold, resume_at: rec.resume_at == null ? null : rec.resume_at, replies_gap_at: rec.replies_gap_at == null ? null : rec.replies_gap_at, stop_reason: stopReason,
     activated_at: rec.activated_at == null ? null : rec.activated_at, created_at: rec.created_at, updated_at: rec.updated_at,
   };
 }
