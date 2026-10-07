@@ -3304,7 +3304,7 @@ document.getElementById('btn-export-csv').addEventListener('click', safeAsync(as
 // available. Text is always set with textContent - the only markup inserted is
 // the website link produced by the existing protocol-checked renderWebsite.
 const LEAD_DRAWER_LAYOUT_KEY = 'ztech.leadDetail.layout';
-const LEAD_DRAWER_TABS = ['overview', 'research', 'opportunity', 'evidence', 'icp', 'pitch'];
+const LEAD_DRAWER_TABS = ['overview', 'research', 'opportunity', 'evidence', 'icp', 'pitch', 'timeline'];
 const LEAD_DRAWER_NA = 'Not available';
 const LEAD_DRAWER_EVIDENCE_LIMIT = 50;
 const LEAD_DRAWER_RESEARCH_SHORT = {
@@ -3816,6 +3816,8 @@ function selectLeadDrawerTab(name, focus) {
     if (panel) panel.hidden = !active;
   }
   if (tab === 'opportunity') renderLeadDrawerOpportunity();
+  // I6: the timeline is (re)read every time its tab is opened. Never polled.
+  if (tab === 'timeline' && leadDrawerLeadId) loadLeadDrawerTimeline(leadDrawerLeadId, false);
   const scroll = document.getElementById('lead-drawer-scroll');
   if (scroll && changed) scroll.scrollTop = 0;
 }
@@ -3902,6 +3904,9 @@ function renderLeadDrawer(lead) {
   renderLeadDrawerPipeline();
   // Phase I2: load Opportunity Intelligence (non-blocking, separate system).
   if (leadDrawerLeadId) loadLeadDrawerOpportunity(leadDrawerLeadId);
+  // I6: a new lead starts with an empty timeline; it loads when its tab is opened.
+  resetLeadDrawerTimeline();
+  if (leadDrawerTab === 'timeline' && leadDrawerLeadId) loadLeadDrawerTimeline(leadDrawerLeadId, false);
 }
 
 function renderLeadDrawerResearchViews() {
@@ -3929,6 +3934,7 @@ function resetLeadDrawer() {
   leadDrawerResearch = { kind: 'idle', view: null, error: null };
   leadDrawerOpportunitySeq += 1;
   leadDrawerOpportunity = { kind: 'idle', view: null, error: null, leadId: null, running: false, notice: null };
+  resetLeadDrawerTimeline();
   leadDrawerTab = 'overview';
   markLeadDrawerRow(null);
   setLeadDrawerSaveState('lead-drawer-save-state', null, '');
@@ -4831,6 +4837,144 @@ async function runLeadDrawerOpportunity(confirmFresh) {
   if (seq !== leadDrawerOpportunitySeq || leadDrawerLeadId !== leadId) return;
   leadDrawerOpportunity = next;
   renderLeadDrawerOpportunity();
+}
+
+// === I6 Lead timeline ===
+// One read-only list of what happened to this lead, newest first, built in MAIN from
+// ZTech's own records (lead, research, enrichment, Opportunity Intelligence, pitch,
+// outreach). This block only displays it: every value is set with textContent, the
+// source filter and paging are applied in main, and there is no timer, no polling and no
+// action other than reading and switching tabs.
+
+const TL_SOURCES = ['lead', 'research', 'enrichment', 'opportunity', 'pitch', 'outreach'];
+const TL_SOURCE_LABEL = { lead: 'Lead', research: 'Research', enrichment: 'Enrichment', opportunity: 'Opportunity', pitch: 'Pitch', outreach: 'Outreach' };
+// Where "Open" goes. A target with no drawer tab (or null) draws no link at all.
+const TL_OPEN_TAB = { research: 'research', opportunity: 'opportunity', pitch: 'pitch', outreach: 'pitch' };
+const TL_PAGE = 50;
+let leadDrawerTimeline = { leadId: null, events: [], next: null, hasMore: false, sources: TL_SOURCES.slice(), loading: false, error: null, unavailable: [], loaded: false };
+let leadDrawerTimelineSeq = 0;
+
+function resetLeadDrawerTimeline() {
+  leadDrawerTimelineSeq += 1;
+  leadDrawerTimeline = { leadId: null, events: [], next: null, hasMore: false, sources: TL_SOURCES.slice(), loading: false, error: null, unavailable: [], loaded: false };
+}
+
+function timelineBridge() {
+  const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
+  return api && api.timeline && typeof api.timeline.forLead === 'function' ? api.timeline : null;
+}
+
+function timelineUnwrap(res) {
+  if (res && res.ok === true) return res.data && typeof res.data === 'object' ? res.data : {};
+  const msg = res && res.error && typeof res.error.message === 'string' && res.error.message ? res.error.message : 'The timeline could not be read.';
+  throw new Error(msg);
+}
+
+async function loadLeadDrawerTimeline(leadId, older) {
+  const bridge = timelineBridge();
+  const st = leadDrawerTimeline;
+  if (!leadId) return;
+  if (!bridge) {
+    leadDrawerTimeline = { ...st, leadId, loading: false, error: 'The timeline is not available in this build.', loaded: true };
+    renderLeadDrawerTimeline();
+    return;
+  }
+  const seq = ++leadDrawerTimelineSeq;
+  const keep = older && st.leadId === leadId ? st.events : [];
+  leadDrawerTimeline = { ...st, leadId, events: keep, loading: true, error: null };
+  renderLeadDrawerTimeline();
+  const payload = { leadId, limit: TL_PAGE };
+  if (st.sources.length !== TL_SOURCES.length) payload.sources = st.sources.slice();
+  if (older && st.next) payload.before = st.next;
+  let next;
+  try {
+    const data = timelineUnwrap(await bridge.forLead(payload));
+    const events = Array.isArray(data.events) ? data.events : [];
+    next = {
+      ...leadDrawerTimeline, leadId, events: keep.concat(events), next: data.next || null, hasMore: data.has_more === true,
+      loading: false, error: null, unavailable: Array.isArray(data.unavailable_sources) ? data.unavailable_sources : [], loaded: true,
+    };
+  } catch (err) {
+    next = { ...leadDrawerTimeline, leadId, loading: false, error: (err && err.message) || 'The timeline could not be read.', loaded: true };
+  }
+  if (seq !== leadDrawerTimelineSeq || leadDrawerLeadId !== leadId) return;
+  leadDrawerTimeline = next;
+  renderLeadDrawerTimeline();
+}
+
+function toggleLeadDrawerTimelineSource(source) {
+  const on = new Set(leadDrawerTimeline.sources);
+  if (on.has(source)) on.delete(source); else on.add(source);
+  if (on.size === 0) return; // at least one source stays on
+  leadDrawerTimeline = { ...leadDrawerTimeline, sources: TL_SOURCES.filter((s) => on.has(s)), next: null };
+  if (leadDrawerLeadId) loadLeadDrawerTimeline(leadDrawerLeadId, false);
+}
+
+function timelineRow(e) {
+  const li = leadDrawerEl('li', 'lead-timeline-row');
+  li.setAttribute('data-kind', String(e.kind || ''));
+  const when = leadDrawerEl('span', 'lead-timeline-when', e.at ? leadDrawerFormatTime(e.at) : '');
+  const src = leadDrawerEl('span', 'lead-timeline-source', TL_SOURCE_LABEL[e.source] || 'Other');
+  src.setAttribute('data-source', TL_SOURCE_LABEL[e.source] ? e.source : 'other');
+  const body = leadDrawerEl('div', 'lead-timeline-body');
+  body.appendChild(leadDrawerEl('span', 'lead-timeline-title', String(e.title || '')));
+  if (e.detail) body.appendChild(leadDrawerEl('span', 'lead-drawer-muted lead-timeline-detail', String(e.detail)));
+  li.appendChild(when);
+  li.appendChild(src);
+  li.appendChild(body);
+  const tab = e.open ? TL_OPEN_TAB[e.open] : null;
+  if (tab && LEAD_DRAWER_TABS.includes(tab)) {
+    const open = leadDrawerEl('button', 'btn btn-sm btn-secondary lead-timeline-open', 'Open');
+    open.type = 'button';
+    open.setAttribute('data-action', 'timeline-open');
+    open.setAttribute('data-target', tab);
+    open.addEventListener('click', () => selectLeadDrawerTab(tab, true));
+    li.appendChild(open);
+  }
+  return li;
+}
+
+function renderLeadDrawerTimeline() {
+  const box = document.getElementById('lead-drawer-timeline');
+  if (!box) return;
+  const st = leadDrawerTimeline;
+  const nodes = [leadDrawerEl('h3', 'lead-drawer-section-title', 'Timeline')];
+  nodes.push(leadDrawerEl('p', 'lead-drawer-muted',
+    "Built from ZTech's records. The Activity ledger and Opportunity Intelligence keep their own full history."));
+  const chips = leadDrawerEl('div', 'lead-timeline-filters');
+  for (const s of TL_SOURCES) {
+    const b = leadDrawerEl('button', 'lead-timeline-chip', TL_SOURCE_LABEL[s]);
+    b.type = 'button';
+    b.setAttribute('data-action', 'timeline-filter');
+    b.setAttribute('data-source', s);
+    b.setAttribute('aria-pressed', st.sources.includes(s) ? 'true' : 'false');
+    b.disabled = st.loading;
+    b.addEventListener('click', () => toggleLeadDrawerTimelineSource(s));
+    chips.appendChild(b);
+  }
+  nodes.push(chips);
+  if (st.error) nodes.push(leadDrawerEl('p', 'lead-drawer-warning', st.error));
+  for (const s of st.unavailable || []) {
+    nodes.push(leadDrawerEl('p', 'lead-drawer-warning', `${TL_SOURCE_LABEL[s] || 'Some'} history could not be read.`));
+  }
+  if (st.events.length) {
+    const list = leadDrawerEl('ol', 'lead-timeline');
+    for (const e of st.events) list.appendChild(timelineRow(e));
+    nodes.push(list);
+  } else if (st.loading || !st.loaded) {
+    nodes.push(leadDrawerEl('p', 'lead-drawer-muted', 'Loading timeline...'));
+  } else if (!st.error) {
+    nodes.push(leadDrawerEl('p', 'lead-drawer-empty', 'Nothing has happened for this lead yet.'));
+  }
+  if (st.hasMore || (st.loading && st.events.length)) {
+    const more = leadDrawerEl('button', 'btn btn-sm btn-secondary', st.loading ? 'Loading...' : 'Load older');
+    more.type = 'button';
+    more.setAttribute('data-action', 'timeline-older');
+    more.disabled = st.loading;
+    more.addEventListener('click', () => { if (leadDrawerLeadId) loadLeadDrawerTimeline(leadDrawerLeadId, true); });
+    nodes.push(more);
+  }
+  box.replaceChildren(...nodes);
 }
 
 // === P1-G Collection Quality Report (read-only) ===

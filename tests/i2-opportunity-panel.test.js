@@ -49,7 +49,8 @@ function functionSource(source, marker) {
 }
 
 const OI_START = '// === I2 Opportunity Intelligence: Lead Drawer panel ===';
-const OI_END = '// === P1-G Collection Quality Report (read-only) ===';
+// I6 declared update: the read-only Timeline block now follows the OI block.
+const OI_END = '// === I6 Lead timeline ===';
 const oiBlock = between(rendererSource, OI_START, OI_END);
 const oiCode = oiBlock.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const helpers = [

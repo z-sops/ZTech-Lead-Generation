@@ -5941,3 +5941,87 @@ textarea {
 #oi-provider-rows .settings-row-label .settings-key-state + .settings-key-state {
   margin-left: var(--space-2);
 }
+
+/* === I6 Lead timeline =====================================================
+   A plain dated list. Source badges reuse the neutral badge look; nothing here
+   signals good/bad, because a timeline row is a fact, not a verdict. */
+
+.lead-timeline-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.lead-timeline-chip {
+  padding: 2px var(--space-3);
+  font-size: var(--font-12);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.lead-timeline-chip[aria-pressed="true"] {
+  background: var(--neutral-bg);
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.lead-timeline {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+}
+
+.lead-timeline-row {
+  display: grid;
+  grid-template-columns: 9.5rem 6.5rem 1fr auto;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.lead-timeline-when {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.lead-timeline-source {
+  justify-self: start;
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.lead-timeline-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.lead-timeline-title {
+  color: var(--text-1);
+}
+
+.lead-timeline-detail {
+  font-size: var(--font-12);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .lead-timeline-row {
+    grid-template-columns: 1fr auto;
+  }
+  .lead-timeline-when,
+  .lead-timeline-source {
+    grid-column: 1 / -1;
+  }
+}

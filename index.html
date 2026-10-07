@@ -914,6 +914,7 @@
                   <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-evidence" data-tab="evidence" aria-controls="lead-panel-evidence" aria-selected="false" tabindex="-1">Evidence</button>
                   <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-icp" data-tab="icp" aria-controls="lead-panel-icp" aria-selected="false" tabindex="-1">ICP</button>
                   <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-pitch" data-tab="pitch" aria-controls="lead-panel-pitch" aria-selected="false" tabindex="-1">Pitch</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-timeline" data-tab="timeline" aria-controls="lead-panel-timeline" aria-selected="false" tabindex="-1">Timeline</button>
                 </div>
               </div>
               <div class="lead-drawer-scroll" id="lead-drawer-scroll">
@@ -1100,6 +1101,12 @@
                        is read/edit/approve only: no outbound action of any kind
                        is reachable from it. -->
                   <div class="lead-drawer-section" id="lead-drawer-pitch" aria-live="polite"></div>
+                </section>
+                <!-- I6 Timeline: a read-only, newest-first list built in main from ZTech's own
+                     records. Rendered by the I6 block in renderer.js with textContent only. It
+                     writes nothing and contacts no provider. -->
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-timeline" aria-labelledby="lead-tab-timeline" tabindex="0" hidden>
+                  <div class="lead-drawer-section" id="lead-drawer-timeline" aria-live="polite"></div>
                 </section>
               </div>
             </div>

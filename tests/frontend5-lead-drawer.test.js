@@ -466,12 +466,13 @@ test('7. tabs switch by click and by keyboard, with correct ARIA state', () => {
   key('ArrowRight');
   assert.strictEqual(env.api.tab, 'opportunity');
   assert.strictEqual(env.doc.activeElement, env.el('lead-tab-opportunity'), 'focus follows the selected tab');
+  // I6 declared update: Timeline is now the last tab.
   key('End');
-  assert.strictEqual(env.api.tab, 'pitch');
+  assert.strictEqual(env.api.tab, 'timeline');
   key('ArrowRight');
   assert.strictEqual(env.api.tab, 'overview', 'wraps around');
   key('ArrowLeft');
-  assert.strictEqual(env.api.tab, 'pitch');
+  assert.strictEqual(env.api.tab, 'timeline');
   key('Home');
   assert.strictEqual(env.api.tab, 'overview');
   env.api.selectLeadDrawerTab('bogus', false);
@@ -635,8 +636,8 @@ test('21. the IPC channel set and dependencies are unchanged', () => {
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods = 76 total.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 76, '76 preload invocations');
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline = 77 total.
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 77, '77 preload invocations');
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'the F5 block performs no I/O');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);
