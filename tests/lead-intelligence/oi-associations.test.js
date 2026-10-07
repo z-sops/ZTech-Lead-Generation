@@ -71,7 +71,8 @@ async function runtimeOn(db, oi) {
 const tableCols = (db, t) => db.exec(`PRAGMA table_info(${t})`)[0].values.map((r) => r[1]).sort();
 
 test('006 is the sixth migration and creates exactly the seven approved columns', { skip }, async () => {
-  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6]);
+  // I5 declared lock update: + 7 (li_oi_refresh_requests). 006 itself is unchanged.
+  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7]);
   const SQL = await initSqlJs();
   const db = new SQL.Database();
   await new SqlJsStore({ db, logger: SILENT }).migrate();
@@ -93,9 +94,10 @@ test('006 applies on top of a database already at version 5, and only once', { s
   const store = new SqlJsStore({ db, logger: SILENT });
   await store.migrate();
   await store.migrate();
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6]);
+  // I5 declared lock update: the same upgrade now also applies 007.
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7]);
   const after = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
-  assert.deepEqual(after.filter((t) => !before.includes(t)), ['li_oi_associations']);
+  assert.deepEqual(after.filter((t) => !before.includes(t)), ['li_oi_associations', 'li_oi_refresh_requests']);
 });
 
 for (const kind of ['sql', 'memory']) {
@@ -166,7 +168,8 @@ test('a link whose report OI no longer holds renders report_missing, never a cra
   const v = await rt2.opportunity.service.latestForLead({ leadId: '5' });
   assert.equal(v.state, 'report_missing');
   assert.equal(v.model, null);
-  assert.match(v.message, /no longer in Opportunity Intelligence/);
+  // I5 (E2) declared copy update: the approved wording.
+  assert.equal(v.message, "This lead's reports are no longer available. Run research again.");
   await rt2.shutdown();
 });
 

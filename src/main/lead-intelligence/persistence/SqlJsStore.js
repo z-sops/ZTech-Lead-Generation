@@ -60,6 +60,7 @@ class SqlJsStore {
     this.enrichmentJobs = new SqlEnrichmentJobs(this);
     this.enrichmentObservations = new SqlEnrichmentObservations(this);
     this.oiAssociations = new SqlOiAssociations(this);
+    this.oiRefreshRequests = new SqlOiRefreshRequests(this);
   }
 
   /** Apply pending migrations in one transaction each. Idempotent. */
@@ -121,6 +122,7 @@ class SqlJsStore {
       this.db.run('DELETE FROM li_enrichment_observations WHERE lead_id = ?', [id]);
       // The link to OI goes with the lead; the report itself lives in OI's store.
       this.db.run('DELETE FROM li_oi_associations WHERE lead_id = ?', [id]);
+      this.db.run('DELETE FROM li_oi_refresh_requests WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_enrichment_jobs WHERE lead_id = ?', [id]);
     });
   }
@@ -837,6 +839,57 @@ class SqlOiAssociations {
         [String(rec.lead_id), String(rec.lead_id), keep]
       );
       return row(this.s.db, `SELECT ${OI_ASSOC_COLS.join(', ')} FROM li_oi_associations WHERE research_id = ?`, [String(rec.research_id)]);
+    });
+  }
+}
+
+/* ------------------------- OI refresh requests (I5, 007) ------------------------- */
+
+const OI_REFRESH_COLS = ['request_id', 'lead_id', 'state', 'research_id', 'error_code', 'created_at', 'updated_at'];
+
+class SqlOiRefreshRequests {
+  constructor(store) { this.s = store; }
+
+  async pendingForLead(leadId) {
+    return row(this.s.db, `SELECT ${OI_REFRESH_COLS.join(', ')} FROM li_oi_refresh_requests WHERE lead_id = ? AND state = 'pending'`, [String(leadId)]);
+  }
+
+  async listAllPending() {
+    return rows(this.s.db, `SELECT ${OI_REFRESH_COLS.join(', ')} FROM li_oi_refresh_requests WHERE state = 'pending' ORDER BY lead_id`);
+  }
+
+  async listByLead(leadId, limit = 20) {
+    return rows(this.s.db, `SELECT ${OI_REFRESH_COLS.join(', ')} FROM li_oi_refresh_requests WHERE lead_id = ? ORDER BY created_at DESC, request_id DESC LIMIT ?`, [String(leadId), limit]);
+  }
+
+  /** Insert a NEW pending intent. Throws when the lead already has one (partial unique index). */
+  async open(rec) {
+    return this.s.tx(() => {
+      this.s.db.run(
+        `INSERT INTO li_oi_refresh_requests (${OI_REFRESH_COLS.join(', ')}) VALUES (?, ?, 'pending', NULL, NULL, ?, ?)`,
+        [String(rec.request_id), String(rec.lead_id), String(rec.created_at), String(rec.created_at)]
+      );
+      return row(this.s.db, `SELECT ${OI_REFRESH_COLS.join(', ')} FROM li_oi_refresh_requests WHERE request_id = ?`, [String(rec.request_id)]);
+    });
+  }
+
+  /** Close a pending intent as succeeded / failed. Only a pending row moves; history is pruned to `keep` per lead. */
+  async close(requestId, { state, research_id = null, error_code = null, updated_at }, { keep = 20 } = {}) {
+    if (state !== 'succeeded' && state !== 'failed') throw new Error('close() takes succeeded or failed');
+    return this.s.tx(() => {
+      this.s.db.run(
+        "UPDATE li_oi_refresh_requests SET state = ?, research_id = ?, error_code = ?, updated_at = ? WHERE request_id = ? AND state = 'pending'",
+        [state, research_id == null ? null : String(research_id), error_code == null ? null : String(error_code), String(updated_at), String(requestId)]
+      );
+      const r = row(this.s.db, `SELECT ${OI_REFRESH_COLS.join(', ')} FROM li_oi_refresh_requests WHERE request_id = ?`, [String(requestId)]);
+      if (r) {
+        this.s.db.run(
+          "DELETE FROM li_oi_refresh_requests WHERE lead_id = ? AND state != 'pending' AND request_id NOT IN "
+          + "(SELECT request_id FROM li_oi_refresh_requests WHERE lead_id = ? AND state != 'pending' ORDER BY created_at DESC, request_id DESC LIMIT ?)",
+          [r.lead_id, r.lead_id, keep]
+        );
+      }
+      return r;
     });
   }
 }

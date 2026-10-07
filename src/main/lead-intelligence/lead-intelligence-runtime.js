@@ -50,6 +50,8 @@ const LI_TABLES = Object.freeze([
   'li_outreach_sends',
   // I3: lead <-> Opportunity Intelligence research ids. IDs only; the report stays in OI.
   'li_oi_associations',
+  // I5: one persisted idempotency key per human OI refresh intent. IDs and state only.
+  'li_oi_refresh_requests',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';
@@ -226,6 +228,7 @@ function buildOpportunity(spec, leadSource, logger, store = null) {
       fetchImpl: spec.fetchImpl,
       clock: spec.clock,
       associationBacking: store && store.oiAssociations ? store.oiAssociations : null,
+      refreshBacking: store && store.oiRefreshRequests ? store.oiRefreshRequests : null,
       logger: { warn: safeWarn, error: (m) => { if (logger && logger.error) logger.error('lead-intel', String(m)); }, info: () => {} },
     });
     // `oiSource` is the one thing OI is given from ZTech: a leadId -> view reader.

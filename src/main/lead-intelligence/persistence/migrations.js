@@ -320,6 +320,13 @@ const MIGRATION_006 = fs.readFileSync(
   'utf8'
 );
 
+// I5: Opportunity Intelligence refresh requests - one persisted idempotency key per human
+// refresh intent, so a retry never pays OI providers twice. IDs and state only.
+const MIGRATION_007 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '007_oi_refresh_requests.sql'),
+  'utf8'
+);
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
@@ -327,6 +334,7 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 4, name: '004_email_send.sql', sql: MIGRATION_004 }),
   Object.freeze({ version: 5, name: '005_whatsapp_send.sql', sql: MIGRATION_005 }),
   Object.freeze({ version: 6, name: '006_oi_associations.sql', sql: MIGRATION_006 }),
+  Object.freeze({ version: 7, name: '007_oi_refresh_requests.sql', sql: MIGRATION_007 }),
 ]);
 
 module.exports = { MIGRATIONS };

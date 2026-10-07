@@ -5,6 +5,22 @@ const { OpportunityAssociationStore, MIGRATION_NEED } = require('./OpportunityAs
 const { buildOpportunityReadModel, summariseReadModel } = require('./OpportunityReadModel');
 const { buildPitchEvidenceBridge } = require('./PitchEvidenceBridge');
 const { generatePitch } = require('../outreach/PitchGenerator');
+const { classifyOiFreshness } = require('./oiFreshness');
+const { OpportunityRefreshLedger } = require('./OpportunityRefreshLedger');
+
+/** I5 (E2): how many associations, newest first, are tried before "no longer available". */
+const MAX_REPORT_LOOKUPS = 5;
+
+/** I5 user-facing copy (approved wording). */
+const I5_COPY = Object.freeze({
+  confirmFresh: 'This report is still fresh. Refreshing may call configured paid providers again. Continue?',
+  olderReport: 'Showing an older report because the latest report is no longer available.',
+  noneAvailable: "This lead's reports are no longer available. Run research again.",
+  alreadyRunning: 'Research is already running for this lead.',
+  stillRunningInOi: 'Research is still running in Opportunity Intelligence. Check again shortly; no new paid run will start.',
+  retrySafe: 'Retry reuses the same request, so it will not start a second paid run.',
+  notRecorded: 'The refresh request could not be recorded, so nothing was sent to Opportunity Intelligence.',
+});
 
 /**
  * OpportunityIntelligenceService - the composition ZTech talks to.
@@ -37,9 +53,14 @@ const { generatePitch } = require('../outreach/PitchGenerator');
 const READ_SECTIONS = Object.freeze(['overview', 'opportunities', 'competitors', 'ads', 'content', 'social', 'timeline', 'evidence', 'angles']);
 
 class OpportunityIntelligenceService {
-  constructor({ config = {}, fetchImpl, clock, logger, gateway, associationBacking = null } = {}) {
+  constructor({ config = {}, fetchImpl, clock, logger, gateway, associationBacking = null, refreshBacking = null } = {}) {
+    this.clock = clock || (() => new Date());
     this.gateway = gateway || new OpportunityIntelligenceGateway({ config, fetchImpl, clock, logger });
-    this.associations = new OpportunityAssociationStore({ clock: clock || (() => new Date()), backing: associationBacking, logger });
+    this.associations = new OpportunityAssociationStore({ clock: this.clock, backing: associationBacking, logger });
+    // I5 (E4): persisted refresh intents, and the per-lead in-flight lock (process-local by
+    // design: after a restart nothing is in flight, and the persisted intent carries on).
+    this.refresh = new OpportunityRefreshLedger({ backing: refreshBacking, clock: this.clock });
+    this.inflight = new Set();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.migration = MIGRATION_NEED;
   }
@@ -83,15 +104,82 @@ class OpportunityIntelligenceService {
    * MAIN PROCESS - not from the renderer, and not from a URL. `leadView` is the
    * same shape the Zuni-SEO gateway consumes.
    */
-  async researchForLead({ leadId, leadView, options = {} }) {
+  async researchForLead({ leadId, leadView, options = {}, confirmFresh = false }) {
     if (!this.enabled) return this.unavailableView('Opportunity Intelligence is disabled in configuration.');
+    const lead = String(leadId);
     const identity = identityFromView(leadView);
     if (!identity.companyName) {
       return { ...this.unavailableView('Lead has no company name, so Opportunity Intelligence cannot be asked.'), state: 'invalid_input' };
     }
-    const res = await this.gateway.requestResearch({ leadId, ...identity, options });
-    if (!res.ok) return { ...this.unavailableView(res.error), state: res.state, status: res.status, errors: res.errors };
-    return this.absorb(leadId, res.report);
+    // One run per lead at a time. A second request is refused here and nothing reaches OI.
+    if (this.inflight.has(lead)) {
+      return { ...this.unavailableView(I5_COPY.alreadyRunning), state: 'in_progress', code: 'OI_RUN_IN_PROGRESS', lead_id: lead, running: true };
+    }
+    this.inflight.add(lead);
+    try {
+      let requestId;
+      let pending;
+      try {
+        pending = await this.refresh.pending(lead);
+      } catch {
+        return { ...this.unavailableView(I5_COPY.notRecorded), state: 'refresh_store_unavailable', lead_id: lead };
+      }
+      if (pending) {
+        // An open intent: this is a RETRY of it. Same key, no confirmation - it cannot
+        // start a second paid run, because OI answers a known key from what it already did.
+        requestId = pending.request_id;
+      } else {
+        // E3: a deliberate refresh of a still-fresh report needs an explicit confirmation.
+        // Enforced here, in main, so a renderer cannot skip it.
+        const latest = this.associations.latestForLead(lead);
+        if (latest && confirmFresh !== true) {
+          const freshness = classifyOiFreshness(latest.generated_at, this.clock());
+          if (freshness.state === 'fresh') {
+            return { available: false, state: 'confirm_required', message: I5_COPY.confirmFresh, lead_id: lead, freshness, model: null, summary: null, sections: null, affects_outreach: false };
+          }
+        }
+        try {
+          requestId = await this.refresh.open(lead);
+        } catch {
+          return { ...this.unavailableView(I5_COPY.notRecorded), state: 'refresh_store_unavailable', lead_id: lead };
+        }
+      }
+
+      const res = await this.gateway.requestResearch({ leadId, ...identity, options: { ...options, idempotency_key: requestId } });
+      if (res.ok) {
+        const view = this.absorb(lead, res.report);
+        if (view.model) {
+          await this.closeIntent(requestId, 'succeeded', res.report.research_id);
+          return { ...view, freshness: classifyOiFreshness(res.report.generated_at, this.clock()), refresh: { retried: Boolean(pending) } };
+        }
+        await this.closeIntent(requestId, 'failed', 'ASSOCIATION_REFUSED');
+        return view;
+      }
+      const outcome = classifyResearchFailure(res);
+      if (outcome === 'in_progress') {
+        return { ...this.unavailableView(I5_COPY.stillRunningInOi), state: 'in_progress', lead_id: lead, refresh_pending: true };
+      }
+      if (outcome === 'terminal') {
+        await this.closeIntent(requestId, 'failed', (res.oiError && res.oiError.code) || res.state || 'FAILED');
+        return { ...this.unavailableView(res.error), state: res.state, status: res.status, errors: res.errors, lead_id: lead, terminal: true };
+      }
+      // Retryable (OI unreachable, timed out, 5xx, 429): the intent stays open.
+      return {
+        ...this.unavailableView(`${res.error || 'Opportunity Intelligence did not answer.'} ${I5_COPY.retrySafe}`),
+        state: res.state, status: res.status, lead_id: lead, refresh_pending: true,
+      };
+    } finally {
+      this.inflight.delete(lead);
+    }
+  }
+
+  async closeIntent(requestId, state, detail) {
+    try {
+      if (state === 'succeeded') await this.refresh.succeed(requestId, detail);
+      else await this.refresh.fail(requestId, detail);
+    } catch {
+      // The intent stays pending: the next Run reuses the key and OI replays the outcome.
+    }
   }
 
   /** Fetch a previously stored OI report by research_id and rebuild the view. */
@@ -109,40 +197,86 @@ class OpportunityIntelligenceService {
     return this.toView(leadId != null ? leadId : known, res.report, association);
   }
 
-  /** The lead's most recent OI report, if one was recorded this session. */
+  /**
+   * The lead's report for the drawer (I5).
+   *
+   * Tries the newest association first, then up to MAX_REPORT_LOOKUPS in total, newest to
+   * oldest (E2). An older report is never presented as current: its state is
+   * `older_report` with the approved message, its own date and freshness, and how many
+   * newer reports are gone. A network failure stops the walk and is reported as
+   * unavailable - ZTech never says a report is missing when it could not ask. Nothing is
+   * deleted; no row is changed.
+   */
   async latestForLead({ leadId }) {
     if (!this.enabled) return this.unavailableView('Opportunity Intelligence is disabled in configuration.');
-    const assoc = this.associations.latestForLead(leadId);
-    if (!assoc) {
+    const lead = leadId == null ? null : String(leadId);
+    const live = await this.liveState(lead);
+    const list = this.associations.listForLead(lead);
+    if (list.length === 0) {
       return {
         available: false,
         state: 'not_researched',
         message: 'No Opportunity Intelligence research has been run for this lead yet.',
-        lead_id: leadId == null ? null : String(leadId),
+        lead_id: lead,
         model: null,
         summary: null,
         sections: null,
+        freshness: null,
         affects_outreach: false,
+        ...live,
       };
     }
-    const res = await this.gateway.getReport(assoc.research_id);
-    if (!res.ok && res.status === 404) {
-      // The link survived (migration 006) but OI no longer holds the report (its DB was
-      // reset or deleted). Say so and offer a fresh run - never fabricate a report.
+    const now = this.clock();
+    let missing = 0;
+    for (const assoc of list.slice(0, MAX_REPORT_LOOKUPS)) {
+      const res = await this.gateway.getReport(assoc.research_id);
+      if (res.ok) {
+        const view = this.toView(lead, res.report, assoc);
+        const freshness = classifyOiFreshness(res.report.generated_at || assoc.generated_at, now);
+        if (missing === 0) return { ...view, freshness, ...live };
+        return {
+          ...view,
+          state: 'older_report',
+          message: I5_COPY.olderReport,
+          freshness,
+          missing_newer: missing,
+          latest_generated_at: list[0].generated_at,
+          ...live,
+        };
+      }
+      if (res.status === 404) { missing += 1; continue; }
+      // Could not ask: unavailable, with the stored age of the newest report.
       return {
-        available: false,
-        state: 'report_missing',
-        message: "This lead's report is no longer in Opportunity Intelligence. Run research again.",
-        lead_id: String(leadId),
-        research_id: assoc.research_id,
-        model: null,
-        summary: null,
-        sections: null,
-        affects_outreach: false,
+        ...this.unavailableView(res.error),
+        state: res.state,
+        lead_id: lead,
+        research_id: list[0].research_id,
+        freshness: classifyOiFreshness(list[0].generated_at, now),
+        ...live,
       };
     }
-    if (!res.ok) return { ...this.unavailableView(res.error), state: res.state, lead_id: String(leadId), research_id: assoc.research_id };
-    return this.toView(leadId, res.report, assoc);
+    return {
+      available: false,
+      state: 'report_missing',
+      message: I5_COPY.noneAvailable,
+      lead_id: lead,
+      research_id: list[0].research_id,
+      checked: missing,
+      model: null,
+      summary: null,
+      sections: null,
+      freshness: null,
+      affects_outreach: false,
+      ...live,
+    };
+  }
+
+  /** Running in this process, and/or an open refresh intent left by an earlier attempt. */
+  async liveState(lead) {
+    const running = lead != null && this.inflight.has(lead);
+    let pending = null;
+    try { pending = lead == null ? null : await this.refresh.pending(lead); } catch { pending = null; }
+    return { running, refresh_pending: Boolean(pending) && !running };
   }
 
   /** Association ledger for a lead. Ids only. */
@@ -365,4 +499,23 @@ function firstText(...candidates) {
   return null;
 }
 
-module.exports = { OpportunityIntelligenceService, READ_SECTIONS, identityFromView, projectSections };
+/**
+ * How a failed research request is settled (E4):
+ *   in_progress - OI is still running this key: keep the intent open
+ *   terminal    - OI gave a final answer (a replayed failure, a refusal, an invalid report):
+ *                 close the intent; the next deliberate Refresh mints a new key
+ *   retryable   - OI was not reached or could not answer (network, timeout, 5xx, 429,
+ *                 not configured): keep the intent open so a retry reuses the key
+ */
+function classifyResearchFailure(res) {
+  const err = res && res.oiError ? res.oiError : {};
+  if (res && res.status === 409 && err.code === 'IN_PROGRESS') return 'in_progress';
+  if (err.replay === true) return 'terminal';
+  if (res && res.state === 'invalid_input') return 'terminal';
+  if (res && res.state === 'invalid_response' && res.status === undefined) return 'terminal';
+  const st = res ? res.status : undefined;
+  if (typeof st === 'number' && st >= 400 && st < 500 && st !== 429) return 'terminal';
+  return 'retryable';
+}
+
+module.exports = { OpportunityIntelligenceService, READ_SECTIONS, identityFromView, projectSections, classifyResearchFailure, MAX_REPORT_LOOKUPS, I5_COPY };

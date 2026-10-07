@@ -51,7 +51,8 @@ const INPUT_SCHEMAS = Object.freeze({
   [CHANNELS.ENGINE]: obj({}),
   // The renderer says WHICH LEAD and nothing else. Identity, domain and options
   // are all derived in the main process.
-  [CHANNELS.REQUEST]: obj({ leadId: S.leadId, force: { type: 'boolean' } }, ['leadId']),
+  // I5: confirmFresh is the human's answer to the E3 question; main enforces it.
+  [CHANNELS.REQUEST]: obj({ leadId: S.leadId, force: { type: 'boolean' }, confirmFresh: { type: 'boolean' } }, ['leadId']),
   [CHANNELS.REPORT]: obj({ leadId: S.leadId, researchId: OI_RESEARCH_ID }, ['researchId']),
   [CHANNELS.LATEST]: obj({ leadId: S.leadId }, ['leadId']),
   [CHANNELS.ASSOCIATIONS]: obj({ leadId: S.leadId }, ['leadId']),
@@ -145,7 +146,7 @@ function registerOpportunityIpc({ ipcMain, opportunity, isTrustedSender, leadSou
     // (ResearchOptions is extra="forbid") and mints a new research_id per run
     // anyway. Every REQUEST is therefore already a fresh OI run; `force` is
     // recorded for the caller's benefit and adds nothing to the wire payload.
-    return opportunity.researchForLead({ leadId: a.leadId, leadView, force: Boolean(a.force), options: {} });
+    return opportunity.researchForLead({ leadId: a.leadId, leadView, force: Boolean(a.force), confirmFresh: a.confirmFresh === true, options: {} });
   });
   handle(CHANNELS.REPORT, (a) => opportunity.reportForResearchId({ leadId: a.leadId, researchId: a.researchId }));
   handle(CHANNELS.LATEST, (a) => opportunity.latestForLead({ leadId: a.leadId }));

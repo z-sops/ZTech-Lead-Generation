@@ -396,7 +396,7 @@ class OpportunityIntelligenceGateway {
    * applied and never rendered as if it were complete.
    */
   #reportOrError(res, context) {
-    if (!res.ok) return { ok: false, state: res.state, error: res.error, status: res.status };
+    if (!res.ok) return { ok: false, state: res.state, error: res.error, status: res.status, oiError: oiErrorOf(res.body) };
     const report = res.body;
     const check = validateIntelligenceReport(report);
     if (!check.valid) {
@@ -491,6 +491,22 @@ async function readBounded(res, maxBytes) {
   size = Buffer.byteLength(String(text), 'utf8');
   if (size > maxBytes) return { body: null, bytes_exceeded: true };
   return { body: String(text), bytes_exceeded: false };
+}
+
+/**
+ * I5: the three facts ZTech needs from an OI error body to settle a refresh intent - the
+ * stable code, retryable, and whether it is a replay of a stored outcome. Nothing else
+ * from the body is kept (no message text, no details beyond the replay flag).
+ */
+function oiErrorOf(body) {
+  if (!body || typeof body !== 'object' || typeof body.error !== 'string') return null;
+  const code = /^[A-Z_]{2,40}$/.test(body.error) ? body.error : null;
+  if (!code) return null;
+  return {
+    code,
+    retryable: body.retryable === true,
+    replay: Boolean(body.details && typeof body.details === 'object' && body.details.idempotent_replay === true),
+  };
 }
 
 function describeHttp(status, parsed) {

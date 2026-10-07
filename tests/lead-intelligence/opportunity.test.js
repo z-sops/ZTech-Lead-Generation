@@ -955,7 +955,8 @@ test('30. OI adds exactly one ID-only table, no send path and no change to F12-F
   assert.equal(MIGRATION_NEED.applied, true);
   const migs = fs.readdirSync(dir).sort();
   const oiFiles = migs.filter((f) => fs.readFileSync(path.join(dir, f), 'utf8').includes('li_oi_'));
-  assert.deepEqual(oiFiles, ['006_oi_associations.sql'], 'exactly one migration mentions an OI table');
+  // I5 declared lock update: + 007_oi_refresh_requests.sql (persistent refresh idempotency, E4).
+  assert.deepEqual(oiFiles, ['006_oi_associations.sql', '007_oi_refresh_requests.sql'], 'exactly two migrations mention an OI table');
   const sql = fs.readFileSync(path.join(dir, '006_oi_associations.sql'), 'utf8').replace(/--.*$/gm, '');
   assert.deepEqual([...sql.matchAll(/CREATE TABLE[^(]*\b(li_\w+)/g)].map((m) => m[1]), ['li_oi_associations']);
   const cols = sql.slice(sql.indexOf('(') + 1, sql.indexOf(');')).split(',').map((c) => c.trim().split(/\s+/)[0]).filter(Boolean);
@@ -963,6 +964,15 @@ test('30. OI adds exactly one ID-only table, no send path and no change to F12-F
   // IDs only: no report body, no provider data, no secret, and no other table is touched.
   for (const banned of ['json', 'report', 'provider', 'secret', 'token', 'key TEXT', 'numbers', 'li_outreach', 'li_pitch', 'ALTER', 'DROP', 'UPDATE ', 'DELETE ']) {
     assert.equal(new RegExp(banned, 'i').test(sql), false, `migration 006 must not contain ${banned}`);
+  }
+  // 007: one ID-and-state table; the same bans hold.
+  const sql7 = fs.readFileSync(path.join(dir, '007_oi_refresh_requests.sql'), 'utf8').replace(/--.*$/gm, '');
+  assert.deepEqual([...sql7.matchAll(/CREATE TABLE[^(]*\b(li_\w+)/g)].map((m) => m[1]), ['li_oi_refresh_requests']);
+  const body7 = sql7.slice(sql7.indexOf('(') + 1, sql7.indexOf(');'));
+  const cols7 = body7.split('\n').map((l) => l.trim().split(/\s+/)[0]).filter((c) => /^[a-z_]+$/.test(c));
+  assert.deepEqual(cols7.sort(), ['created_at', 'error_code', 'lead_id', 'request_id', 'research_id', 'state', 'updated_at']);
+  for (const banned of ['json', 'report', 'provider', 'secret', 'token', 'numbers', 'li_outreach', 'li_pitch', 'ALTER', 'DROP', 'UPDATE ', 'DELETE ']) {
+    assert.equal(new RegExp(banned, 'i').test(sql7), false, `migration 007 must not contain ${banned}`);
   }
 
   // The outreach activity enum is untouched: 7 operational events, no research event.

@@ -302,6 +302,50 @@ class MemOiAssociations {
   }
 }
 
+/** I5 (migration 007): the in-memory twin of SqlOiRefreshRequests - same contract. */
+class MemOiRefreshRequests {
+  constructor() { this.rows = new Map(); }
+
+  async pendingForLead(leadId) {
+    const r = [...this.rows.values()].find((x) => x.lead_id === String(leadId) && x.state === 'pending');
+    return r ? { ...r } : null;
+  }
+
+  async listAllPending() {
+    return [...this.rows.values()].filter((x) => x.state === 'pending').sort((a, b) => (a.lead_id < b.lead_id ? -1 : 1)).map((r) => ({ ...r }));
+  }
+
+  async listByLead(leadId, limit = 20) {
+    return [...this.rows.values()].filter((x) => x.lead_id === String(leadId))
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : a.request_id < b.request_id ? 1 : -1))
+      .slice(0, limit).map((r) => ({ ...r }));
+  }
+
+  async open(rec) {
+    const id = String(rec.request_id);
+    if (this.rows.has(id)) throw new Error('UNIQUE constraint failed: li_oi_refresh_requests.request_id');
+    if (await this.pendingForLead(rec.lead_id)) throw new Error('UNIQUE constraint failed: li_oi_refresh_requests.lead_id');
+    const r = { request_id: id, lead_id: String(rec.lead_id), state: 'pending', research_id: null, error_code: null, created_at: String(rec.created_at), updated_at: String(rec.created_at) };
+    this.rows.set(id, r);
+    return { ...r };
+  }
+
+  async close(requestId, { state, research_id = null, error_code = null, updated_at }, { keep = 20 } = {}) {
+    if (state !== 'succeeded' && state !== 'failed') throw new Error('close() takes succeeded or failed');
+    const r = this.rows.get(String(requestId));
+    if (!r) return null;
+    if (r.state === 'pending') Object.assign(r, { state, research_id: research_id == null ? null : String(research_id), error_code: error_code == null ? null : String(error_code), updated_at: String(updated_at) });
+    const done = [...this.rows.values()].filter((x) => x.lead_id === r.lead_id && x.state !== 'pending')
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : a.request_id < b.request_id ? 1 : -1));
+    for (const x of done.slice(keep)) this.rows.delete(x.request_id);
+    return this.rows.has(r.request_id) ? { ...r } : null;
+  }
+
+  async deleteByLead(leadId) {
+    for (const [k, r] of this.rows) if (r.lead_id === String(leadId)) this.rows.delete(k);
+  }
+}
+
 class MemActivity {
   constructor() { this.rows = new Map(); }
 
@@ -467,6 +511,7 @@ class MemoryStore {
     this.enrichmentJobs = new MemEnrichmentJobs();
     this.enrichmentObservations = new MemEnrichmentObservations();
     this.oiAssociations = new MemOiAssociations();
+    this.oiRefreshRequests = new MemOiRefreshRequests();
   }
 
   async purgeLead(leadId) {
@@ -480,6 +525,7 @@ class MemoryStore {
     await this.enrichmentJobs.deleteByLead(leadId);
     await this.enrichmentObservations.deleteByLead(leadId);
     await this.oiAssociations.deleteByLead(leadId);
+    await this.oiRefreshRequests.deleteByLead(leadId);
   }
 }
 

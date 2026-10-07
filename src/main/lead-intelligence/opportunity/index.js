@@ -25,7 +25,7 @@ const oiContract = require('./oiContract');
  * @param {object} [input.leadSource] anything with .get(leadId) -> lead view
  * @returns {{service, gateway, associations, migration, start, stop, registerIpc}}
  */
-function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, gateway, associationBacking = null } = {}) {
+function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, gateway, associationBacking = null, refreshBacking = null } = {}) {
   const resolved = {
     enabled: config.enabled !== undefined ? Boolean(config.enabled) : DEFAULT_CONFIG.enabled,
     baseUrl: config.baseUrl === undefined ? DEFAULT_CONFIG.baseUrl : String(config.baseUrl),
@@ -37,7 +37,7 @@ function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, 
     maxCompetitors: config.maxCompetitors === undefined ? DEFAULT_CONFIG.maxCompetitors : Number(config.maxCompetitors),
   };
 
-  const service = new OpportunityIntelligenceService({ config: resolved, fetchImpl, clock, logger, gateway, associationBacking });
+  const service = new OpportunityIntelligenceService({ config: resolved, fetchImpl, clock, logger, gateway, associationBacking, refreshBacking });
 
   return {
     service,

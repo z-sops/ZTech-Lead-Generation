@@ -552,7 +552,7 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const versions = migrationsSource.match(/Object\.freeze\(\{ version: (\d+), name: '([^']+)'/g).map((s) => s.match(/version: (\d+)/)[1]);
   // F19 declared lock update: migration 004 exists legitimately, so versions are 1-4. The
   // banned-token check below is what actually protects F17's no-schema-change property.
-  assert.deepStrictEqual(versions, ['1', '2', '3', '4', '5', '6'], 'migrations include F20 WhatsApp send and I3 OI associations: ' + versions.join(','));
+  assert.deepStrictEqual(versions, ['1', '2', '3', '4', '5', '6', '7'], 'migrations include F20 WhatsApp send, I3 OI associations and I5 OI refresh requests (declared): ' + versions.join(','));
   for (const banned of [/contact/i, /channel/i, /whatsapp/i, /outbox/i, /queue/i]) {
     assert.ok(!new RegExp('CREATE TABLE IF NOT EXISTS (li_)?\\w*' + banned.source, 'i').test(migrationsSource),
       'no ' + banned + ' table was migrated');
