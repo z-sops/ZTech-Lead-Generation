@@ -8283,7 +8283,6 @@ function renderLeadReplyRoute() {
       ? `Matching review: ${F29_REVIEW_LABEL[v.suggestedReview]}. Nothing is recorded until you click a review button.`
       : 'No matching review: choose the review yourself.'));
     const row = trustEl('div', 'f29-controls');
-    if (v.state === 'suppressed') row.hidden = true;
     if (!v.confirmed && !f29Lead.changing) row.appendChild(f29Button('Confirm', () => f29LeadConfirm(v.eventId, v.suggested), 'btn-secondary', f29Lead.busy));
     if (f29Lead.changing) {
       const select = f29CategorySelect(v.category, 'Reply category');
@@ -8293,7 +8292,7 @@ function renderLeadReplyRoute() {
     } else {
       row.appendChild(f29Button('Change', () => { f29Lead = { ...f29Lead, changing: true }; renderLeadReplyRoute(); }, 'btn-secondary', f29Lead.busy));
     }
-    host.appendChild(row);
+    if (v.state !== 'suppressed') host.appendChild(row); // nothing to categorise on do-not-contact
   }
   if (view.away) host.appendChild(trustEl('p', 'f29-away', `Away (out of office): an automatic reply (marked automatic in its headers) arrived ${f29When(view.away.routedAt)}. A note only: it is not counted as a reply and stops or changes nothing.`));
   host.appendChild(trustEl('p', 'f29-note', F29_BODY_NOTE));

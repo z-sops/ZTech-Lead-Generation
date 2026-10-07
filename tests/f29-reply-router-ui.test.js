@@ -121,6 +121,12 @@ test('U2. drawer: a changed subject says "Suggested from the subject/headers" an
   assert.ok(/Possible opt-out - review now\. A category never adds anyone to do-not-contact: your review \("Unsubscribe" or "Not interested"\) or the do-not-contact buttons do\./.test(t));
   assert.ok(/Away \(out of office\): an automatic reply \(marked automatic in its headers\) arrived .*A note only: it is not counted as a reply and stops or changes nothing\./.test(t));
   assert.ok(!t.includes(h.LEAD_EMAIL), 'no address is shown');
+  // Review fix: once the contact is on do-not-contact, the drawer offers no category controls.
+  await e.s.li.trust.suppressLead({ leadId: 'L1', channel: 'email', reason: 'manual', scope: 'global' });
+  await e.ui.load('L1');
+  assert.ok(/This contact is on the do-not-contact list\./.test(e.drawer().textContent));
+  assert.strictEqual(e.button(e.drawer(), 'Confirm'), null);
+  assert.strictEqual(e.button(e.drawer(), 'Change'), null);
 });
 
 test('U3. Outreach > Replies: opt-outs first, filter and "show reviewed" go to main as codes, Open lead uses the existing drawer', async () => {
