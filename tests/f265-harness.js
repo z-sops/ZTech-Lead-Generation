@@ -29,7 +29,10 @@ const OFFER = Object.freeze({
   postal_address: TRUST_OFFER.postal_address,
 });
 
-const lead = (o) => Object.assign({ id: 'L1', title: 'Acme Bakery', website: 'https://acme.example.com', email: LEAD_EMAIL, phone: LEAD_PHONE, address: '12 Road', qualification: 'qualified' }, o);
+// F26.6 declared harness update: the lead carries a country, because the F26.6 market gate
+// judges every email path by it (no country = consent required).
+const LEAD_COUNTRY = 'United States';
+const lead = (o) => Object.assign({ id: 'L1', title: 'Acme Bakery', website: 'https://acme.example.com', email: LEAD_EMAIL, phone: LEAD_PHONE, address: '12 Road', country: LEAD_COUNTRY, qualification: 'qualified' }, o);
 
 function configStore(settings, providers) {
   const data = { settings, providers };
@@ -106,6 +109,10 @@ const reply = (store, { source = 'relay', email = LEAD_EMAIL } = {}) => store.tr
   row_id: 'tev_t' + (++n), event_id: 'evt_t' + n, kind: 'reply', channel: 'email', recipient_ref: null, normalized_address: email,
   source, state: 'stored', reject_code: null, received_at: iso(NOW - HOUR), recorded_at: iso(NOW - HOUR),
 });
+/** F26.6: record a REVIEWED opt-out market rule for the lead's country (US by default). */
+const allowMarket = (store, country_code = 'US') => store.marketRules.set({
+  country_code, rule: 'opt_out_allowed', note: 'Test fixture: reviewed opt-out market', reviewed_by: 'Zee', reviewed_at: iso(NOW - HOUR),
+});
 const waConsent = (store) => store.consents.record({
   consent_id: 'con_t' + (++n), lead_id: 'L1', channel: 'whatsapp', normalized_address: LEAD_PHONE, method: 'in_person',
   evidence_note: 'Asked us to WhatsApp the audit at the expo.', recorded_by: 'Dana', consented_at: iso(NOW - 2 * HOUR), recorded_at: iso(NOW - 2 * HOUR), source: 'user',
@@ -114,5 +121,5 @@ const waConsent = (store) => store.consents.record({
 
 module.exports = {
   NOW, HOUR, CAPTURED_AT, LEAD_EMAIL, LEAD_PHONE, EMAIL_KEY, ACCESS_TOKEN, OFFER, SILENT,
-  lead, runtime, approved, iso, suppress, inbound, reply, waConsent, spy,
+  lead, runtime, approved, iso, suppress, inbound, reply, waConsent, spy, allowMarket, LEAD_COUNTRY,
 };

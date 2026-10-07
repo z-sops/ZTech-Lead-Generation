@@ -597,7 +597,9 @@ test('S3. the preload bridge adds exactly one read-only prepare method plus the 
   // I6 declared lock update: + forLead (the read-only lead timeline) = 17.
   // I7 declared lock update: + pitchPreview (unsaved OI-informed preview) = 18.
   // F26.5 declared lock update: + trust forLead, suppress, lift, recordConsent, handoff = 23.
-  assert.strictEqual(methods.length, 23, 'exactly twenty-three Lead Intelligence methods: ' + methods.join(','));
+  // F26.6 declared lock update: + mailbox connect, disconnect, setDefault, setLimits, setGoogleClient,
+  // setMarketRule, removeMarketRule = 30. None of them sends.
+  assert.strictEqual(methods.length, 30, 'exactly thirty Lead Intelligence methods: ' + methods.join(','));
   assert.strictEqual([...bridge.matchAll(/\bprepare\s*:/g)].length, 1, 'prepare is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\boutreachSend\s*:/g)].length, 1, 'outreachSend is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\bsends\s*:/g)].length, 1, 'the ledger read is declared exactly once');

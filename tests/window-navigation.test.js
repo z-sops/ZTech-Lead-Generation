@@ -69,7 +69,14 @@ test('5. non-http(s) protocols do NOT reach shell.openExternal', () => {
   // F26.5 declared lock update: 1 -> 2 call sites. The second is the mail-app handoff opener,
   // which accepts ONLY a mailto: URL and throws for anything else (asserted below). The
   // window-open handler is unchanged and still the only path a page can trigger.
-  assert.strictEqual(openExternalCount, 2, 'the window-open handler plus the mailto-only handoff opener');
+  // F26.6 declared lock update: 2 -> 3. The third is the mailbox sign-in opener, which accepts ONLY
+  // Google's OAuth consent URL and throws for anything else (asserted below).
+  assert.strictEqual(openExternalCount, 3, 'the window-open handler, the mailto-only handoff opener and the Google-consent-only mailbox opener');
+  const mbxIdx = mainSource.indexOf('openBrowser: (url) => {');
+  assert.ok(mbxIdx > -1, 'the mailbox opener is the mailbox runtime option');
+  const mbxBody = mainSource.slice(mbxIdx, mainSource.indexOf('\n    },', mbxIdx));
+  assert.ok(mbxBody.includes("!url.startsWith('https://accounts.google.com/o/oauth2/v2/auth?')) throw new Error"), 'the mailbox opener refuses every URL but the Google consent URL');
+  assert.ok(mbxBody.indexOf('throw') < mbxBody.indexOf('shell.openExternal'), 'its refusal comes first');
   const handoffIdx = mainSource.indexOf('openExternal: (url) => {');
   assert.ok(handoffIdx > -1, 'the handoff opener is the runtime option');
   const handoffBody = mainSource.slice(handoffIdx, mainSource.indexOf('\n      },', handoffIdx));

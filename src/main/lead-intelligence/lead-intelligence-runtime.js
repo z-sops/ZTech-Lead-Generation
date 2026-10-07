@@ -61,6 +61,11 @@ const LI_TABLES = Object.freeze([
   'li_contact_provenance',
   'li_trust_events',
   'li_recipient_refs',
+  // F26.6 (migration 010): connected mailboxes (sanitized identity, status, limits - never a
+  // token), provider-stored ids of each mailbox send, and the per-country market rules.
+  'li_mailboxes',
+  'li_mailbox_sent',
+  'li_market_rules',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';
@@ -148,7 +153,7 @@ function createRound1Port(db) {
  *        affect `li`: if OI is down, misconfigured or disabled, `li` is returned
  *        exactly as it would have been without this parameter.
  */
-async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = null, config = {}, logger = console, round1Port = null, clock, emailProvider = null, whatsappProvider = null, opportunity = null, openExternal = null, trustRelay = null }) {
+async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = null, config = {}, logger = console, round1Port = null, clock, emailProvider = null, whatsappProvider = null, opportunity = null, openExternal = null, trustRelay = null, mailbox = null }) {
   if (!accountStore || typeof accountStore !== 'object') throw new TypeError('accountStore is required');
   // A10 contract: the runtime initialises ONLY after the shared database is open.
   await accountStore.ready;
@@ -221,6 +226,26 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
     } catch (err) {
       relay = null;
       if (logger && logger.warn) logger.warn(`[lead-intelligence] trust relay disabled: ${err && err.message}`);
+    }
+  }
+
+  // F26.6: connected mailboxes. OFF unless main.js injects the main-only token store and Google
+  // client config ({ tokenStore, clientConfig, openBrowser, fetchImpl, operator }). Tokens, the
+  // client secret and the OAuth exchange never leave this process.
+  li.mailboxes = null;
+  if (mailbox) {
+    try {
+      const { MailboxService } = require('./mailbox/MailboxService');
+      const { GoogleOAuth } = require('./mailbox/gmail/GoogleOAuth');
+      const fetchImpl = mailbox.fetchImpl || globalThis.fetch;
+      li.mailboxes = new MailboxService({
+        store, clock, tokenStore: mailbox.tokenStore, clientConfig: mailbox.clientConfig, fetch: fetchImpl,
+        googleOAuth: mailbox.openBrowser ? new GoogleOAuth({ fetch: fetchImpl, openExternal: mailbox.openBrowser }) : null,
+        operator: mailbox.operator || config.operatorName || 'local-user', logger,
+      });
+    } catch (err) {
+      li.mailboxes = null;
+      if (logger && logger.warn) logger.warn(`[lead-intelligence] mailboxes disabled: ${err && err.message}`);
     }
   }
 

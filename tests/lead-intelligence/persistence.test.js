@@ -43,15 +43,17 @@ test('sqljs: migrate is idempotent and records the version', { skip }, async () 
   // I3 declared lock update: + [6] (li_oi_associations)
   // I5 declared lock update: + [7] (li_oi_refresh_requests)
   // F26.5 declared lock update: + [8] (five trust tables) + [9] (activity CHECK + handoff)
-  assert.deepEqual(rows[0].values, [[1], [2], [3], [4], [5], [6], [7], [8], [9]]);
+  // F26.6 declared lock update: + [10] (mailbox transport)
+  assert.deepEqual(rows[0].values, [[1], [2], [3], [4], [5], [6], [7], [8], [9], [10]]);
   const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'li_%' ORDER BY name")[0].values.flat();
   // F19 declared lock update: + li_outreach_sends (the outbound send ledger)
   // F26.5 declared lock update: + li_contact_consents, li_contact_provenance, li_recipient_refs, li_suppressions, li_trust_events
-  assert.deepEqual(tables, ['li_contact_consents', 'li_contact_provenance', 'li_enrichment_jobs', 'li_enrichment_observations', 'li_evidence_packets', 'li_oi_associations', 'li_oi_refresh_requests', 'li_outreach_activity', 'li_outreach_approvals', 'li_outreach_sends', 'li_pitch_drafts', 'li_recipient_refs', 'li_research_changes', 'li_research_jobs', 'li_saved_searches', 'li_schema_migrations', 'li_segment_members', 'li_segments', 'li_suppressions', 'li_trust_events']);
+  // F26.6 declared lock update: + li_mailbox_sent, li_mailboxes, li_market_rules
+  assert.deepEqual(tables, ['li_contact_consents', 'li_contact_provenance', 'li_enrichment_jobs', 'li_enrichment_observations', 'li_evidence_packets', 'li_mailbox_sent', 'li_mailboxes', 'li_market_rules', 'li_oi_associations', 'li_oi_refresh_requests', 'li_outreach_activity', 'li_outreach_approvals', 'li_outreach_sends', 'li_pitch_drafts', 'li_recipient_refs', 'li_research_changes', 'li_research_jobs', 'li_saved_searches', 'li_schema_migrations', 'li_segment_members', 'li_segments', 'li_suppressions', 'li_trust_events']);
   // A second migrate() adds nothing.
   await store.migrate();
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values, [[1], [2], [3], [4], [5], [6], [7], [8], [9]]);
-  assert.equal(db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'li_%'")[0].values.flat().length, 20);
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values, [[1], [2], [3], [4], [5], [6], [7], [8], [9], [10]]);
+  assert.equal(db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'li_%'")[0].values.flat().length, 23);
 });
 
 test('sqljs: full research flow persists, and persist() is called after writes', { skip }, async () => {

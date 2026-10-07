@@ -203,13 +203,13 @@ class OutreachService {
    * row (with the stable code, never the address) and throw. Runs after the recipient is known
    * and BEFORE the message is validated, recorded as attempted or handed to any provider.
    */
-  async _enforceTrust(pitch, channel, recipient, { fromName = null, provider = null } = {}) {
+  async _enforceTrust(pitch, channel, recipient, { fromName = null, provider = null, country = null } = {}) {
     if (!this.trust) {
       const message = 'The do-not-contact and consent records cannot be read, so nothing is sent.';
       await this._recordSendEvent(pitch.pitch_id, 'OUTREACH_SEND_BLOCKED', { reason: message, channel, contentHash: pitch.content_hash, blockedCode: 'TRUST_UNAVAILABLE' });
       throw new LiError('TRUST_UNAVAILABLE', message);
     }
-    const verdict = await this.trust.evaluate({ channel, recipient, offer: this.offer, sender: { fromName }, subject: pitch.subject, provider });
+    const verdict = await this.trust.evaluate({ channel, recipient, offer: this.offer, sender: { fromName }, subject: pitch.subject, provider, country });
     if (verdict.allowed) return verdict;
     await this._recordSendEvent(pitch.pitch_id, 'OUTREACH_SEND_BLOCKED', { reason: verdict.message, channel, contentHash: pitch.content_hash, blockedCode: verdict.code });
     throw new LiError(verdict.code, verdict.message);
@@ -219,13 +219,13 @@ class OutreachService {
    * F26.5: the read-only trust preview Prepare shows beside readiness and delivery. It carries
    * verdicts and dates only - never the normalized address, a recipient_ref or a hash.
    */
-  async _trustPreview(pitch, channel, recipient) {
+  async _trustPreview(pitch, channel, recipient, country = null) {
     // The transport's declared policy is read here (a getter, never a call that reaches out),
     // so Prepare itself names no provider.
     const provider = channel === 'email' ? this.emailProvider : this.whatsappProvider;
     const fromName = channel === 'email' ? this._senderProfile().displayName : null;
-    if (!this.trust) return { allowed: false, code: 'TRUST_UNAVAILABLE', message: 'The do-not-contact and consent records cannot be read.', suppressed: null, consent: null, verifiedReply: false, sessionOpenUntil: null, handoffAvailable: false };
-    const v = await this.trust.evaluate({ channel, recipient, offer: this.offer, sender: { fromName }, subject: pitch.subject, provider });
+    if (!this.trust) return { allowed: false, code: 'TRUST_UNAVAILABLE', message: 'The do-not-contact and consent records cannot be read.', suppressed: null, consent: null, verifiedReply: false, sessionOpenUntil: null, market: null, handoffAvailable: false };
+    const v = await this.trust.evaluate({ channel, recipient, offer: this.offer, sender: { fromName }, subject: pitch.subject, provider, country });
     const f = v.facts || {};
     return {
       allowed: v.allowed === true,
@@ -235,8 +235,13 @@ class OutreachService {
       consent: f.consent ? { method: f.consent.method, consentedAt: f.consent.consented_at, recordedBy: f.consent.recorded_by } : null,
       verifiedReply: Boolean(f.reply),
       sessionOpenUntil: f.sessionOpenUntil || null,
+      // F26.6: the market rule this email is judged by (country code + rule; never the address).
+      market: f.market ? { countryCode: f.market.countryCode || null, rule: f.market.rule, reviewed: f.market.reviewed === true } : null,
       // A mail-app handoff is offered only for email, and never to a suppressed contact.
-      handoffAvailable: channel === 'email' && Boolean(f.address) && !f.suppression,
+      // F26.6: nor where the market gate would refuse it (no consent, no verified reply and no
+      // reviewed opt-out rule for the lead's country).
+      handoffAvailable: channel === 'email' && Boolean(f.address) && !f.suppression
+        && Boolean(f.consent || f.reply || (f.market && f.market.rule === 'opt_out_allowed')),
     };
   }
 
@@ -984,7 +989,7 @@ class OutreachService {
       contactFacts: facts,
       // F26.5: the trust verdict the send boundary WILL apply (suppression, identity, transport,
       // subject, consent, session) - read-only, beside readiness and delivery, never inside them.
-      trust: await this._trustPreview(pitch, channel, recipient.contact)
+      trust: await this._trustPreview(pitch, channel, recipient.contact, ctx && ctx.view ? ctx.view.country : null)
     };
   }
 
@@ -1065,7 +1070,7 @@ class OutreachService {
     const to = facts.channels.email.contact;
     const check = await this.trust.evaluate({
       channel: 'email', recipient: to, offer: this.offer, sender: { fromName: this._senderProfile().displayName },
-      subject: pitch.subject, provider: HANDOFF_TRANSPORT,
+      subject: pitch.subject, provider: HANDOFF_TRANSPORT, country: ctx.view.country,
     });
     if (!check.allowed) throw new LiError(check.code, check.message);
 
@@ -1207,6 +1212,7 @@ class OutreachService {
     await this._enforceTrust(pitch, 'email', facts.channels.email.contact, {
       fromName: providerStatus && providerStatus.fromName ? providerStatus.fromName : null,
       provider: this.emailProvider,
+      country: ctx && ctx.view ? ctx.view.country : null,
     });
 
     // (6) Provider validation, before any provider contact. The command is COMPLETE and

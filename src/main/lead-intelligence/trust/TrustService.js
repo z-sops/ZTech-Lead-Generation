@@ -35,6 +35,9 @@ const { verifyEvent } = require('./relaySignature');
 const { HANDOFF_HEADER_NOTE } = require('./unsubscribe');
 
 const USER_EVENT_KINDS = Object.freeze(['unsubscribe', 'bounce', 'complaint']);
+// F26.6: what a connected mailbox may report. Bounce (DSN) parsing is deferred.
+const MAILBOX_EVENT_KINDS = Object.freeze(['reply', 'unsubscribe']);
+const { VERIFIED_REPLY_SOURCES } = require('./TrustPolicy');
 const SUPPRESSING_KINDS = Object.freeze(['unsubscribe', 'bounce', 'complaint']);
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const LEAD_SCAN_MAX = 20000;
@@ -110,7 +113,7 @@ class TrustService {
           createdAt: suppression.created_at, removable: suppression.reason === 'manual' && suppression.source === 'user',
         } : null,
         consent: consent ? { method: consent.method, consentedAt: consent.consented_at, recordedBy: consent.recorded_by, evidenceNote: consent.evidence_note, source: consent.source } : null,
-        verifiedReply: reply && reply.source === 'relay' ? { receivedAt: reply.received_at } : null,
+        verifiedReply: reply && VERIFIED_REPLY_SOURCES.includes(reply.source) ? { receivedAt: reply.received_at } : null,
         sessionOpenUntil: verifiedInbound ? new Date(Date.parse(verifiedInbound.received_at) + TRUST_LIMITS.WHATSAPP_SESSION_MS).toISOString() : null,
       };
     }
@@ -199,13 +202,16 @@ class TrustService {
    * The ONE intake for trust events.
    * @param {object} event  relay: { event_id, kind, channel, recipient_ref, received_at, signature }
    *                        user:  { event_id, kind, channel, address, received_at } (main-built)
-   * @param {{source: 'relay'|'user'}} opts
+   *                        mailbox (F26.6): { event_id, kind: 'reply'|'unsubscribe', channel: 'email',
+   *                                       address, received_at } built in main by mailbox sync
+   *                                       from a reply MATCHED to a stored sent Message-ID
+   * @param {{source: 'relay'|'user'|'mailbox'}} opts
    * @returns {Promise<{accepted: boolean, duplicate?: boolean, state: string, code?: string}>}
    */
   async intake(event, { source }) {
     const e = event && typeof event === 'object' ? event : {};
     const nowIso = this.now().toISOString();
-    if (source !== 'relay' && source !== 'user') throw new ValidationError('unknown source', [{ path: '$.source', message: 'source must be relay or user' }]);
+    if (!['relay', 'user', 'mailbox'].includes(source)) throw new ValidationError('unknown source', [{ path: '$.source', message: 'source must be relay, user or mailbox' }]);
     const shapeOk = typeof e.event_id === 'string' && EVENT_ID_RE.test(e.event_id)
       && TRUST_EVENT_KINDS.includes(e.kind) && TRUST_CHANNELS.includes(e.channel)
       && !(e.kind === 'whatsapp_inbound' && e.channel !== 'whatsapp')
@@ -238,6 +244,12 @@ class TrustService {
       // A ref this desktop never stored (an inbound from a number never written to, or a link
       // minted under an earlier relay key) is resolved by recomputing refs for known leads.
       if (!address && ref) address = await this._resolveRefByLeads(ref, e.channel);
+    } else if (source === 'mailbox') {
+      // F26.6: only a verified reply or an unsubscribe reply, on email. Never a bounce (deferred),
+      // a complaint or a WhatsApp event. Reachable only from main-process mailbox sync.
+      if (e.channel !== 'email' || !MAILBOX_EVENT_KINDS.includes(e.kind)) return reject('KIND_NOT_MAILBOX_RECORDABLE');
+      address = normalizeAddress(e.channel, e.address);
+      if (!address) return { accepted: false, state: 'invalid', code: 'EVENT_INVALID' };
     } else {
       if (!USER_EVENT_KINDS.includes(e.kind)) return reject('KIND_NOT_USER_RECORDABLE');
       address = normalizeAddress(e.channel, e.address);

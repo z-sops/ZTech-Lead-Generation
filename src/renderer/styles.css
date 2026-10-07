@@ -6151,3 +6151,54 @@ textarea {
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
 }
+
+/* F26.6 Mailboxes: connected mailboxes, pacing limits and market rules */
+.f266-provider-rows,
+.f266-mailbox-rows,
+.f266-market-rows {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.f266-provider,
+.f266-market-rule,
+.f266-mailbox-head,
+.f266-mailbox-actions,
+.f266-limits,
+.f266-market-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.f266-mailbox {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.f266-provider-name,
+.f266-mailbox-address,
+.f266-market-code {
+  font-size: var(--font-12);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.f266-provider-notice,
+.f266-mailbox-provider,
+.f266-mailbox-default,
+.f266-limit-label,
+.f266-market-label {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.f266-limit {
+  display: grid;
+  gap: 2px;
+}
+
+.f266-limit input {
+  width: 7em;
+}

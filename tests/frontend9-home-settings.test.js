@@ -188,7 +188,8 @@ test('10. Settings is organised into nine groups, each holding its own controls'
   const groups = [...SETTINGS_HTML.matchAll(/<section class="settings-group" id="settings-group-([a-z]+)"/g)].map((m) => m[1]);
   // I3/I4 declared lock update: + 'intelligence' (Opportunity Intelligence service and keys).
   // F26 declared lock update: + 'business', 'email', 'whatsapp' (Outreach Settings).
-  assert.deepStrictEqual(groups, ['collection', 'research', 'intelligence', 'business', 'email', 'whatsapp', 'network', 'security', 'application']);
+  // F26.6 declared lock update: + 'mailboxes' (connected mailboxes, pacing limits, market rules).
+  assert.deepStrictEqual(groups, ['collection', 'research', 'intelligence', 'business', 'email', 'mailboxes', 'whatsapp', 'network', 'security', 'application']);
   const group = (name) => {
     const start = SETTINGS_HTML.indexOf(`id="settings-group-${name}"`);
     const end = SETTINGS_HTML.indexOf('<section class="settings-group"', start + 1);
@@ -200,6 +201,7 @@ test('10. Settings is organised into nine groups, each holding its own controls'
   has('intelligence', ['oi-service-state', 'oi-service-mode', 'btn-oi-choose-folder', 'btn-oi-start', 'btn-oi-stop', 'btn-oi-restart', 'btn-oi-copy-log', 'oi-provider-rows', 'btn-oi-save-settings']);
   has('business', ['outreach-business-representativeName', 'outreach-business-companyName', 'btn-outreach-save-business']);
   has('email', ['outreach-email-enabled', 'outreach-email-domain', 'outreach-email-key', 'btn-outreach-email-verify', 'outreach-email-capability']);
+  has('mailboxes', ['mailbox-provider-rows', 'mailbox-google-client-id', 'mailbox-google-client-secret', 'btn-mailbox-save-client', 'mailbox-rows', 'market-rule-rows', 'btn-market-rule-save']); // F26.6
   has('whatsapp', ['outreach-whatsapp-enabled', 'outreach-whatsapp-fromNumber', 'outreach-whatsapp-key', 'btn-outreach-whatsapp-verify', 'outreach-whatsapp-templates']);
   has('network', ['settings-proxy-url', 'btn-detect-proxy']);
   has('security', ['settings-security-apikey', 'settings-security-taskkey', 'settings-security-researchkey', 'settings-security-proxy']);
@@ -226,8 +228,8 @@ test('11. the settings contract is unchanged', () => {
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total.
-  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 83, 'A10..F21 + Phase I2 add the eighteen Lead Intelligence preload methods');
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total.
+  assert.strictEqual((preloadSource.match(/ipcRenderer\.invoke\(/g) || []).length, 93, 'A10..F21 + Phase I2 add the eighteen Lead Intelligence preload methods');
   assert.ok(vaultSource.includes("const CREDENTIAL_FIELDS = ['apiKey', 'taskKey'];"), 'credentialVault untouched');
   // The existing save / clear / test handlers keep their payloads.
   assert.ok(/apiKey: document\.getElementById\('settings-apikey'\)\.value\.trim\(\),\s*taskKey: document\.getElementById\('settings-task-key'\)\.value\.trim\(\),\s*proxyUrl: document\.getElementById\('settings-proxy-url'\)\.value\.trim\(\),\s*research: collectResearchSettings\(\)/.test(rendererSource),

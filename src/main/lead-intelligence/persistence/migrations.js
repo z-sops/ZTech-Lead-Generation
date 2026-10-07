@@ -341,6 +341,13 @@ const MIGRATION_009 = fs.readFileSync(
   'utf8'
 );
 
+// F26.6: Native Mailbox Transport - nullable mailbox_id on sends, mailboxes, provider-stored
+// sent identifiers, market rules, and the 'mailbox' trust-event source (verbatim rebuild).
+const MIGRATION_010 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '010_mailbox_transport.sql'),
+  'utf8'
+);
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
@@ -351,6 +358,7 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 7, name: '007_oi_refresh_requests.sql', sql: MIGRATION_007 }),
   Object.freeze({ version: 8, name: '008_trust_foundation.sql', sql: MIGRATION_008 }),
   Object.freeze({ version: 9, name: '009_outreach_handoff_activity.sql', sql: MIGRATION_009 }),
+  Object.freeze({ version: 10, name: '010_mailbox_transport.sql', sql: MIGRATION_010 }),
 ]);
 
 module.exports = { MIGRATIONS };

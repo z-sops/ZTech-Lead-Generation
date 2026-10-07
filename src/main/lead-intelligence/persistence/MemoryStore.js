@@ -4,6 +4,8 @@ const { clone } = require('../core/objects');
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { ACTIVE_STATES } = require('../contracts/constants');
 const { MemSuppressions, MemConsents, MemProvenance, MemTrustEvents, MemRecipientRefs } = require('./trustRepos');
+const { MemMailboxes, MemMailboxSent, MemMarketRules } = require('./mailboxRepos');
+const { MAILBOX_ID_RE } = require('../mailbox/mailboxContract');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
 /** In-memory implementation of the repository contract. Used by tests and dev tools. */
@@ -430,6 +432,9 @@ class MemSends {
     if (n.value.state !== 'attempted') {
       throw new LiError('VALIDATION_FAILED', 'A send attempt must be recorded as attempted before it can change state');
     }
+    if (rec.mailbox_id != null && (typeof rec.mailbox_id !== 'string' || !MAILBOX_ID_RE.test(rec.mailbox_id))) {
+      throw new LiError('VALIDATION_FAILED', 'send: mailbox_id');
+    }
     this.rows.set(rec.send_id, {
       send_id: rec.send_id,
       lead_id: rec.lead_id,
@@ -442,10 +447,17 @@ class MemSends {
       provider_message_id: n.value.provider_message_id,
       failure_code: null,
       failure_message: null,
+      mailbox_id: rec.mailbox_id == null ? null : rec.mailbox_id,
       created_at: rec.created_at,
       updated_at: rec.updated_at
     });
     return clone(this.rows.get(rec.send_id));
+  }
+
+  async mailboxSendTimes(mailboxId, sinceIso) {
+    return [...this.rows.values()]
+      .filter((r) => r.mailbox_id === String(mailboxId) && r.created_at >= String(sinceIso) && r.state !== 'blocked')
+      .map((r) => r.created_at).sort();
   }
 
   async accept({ sendId, providerId, providerMessageId, at }) {
@@ -526,6 +538,10 @@ class MemoryStore {
     this.provenance = new MemProvenance();
     this.trustEvents = new MemTrustEvents();
     this.recipientRefs = new MemRecipientRefs();
+    // F26.6 Native Mailbox Transport: twins of the migration 010 repositories.
+    this.mailboxes = new MemMailboxes();
+    this.mailboxSent = new MemMailboxSent();
+    this.marketRules = new MemMarketRules();
   }
 
   async purgeLead(leadId) {

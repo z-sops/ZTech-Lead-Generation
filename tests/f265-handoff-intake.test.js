@@ -15,7 +15,7 @@ const { unsubscribeHeaders, isValidUnsubscribeHeader, complianceFooter } = requi
 const { LeadTimeline } = require(path.join(LI, 'timeline', 'LeadTimeline.js'));
 const { grantTrust } = require('./trust-fixture');
 const {
-  NOW, HOUR, LEAD_EMAIL, LEAD_PHONE, OFFER, lead, runtime, approved, iso, suppress, waConsent,
+  NOW, HOUR, LEAD_EMAIL, LEAD_PHONE, OFFER, lead, runtime, approved, iso, suppress, waConsent, allowMarket,
 } = require('./f265-harness');
 
 const tests = [];
@@ -54,8 +54,15 @@ async function activityTypes(li) {
 
 test('H1. "Open in my mail app" for a COLD lead: one mailto opened, compliant footer, no send, no Resend call', async () => {
   const o = opener();
-  const { li, emailSpy } = runtime({ openExternal: o.open });
+  const { li, store, emailSpy } = runtime({ openExternal: o.open });
   const pitch = await approved(li);
+  // F26.6 declared lock update: a cold handoff is judged by the market gate. With no reviewed
+  // rule for the lead's country it is refused, nothing is opened and nothing is recorded ...
+  await assert.rejects(li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'mailto' }), (e) => e.code === 'MARKET_CONSENT_REQUIRED');
+  assert.strictEqual(o.urls.length, 0);
+  assert.ok(!(await activityTypes(li)).includes('OUTREACH_HANDOFF_CREATED'));
+  // ... and with a reviewed opt-out rule it proceeds exactly as F26.5 specified.
+  await allowMarket(store);
   const r = await li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'mailto' });
   assert.strictEqual(o.urls.length, 1);
   assert.ok(o.urls[0].startsWith('mailto:' + LEAD_EMAIL + '?subject='), 'the To address keeps its @ (some mail apps do not decode %40)');
@@ -75,7 +82,10 @@ test('H1. "Open in my mail app" for a COLD lead: one mailto opened, compliant fo
 
 test('H2. "Copy" opens nothing; the same content and kind is recorded once; a different kind is its own row', async () => {
   const o = opener();
-  const { li } = runtime({ openExternal: o.open });
+  const { li, store } = runtime({ openExternal: o.open });
+  // F26.6 declared lock update: a cold handoff now also passes the market gate, so this test
+  // records a reviewed opt-out market rule for the lead's country first.
+  await allowMarket(store);
   const pitch = await approved(li);
   const a = await li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' });
   await li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' });
@@ -106,6 +116,7 @@ test('H3. a handoff still honours suppression, identity, subject lint and the ga
   ];
   for (const [code, prep, opts] of cases) {
     const rt = runtime({ openExternal: o.open, ...opts });
+    await allowMarket(rt.store); // F26.6 declared lock update: isolate the check under test from the market gate
     const pitch = await prep(rt);
     await assert.rejects(rt.li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'mailto' }), (e) => e.code === code, code);
     assert.ok(!(await activityTypes(rt.li)).includes('OUTREACH_HANDOFF_CREATED'), code + ': nothing recorded');
@@ -119,7 +130,10 @@ test('H3. a handoff still honours suppression, identity, subject lint and the ga
 
 test('H4. the mailto URL cannot carry injected headers: every part is percent-encoded', async () => {
   const o = opener();
-  const { li } = runtime({ openExternal: o.open });
+  const { li, store } = runtime({ openExternal: o.open });
+  // F26.6 declared lock update: a cold handoff now also passes the market gate, so this test
+  // records a reviewed opt-out market rule for the lead's country first.
+  await allowMarket(store);
   await li.research.sync({ leadId: 'L1' });
   const p = await li.outreach.generate({ leadId: 'L1' });
   const e = await li.outreach.update({ pitchId: p.pitch_id, edits: { subject: 'Ideas & notes?cc=attacker@evil.test' } });
@@ -134,6 +148,9 @@ test('H4. the mailto URL cannot carry injected headers: every part is percent-en
 test('H5. the timeline shows a handoff as a handoff - never as sent or delivered', async () => {
   const o = opener();
   const { li, store } = runtime({ openExternal: o.open });
+  // F26.6 declared lock update: a cold handoff now also passes the market gate, so this test
+  // records a reviewed opt-out market rule for the lead's country first.
+  await allowMarket(store);
   const pitch = await approved(li);
   await li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' });
   const leads = { L1: lead({}) };
@@ -412,7 +429,10 @@ test('R6. a transport that enforces unsubscribe headers never sends without them
 test('R7. the handoff IPC result never carries the body (it can hold the personal unsubscribe link)', async () => {
   const { registerTrustIpc, TRUST_CHANNELS_IPC } = require(path.join(LI, 'trust', 'trust-ipc.js'));
   const o = opener();
-  const { li } = runtime({ openExternal: o.open });
+  const { li, store } = runtime({ openExternal: o.open });
+  // F26.6 declared lock update: a cold handoff now also passes the market gate, so this test
+  // records a reviewed opt-out market rule for the lead's country first.
+  await allowMarket(store);
   withRelay(li);
   const pitch = await approved(li);
   const handlers = {};

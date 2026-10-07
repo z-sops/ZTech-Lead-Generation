@@ -1191,6 +1191,8 @@ async function loadSettingsWorkspace() {
   loadOiSettings();
   // F26: Business profile, Email and WhatsApp (booleans and plain states only).
   loadOutreachSettings();
+  // F26.6: connected mailboxes and market rules (sanitized records only).
+  f266MailboxesLoad();
   const engine = document.getElementById('settings-storage-engine');
   try {
     const storage = await window.appAPI.collector.storageStatus();
@@ -10550,7 +10552,7 @@ function trustStatusLine(channel, c) {
   }
   if (channel === 'email' && c.verifiedReply) return `Replied (verified) \u00b7 ${trustDate(c.verifiedReply.receivedAt)}`;
   return channel === 'email'
-    ? 'No opt-in recorded. A first email goes out from your own mail app.'
+    ? 'No opt-in recorded. A first email can go from your own mail app only where your reviewed market rule allows it (Settings > Mailboxes).'
     : 'No opt-in recorded. WhatsApp stays locked until the contact opts in.';
 }
 
@@ -10688,6 +10690,283 @@ async function f265Handoff(pitchId, kind) {
 }
 // === END F26.5 Trust ===
 
+// === F26.6 Mailboxes: connected mailboxes, pacing limits and market rules ===
+// Everything here goes through window.ztechLeadIntel.mailboxes. What comes back is a SANITIZED
+// mailbox record (mailbox_id, provider, address, display name, connection and pacing status):
+// never a token, an auth code, a PKCE verifier or a client secret. The client secret typed here
+// goes to main once and the field is emptied whatever happens. Values are set with textContent
+// only. There is no send control here: a mailbox send is one click in Prepare, and in this build
+// Gmail sending waits for its real-mailbox verification while Microsoft 365 is not available.
+
+const MAILBOX_STATUS_LABEL = { needs_check: 'Needs check', ready: 'Ready', paused: 'Paused', reconnect_needed: 'Reconnect needed' };
+const MAILBOX_CODE_TEXT = {
+  MAILBOX_PROVIDER_STEP1_PENDING: 'Sending from Gmail waits for its real-mailbox verification. This mailbox is connected but cannot send yet.',
+  MAILBOX_PROVIDER_UNVERIFIED: 'Microsoft 365 — verification required before activation',
+};
+const MARKET_RULE_LABEL = { consent_required: 'Consent required', opt_out_allowed: 'Opt-out allowed' };
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+let f266State = { caps: null, mailboxes: [], rules: [], busy: false, confirmDisconnect: null };
+
+function mailboxBridge() {
+  const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
+  return api && api.mailboxes && typeof api.mailboxes.list === 'function' ? api.mailboxes : null;
+}
+
+function f266Unwrap(res, fallback) {
+  if (res && res.ok === true) return res.data;
+  const err = res && res.error ? res.error : {};
+  // A validation refusal carries its reason in errors[0] (written by ZTech, never remote text).
+  const detail = Array.isArray(err.errors) && err.errors[0] && typeof err.errors[0].message === 'string' ? err.errors[0].message : '';
+  const msg = detail || (typeof err.message === 'string' && err.message ? err.message : fallback);
+  throw new Error(msg);
+}
+
+function f266Status(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text || '';
+}
+
+async function f266MailboxesLoad() {
+  const bridge = mailboxBridge();
+  if (!bridge) {
+    f266Status('mailbox-status', 'Mailboxes are not available in this build.');
+    return;
+  }
+  try {
+    const [caps, list, rules] = await Promise.all([bridge.capabilities(), bridge.list(), bridge.marketRules()]);
+    f266State.caps = f266Unwrap(caps, 'Mailbox providers could not be read.');
+    f266State.mailboxes = f266Unwrap(list, 'Mailboxes could not be read.') || [];
+    f266State.rules = f266Unwrap(rules, 'Market rules could not be read.') || [];
+  } catch (err) {
+    f266Status('mailbox-status', (err && err.message) || 'Mailboxes could not be read.');
+  }
+  f266Render();
+}
+
+function f266Render() {
+  f266RenderProviders();
+  f266RenderClient();
+  f266RenderMailboxes();
+  f266RenderRules();
+}
+
+function f266RenderProviders() {
+  const host = document.getElementById('mailbox-provider-rows');
+  if (!host) return;
+  host.replaceChildren();
+  for (const p of f266State.caps || []) {
+    const row = trustEl('div', 'f266-provider');
+    row.setAttribute('role', 'listitem');
+    row.appendChild(trustEl('span', 'f266-provider-name', p.label));
+    if (p.provider === 'microsoft365' || !p.canConnect) {
+      // Fail closed: identity and status only. No connect control, no scope request.
+      row.appendChild(trustEl('span', 'f266-provider-notice', p.notice));
+    } else {
+      const btn = trustEl('button', 'btn btn-sm btn-secondary', 'Connect Gmail');
+      btn.type = 'button';
+      btn.disabled = f266State.busy || p.clientConfigured !== true;
+      btn.addEventListener('click', () => f266Connect(p.provider));
+      row.appendChild(btn);
+      row.appendChild(trustEl('span', 'f266-provider-notice', p.clientConfigured ? p.notice : 'Save your Google OAuth client first.'));
+    }
+    host.appendChild(row);
+  }
+}
+
+function f266RenderClient() {
+  const gmail = (f266State.caps || []).find((p) => p.provider === 'gmail');
+  const state = document.getElementById('mailbox-client-state');
+  const configured = Boolean(gmail && gmail.clientConfigured);
+  if (state) {
+    state.dataset.state = configured ? 'stored' : 'missing';
+    state.textContent = configured ? 'Saved' : 'Not set';
+  }
+  const id = document.getElementById('mailbox-google-client-id');
+  if (id && configured && !id.value) id.value = gmail.clientId || '';
+  const clear = document.getElementById('btn-mailbox-clear-client');
+  if (clear) clear.disabled = !configured || f266State.busy;
+}
+
+function f266PacingLine(m) {
+  const p = m.pacing;
+  if (!p) return '';
+  const counts = `Sent in the last 24 hours: ${p.sentToday} of ${m.limits.dailyCap}. Last hour: ${p.sentThisHour} of ${m.limits.hourlyCap}.`;
+  if (p.allowed) return counts;
+  return `${counts} Next allowed: ${p.nextAllowedAt ? new Date(p.nextAllowedAt).toLocaleString() : 'not within the next week (check the sending window)'}.`;
+}
+
+function f266LimitInput(label, value, attrs) {
+  const wrap = trustEl('label', 'f266-limit');
+  wrap.appendChild(trustEl('span', 'f266-limit-label', label));
+  const input = document.createElement('input');
+  for (const [k, v] of Object.entries(attrs)) input.setAttribute(k, v);
+  input.value = String(value);
+  wrap.appendChild(input);
+  return { wrap, input };
+}
+
+function f266RenderMailboxes() {
+  const host = document.getElementById('mailbox-rows');
+  if (!host) return;
+  host.replaceChildren();
+  if (!f266State.mailboxes.length) {
+    host.appendChild(trustEl('p', 'form-hint', 'No mailbox connected.'));
+    return;
+  }
+  for (const m of f266State.mailboxes) {
+    const row = trustEl('div', 'f266-mailbox');
+    row.setAttribute('role', 'listitem');
+    const head = trustEl('div', 'f266-mailbox-head');
+    head.appendChild(trustEl('span', 'f266-mailbox-address', m.emailAddress));
+    head.appendChild(trustEl('span', 'f266-mailbox-provider', m.providerLabel));
+    const chip = trustEl('span', 'settings-key-state', MAILBOX_STATUS_LABEL[m.status] || m.status);
+    chip.dataset.state = m.status === 'ready' ? 'stored' : 'missing';
+    head.appendChild(chip);
+    if (m.isDefault) head.appendChild(trustEl('span', 'f266-mailbox-default', 'Default'));
+    row.appendChild(head);
+    if (m.statusCode && MAILBOX_CODE_TEXT[m.statusCode]) row.appendChild(trustEl('p', 'form-hint', MAILBOX_CODE_TEXT[m.statusCode]));
+    row.appendChild(trustEl('p', 'form-hint f266-pacing', f266PacingLine(m)));
+
+    const l = m.limits;
+    const limits = trustEl('div', 'f266-limits');
+    const daily = f266LimitInput('Per day', l.dailyCap, { type: 'number', min: '1', max: '200', step: '1' });
+    const hourly = f266LimitInput('Per hour', l.hourlyCap, { type: 'number', min: '1', max: '30', step: '1' });
+    const gap = f266LimitInput('Gap (seconds)', l.minGapSeconds, { type: 'number', min: '60', max: '3600', step: '1' });
+    const start = f266LimitInput('From', l.windowStart, { type: 'time' });
+    const end = f266LimitInput('To', l.windowEnd, { type: 'time' });
+    const days = f266LimitInput('Days', l.windowDays.split(',').map((d) => WEEKDAY_SHORT[Number(d)]).join(' '), { type: 'text', readonly: 'readonly' });
+    limits.append(daily.wrap, hourly.wrap, gap.wrap, start.wrap, end.wrap, days.wrap);
+    limits.appendChild(trustEl('span', 'form-hint', `Time zone: ${l.timeZone}`));
+    row.appendChild(limits);
+
+    const actions = trustEl('div', 'f266-mailbox-actions');
+    const save = trustEl('button', 'btn btn-sm btn-secondary', 'Save limits');
+    save.type = 'button';
+    save.disabled = f266State.busy;
+    save.addEventListener('click', () => f266SaveLimits(m.mailboxId, {
+      dailyCap: Number(daily.input.value), hourlyCap: Number(hourly.input.value), minGapSeconds: Number(gap.input.value),
+      windowStart: start.input.value, windowEnd: end.input.value,
+    }));
+    actions.appendChild(save);
+    if (!m.isDefault) {
+      const def = trustEl('button', 'btn btn-sm btn-secondary', 'Make default');
+      def.type = 'button';
+      def.disabled = f266State.busy;
+      def.addEventListener('click', () => f266Act(() => mailboxBridge().setDefault({ mailboxId: m.mailboxId }), 'The default mailbox could not be changed.'));
+      actions.appendChild(def);
+    }
+    if (f266State.confirmDisconnect === m.mailboxId) {
+      actions.appendChild(trustEl('span', 'lead-trust-confirm', 'Disconnect this mailbox? ZTech revokes its access at Google and forgets it. Past sends stay in the history.'));
+      const yes = trustEl('button', 'btn btn-sm btn-secondary', 'Disconnect');
+      yes.type = 'button';
+      yes.disabled = f266State.busy;
+      yes.addEventListener('click', () => { f266State.confirmDisconnect = null; f266Act(() => mailboxBridge().disconnect({ mailboxId: m.mailboxId }), 'The mailbox could not be disconnected.'); });
+      const no = trustEl('button', 'btn btn-sm btn-secondary', 'Keep');
+      no.type = 'button';
+      no.addEventListener('click', () => { f266State.confirmDisconnect = null; f266RenderMailboxes(); });
+      actions.append(yes, no);
+    } else {
+      const dis = trustEl('button', 'btn btn-sm btn-secondary', 'Disconnect…');
+      dis.type = 'button';
+      dis.disabled = f266State.busy;
+      dis.addEventListener('click', () => { f266State.confirmDisconnect = m.mailboxId; f266RenderMailboxes(); });
+      actions.appendChild(dis);
+    }
+    row.appendChild(actions);
+    host.appendChild(row);
+  }
+}
+
+function f266RenderRules() {
+  const host = document.getElementById('market-rule-rows');
+  if (!host) return;
+  host.replaceChildren();
+  if (!f266State.rules.length) {
+    host.appendChild(trustEl('p', 'form-hint', 'No market rule recorded: consent is required everywhere.'));
+    return;
+  }
+  for (const r of f266State.rules) {
+    const row = trustEl('div', 'f266-market-rule');
+    row.setAttribute('role', 'listitem');
+    row.appendChild(trustEl('span', 'f266-market-code', r.countryCode));
+    row.appendChild(trustEl('span', 'f266-market-label', MARKET_RULE_LABEL[r.rule] || r.rule));
+    row.appendChild(trustEl('span', 'form-hint', `${r.note} — reviewed by ${r.reviewedBy}, ${trustDate(r.reviewedAt)}`));
+    const rm = trustEl('button', 'btn btn-sm btn-secondary', 'Remove');
+    rm.type = 'button';
+    rm.disabled = f266State.busy;
+    rm.addEventListener('click', () => f266Act(() => mailboxBridge().removeMarketRule({ countryCode: r.countryCode }), 'The rule could not be removed.', 'market-rule-status'));
+    row.appendChild(rm);
+    host.appendChild(row);
+  }
+}
+
+async function f266Act(run, fallback, statusId = 'mailbox-status') {
+  if (f266State.busy || !mailboxBridge()) return;
+  f266State.busy = true;
+  f266Render();
+  try {
+    f266Unwrap(await run(), fallback);
+    f266Status(statusId, '');
+  } catch (err) {
+    f266Status(statusId, (err && err.message) || fallback);
+  }
+  f266State.busy = false;
+  await f266MailboxesLoad();
+}
+
+function f266Connect(provider) {
+  f266Status('mailbox-status', 'Finish the sign-in in your browser, then come back here.');
+  return f266Act(() => mailboxBridge().connect({ provider }), 'The mailbox could not be connected.');
+}
+
+function f266SaveLimits(mailboxId, limits) {
+  for (const k of ['dailyCap', 'hourlyCap', 'minGapSeconds']) {
+    if (!Number.isInteger(limits[k])) {
+      f266Status('mailbox-status', 'Limits must be whole numbers.');
+      return null;
+    }
+  }
+  return f266Act(() => mailboxBridge().setLimits({ mailboxId, limits }), 'The limits could not be saved.');
+}
+
+function f266SaveClient() {
+  const idEl = document.getElementById('mailbox-google-client-id');
+  const secretEl = document.getElementById('mailbox-google-client-secret');
+  const clientId = idEl ? idEl.value.trim() : '';
+  const clientSecret = secretEl ? secretEl.value.trim() : '';
+  if (secretEl) secretEl.value = ''; // emptied whatever happens; never shown again
+  if (!clientId || !clientSecret) {
+    f266Status('mailbox-status', 'Enter both the client ID and the client secret.');
+    return null;
+  }
+  return f266Act(() => mailboxBridge().setGoogleClient({ clientId, clientSecret }), 'The Google client could not be saved.');
+}
+
+function f266SaveRule() {
+  const code = document.getElementById('market-rule-country');
+  const rule = document.getElementById('market-rule-rule');
+  const note = document.getElementById('market-rule-note');
+  const payload = { countryCode: code ? code.value.trim().toUpperCase() : '', rule: rule ? rule.value : '', note: note ? note.value.trim() : '' };
+  if (!/^[A-Z]{2}$/.test(payload.countryCode) || payload.note.length < 3) {
+    f266Status('market-rule-status', 'Enter a two-letter country code and what you reviewed.');
+    return null;
+  }
+  return f266Act(async () => {
+    const res = await mailboxBridge().setMarketRule(payload);
+    if (res && res.ok && code && note) { code.value = ''; note.value = ''; }
+    return res;
+  }, 'The rule could not be saved.', 'market-rule-status');
+}
+
+function f266MailboxesInit() {
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+  on('btn-mailbox-save-client', () => f266SaveClient());
+  on('btn-mailbox-clear-client', () => f266Act(() => mailboxBridge().setGoogleClient({ clear: true }), 'The Google client could not be cleared.'));
+  on('btn-market-rule-save', () => f266SaveRule());
+}
+// === END F26.6 Mailboxes ===
+
+
 // This call MUST stay here, at the end of the module, and not beside the other
 // startup calls in the middle of this file. f12OutreachInit() reads F12_OUTREACH_STATUSES
 // and the F11 label maps synchronously, and those are module-scope `const`
@@ -10697,6 +10976,8 @@ async function f265Handoff(pitchId, kind) {
 // is order-independent with respect to every other view: this file still has exactly
 // one init point for F12, and the app's own init sequence is otherwise untouched.
 f12OutreachInit();
+// F26.6: the Mailboxes settings controls (listeners only; state is declared above).
+f266MailboxesInit();
 // F15: the activity workspace's controls. Same rule as F12: one init point, at the end
 // of the module, so it cannot run inside the temporal dead zone of the constants above.
 f15ActivityInit();

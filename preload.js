@@ -205,6 +205,21 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     recordConsent: (payload) => ipcRenderer.invoke('lead-intel:trust-consent', payload || {}),
     handoff: (payload) => ipcRenderer.invoke('lead-intel:trust-handoff', payload || {}),
   }),
+  // F26.6: connected mailboxes and market rules. Records are sanitized (mailbox_id, provider,
+  // address, display name, connection and pacing status). No token, auth code, PKCE verifier or
+  // client secret ever comes back; setGoogleClient is write-only. There is no send method here.
+  mailboxes: Object.freeze({
+    capabilities: () => ipcRenderer.invoke('lead-intel:mailbox-capabilities', {}),
+    list: () => ipcRenderer.invoke('lead-intel:mailbox-list', {}),
+    connect: (payload) => ipcRenderer.invoke('lead-intel:mailbox-connect', payload || {}),
+    disconnect: (payload) => ipcRenderer.invoke('lead-intel:mailbox-disconnect', payload || {}),
+    setDefault: (payload) => ipcRenderer.invoke('lead-intel:mailbox-default', payload || {}),
+    setLimits: (payload) => ipcRenderer.invoke('lead-intel:mailbox-limits', payload || {}),
+    setGoogleClient: (payload) => ipcRenderer.invoke('lead-intel:mailbox-google-client', payload || {}),
+    marketRules: () => ipcRenderer.invoke('lead-intel:market-rules', {}),
+    setMarketRule: (payload) => ipcRenderer.invoke('lead-intel:market-rule-set', payload || {}),
+    removeMarketRule: (payload) => ipcRenderer.invoke('lead-intel:market-rule-remove', payload || {}),
+  }),
   // I3: Opportunity Intelligence provider configuration - WRITE-ONLY for keys.
   // setKey sends a key to the main process, which seals it; nothing ever returns it.
   // status returns booleans per provider (stored / readable / loaded by OI) and the

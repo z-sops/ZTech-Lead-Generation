@@ -3,6 +3,8 @@
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { MIGRATIONS } = require('./migrations');
 const { SqlSuppressions, SqlConsents, SqlProvenance, SqlTrustEvents, SqlRecipientRefs } = require('./trustRepos');
+const { SqlMailboxes, SqlMailboxSent, SqlMarketRules } = require('./mailboxRepos');
+const { MAILBOX_ID_RE } = require('../mailbox/mailboxContract');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
 /**
@@ -68,6 +70,10 @@ class SqlJsStore {
     this.provenance = new SqlProvenance(this);
     this.trustEvents = new SqlTrustEvents(this);
     this.recipientRefs = new SqlRecipientRefs(this);
+    // F26.6 Native Mailbox Transport (migration 010).
+    this.mailboxes = new SqlMailboxes(this);
+    this.mailboxSent = new SqlMailboxSent(this);
+    this.marketRules = new SqlMarketRules(this);
   }
 
   /** Apply pending migrations in one transaction each. Idempotent. */
@@ -588,6 +594,13 @@ class SqlActivity {
  * Like the activity ledger, send rows deliberately SURVIVE purgeLead: a historical fact
  * about a real send must not vanish when the lead it referred to is removed.
  */
+/** F26.6: an optional mailbox_id on a send record; absent = NULL (legacy / Resend). */
+function sendMailboxId(rec) {
+  if (rec.mailbox_id == null) return null;
+  if (typeof rec.mailbox_id !== 'string' || !MAILBOX_ID_RE.test(rec.mailbox_id)) throw new LiError('VALIDATION_FAILED', 'send: mailbox_id');
+  return rec.mailbox_id;
+}
+
 class SqlSends {
   constructor(s) { this.s = s; }
 
@@ -605,9 +618,21 @@ class SqlSends {
       provider_message_id: r.provider_message_id === undefined ? null : r.provider_message_id,
       failure_code: r.failure_code === undefined ? null : r.failure_code,
       failure_message: r.failure_message === undefined ? null : r.failure_message,
+      // F26.6: the connected mailbox this send went through; NULL for every legacy / Resend send.
+      mailbox_id: r.mailbox_id == null ? null : r.mailbox_id,
       created_at: r.created_at,
       updated_at: r.updated_at
     };
+  }
+
+  /**
+   * F26.6 pacing input: created_at of every send through this mailbox since `sinceIso` that
+   * reached (or may have reached) the provider. 'blocked' rows never contacted it and do not count.
+   */
+  async mailboxSendTimes(mailboxId, sinceIso) {
+    return rows(this.s.db,
+      "SELECT created_at FROM li_outreach_sends WHERE mailbox_id = ? AND created_at >= ? AND state != 'blocked' ORDER BY created_at ASC",
+      [String(mailboxId), String(sinceIso)]).map((r) => r.created_at);
   }
 
   /** The already-accepted send for this key, or null. This is the replay lookup. */
@@ -628,10 +653,11 @@ class SqlSends {
     if (n.value.state !== 'attempted') {
       throw new LiError('VALIDATION_FAILED', 'A send attempt must be recorded as attempted before it can change state');
     }
+    const mailboxId = sendMailboxId(rec);
     await this.s.tx(() => this.s.db.run(
-      'INSERT INTO li_outreach_sends (send_id, lead_id, pitch_id, channel, content_hash, idempotency_key, state, provider_id, provider_message_id, failure_code, failure_message, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO li_outreach_sends (send_id, lead_id, pitch_id, channel, content_hash, idempotency_key, state, provider_id, provider_message_id, failure_code, failure_message, created_at, updated_at, mailbox_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [rec.send_id, rec.lead_id, rec.pitch_id, n.value.channel, rec.content_hash, rec.idempotency_key, 'attempted',
-        n.value.provider_id, n.value.provider_message_id, null, null, rec.created_at, rec.updated_at]
+        n.value.provider_id, n.value.provider_message_id, null, null, rec.created_at, rec.updated_at, mailboxId]
     ));
     return this.get(rec.send_id);
   }

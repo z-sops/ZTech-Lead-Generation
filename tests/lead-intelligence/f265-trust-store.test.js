@@ -104,7 +104,8 @@ test('11d. 009 copies every existing activity row byte for byte, and the new typ
   db.run(ins, ['a3', 'L1', 'p1', 'OUTREACH_HANDOFF_CREATED', '{"handoffKind":"mailto"}', T(3)]);
   assert.equal(db.exec("SELECT COUNT(*) FROM li_outreach_activity WHERE activity_type = 'OUTREACH_HANDOFF_CREATED'")[0].values[0][0], 1);
   await store.migrate();
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  // F26.6 declared lock update: the migration list now ends at 010.
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 });
 
 test('11e. every CHECK list in 008 equals the trust contract list (one vocabulary)', () => {
@@ -117,13 +118,24 @@ test('11e. every CHECK list in 008 equals the trust contract list (one vocabular
   };
   assert.deepEqual(checkOf('li_suppressions', 'scope'), [...C.SUPPRESSION_SCOPES]);
   assert.deepEqual(checkOf('li_suppressions', 'reason'), [...C.SUPPRESSION_REASONS]);
-  assert.deepEqual(checkOf('li_suppressions', 'source'), [...C.SUPPRESSION_SOURCES]);
+  // F26.6 declared lock update: 010 also rebuilds li_suppressions to admit 'mailbox'.
+  assert.deepEqual(checkOf('li_suppressions', 'source'), C.SUPPRESSION_SOURCES.filter((x) => x !== 'mailbox'));
   assert.deepEqual(checkOf('li_contact_consents', 'method'), [...C.CONSENT_METHODS]);
   assert.deepEqual(checkOf('li_contact_consents', 'source'), [...C.CONSENT_SOURCES]);
   assert.deepEqual(checkOf('li_contact_provenance', 'field'), [...C.PROVENANCE_FIELDS]);
   assert.deepEqual(checkOf('li_contact_provenance', 'source_kind'), [...C.PROVENANCE_SOURCE_KINDS]);
   assert.deepEqual(checkOf('li_trust_events', 'kind'), [...C.TRUST_EVENT_KINDS]);
-  assert.deepEqual(checkOf('li_trust_events', 'source'), [...C.TRUST_EVENT_SOURCES]);
+  // F26.6 declared lock update: 010 rebuilds li_trust_events to admit 'mailbox'; 008's list is the
+  // contract list minus that one addition, and 010's list equals the contract list exactly.
+  assert.deepEqual(checkOf('li_trust_events', 'source'), C.TRUST_EVENT_SOURCES.filter((s) => s !== 'mailbox'));
+  const sql10 = fs.readFileSync(path.join(SQL_DIR, '010_mailbox_transport.sql'), 'utf8');
+  const m10 = sql10.match(/source\s+TEXT NOT NULL CHECK \(source IN \(([^)]*)\)\)/);
+  assert.ok(m10, '010 li_trust_events.source CHECK');
+  assert.deepEqual(m10[1].split(',').map((s) => s.trim().replace(/'/g, '')), [...C.TRUST_EVENT_SOURCES]);
+  const s10 = sql10.slice(sql10.indexOf('CREATE TABLE li_suppressions_f266'));
+  const ms10 = s10.match(/source\s+TEXT NOT NULL CHECK \(source IN \(([^)]*)\)\)/);
+  assert.ok(ms10, '010 li_suppressions.source CHECK');
+  assert.deepEqual(ms10[1].split(',').map((s) => s.trim().replace(/'/g, '')), [...C.SUPPRESSION_SOURCES]);
   assert.deepEqual(checkOf('li_trust_events', 'state'), [...C.TRUST_EVENT_STATES]);
   for (const t of TRUST_TABLES.filter((x) => x !== 'li_contact_provenance')) assert.deepEqual(checkOf(t, 'channel'), [...C.TRUST_CHANNELS], t);
 });

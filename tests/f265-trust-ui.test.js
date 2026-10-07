@@ -15,7 +15,7 @@ const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'rende
 const htmlSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const { registerTrustIpc, TRUST_CHANNELS_IPC } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'trust', 'trust-ipc.js'));
 const { grantTrust } = require('./trust-fixture');
-const { NOW, LEAD_EMAIL, LEAD_PHONE, runtime, approved, iso } = require('./f265-harness');
+const { NOW, LEAD_EMAIL, LEAD_PHONE, runtime, approved, iso, allowMarket } = require('./f265-harness');
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
@@ -95,7 +95,8 @@ test('12b. an empty lead shows honest states; nothing is written by reading', as
   await flush();
   const t = u.text();
   assert.ok(t.includes('Consent & do-not-contact'));
-  assert.ok(t.includes('No opt-in recorded. A first email goes out from your own mail app.'));
+  // F26.6 declared lock update: the cold handoff now also depends on the reviewed market rule.
+  assert.ok(t.includes('No opt-in recorded. A first email can go from your own mail app only where your reviewed market rule allows it (Settings > Mailboxes).'));
   assert.ok(t.includes('No opt-in recorded. WhatsApp stays locked until the contact opts in.'));
   assert.deepStrictEqual(m.sent.map((s) => s.ch), [TRUST_CHANNELS_IPC.LEAD]);
   assert.strictEqual((await m.store.suppressions.list()).total, 0);
@@ -203,6 +204,9 @@ test('12h. a late answer for another lead is dropped; without the bridge the blo
 
 test('12i. Prepare handoff: Copy goes to main (clipboard there), the result says it was not sent, and the header limit is stated', async () => {
   const m = mainSide();
+  // F26.6 declared lock update: a cold handoff now also passes the market gate, so this test
+  // records a reviewed opt-out market rule for the lead's country first.
+  await allowMarket(m.store);
   const pitch = await approved(m.li);
   const u = makeUi(m.api);
   const footer = new FakeEl('div', 'f18-prepare-footer');

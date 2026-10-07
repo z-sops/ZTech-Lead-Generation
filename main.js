@@ -24,6 +24,7 @@ const { registerOutreachSettingsIpc } = require('./src/main/lead-intelligence/ou
 const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/main/lead-intelligence/outreach-ipc');
 const { registerTimelineIpc } = require('./src/main/lead-intelligence/timeline/timeline-ipc');
 const { registerTrustIpc } = require('./src/main/lead-intelligence/trust/trust-ipc');
+const { registerMailboxIpc } = require('./src/main/lead-intelligence/mailbox/mailbox-ipc');
 
 let mainWindow = null;
 let providerManager = null;
@@ -1385,6 +1386,10 @@ async function initLeadIntelligence() {
       // F26.5: the Hosted Trust Relay (F26.5b server). OFF unless settings.trustRelayUrl AND a
       // 'trust-relay' secret in the credential vault both exist. Neither ever reaches the renderer.
       trustRelay: trustRelayFromSettings(),
+      // F26.6: connected mailboxes. Refresh tokens and the Google client secret are sealed by the
+      // credential vault in electron-store and revealed only here, in main. The browser opener
+      // accepts ONLY Google's OAuth consent URL.
+      mailbox: mailboxDepsFromStore(),
       // F26.5: the mail-app handoff. ONLY a mailto: URL is ever opened; anything else is refused.
       openExternal: (url) => {
         if (typeof url !== 'string' || !/^mailto:[^\s]+$/i.test(url)) throw new Error('only mailto: links can be opened');
@@ -1534,6 +1539,74 @@ function registerLeadIntelIpcHandlers() {
   } catch (err) {
     logger.error('lead-intel', 'trust IPC registration failed', { error: err.message });
   }
+
+  // F26.6: connected mailboxes and market rules. Sanitized records only; no send channel.
+  try {
+    if (leadIntelRuntime.li && leadIntelRuntime.li.mailboxes) {
+      registerMailboxIpc({
+        ipcMain,
+        mailboxes: leadIntelRuntime.li.mailboxes,
+        isTrustedSender: (event) => {
+          try {
+            return leadIntelTrustedSender(event) === true;
+          } catch {
+            return false;
+          }
+        },
+        logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
+      });
+    }
+  } catch (err) {
+    logger.error('lead-intel', 'mailbox IPC registration failed', { error: err.message });
+  }
+}
+
+/**
+ * F26.6: main-only persistence for connected mailboxes. Sealed values only; nothing here is ever
+ * sent to the renderer or logged.
+ *   mailboxTokens.<mailbox_id>   sealed refresh token
+ *   mailboxOAuth.google          { clientId, clientSecret (sealed) }   - D1, the customer's own client
+ */
+function mailboxDepsFromStore() {
+  const tokens = () => new Store().get('mailboxTokens', {}) || {};
+  return {
+    tokenStore: {
+      get: (id) => {
+        const sealed = tokens()[id];
+        return typeof sealed === 'string' && sealed ? credentialVault.reveal(sealed) : null;
+      },
+      set: (id, refreshToken) => {
+        const all = { ...tokens(), [id]: credentialVault.seal(String(refreshToken)) };
+        new Store().set('mailboxTokens', all);
+      },
+      remove: (id) => {
+        const all = { ...tokens() };
+        delete all[id];
+        new Store().set('mailboxTokens', all);
+      },
+    },
+    clientConfig: {
+      get: () => {
+        const g = (new Store().get('mailboxOAuth', {}) || {}).google;
+        if (!g || typeof g.clientId !== 'string' || typeof g.clientSecret !== 'string') return null;
+        try { return { clientId: g.clientId, clientSecret: credentialVault.reveal(g.clientSecret) }; } catch { return null; }
+      },
+      set: ({ clientId, clientSecret }) => {
+        const s = new Store();
+        s.set('mailboxOAuth', { ...(s.get('mailboxOAuth', {}) || {}), google: { clientId, clientSecret: credentialVault.seal(clientSecret) } });
+      },
+      clear: () => {
+        const s = new Store();
+        const next = { ...(s.get('mailboxOAuth', {}) || {}) };
+        delete next.google;
+        s.set('mailboxOAuth', next);
+      },
+    },
+    openBrowser: (url) => {
+      if (typeof url !== 'string' || !url.startsWith('https://accounts.google.com/o/oauth2/v2/auth?')) throw new Error('only the Google consent URL can be opened');
+      return shell.openExternal(url);
+    },
+  };
 }
 
 /**

@@ -380,7 +380,7 @@ test('A10 runtime: initialises only after AccountStore readiness, on the shared 
   assert.equal(runtime.available, false);
 });
 
-test('A10 runtime: runs the additive li_* migrations (001-009) on whatsapp.db and changes no ZTech table', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
+test('A10 runtime: runs the additive li_* migrations (001-010) on whatsapp.db and changes no ZTech table', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
   const SQL = await initSqlJs();
   const db = new SQL.Database();
   db.run('CREATE TABLE numbers (id INTEGER PRIMARY KEY, phone TEXT, title TEXT)');
@@ -399,9 +399,10 @@ test('A10 runtime: runs the additive li_* migrations (001-009) on whatsapp.db an
   // I3 declared lock update: 13 -> 14, adding li_oi_associations (OI ids only, migration 006).
   // I5 declared lock update: 14 -> 15, adding li_oi_refresh_requests (migration 007).
   // F26.5 declared lock update: 15 -> 20, adding the five trust tables of migration 008.
-  assert.equal(LI_TABLES.length, 20, 'twenty additive LI tables are declared');
+  // F26.6 declared lock update: 20 -> 23, adding li_mailboxes, li_mailbox_sent, li_market_rules (010).
+  assert.equal(LI_TABLES.length, 23, 'twenty-three additive LI tables are declared');
   for (const t of LI_TABLES) assert.ok(tables.includes(t), 'missing additive table: ' + t);
-  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 20, 'exactly the twenty li_* tables were added');
+  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 23, 'exactly the twenty-three li_* tables were added');
 
   // Every pre-existing ZTech table is still present and its data is intact.
   const ztechAfter = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
@@ -413,7 +414,7 @@ test('A10 runtime: runs the additive li_* migrations (001-009) on whatsapp.db an
 
   // Migrations are idempotent: a second init adds nothing.
   const again = await initializeLeadIntelligenceRuntime({ accountStore, logger: SILENT });
-  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 20); // F19 12 -> 13; I3 13 -> 14; I5 14 -> 15; F26.5 15 -> 20 (five trust tables)
+  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 23); // F19 12 -> 13; I3 13 -> 14; I5 14 -> 15; F26.5 15 -> 20 (five trust tables); F26.6 20 -> 23
   await again.shutdown();
 });
 
@@ -707,8 +708,10 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     'lead-intel:timeline', // I6 declared lock update: the read-only lead timeline
     // F26.5 declared lock update: the five trust channels (none of them sends).
     'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-suppress',
-    ]);
-    assert.equal(leadIntel.length, 25, 'exactly twenty-five Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust)');
+    // F26.6 declared lock update: the ten mailbox / market-rule channels (none of them sends).
+    'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules',
+    ].sort());
+    assert.equal(leadIntel.length, 35, 'exactly thirty-five Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 10 F26.6 mailboxes)');
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 

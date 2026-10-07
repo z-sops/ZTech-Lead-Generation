@@ -790,7 +790,10 @@ test('S1. the bridge exposes exactly one send method and no scheduling surface',
   const expectedOI = ['request', 'report', 'latest', 'associations', 'pitchContext', 'pitchPreview']; // I7 declared lock update: + pitchPreview
   const expectedI6 = ['forLead']; // I6 declared lock update: the read-only lead timeline
   const expectedF265 = ['forLead', 'suppress', 'lift', 'recordConsent', 'handoff']; // F26.5 declared lock update: trust (handoff is not a send)
-  assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedF265],
+  // F26.6 declared lock update: the mailbox methods that take a payload (none sends; there is no
+  // mailbox send method on the bridge).
+  const expectedF266 = ['connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'setMarketRule', 'removeMarketRule'];
+  assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedF265, ...expectedF266],
     'the bridge method list is exactly the eleven declared channels plus Phase I2 Opportunity Intelligence');
   assert.deepStrictEqual(methods.filter((m) => /send/i.test(m) && !/^sends$/.test(m)), ['outreachSend'],
     'outreachSend is still the only sending method; `sends` is the ledger read');

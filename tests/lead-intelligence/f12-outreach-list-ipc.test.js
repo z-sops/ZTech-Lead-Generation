@@ -290,9 +290,9 @@ test('F12 B2: preload exposes outreach.list and no email.send', () => {
       'lead-intel:opportunity-report',
       'lead-intel:opportunity-request',
     ];
-    const EXPECTED = [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends', ...OI_CHANNELS, 'lead-intel:timeline', 'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-suppress'].sort(); // I6 declared lock update: + timeline; F26.5: + five trust channels
+    const EXPECTED = [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends', ...OI_CHANNELS, 'lead-intel:timeline', 'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-suppress', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules', 'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities'].sort(); // I6 declared lock update: + timeline; F26.5: + five trust channels; F26.6: + ten mailbox channels
     assert.deepEqual(leadIntel.slice().sort(), EXPECTED);
-    assert.equal(leadIntel.length, 25);
+    assert.equal(leadIntel.length, 35); // F26.6 declared lock update: 25 -> 35
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(leadIntel.includes('lead-intel:outreach-list'), 'outreach.list must be exposed');
     assert.ok(!leadIntel.includes('lead-intel:email-send'), 'email.send must never be exposed');

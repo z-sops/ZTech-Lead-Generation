@@ -16,13 +16,16 @@ const { EMAIL, toE164 } = require('../contracts/leadView');
 const TRUST_CHANNELS = Object.freeze(['email', 'whatsapp']);
 const SUPPRESSION_SCOPES = Object.freeze(['workspace', 'global']);
 const SUPPRESSION_REASONS = Object.freeze(['unsubscribe', 'bounce', 'complaint', 'manual']);
-const SUPPRESSION_SOURCES = Object.freeze(['user', 'relay', 'import']);
+// F26.6: + 'mailbox' (an unsubscribe reply read from a connected mailbox; migration 010).
+const SUPPRESSION_SOURCES = Object.freeze(['user', 'relay', 'import', 'mailbox']);
 const CONSENT_METHODS = Object.freeze(['inbound_message', 'website_form', 'in_person', 'other']);
 const CONSENT_SOURCES = Object.freeze(['user', 'relay']);
 const PROVENANCE_FIELDS = Object.freeze(['email', 'phone', 'website']);
 const PROVENANCE_SOURCE_KINDS = Object.freeze(['collection_run', 'import', 'manual', 'enrichment', 'unknown']);
 const TRUST_EVENT_KINDS = Object.freeze(['unsubscribe', 'bounce', 'complaint', 'reply', 'whatsapp_inbound']);
-const TRUST_EVENT_SOURCES = Object.freeze(['relay', 'user']);
+// F26.6: 'mailbox' = read from a connected mailbox by the main-process sync (verified replies
+// and unsubscribe replies only). Never entered by a user.
+const TRUST_EVENT_SOURCES = Object.freeze(['relay', 'user', 'mailbox']);
 const TRUST_EVENT_STATES = Object.freeze(['applied', 'stored', 'unresolved', 'rejected']);
 
 /** One install is one workspace today. The column exists so a multi-workspace build needs no migration. */

@@ -23,7 +23,7 @@ const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 
 const {
-  NOW, HOUR, LEAD_EMAIL, LEAD_PHONE, OFFER, lead, runtime, approved, iso, suppress, inbound, reply, waConsent,
+  NOW, HOUR, LEAD_EMAIL, LEAD_PHONE, OFFER, lead, runtime, approved, iso, suppress, inbound, reply, waConsent, allowMarket,
 } = require('./f265-harness');
 
 async function expectRefusal(li, pitch, channel, code) {
@@ -225,9 +225,14 @@ test('6d. the rule belongs to the transport: Resend declares it, the base class 
     async send(m) { this.sent.push(m); return { messageId: 'om_1', status: 'queued' }; }
   }
   const own = new OwnMailbox();
-  const { li } = runtime({ emailProvider: own });
+  const { li, store } = runtime({ emailProvider: own });
   li.outreach.emailConfigStore().data.settings.emailProvider = 'resend'; // configuration status stays verified
   const pitch = await approved(li);
+  // F26.6 declared lock update: a transport's permission is never a permission to contact this
+  // person. With no consent, no verified reply and no reviewed market rule, the market gate refuses.
+  await assert.rejects(li.outreach.send({ pitchId: pitch.pitch_id, channel: 'email' }), (e) => e.code === 'MARKET_CONSENT_REQUIRED');
+  assert.strictEqual(own.sent.length, 0);
+  await allowMarket(store);
   const r = await li.outreach.send({ pitchId: pitch.pitch_id, channel: 'email' });
   assert.strictEqual(r.outcome, 'accepted', 'a transport whose terms allow 1:1 cold email is not held to Resend\'s rule');
   assert.strictEqual(own.sent.length, 1);
@@ -298,10 +303,17 @@ test('P. Prepare shows the trust verdict the send will apply - verdicts and date
   const { li, store } = runtime();
   const pitch = await approved(li);
   const cold = await li.outreach.prepare({ pitchId: pitch.pitch_id, channel: 'email' });
-  assert.deepStrictEqual(Object.keys(cold.trust).sort(), ['allowed', 'code', 'consent', 'handoffAvailable', 'message', 'sessionOpenUntil', 'suppressed', 'verifiedReply']);
+  // F26.6 declared lock update: + 'market' (country code + rule, never the address), and the
+  // handoff is offered to a cold lead only where a reviewed opt-out market rule allows it.
+  assert.deepStrictEqual(Object.keys(cold.trust).sort(), ['allowed', 'code', 'consent', 'handoffAvailable', 'market', 'message', 'sessionOpenUntil', 'suppressed', 'verifiedReply']);
   assert.strictEqual(cold.trust.allowed, false);
   assert.strictEqual(cold.trust.code, TRUST_CODES.EMAIL_COLD);
-  assert.strictEqual(cold.trust.handoffAvailable, true, 'a cold lead is offered the mail-app handoff');
+  assert.deepStrictEqual(cold.trust.market, { countryCode: 'US', rule: 'consent_required', reviewed: false });
+  assert.strictEqual(cold.trust.handoffAvailable, false, 'no reviewed market rule: no cold handoff');
+  await allowMarket(store);
+  const coldReviewed = await li.outreach.prepare({ pitchId: pitch.pitch_id, channel: 'email' });
+  assert.deepStrictEqual(coldReviewed.trust.market, { countryCode: 'US', rule: 'opt_out_allowed', reviewed: true });
+  assert.strictEqual(coldReviewed.trust.handoffAvailable, true, 'a cold lead in a reviewed opt-out market is offered the mail-app handoff');
   await grantTrust(store, { email: LEAD_EMAIL, now: iso(NOW) });
   const warm = await li.outreach.prepare({ pitchId: pitch.pitch_id, channel: 'email' });
   assert.strictEqual(warm.trust.allowed, true);

@@ -1809,6 +1809,7 @@
                 <button type="button" class="settings-index-item" data-settings-jump="intelligence">Opportunity Intelligence</button>
                 <button type="button" class="settings-index-item" data-settings-jump="business">Business profile</button>
                 <button type="button" class="settings-index-item" data-settings-jump="email">Email</button>
+                <button type="button" class="settings-index-item" data-settings-jump="mailboxes">Mailboxes</button>
                 <button type="button" class="settings-index-item" data-settings-jump="whatsapp">WhatsApp</button>
                 <button type="button" class="settings-index-item" data-settings-jump="network">Network</button>
                 <button type="button" class="settings-index-item" data-settings-jump="security">Security</button>
@@ -2139,6 +2140,64 @@
                     <div class="settings-row-control settings-row-inline">
                       <p class="form-hint" id="outreach-email-verify-checked" role="status" aria-live="polite">Never checked.</p>
                       <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-email-verify">Check domain</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-mailboxes" aria-labelledby="settings-title-mailboxes">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-mailboxes">Mailboxes</h3>
+                    <p class="settings-group-desc">Connect your own Gmail / Google Workspace mailbox so an approved pitch can later be sent from it, one message per click, within the limits you set here. ZTech does not do bulk mailbox sending, and one-message-per-click with conservative pacing does not by itself give permission to contact anyone.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Providers</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div id="mailbox-provider-rows" class="f266-provider-rows" role="list"></div>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="mailbox-google-client-id">Google OAuth client ID</label>
+                      <span class="settings-key-state" id="mailbox-client-state" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="mailbox-google-client-id" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" maxlength="240">
+                      <div class="input-with-btn">
+                        <input type="password" id="mailbox-google-client-secret" placeholder="Client secret" autocomplete="off" maxlength="200">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-mailbox-save-client">Save client</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-mailbox-clear-client" disabled>Clear</button>
+                      </div>
+                      <p class="form-hint">Your own "Desktop app" OAuth client from Google Cloud (an Internal app in your Google Workspace). The secret is stored encrypted on this computer and is never shown again.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Connected mailboxes</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div id="mailbox-rows" class="f266-mailbox-rows" role="list"></div>
+                      <p class="form-hint" id="mailbox-status" role="status" aria-live="polite"></p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Market rules</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint">Without a recorded consent or a verified reply, an email to a contact is allowed only where you have reviewed that country's rules and recorded "opt-out allowed". No rule, or an unknown country, means consent is required.</p>
+                      <div id="market-rule-rows" class="f266-market-rows" role="list"></div>
+                      <div class="f266-market-form">
+                        <input type="text" id="market-rule-country" placeholder="Country code, e.g. US" autocomplete="off" maxlength="2">
+                        <select id="market-rule-rule">
+                          <option value="consent_required">Consent required</option>
+                          <option value="opt_out_allowed">Opt-out allowed</option>
+                        </select>
+                        <input type="text" id="market-rule-note" placeholder="What you reviewed (required)" autocomplete="off" maxlength="500">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-market-rule-save">Save rule</button>
+                      </div>
+                      <p class="form-hint" id="market-rule-status" role="status" aria-live="polite"></p>
                     </div>
                   </div>
                 </section>
