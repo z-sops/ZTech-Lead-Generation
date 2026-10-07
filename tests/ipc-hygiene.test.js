@@ -65,7 +65,10 @@ function leadIntelChannels() {
   // F28 declared lock update: the sequence registrar (eight channels, none sends).
   const sequenceSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'sequences', 'sequence-ipc.js'), 'utf8');
   const sequenceChannels = [...sequenceSrc.matchAll(/'(lead-intel:sequence-[a-z-]+)'/g)].map(m => m[1]);
-  return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings, ...timelineChannels, ...trustChannels, ...mailboxChannels, ...sequenceChannels];
+  // F29 declared lock update: the reply-router registrar (three channels, none sends).
+  const replyRouteSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'replies', 'reply-router-ipc.js'), 'utf8');
+  const replyRouteChannels = [...replyRouteSrc.matchAll(/'(lead-intel:reply-route[a-z-]*)'/g)].map(m => m[1]);
+  return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings, ...timelineChannels, ...trustChannels, ...mailboxChannels, ...sequenceChannels, ...replyRouteChannels];
 }
 
 function preloadChannels(src) {

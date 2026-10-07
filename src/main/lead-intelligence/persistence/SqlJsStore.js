@@ -5,6 +5,7 @@ const { MIGRATIONS } = require('./migrations');
 const { SqlSuppressions, SqlConsents, SqlProvenance, SqlTrustEvents, SqlRecipientRefs } = require('./trustRepos');
 const { SqlMailboxes, SqlMailboxSent, SqlMarketRules, SqlReplyReviews } = require('./mailboxRepos');
 const { SqlSequences } = require('./sequenceRepos');
+const { SqlReplyRoutes } = require('./replyRouteRepos');
 const { MAILBOX_ID_RE } = require('../mailbox/mailboxContract');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
@@ -79,6 +80,8 @@ class SqlJsStore {
     this.replyReviews = new SqlReplyReviews(this);
     // F28 (migration 012): follow-up sequences, their steps, the sequence audit and Pause all.
     this.sequences = new SqlSequences(this);
+    // F29 (migration 013): the Reply Router's suggested categories (no text).
+    this.replyRoutes = new SqlReplyRoutes(this);
   }
 
   /** Apply pending migrations in one transaction each. Idempotent. */
@@ -134,6 +137,8 @@ class SqlJsStore {
       this.db.run('DELETE FROM li_outreach_approvals WHERE pitch_id IN (SELECT pitch_id FROM li_pitch_drafts WHERE lead_id = ?)', [id]);
       // F28: the lead's sequences and steps (and their step approvals) go; the audit stays.
       this.sequences._deleteByLeadSql(id);
+      // F29: the lead's reply categories go with it (the address-keyed trust events stay).
+      this.replyRoutes._deleteByLeadSql(id);
       this.db.run('DELETE FROM li_pitch_drafts WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_research_changes WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_evidence_packets WHERE lead_id = ?', [id]);

@@ -239,6 +239,13 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     stop: (payload) => ipcRenderer.invoke('lead-intel:sequence-stop', payload || {}),
     setPauseAll: (payload) => ipcRenderer.invoke('lead-intel:sequence-pause-all', payload || {}),
   }),
+  // F29: the Reply Router. A category is a suggestion about a verified reply, read from its
+  // subject and headers only. Confirming one records the category and nothing else.
+  replyRoutes: Object.freeze({
+    list: (payload) => ipcRenderer.invoke('lead-intel:reply-routes', payload || {}),
+    confirm: (payload) => ipcRenderer.invoke('lead-intel:reply-route-confirm', payload || {}),
+    forLead: (payload) => ipcRenderer.invoke('lead-intel:reply-route-lead', payload || {}),
+  }),
   // I3: Opportunity Intelligence provider configuration - WRITE-ONLY for keys.
   // setKey sends a key to the main process, which seals it; nothing ever returns it.
   // status returns booleans per provider (stored / readable / loaded by OI) and the

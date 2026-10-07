@@ -3915,6 +3915,8 @@ function renderLeadDrawer(lead) {
   if (leadDrawerLeadId) loadLeadTrust(leadDrawerLeadId);
   // F28: the lead's follow-up sequence (local read; nothing is sent from the drawer).
   if (leadDrawerLeadId) loadLeadSequence(leadDrawerLeadId);
+  // F29: the suggested category of the lead's newest verified reply (local read; changes nothing).
+  if (leadDrawerLeadId) loadLeadReplyRoute(leadDrawerLeadId);
 }
 
 function renderLeadDrawerResearchViews() {
@@ -8151,6 +8153,256 @@ function f28FollowupsInit() {
 // cannot run inside a temporal dead zone (the F12 rule for end-of-module init calls).
 f28FollowupsInit();
 // === END F28 Follow-ups ===
+
+// === F29 Reply Router: suggested categories for verified replies ===
+// A category is a SUGGESTION, read from the reply's subject and headers only (Gmail gives no
+// snippet under the existing permission, so reply bodies are never read). It never changes trust
+// or permission, never adds anyone to do-not-contact, never sends or schedules anything, and
+// never records a reply review: only the review buttons do that. This block reads, and asks main
+// to confirm a category. Text is set with textContent only.
+const F29_CATEGORY_LABEL = Object.freeze({
+  interested: 'Interested', not_interested: 'Not interested', pricing_request: 'Pricing request', meeting_request: 'Meeting request',
+  later: 'Later', out_of_office: 'Out of office', unsubscribe: 'Unsubscribe', unknown: 'Unknown',
+});
+const F29_CATEGORIES = Object.freeze(Object.keys(F29_CATEGORY_LABEL));
+const F29_REVIEW_LABEL = Object.freeze({ interested: 'Interested', not_interested: 'Not interested', unsubscribe: 'Unsubscribe' });
+const F29_BODY_NOTE = 'ZTech reads only the subject and headers of a reply, never its body. A stop request written only in the body is not detected: read the reply in Gmail.';
+let f29Lead = { leadId: null, view: null, loading: false, error: null, notice: null, busy: false, changing: false };
+let f29LeadSeq = 0;
+let f29List = { data: null, loading: false, error: null, busy: false, category: '', showAll: false };
+
+function f29Bridge() {
+  const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
+  return api && api.replyRoutes && typeof api.replyRoutes.forLead === 'function' ? api.replyRoutes : null;
+}
+
+function f29Unwrap(res, fallback) {
+  if (res && res.ok === true) return res.data;
+  const err = res && res.error ? res.error : {};
+  throw new Error(typeof err.message === 'string' && err.message ? err.message : fallback);
+}
+
+function f29When(iso) {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t).toLocaleString() : '—';
+}
+
+function f29SourceNote(v) {
+  if (v.confirmed) return `Confirmed by you ${f29When(v.confirmedAt)}.`;
+  return v.suggested === 'unknown' ? 'No clear signal from subject/headers.' : 'Suggested from the subject/headers.';
+}
+
+function f29CategoryText(v) {
+  const label = F29_CATEGORY_LABEL[v.category] || F29_CATEGORY_LABEL.unknown;
+  return v.confirmed ? label : `${label} (suggested)`;
+}
+
+function f29Button(label, onClick, kind, disabled) {
+  const b = trustEl('button', 'btn btn-sm ' + (kind || 'btn-secondary'), label);
+  b.type = 'button';
+  b.disabled = Boolean(disabled);
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function f29CategorySelect(current, label) {
+  const select = trustEl('select', 'f29-category');
+  select.setAttribute('aria-label', label);
+  for (const c of F29_CATEGORIES) {
+    const o = trustEl('option', null, F29_CATEGORY_LABEL[c]);
+    o.value = c;
+    if (c === current) o.selected = true;
+    select.appendChild(o);
+  }
+  return select;
+}
+
+/* ---- Lead drawer: the suggestion for the reply the review buttons apply to ---- */
+
+async function loadLeadReplyRoute(leadId) {
+  const bridge = f29Bridge();
+  const seq = ++f29LeadSeq;
+  if (!bridge) { f29Lead = { ...f29Lead, leadId, view: null, loading: false, error: null }; renderLeadReplyRoute(); return; }
+  f29Lead = { leadId, view: null, loading: true, error: null, notice: null, busy: false, changing: false };
+  renderLeadReplyRoute();
+  let next;
+  try {
+    next = { ...f29Lead, view: f29Unwrap(await bridge.forLead({ leadId }), 'The reply category could not be read.'), loading: false };
+  } catch (err) {
+    next = { ...f29Lead, view: null, loading: false, error: (err && err.message) || 'The reply category could not be read.' };
+  }
+  if (seq !== f29LeadSeq || leadDrawerLeadId !== leadId) return;
+  f29Lead = next;
+  renderLeadReplyRoute();
+}
+
+async function f29LeadConfirm(eventId, category) {
+  const bridge = f29Bridge();
+  const leadId = f29Lead.leadId;
+  if (!bridge || !leadId || f29Lead.busy) return;
+  f29Lead = { ...f29Lead, busy: true, error: null, notice: null };
+  renderLeadReplyRoute();
+  try {
+    f29Unwrap(await bridge.confirm({ eventId, category }), 'The category could not be saved.');
+    if (f29Lead.leadId !== leadId) return;
+    f29Lead = { ...f29Lead, busy: false, changing: false };
+    await loadLeadReplyRoute(leadId);
+    if (f29Lead.leadId === leadId) { f29Lead = { ...f29Lead, notice: 'Category saved. It changes nothing else: use the review buttons to record your review.' }; renderLeadReplyRoute(); }
+  } catch (err) {
+    if (f29Lead.leadId !== leadId) return;
+    f29Lead = { ...f29Lead, busy: false, error: (err && err.message) || 'The category could not be saved.' };
+    renderLeadReplyRoute();
+  }
+}
+
+function renderLeadReplyRoute() {
+  const host = typeof document !== 'undefined' ? document.getElementById('lead-drawer-reply-route') : null;
+  if (!host) return;
+  host.replaceChildren();
+  host.appendChild(trustEl('div', 'lead-drawer-section-title', 'Reply category'));
+  if (!f29Bridge()) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Reply categories are not available in this build.')); return; }
+  if (f29Lead.loading) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Loading…')); return; }
+  if (f29Lead.error) host.appendChild(trustEl('p', 'lead-trust-error', f29Lead.error));
+  if (f29Lead.notice) host.appendChild(trustEl('p', 'lead-trust-notice', f29Lead.notice));
+  const view = f29Lead.view;
+  if (!view) return;
+  const v = view.latest;
+  if (!v && !view.away) host.appendChild(trustEl('p', 'lead-drawer-muted', 'No verified reply with a category yet.'));
+  if (v && v.kind === 'unsubscribe') {
+    host.appendChild(trustEl('p', 'f29-line', `Unsubscribe: their reply's subject asked to opt out (${f29When(v.receivedAt)}). They are already on the do-not-contact list.`));
+  } else if (v) {
+    if (v.possibleOptOut) host.appendChild(trustEl('p', 'f29-optout', 'Possible opt-out - review now. Only the review button "Unsubscribe" adds them to do-not-contact.'));
+    host.appendChild(trustEl('p', 'f29-line', `${f29CategoryText(v)} · reply received ${f29When(v.receivedAt)}`));
+    host.appendChild(trustEl('p', 'f29-source', f29SourceNote(v)));
+    host.appendChild(trustEl('p', 'f29-review-hint', v.suggestedReview
+      ? `Matching review: ${F29_REVIEW_LABEL[v.suggestedReview]}. Nothing is recorded until you click a review button.`
+      : 'No matching review: choose the review yourself.'));
+    const row = trustEl('div', 'f29-controls');
+    if (!v.confirmed && !f29Lead.changing) row.appendChild(f29Button('Confirm', () => f29LeadConfirm(v.eventId, v.suggested), 'btn-secondary', f29Lead.busy));
+    if (f29Lead.changing) {
+      const select = f29CategorySelect(v.category, 'Reply category');
+      row.append(select,
+        f29Button('Save category', () => f29LeadConfirm(v.eventId, select.value), 'btn-primary', f29Lead.busy),
+        f29Button('Cancel', () => { f29Lead = { ...f29Lead, changing: false }; renderLeadReplyRoute(); }, 'btn-secondary', f29Lead.busy));
+    } else {
+      row.appendChild(f29Button('Change', () => { f29Lead = { ...f29Lead, changing: true }; renderLeadReplyRoute(); }, 'btn-secondary', f29Lead.busy));
+    }
+    host.appendChild(row);
+  }
+  if (view.away) host.appendChild(trustEl('p', 'f29-away', `Away (out of office): an automatic reply arrived ${f29When(view.away.routedAt)}. A note only: it is not a reply and stops or changes nothing.`));
+  host.appendChild(trustEl('p', 'f29-note', F29_BODY_NOTE));
+}
+
+/* ---- Outreach > Replies: verified replies waiting for a review, possible opt-outs first ---- */
+
+async function f29ListLoad() {
+  const bridge = f29Bridge();
+  if (!bridge) { f29List = { ...f29List, data: null, loading: false, error: null }; renderF29List(); return; }
+  f29List = { ...f29List, loading: true, error: null };
+  renderF29List();
+  const payload = { show: f29List.showAll ? 'all' : 'pending' };
+  if (f29List.category) payload.category = f29List.category;
+  try {
+    f29List = { ...f29List, data: f29Unwrap(await bridge.list(payload), 'Replies could not be read.'), loading: false };
+  } catch (err) {
+    f29List = { ...f29List, loading: false, error: (err && err.message) || 'Replies could not be read.' };
+  }
+  renderF29List();
+}
+
+async function f29ListConfirm(eventId, category) {
+  const bridge = f29Bridge();
+  if (!bridge || f29List.busy) return;
+  f29List = { ...f29List, busy: true, error: null };
+  renderF29List();
+  try {
+    f29Unwrap(await bridge.confirm({ eventId, category }), 'The category could not be saved.');
+    f29List = { ...f29List, busy: false };
+    await f29ListLoad();
+  } catch (err) {
+    f29List = { ...f29List, busy: false, error: (err && err.message) || 'The category could not be saved.' };
+    renderF29List();
+  }
+}
+
+function f29ListRow(v) {
+  const r = trustEl('div', 'f29-row' + (v.possibleOptOut ? ' f29-row-optout' : ''));
+  r.appendChild(trustEl('span', 'f29-row-lead', v.leadName || `Lead ${v.leadId}`));
+  r.appendChild(trustEl('span', 'f29-row-when', f29When(v.receivedAt)));
+  r.appendChild(trustEl('span', 'f29-row-category', f29CategoryText(v)));
+  r.appendChild(trustEl('span', 'f29-row-source', v.kind === 'unsubscribe' ? 'Already unsubscribed.' : f29SourceNote(v)));
+  if (v.state !== 'pending') r.appendChild(trustEl('span', 'f29-row-state', v.state === 'reviewed' ? 'Reviewed' : v.state === 'superseded' ? 'A newer reply arrived' : 'Unsubscribed'));
+  if (typeof openLeadDetail === 'function') {
+    const open = f29Button('Open lead', () => openLeadDetail(String(v.leadId)), 'btn-secondary', false);
+    open.setAttribute('data-lead-id', String(v.leadId));
+    r.appendChild(open);
+  }
+  if (v.kind === 'reply' && !v.confirmed) r.appendChild(f29Button('Confirm', () => f29ListConfirm(v.eventId, v.suggested), 'btn-secondary', f29List.busy));
+  if (v.kind === 'reply') {
+    const select = f29CategorySelect(v.category, 'Change the category');
+    select.disabled = f29List.busy;
+    select.addEventListener('change', () => f29ListConfirm(v.eventId, select.value));
+    r.appendChild(select);
+  }
+  return r;
+}
+
+function renderF29List() {
+  const host = typeof document !== 'undefined' ? document.getElementById('f29-replies') : null;
+  if (!host) return;
+  host.replaceChildren();
+  const head = trustEl('div', 'f29-list-head');
+  head.appendChild(trustEl('h3', 'f29-list-title', 'Replies'));
+  host.appendChild(head);
+  if (!f29Bridge()) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Reply categories are not available in this build.')); return; }
+  host.appendChild(trustEl('p', 'f29-list-note', 'Verified replies waiting for your review, with a suggested category. A category changes nothing: open the lead and use the review buttons. ' + F29_BODY_NOTE));
+  const filters = trustEl('div', 'f29-filters');
+  const select = trustEl('select', 'f29-filter');
+  select.setAttribute('aria-label', 'Filter by category');
+  const any = trustEl('option', null, 'All categories');
+  any.value = '';
+  select.appendChild(any);
+  for (const c of F29_CATEGORIES) { const o = trustEl('option', null, F29_CATEGORY_LABEL[c]); o.value = c; if (c === f29List.category) o.selected = true; select.appendChild(o); }
+  select.addEventListener('change', () => { f29List = { ...f29List, category: select.value }; f29ListLoad(); });
+  const label = trustEl('label', 'f29-show-all');
+  const box = trustEl('input');
+  box.type = 'checkbox';
+  box.checked = f29List.showAll;
+  box.addEventListener('change', () => { f29List = { ...f29List, showAll: box.checked }; f29ListLoad(); });
+  label.append(box, document.createTextNode(' Show reviewed replies too'));
+  filters.append(select, label);
+  host.appendChild(filters);
+  if (f29List.error) host.appendChild(trustEl('p', 'lead-trust-error', f29List.error));
+  if (f29List.loading && !f29List.data) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Loading…')); return; }
+  const data = f29List.data;
+  if (!data) return;
+  const rows = Array.isArray(data.replies) ? data.replies : [];
+  if (!rows.length) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'No replies to show.')); return; }
+  const optOuts = rows.filter((v) => v.possibleOptOut);
+  if (optOuts.length) {
+    host.appendChild(trustEl('p', 'f29-optout', 'Possible opt-out - review now'));
+    const top = trustEl('div', 'f29-rows');
+    for (const v of optOuts) top.appendChild(f29ListRow(v));
+    host.appendChild(top);
+  }
+  const rest = rows.filter((v) => !v.possibleOptOut);
+  if (rest.length) {
+    const list = trustEl('div', 'f29-rows');
+    for (const v of rest) list.appendChild(f29ListRow(v));
+    host.appendChild(list);
+  }
+}
+
+function f29RepliesInit() {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function' || typeof document.getElementById !== 'function') return;
+  const nav = document.querySelector('.nav-item[data-view="outreach"]');
+  if (nav) nav.addEventListener('click', () => f29ListLoad());
+  const refresh = document.getElementById('outreach-refresh');
+  if (refresh) refresh.addEventListener('click', () => f29ListLoad());
+}
+// Listeners only, attached here, after every binding this block reads (the F12 init rule).
+f29RepliesInit();
+// === END F29 Reply Router ===
 
 // === F11 Outreach: Lead Drawer Pitch tab ===
 //

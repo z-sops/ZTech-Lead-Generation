@@ -1048,6 +1048,9 @@
                   <!-- F26.5: consent, do-not-contact and where the contact details came from.
                        Filled by the F26.5 renderer block with textContent only. -->
                   <div class="lead-drawer-section lead-trust" id="lead-drawer-trust" aria-live="polite"></div>
+                  <!-- F29: the suggested category of the lead's newest verified reply (subject/headers only).
+                       Filled by the F29 renderer block with textContent only. -->
+                  <div class="lead-drawer-section f29-reply-route" id="lead-drawer-reply-route" aria-live="polite"></div>
                   <!-- F28: the lead's follow-up sequence. Filled by the F28 renderer block with textContent only. -->
                   <div class="lead-drawer-section f28-sequence" id="lead-drawer-sequence" aria-live="polite"></div>
                   <!-- The complete stored record, rendered by the unchanged B3 template. -->
@@ -1570,6 +1573,9 @@
             <!-- F28: open follow-up sequences and the "Pause all follow-ups" switch. Filled by the F28
                  renderer block (textContent only); the pitch table above stays read-only. -->
             <div class="f28-followups" id="f28-followups" aria-live="polite"></div>
+            <!-- F29: verified replies waiting for a review, with a suggested category. Filled by the F29
+                 renderer block (textContent only); no static control is added here. -->
+            <div class="f29-replies" id="f29-replies" aria-live="polite"></div>
           </div>
         </section>
 

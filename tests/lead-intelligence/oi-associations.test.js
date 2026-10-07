@@ -74,7 +74,7 @@ test('006 is the sixth migration and creates exactly the seven approved columns'
   // I5 declared lock update: + 7 (li_oi_refresh_requests). 006 itself is unchanged.
   // F26.5 declared lock update: + 8 (five trust tables) and 9 (activity CHECK + handoff).
   // F26.6 declared lock update: + 10 (mailbox transport).
-  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // F28 declared lock update: + 012 sequences
+  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]); // F28 declared lock update: + 012 sequences; F29: + 013 reply routes
   const SQL = await initSqlJs();
   const db = new SQL.Database();
   await new SqlJsStore({ db, logger: SILENT }).migrate();
@@ -99,9 +99,9 @@ test('006 applies on top of a database already at version 5, and only once', { s
   // I5 declared lock update: the same upgrade now also applies 007.
   // F26.5 declared lock update: the same upgrade now also applies 008 (five new trust tables) and 009.
   // F26.6 declared lock update: ... and 010 (mailbox transport).
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // F28 declared lock update: + 012 sequences
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]); // F28 declared lock update: + 012 sequences; F29: + 013 reply routes
   const after = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
-  assert.deepEqual(after.filter((t) => !before.includes(t)), ['li_contact_consents', 'li_contact_provenance', 'li_mailbox_sent', 'li_mailboxes', 'li_market_rules', 'li_oi_associations', 'li_oi_refresh_requests', 'li_recipient_refs', 'li_reply_reviews', 'li_sequence_control', 'li_sequence_events', 'li_sequence_gaps', 'li_sequence_steps', 'li_sequences', 'li_suppressions', 'li_trust_events']); // F26.6 follow-up: + li_reply_reviews (011); F28 declared lock update: + the five sequence tables (012)
+  assert.deepEqual(after.filter((t) => !before.includes(t)), ['li_contact_consents', 'li_contact_provenance', 'li_mailbox_sent', 'li_mailboxes', 'li_market_rules', 'li_oi_associations', 'li_oi_refresh_requests', 'li_recipient_refs', 'li_reply_reviews', 'li_reply_routes', 'li_sequence_control', 'li_sequence_events', 'li_sequence_gaps', 'li_sequence_steps', 'li_sequences', 'li_suppressions', 'li_trust_events']); // F26.6 follow-up: + li_reply_reviews (011); F28 declared lock update: + the five sequence tables (012); F29: + li_reply_routes (013)
 });
 
 for (const kind of ['sql', 'memory']) {

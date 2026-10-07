@@ -361,6 +361,12 @@ const MIGRATION_012 = fs.readFileSync(
   'utf8'
 );
 
+// F29: the Reply Router's suggested categories - ids, closed codes and times only, no text.
+const MIGRATION_013 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '013_reply_routes.sql'),
+  'utf8'
+);
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
@@ -374,6 +380,7 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 10, name: '010_mailbox_transport.sql', sql: MIGRATION_010 }),
   Object.freeze({ version: 11, name: '011_reply_reviews.sql', sql: MIGRATION_011 }),
   Object.freeze({ version: 12, name: '012_sequences.sql', sql: MIGRATION_012 }),
+  Object.freeze({ version: 13, name: '013_reply_routes.sql', sql: MIGRATION_013 }),
 ]);
 
 module.exports = { MIGRATIONS };

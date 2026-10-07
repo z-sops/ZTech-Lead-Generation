@@ -76,6 +76,8 @@ const LI_TABLES = Object.freeze([
   'li_sequence_control',
   // F28 review fix: the latest reply-history gap per mailbox (mailbox id + time only).
   'li_sequence_gaps',
+  // F29 (migration 013): the Reply Router's suggested categories - ids, codes and times, no text.
+  'li_reply_routes',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';
@@ -290,6 +292,26 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
     if (logger && logger.warn) logger.warn(`[lead-intelligence] follow-ups disabled: ${err && err.message}`);
   }
   li.sequenceScheduler = sequenceScheduler;
+
+  // F29: the Reply Router. It only SUGGESTS a category for a verified reply (subject and headers,
+  // read in memory and dropped). It writes nothing the trust policy, the gates or F28 read, and
+  // it has no send path. Its one listener runs after the trust intake inside reply sync.
+  li.replyRouter = null;
+  try {
+    const { ReplyRouterService } = require('./replies/ReplyRouterService');
+    li.replyRouter = new ReplyRouterService({
+      store, clock: clock || (() => new Date()), logger,
+      operator: (mailbox && mailbox.operator) || config.operatorName || 'local-user',
+      leadName: async (leadId) => {
+        const ctx = await li.outreach.contexts.getContext(leadId);
+        return ctx && ctx.view && typeof ctx.view.name === 'string' ? ctx.view.name : null;
+      },
+    });
+    if (li.mailboxes) li.mailboxes.setReplyRouter((m) => li.replyRouter.onMailboxMessage(m));
+  } catch (err) {
+    li.replyRouter = null;
+    if (logger && logger.warn) logger.warn(`[lead-intelligence] reply router disabled: ${err && err.message}`);
+  }
 
   let closed = false;
 

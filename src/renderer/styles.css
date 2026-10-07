@@ -6325,3 +6325,63 @@ textarea {
   font-size: var(--font-12);
   color: var(--text-2);
 }
+
+/* F29 Reply Router: the drawer's reply category and the Outreach view's Replies list */
+.f29-line,
+.f29-review-hint,
+.f29-away {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.f29-source,
+.f29-note,
+.f29-list-note,
+.f29-row-when,
+.f29-row-source,
+.f29-row-state {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.f29-optout {
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--warn);
+}
+
+.f29-controls,
+.f29-filters,
+.f29-list-head,
+.f29-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.f29-replies {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.f29-rows {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.f29-row {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.f29-row-optout {
+  border-left: 3px solid var(--warn);
+  padding-left: var(--space-2);
+}
+
+.f29-row-lead,
+.f29-row-category {
+  font-weight: 600;
+}

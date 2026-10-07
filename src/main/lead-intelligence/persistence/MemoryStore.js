@@ -6,6 +6,7 @@ const { ACTIVE_STATES } = require('../contracts/constants');
 const { MemSuppressions, MemConsents, MemProvenance, MemTrustEvents, MemRecipientRefs } = require('./trustRepos');
 const { MemMailboxes, MemMailboxSent, MemMarketRules, MemReplyReviews } = require('./mailboxRepos');
 const { MemSequences } = require('./sequenceRepos');
+const { MemReplyRoutes } = require('./replyRouteRepos');
 const { MAILBOX_ID_RE } = require('../mailbox/mailboxContract');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
@@ -546,6 +547,8 @@ class MemoryStore {
     this.replyReviews = new MemReplyReviews();
     // F28 (migration 012): follow-up sequences, their steps, the sequence audit and Pause all.
     this.sequences = new MemSequences();
+    // F29 (migration 013): the Reply Router's suggested categories (no text).
+    this.replyRoutes = new MemReplyRoutes();
   }
 
   async purgeLead(leadId) {
@@ -554,6 +557,8 @@ class MemoryStore {
     // F28: the lead's sequences and steps go with it (and the approvals of the step pitches);
     // the append-only sequence audit stays, like the send ledger.
     await this.approvals.deleteForPitches(this.sequences.deleteByLead(leadId));
+    // F29: the lead's reply categories go with it.
+    this.replyRoutes.deleteByLead(leadId);
     await this.pitches.deleteByLead(leadId);
     await this.changes.deleteByLead(leadId);
     await this.packets.deleteByLead(leadId);

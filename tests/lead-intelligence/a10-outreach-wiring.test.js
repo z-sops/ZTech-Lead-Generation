@@ -402,9 +402,10 @@ test('A10 runtime: runs the additive li_* migrations (001-012) on whatsapp.db an
   // F26.6 declared lock update: 20 -> 23, adding li_mailboxes, li_mailbox_sent, li_market_rules (010).
   // F26.6 follow-up declared lock update: 23 -> 24, adding li_reply_reviews (011).
   // F28 declared lock update: 24 -> 29, adding li_sequences, li_sequence_steps, li_sequence_events, li_sequence_control, li_sequence_gaps (012).
-  assert.equal(LI_TABLES.length, 29, 'twenty-nine additive LI tables are declared');
+  // F29 declared lock update: 29 -> 30, adding li_reply_routes (013; ids, codes and times only).
+  assert.equal(LI_TABLES.length, 30, 'thirty additive LI tables are declared');
   for (const t of LI_TABLES) assert.ok(tables.includes(t), 'missing additive table: ' + t);
-  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 29, 'exactly the twenty-nine li_* tables were added');
+  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 30, 'exactly the thirty li_* tables were added');
 
   // Every pre-existing ZTech table is still present and its data is intact.
   const ztechAfter = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
@@ -416,7 +417,7 @@ test('A10 runtime: runs the additive li_* migrations (001-012) on whatsapp.db an
 
   // Migrations are idempotent: a second init adds nothing.
   const again = await initializeLeadIntelligenceRuntime({ accountStore, logger: SILENT });
-  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 29); // F28 declared lock update 24 -> 29 (five sequence tables); F26.6 follow-up 23 -> 24; F19 12 -> 13; I3 13 -> 14; I5 14 -> 15; F26.5 15 -> 20 (five trust tables); F26.6 20 -> 23
+  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 30); // F29 declared lock update 29 -> 30 (li_reply_routes); F28 declared lock update 24 -> 29 (five sequence tables); F26.6 follow-up 23 -> 24; F19 12 -> 13; I3 13 -> 14; I5 14 -> 15; F26.5 15 -> 20 (five trust tables); F26.6 20 -> 23
   await again.shutdown();
 });
 
@@ -714,8 +715,10 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities', 'lead-intel:mailbox-check', 'lead-intel:mailbox-replies', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules',
     // F28 declared lock update: the eight sequence channels (none of them sends).
     'lead-intel:sequence-activate', 'lead-intel:sequence-create', 'lead-intel:sequence-for-lead', 'lead-intel:sequence-list', 'lead-intel:sequence-pause', 'lead-intel:sequence-pause-all', 'lead-intel:sequence-resume', 'lead-intel:sequence-stop',
+    // F29 declared lock update: the three reply-route channels (none of them sends).
+    'lead-intel:reply-route-confirm', 'lead-intel:reply-route-lead', 'lead-intel:reply-routes',
     ].sort());
-    assert.equal(leadIntel.length, 46, 'exactly forty-six Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes + 1 F26.6 reply review + 8 F28 sequences)');
+    assert.equal(leadIntel.length, 49, 'exactly forty-nine Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes + 1 F26.6 reply review + 8 F28 sequences + 3 F29 reply routes)');
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 

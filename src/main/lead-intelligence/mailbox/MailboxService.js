@@ -102,6 +102,20 @@ class MailboxService {
    */
   setRepliesGapListener(fn) { this._onRepliesGap = typeof fn === 'function' ? fn : null; }
 
+  /**
+   * F29: the Reply Router listener - called once per message AFTER the trust intake decided (or,
+   * for an automatic reply, after it was skipped). It only suggests a category; it cannot change
+   * what the sync records, and its failure never fails the sync.
+   */
+  setReplyRouter(fn) { this._onReplyRouted = typeof fn === 'function' ? fn : null; }
+
+  async _routeReply(message) {
+    if (!this._onReplyRouted) return;
+    try { await this._onReplyRouted(message); } catch (err) {
+      if (this.logger && this.logger.warn) this.logger.warn(`[mailbox] reply router failed: ${(err && err.code) || 'ERROR'}`);
+    }
+  }
+
   async _repliesGap(mailboxId) {
     if (!this._onRepliesGap) return;
     try { await this._onRepliesGap(mailboxId, this._now().toISOString()); } catch (err) {
@@ -491,7 +505,16 @@ class MailboxService {
     if (DELIVERY_REPORT_FROM.test(from) || /multipart\/report/i.test(h['content-type'] || '')) { summary.skippedDeliveryReports += 1; return; }
     const auto = h['auto-submitted'] && h['auto-submitted'].trim().toLowerCase() !== 'no';
     // Automatic and mailing-list traffic is never a person replying (and never their opt-out).
-    if (auto || h['x-autoreply'] || h['x-autorespond'] || h['list-id'] || /^(auto_reply|bulk|junk|list)$/i.test((h.precedence || '').trim())) { summary.skippedAutomatic += 1; return; }
+    if (auto || h['x-autoreply'] || h['x-autorespond'] || h['list-id'] || /^(auto_reply|bulk|junk|list)$/i.test((h.precedence || '').trim())) {
+      summary.skippedAutomatic += 1;
+      // F29 D4: an auto-reply (not list or bulk mail) that cites one of our stored ids may be noted
+      // as "Away". The trust intake still skips it: never a reply, never permission, never a stop.
+      if (!h['list-id'] && !/^(bulk|junk|list)$/i.test((h.precedence || '').trim())) {
+        const autoRefs = [...parseMessageIds(h['in-reply-to']), ...parseMessageIds(h.references)];
+        if (autoRefs.length) await this._routeReply({ kind: 'away', mailboxId: row.mailbox_id, eventId: mailboxEventId(row.mailbox_id, id), from, refs: autoRefs, subject: h.subject || '' });
+      }
+      return;
+    }
     const refs = [...parseMessageIds(h['in-reply-to']), ...parseMessageIds(h.references)];
     const kind = UNSUBSCRIBE_SUBJECT.test(h.subject || '') ? 'unsubscribe' : 'reply';
     if (kind === 'reply' && !refs.length) return;
@@ -501,6 +524,8 @@ class MailboxService {
     }, { source: 'mailbox' });
     if (r && r.accepted && !r.duplicate) summary[kind === 'reply' ? 'replies' : 'unsubscribes'] += 1;
     else if (r && r.code === 'REPLY_NOT_MATCHED') summary.unmatched += 1;
+    // F29: only what the intake ACCEPTED is offered to the router (a re-read is a no-op there).
+    if (r && r.accepted) await this._routeReply({ kind, mailboxId: row.mailbox_id, eventId: mailboxEventId(row.mailbox_id, id), from, refs, subject: h.subject || '' });
   }
 
   /** Sync every Gmail mailbox that can be synced. One at a time; a failure never stops the rest. */

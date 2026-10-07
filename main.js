@@ -26,6 +26,7 @@ const { registerTimelineIpc } = require('./src/main/lead-intelligence/timeline/t
 const { registerTrustIpc } = require('./src/main/lead-intelligence/trust/trust-ipc');
 const { registerMailboxIpc } = require('./src/main/lead-intelligence/mailbox/mailbox-ipc');
 const { registerSequenceIpc } = require('./src/main/lead-intelligence/sequences/sequence-ipc');
+const { registerReplyRouterIpc } = require('./src/main/lead-intelligence/replies/reply-router-ipc');
 
 let mainWindow = null;
 let providerManager = null;
@@ -1580,6 +1581,27 @@ function registerLeadIntelIpcHandlers() {
     }
   } catch (err) {
     logger.error('lead-intel', 'sequence IPC registration failed', { error: err.message });
+  }
+
+  // F29: the Reply Router (list replies, confirm a category, the drawer's suggestion). It only
+  // suggests: no channel sends, suppresses, permits or records a reply review.
+  try {
+    if (leadIntelRuntime.li && leadIntelRuntime.li.replyRouter) {
+      registerReplyRouterIpc({
+        ipcMain,
+        replyRouter: leadIntelRuntime.li.replyRouter,
+        isTrustedSender: (event) => {
+          try {
+            return leadIntelTrustedSender(event) === true;
+          } catch {
+            return false;
+          }
+        },
+        logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
+      });
+    }
+  } catch (err) {
+    logger.error('lead-intel', 'reply router IPC registration failed', { error: err.message });
   }
 }
 
