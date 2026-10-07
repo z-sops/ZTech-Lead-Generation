@@ -148,7 +148,7 @@ function createRound1Port(db) {
  *        affect `li`: if OI is down, misconfigured or disabled, `li` is returned
  *        exactly as it would have been without this parameter.
  */
-async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = null, config = {}, logger = console, round1Port = null, clock, emailProvider = null, whatsappProvider = null, opportunity = null }) {
+async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = null, config = {}, logger = console, round1Port = null, clock, emailProvider = null, whatsappProvider = null, opportunity = null, openExternal = null, trustRelay = null }) {
   if (!accountStore || typeof accountStore !== 'object') throw new TypeError('accountStore is required');
   // A10 contract: the runtime initialises ONLY after the shared database is open.
   await accountStore.ready;
@@ -192,7 +192,37 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
     whatsappProvider,
     // The Round-1 record shape is mapped by the injectable A10 mapper.
     round1ResultMapper: round1PacketMapper,
+    // F26.5: opens a mailto: URL in the person's own mail app (main.js restricts it to mailto).
+    openExternal,
   });
+
+  // F26.5: one-time provenance backfill - every existing contact field without provenance is
+  // marked 'unknown' (nothing inferred). It never fails initialisation.
+  if (li.trust) {
+    try {
+      await li.trust.backfillProvenance();
+    } catch (err) {
+      if (logger && logger.warn) logger.warn(`[lead-intelligence] provenance backfill skipped: ${err && err.message}`);
+    }
+  }
+
+  // F26.5: the Hosted Trust Relay client - OFF unless BOTH a relay URL and a secret are
+  // configured (trustRelay: { url, getSecret, cursorStore, fetchImpl }). The secret stays in
+  // this process; nothing about it reaches the renderer.
+  let relay = null;
+  if (li.trust && trustRelay) {
+    try {
+      const { buildRelayClient } = require('./trust/RelayClient');
+      relay = buildRelayClient({ ...trustRelay, trust: li.trust, logger });
+      if (relay) {
+        li.outreach.setRelayLinks(relay);
+        relay.start(trustRelay.intervalMs);
+      }
+    } catch (err) {
+      relay = null;
+      if (logger && logger.warn) logger.warn(`[lead-intelligence] trust relay disabled: ${err && err.message}`);
+    }
+  }
 
   let closed = false;
 
@@ -215,11 +245,13 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
     round1Port: port,
     opportunity: oi,
     timeline,
+    relay,
     get available() { return !closed; },
     /** Clean shutdown: stops nothing that was never started, closes LI resources. */
     async shutdown() {
       if (closed) return;
       closed = true;
+      if (relay) relay.stop();
       li.stop();
       // OI holds no socket and no timer, so this is a no-op that exists so the
       // shutdown path is explicit rather than accidental.

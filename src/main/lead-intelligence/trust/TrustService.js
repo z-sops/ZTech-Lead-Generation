@@ -265,6 +265,71 @@ class TrustService {
     return created ? { accepted: true, state } : { accepted: true, duplicate: true, state: row.state };
   }
 
+  /* ------------------------------ provenance ------------------------------ */
+
+  /**
+   * Capture provenance for one collection or import SAVE (called by the main process right
+   * after accountStore.addNumbers succeeded). For every saved row, the lead is found by its
+   * phone, and a contact field is attributed to this save ONLY when:
+   *   - the saved row carried that field, AND
+   *   - the stored lead now holds exactly that value, AND
+   *   - the field has no provenance row yet.
+   * So a merge that kept an older value never re-attributes it, and nothing is guessed.
+   *
+   * @param {{rows: object[], providerId?: string|null, runSlug?: string|null}} save
+   */
+  async captureSave({ rows, providerId = null, runSlug = null } = {}) {
+    const saved = Array.isArray(rows) ? rows : [];
+    if (!saved.length) return { recorded: 0 };
+    const at = this.now().toISOString();
+    const isRun = typeof runSlug === 'string' && runSlug.length > 0;
+    const sourceKind = isRun ? 'collection_run' : 'import';
+    const sourceRef = isRun ? cleanText(`${providerId || 'provider'}/${runSlug}`, TRUST_LIMITS.SOURCE_REF_MAX) : null;
+    const byPhone = new Map();
+    for (const v of await this._allLeadViews()) {
+      const p = normalizeAddress('whatsapp', v.phone) || (v.phone ? String(v.phone).replace(/[\s\-.()]/g, '') : null);
+      if (p) byPhone.set(p, v);
+    }
+    const recs = [];
+    for (const r of saved) {
+      if (!r || typeof r !== 'object') continue;
+      const key = normalizeAddress('whatsapp', r.phone) || (r.phone ? String(r.phone).replace(/[\s\-.()]/g, '') : null);
+      const view = key ? byPhone.get(key) : null;
+      if (!view) continue;
+      const same = {
+        phone: Boolean(r.phone),
+        email: typeof r.email === 'string' && view.email && r.email.trim().toLowerCase() === view.email,
+        website: typeof r.website === 'string' && view.website && r.website.trim() === view.website,
+      };
+      for (const field of ['phone', 'email', 'website']) {
+        if (!same[field]) continue;
+        recs.push({ lead_id: view.id, field, source_kind: sourceKind, source_ref: sourceRef, collected_at: at, backfilled: false, recorded_at: at });
+      }
+    }
+    const results = await this.store.provenance.putMany(recs, { ifAbsent: true });
+    return { recorded: results.filter((x) => x.written).length };
+  }
+
+  /**
+   * One-time backfill: every contact field of a lead that has NO provenance yet is marked
+   * 'unknown' (backfilled). Nothing is inferred from the lead record - which run first saw a
+   * field cannot be told after merges - so no source or date is invented. A later capture can
+   * never be overwritten by this, and this never overwrites a capture.
+   */
+  async backfillProvenance() {
+    const views = await this._allLeadViews();
+    const at = this.now().toISOString();
+    const recs = [];
+    for (const v of views) {
+      const present = { phone: Boolean(v.phone), email: Boolean(v.email), website: Boolean(v.website) };
+      for (const field of ['phone', 'email', 'website']) {
+        if (present[field]) recs.push({ lead_id: v.id, field, source_kind: 'unknown', source_ref: null, collected_at: null, backfilled: true, recorded_at: at });
+      }
+    }
+    const results = await this.store.provenance.putMany(recs);
+    return { leads: views.length, recorded: results.filter((x) => x.written).length };
+  }
+
   async _allLeadViews() {
     if (!this.leadSource || typeof this.leadSource.listLeads !== 'function') return [];
     const raw = await this.leadSource.listLeads();

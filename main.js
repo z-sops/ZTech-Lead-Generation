@@ -1239,6 +1239,39 @@ function whatsappConfigFromSettings() {
 // the transport only runs after the send boundary has approved an attempt. With this
 // installation's current configuration the capability check refuses long before this
 // object is ever asked to send anything.
+// F26.5: Hosted Trust Relay configuration. settings.trustRelayUrl is plain (https) text; the
+// shared secret is a sealed credential under providers['trust-relay'], revealed only here.
+// The pull cursor is a plain setting. With either part missing the relay is simply off.
+function trustRelayFromSettings() {
+  try {
+    if (!electronStore) return null;
+    const settings = electronStore.get('settings', {}) || {};
+    const url = typeof settings.trustRelayUrl === 'string' ? settings.trustRelayUrl : '';
+    if (!url) return null;
+    return {
+      url,
+      getSecret: () => {
+        try {
+          const providers = electronStore.get('providers', null);
+          const record = providers && typeof providers === 'object' ? providers['trust-relay'] : null;
+          const stored = record && record.credentials ? record.credentials.apiKey : null;
+          if (typeof stored !== 'string' || !stored) return null;
+          const revealed = credentialVault.reveal(stored);
+          return typeof revealed === 'string' && revealed ? revealed : null;
+        } catch {
+          return null;
+        }
+      },
+      cursorStore: {
+        get: () => { const s = electronStore.get('settings', {}) || {}; return typeof s.trustRelayCursor === 'string' ? s.trustRelayCursor : null; },
+        set: (c) => { const s = electronStore.get('settings', {}) || {}; electronStore.set('settings', { ...s, trustRelayCursor: String(c) }); },
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildResendEmailProvider() {
   try {
     const { ResendEmailProvider } = require('./src/main/lead-intelligence/outreach/email/ResendEmailProvider');
@@ -1348,6 +1381,14 @@ async function initLeadIntelligence() {
       // destination comes from configuration and the environment only; the renderer
       // can never supply it. OI being down is not an error here.
       opportunity: { config: opportunityConfigFromEnv() },
+      // F26.5: the Hosted Trust Relay (F26.5b server). OFF unless settings.trustRelayUrl AND a
+      // 'trust-relay' secret in the credential vault both exist. Neither ever reaches the renderer.
+      trustRelay: trustRelayFromSettings(),
+      // F26.5: the mail-app handoff. ONLY a mailto: URL is ever opened; anything else is refused.
+      openExternal: (url) => {
+        if (typeof url !== 'string' || !/^mailto:[^\s]+$/i.test(url)) throw new Error('only mailto: links can be opened');
+        return shell.openExternal(url);
+      },
       logger: {
         warn: (msg) => logger.warn('lead-intel', String(msg)),
         error: (msg) => logger.error('lead-intel', String(msg)),
@@ -1945,6 +1986,16 @@ function registerIpcHandlers() {
     }
   });
 
+  // F26.5: provenance capture after a successful collection/import save. addNumbers may return a
+  // promise; capture waits for it and never throws into the save path.
+  function capturePostSaveProvenance(result, payload, saveContext) {
+    const trust = leadIntelRuntime && leadIntelRuntime.li ? leadIntelRuntime.li.trust : null;
+    if (!trust) return;
+    Promise.resolve(result)
+      .then(() => trust.captureSave({ rows: payload, providerId: saveContext.providerId || null, runSlug: saveContext.runSlug || null }))
+      .catch((err) => logger.warn('lead-intel', 'provenance capture skipped', { error: err && err.message }));
+  }
+
   // The local collection save. The optional second argument carries the run
   // context of THIS save (the run it came from, and the target the user
   // applied). It never reaches the provider: the numbers payload and the
@@ -1964,6 +2015,9 @@ function registerIpcHandlers() {
       throw err;
     }
     const result = accountStore.addNumbers(payload);
+    // F26.5: record where each saved contact field came from (this run or an import) and when.
+    // Best effort and after the save: a provenance failure never loses or blocks saved leads.
+    capturePostSaveProvenance(result, payload, saveContext);
     // P1-G: the report counters are the ones this save really produced - the
     // submitted count and addNumbers' own added/duplicates - added to what the
     // run already recorded. Recorded only here, after a successful save, and

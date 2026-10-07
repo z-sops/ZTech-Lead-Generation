@@ -66,7 +66,15 @@ test('4. https protocol reaches shell.openExternal', () => {
 
 test('5. non-http(s) protocols do NOT reach shell.openExternal', () => {
   const openExternalCount = mainSource.split('shell.openExternal').length - 1;
-  assert.strictEqual(openExternalCount, 1, 'exactly one shell.openExternal call site');
+  // F26.5 declared lock update: 1 -> 2 call sites. The second is the mail-app handoff opener,
+  // which accepts ONLY a mailto: URL and throws for anything else (asserted below). The
+  // window-open handler is unchanged and still the only path a page can trigger.
+  assert.strictEqual(openExternalCount, 2, 'the window-open handler plus the mailto-only handoff opener');
+  const handoffIdx = mainSource.indexOf('openExternal: (url) => {');
+  assert.ok(handoffIdx > -1, 'the handoff opener is the runtime option');
+  const handoffBody = mainSource.slice(handoffIdx, mainSource.indexOf('\n      },', handoffIdx));
+  assert.ok(/if \(typeof url !== 'string' \|\| !\/\^mailto:\[\^\\s\]\+\$\/i\.test\(url\)\) throw new Error/.test(handoffBody), 'the handoff opener refuses every non-mailto URL before opening');
+  assert.ok(handoffBody.indexOf('throw') < handoffBody.indexOf('shell.openExternal'), 'the refusal comes first');
   assert.ok(handlerRegion.includes('shell.openExternal'), 'call site lives inside the window-open handler');
   assert.ok(!handlerRegion.includes("protocol === 'file:'") || !/file:[^}]*openExternal/.test(handlerRegion), 'file: never forwarded');
   const gateIdx = handlerRegion.indexOf("if (protocol === 'http:' || protocol === 'https:')");

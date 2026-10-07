@@ -149,15 +149,30 @@ class SqlProvenance {
    * A captured fact REPLACES what was there. A backfilled row is only ever written where no
    * row exists, so a backfill can never overwrite a real capture.
    */
-  async put(rec) {
-    const v = requireValid(normalizeProvenanceRecord(rec));
-    return this.s.tx(() => {
-      const verb = v.backfilled ? 'INSERT OR IGNORE' : 'INSERT OR REPLACE';
+  async put(rec, { ifAbsent = false } = {}) {
+    return (await this.putMany([rec], { ifAbsent }))[0];
+  }
+
+  /**
+   * Several provenance rows in ONE transaction (one save of the database file). `ifAbsent`
+   * writes a captured row only where none exists, so a later save that merely repeats a value
+   * never re-attributes a field that was already there.
+   */
+  async putMany(recs, { ifAbsent = false } = {}) {
+    const values = (Array.isArray(recs) ? recs : []).map((r) => requireValid(normalizeProvenanceRecord(r)));
+    if (!values.length) return [];
+    return this.s.tx(() => values.map((v) => {
+      const verb = v.backfilled || ifAbsent ? 'INSERT OR IGNORE' : 'INSERT OR REPLACE';
       this.s.db.run(`${verb} INTO li_contact_provenance (${PROVENANCE_COLS.join(', ')}) VALUES (${placeholders(PROVENANCE_COLS)})`, PROVENANCE_COLS.map((c) => v[c]));
       const written = this.s.db.getRowsModified() > 0;
       const row = sqlRow(this.s.db, `SELECT ${PROVENANCE_COLS.join(', ')} FROM li_contact_provenance WHERE lead_id = ? AND field = ?`, [v.lead_id, v.field]);
       return { row: freeze(row), written };
-    });
+    }));
+  }
+
+  /** The lead ids that already have at least one provenance row (for the one-time backfill). */
+  async leadIds() {
+    return new Set(sqlRows(this.s.db, 'SELECT DISTINCT lead_id FROM li_contact_provenance').map((r) => r.lead_id));
   }
 
   async listByLead(leadId) {
@@ -318,12 +333,22 @@ class MemConsents {
 class MemProvenance {
   constructor() { this.rows = new Map(); }
 
-  async put(rec) {
-    const v = requireValid(normalizeProvenanceRecord(rec));
-    const key = `${v.lead_id}|${v.field}`;
-    if (v.backfilled && this.rows.has(key)) return { row: freeze(this.rows.get(key)), written: false };
-    this.rows.set(key, { ...v });
-    return { row: freeze(v), written: true };
+  async put(rec, { ifAbsent = false } = {}) {
+    return (await this.putMany([rec], { ifAbsent }))[0];
+  }
+
+  async putMany(recs, { ifAbsent = false } = {}) {
+    const values = (Array.isArray(recs) ? recs : []).map((r) => requireValid(normalizeProvenanceRecord(r)));
+    return values.map((v) => {
+      const key = `${v.lead_id}|${v.field}`;
+      if ((v.backfilled || ifAbsent) && this.rows.has(key)) return { row: freeze(this.rows.get(key)), written: false };
+      this.rows.set(key, { ...v });
+      return { row: freeze(v), written: true };
+    });
+  }
+
+  async leadIds() {
+    return new Set([...this.rows.values()].map((r) => r.lead_id));
   }
 
   async listByLead(leadId) {
