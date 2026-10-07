@@ -194,6 +194,17 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
   timeline: Object.freeze({
     forLead: (payload) => ipcRenderer.invoke('lead-intel:timeline', payload || {}),
   }),
+  // F26.5: Compliance & Trust. Every payload names a lead (or a pitch) and a channel - never an
+  // address: main reads the address from the stored lead. There is no "they replied" method:
+  // a reply counts only when it arrives as a verified relay event. handoff() opens the person's
+  // own mail app (mailto) or copies the text; it is NOT a send and records no send.
+  trust: Object.freeze({
+    forLead: (payload) => ipcRenderer.invoke('lead-intel:trust-lead', payload || {}),
+    suppress: (payload) => ipcRenderer.invoke('lead-intel:trust-suppress', payload || {}),
+    lift: (payload) => ipcRenderer.invoke('lead-intel:trust-lift', payload || {}),
+    recordConsent: (payload) => ipcRenderer.invoke('lead-intel:trust-consent', payload || {}),
+    handoff: (payload) => ipcRenderer.invoke('lead-intel:trust-handoff', payload || {}),
+  }),
   // I3: Opportunity Intelligence provider configuration - WRITE-ONLY for keys.
   // setKey sends a key to the main process, which seals it; nothing ever returns it.
   // status returns booleans per provider (stored / readable / loaded by OI) and the

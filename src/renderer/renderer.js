@@ -3909,6 +3909,8 @@ function renderLeadDrawer(lead) {
   // I7: the Opportunity context starts collapsed for every lead.
   resetPitchOiContext();
   if (leadDrawerTab === 'timeline' && leadDrawerLeadId) loadLeadDrawerTimeline(leadDrawerLeadId, false);
+  // F26.5: consent, do-not-contact and provenance for this lead (local read, no provider).
+  if (leadDrawerLeadId) loadLeadTrust(leadDrawerLeadId);
 }
 
 function renderLeadDrawerResearchViews() {
@@ -3938,6 +3940,7 @@ function resetLeadDrawer() {
   leadDrawerOpportunity = { kind: 'idle', view: null, error: null, leadId: null, running: false, notice: null };
   resetLeadDrawerTimeline();
   resetPitchOiContext();
+  resetLeadTrust();
   leadDrawerTab = 'overview';
   markLeadDrawerRow(null);
   setLeadDrawerSaveState('lead-drawer-save-state', null, '');
@@ -9157,7 +9160,13 @@ function f18PrepareRenderFooter() {
   const data = f18PrepareState.data;
   const verdict = data && data.readiness;
   const delivery = (data && data.delivery) || (verdict && verdict.delivery);
-  const canSend = Boolean(delivery && delivery.canSend);
+  // F26.5: the trust verdict the send boundary WILL apply (suppression, identity, transport,
+  // subject, consent, session). When it refuses, no send control is offered - the reason is
+  // shown instead, and for email the mail-app handoff. A preview without a trust block (an
+  // older response) keeps the previous behaviour; the send boundary enforces either way.
+  const trust = data && data.trust && typeof data.trust === 'object' ? data.trust : null;
+  const trustBlocks = Boolean(trust && trust.allowed === false);
+  const canSend = Boolean(delivery && delivery.canSend) && !trustBlocks;
   const isWhatsApp = f18PrepareState.channel === 'whatsapp';
   // A result from another pitch - or from the OTHER channel of this same pitch - must never
   // be shown against this one.
@@ -9212,11 +9221,14 @@ function f18PrepareRenderFooter() {
     send.type = 'button';
     send.addEventListener('click', () => f19OpenSendConfirm());
     footer.appendChild(send);
+  } else if (trustBlocks && !result) {
+    footer.appendChild(f11El('span', 'f19-send-blocked f265-trust-blocked', trust.message || 'This contact cannot be written to on this channel.'));
   } else if (delivery && !delivery.canSend && delivery.blockedMessage) {
     // The honest reason the control is absent: the backend's own refusal text, carried
     // verbatim from evaluateSendCapability(), not a renderer explanation.
     footer.appendChild(f11El('span', 'f19-send-blocked', delivery.blockedMessage));
   }
+  if (trust && trust.handoffAvailable === true && !isWhatsApp && data && data.pitchId) f265HandoffControls(footer, data.pitchId);
 
   const back = f11El('button', 'btn btn-sm btn-secondary', 'Back to Ready');
   back.type = 'button';
@@ -10434,6 +10446,245 @@ async function f21SendHistoryLoad(seq) {
 
 // F12: wire the read-only Outreach workspace's controls.
 //
+// === F26.5 Trust: consent, do-not-contact, provenance and the mail-app handoff ===
+// Everything here goes through window.ztechLeadIntel.trust, which names a lead (or a pitch)
+// and a channel - never an address: the main process reads the address from the stored lead.
+// Values are set with textContent only. There is no "they replied" control anywhere: a reply
+// counts only when it arrives as a verified relay event. "Mark unsubscribed" cannot be undone
+// here, so it asks once more. The handoff opens the person's own mail app (or copies the text);
+// it is not a send, and ZTech cannot see whether the email is sent.
+
+const TRUST_CHANNEL_LABEL = { email: 'Email', whatsapp: 'WhatsApp' };
+const TRUST_METHOD_LABEL = { inbound_message: 'They messaged us first', website_form: 'Website or form opt-in', in_person: 'In person', other: 'Other (described in the note)' };
+const TRUST_REASON_LABEL = { unsubscribe: 'Unsubscribed', bounce: 'Bounced', complaint: 'Marked as spam', manual: 'Do not contact' };
+const TRUST_SOURCE_KIND_LABEL = { collection_run: 'Collection run', import: 'Import', manual: 'Added by hand', enrichment: 'Enrichment', unknown: 'Source not recorded (added before tracking began)' };
+const TRUST_FIELD_LABEL = { phone: 'Phone', email: 'Email', website: 'Website' };
+let leadTrust = { leadId: null, view: null, error: null, loading: false, form: null, confirm: null, busy: false, notice: null };
+let leadTrustSeq = 0;
+
+function trustBridge() {
+  const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
+  return api && api.trust && typeof api.trust.forLead === 'function' ? api.trust : null;
+}
+
+function trustUnwrap(res, fallback) {
+  if (res && res.ok === true) return res.data && typeof res.data === 'object' ? res.data : {};
+  const msg = res && res.error && typeof res.error.message === 'string' && res.error.message ? res.error.message : fallback;
+  throw new Error(msg);
+}
+
+function trustEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function trustDate(iso) {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t).toLocaleDateString() : '\u2014';
+}
+
+function trustButton(label, onClick, kind) {
+  const b = trustEl('button', 'btn btn-sm ' + (kind || 'btn-secondary'), label);
+  b.type = 'button';
+  b.disabled = leadTrust.busy;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function resetLeadTrust() {
+  leadTrustSeq += 1;
+  leadTrust = { leadId: null, view: null, error: null, loading: false, form: null, confirm: null, busy: false, notice: null };
+  renderLeadTrust();
+}
+
+async function loadLeadTrust(leadId) {
+  const bridge = trustBridge();
+  const seq = ++leadTrustSeq;
+  if (!bridge) {
+    leadTrust = { ...leadTrust, leadId, view: null, loading: false, error: 'Consent and do-not-contact records are not available in this build.' };
+    renderLeadTrust();
+    return;
+  }
+  leadTrust = { ...leadTrust, leadId, loading: true, error: null, form: null, confirm: null, notice: null };
+  renderLeadTrust();
+  let next;
+  try {
+    next = { ...leadTrust, view: trustUnwrap(await bridge.forLead({ leadId }), 'Consent records could not be read.'), loading: false, error: null };
+  } catch (err) {
+    next = { ...leadTrust, view: null, loading: false, error: (err && err.message) || 'Consent records could not be read.' };
+  }
+  if (seq !== leadTrustSeq || leadDrawerLeadId !== leadId) return;
+  leadTrust = next;
+  renderLeadTrust();
+}
+
+async function trustAct(method, payload, notice) {
+  const bridge = trustBridge();
+  const leadId = leadTrust.leadId;
+  if (!bridge || !leadId || leadTrust.busy) return;
+  const seq = ++leadTrustSeq;
+  leadTrust = { ...leadTrust, busy: true, error: null, notice: null };
+  renderLeadTrust();
+  let next;
+  try {
+    const view = trustUnwrap(await bridge[method]({ leadId, ...payload }), 'The change could not be saved.');
+    next = { ...leadTrust, view, busy: false, form: null, confirm: null, notice };
+  } catch (err) {
+    next = { ...leadTrust, busy: false, error: (err && err.message) || 'The change could not be saved.' };
+  }
+  if (seq !== leadTrustSeq || leadDrawerLeadId !== leadId) return;
+  leadTrust = next;
+  renderLeadTrust();
+}
+
+function trustStatusLine(channel, c) {
+  if (!c || !c.available) return 'No valid contact stored for this channel.';
+  if (c.suppression) {
+    const scope = c.suppression.scope === 'workspace' ? 'this workspace' : 'all workspaces';
+    return `${TRUST_REASON_LABEL[c.suppression.reason] || 'Do not contact'} \u00b7 ${scope} \u00b7 since ${trustDate(c.suppression.createdAt)}. Nothing can be sent on this channel.`;
+  }
+  if (c.consent) {
+    return `Opted in: ${TRUST_METHOD_LABEL[c.consent.method] || c.consent.method} \u00b7 ${trustDate(c.consent.consentedAt)} \u00b7 recorded by ${c.consent.recordedBy}`;
+  }
+  if (channel === 'email' && c.verifiedReply) return `Replied (verified) \u00b7 ${trustDate(c.verifiedReply.receivedAt)}`;
+  return channel === 'email'
+    ? 'No opt-in recorded. A first email goes out from your own mail app.'
+    : 'No opt-in recorded. WhatsApp stays locked until the contact opts in.';
+}
+
+function trustConsentForm(channel) {
+  const form = trustEl('div', 'lead-trust-form');
+  const methodLabel = trustEl('label', 'lead-trust-label', 'How did they opt in?');
+  const select = trustEl('select', 'lead-trust-input');
+  select.id = `lead-trust-method-${channel}`;
+  methodLabel.htmlFor = select.id;
+  for (const m of Object.keys(TRUST_METHOD_LABEL)) {
+    // A reply cannot be recorded by hand for email: it counts only as a verified event.
+    if (channel === 'email' && m === 'inbound_message') continue;
+    const o = trustEl('option', null, TRUST_METHOD_LABEL[m]);
+    o.value = m;
+    select.appendChild(o);
+  }
+  const dateLabel = trustEl('label', 'lead-trust-label', 'Date');
+  const date = trustEl('input', 'lead-trust-input');
+  date.type = 'date';
+  date.id = `lead-trust-date-${channel}`;
+  date.value = new Date().toISOString().slice(0, 10);
+  dateLabel.htmlFor = date.id;
+  const noteLabel = trustEl('label', 'lead-trust-label', 'Evidence (where and how, e.g. "Signed up on our site form, 7 Oct")');
+  const note = trustEl('textarea', 'lead-trust-input');
+  note.id = `lead-trust-note-${channel}`;
+  note.rows = 2;
+  note.maxLength = 500;
+  noteLabel.htmlFor = note.id;
+  form.append(methodLabel, select, dateLabel, date, noteLabel, note);
+  const actions = trustEl('div', 'lead-trust-actions');
+  actions.appendChild(trustButton('Save opt-in', () => trustAct('recordConsent',
+    { channel, method: select.value, consentedAt: date.value, evidenceNote: note.value }, 'Opt-in recorded.'), 'btn-primary'));
+  actions.appendChild(trustButton('Cancel', () => { leadTrust = { ...leadTrust, form: null }; renderLeadTrust(); }));
+  form.appendChild(actions);
+  return form;
+}
+
+function trustChannelBlock(channel, c) {
+  const block = trustEl('div', 'lead-trust-channel');
+  block.setAttribute('data-channel', channel);
+  block.appendChild(trustEl('div', 'lead-trust-channel-title', TRUST_CHANNEL_LABEL[channel]));
+  block.appendChild(trustEl('div', 'lead-trust-status', trustStatusLine(channel, c)));
+  if (c && c.consent && !c.suppression) block.appendChild(trustEl('div', 'lead-trust-note', `Evidence: ${c.consent.evidenceNote}`));
+  if (channel === 'whatsapp' && c && c.sessionOpenUntil && Date.parse(c.sessionOpenUntil) > Date.now()) {
+    block.appendChild(trustEl('div', 'lead-trust-note', `Chat window open until ${new Date(Date.parse(c.sessionOpenUntil)).toLocaleString()}`));
+  }
+  if (!c || !c.available) return block;
+  const actions = trustEl('div', 'lead-trust-actions');
+  if (leadTrust.confirm === channel) {
+    actions.appendChild(trustEl('span', 'lead-trust-confirm', 'Mark as unsubscribed? This cannot be undone here.'));
+    actions.appendChild(trustButton('Yes, unsubscribe', () => trustAct('suppress', { channel, reason: 'unsubscribe' }, 'Marked as unsubscribed.'), 'btn-danger'));
+    actions.appendChild(trustButton('Cancel', () => { leadTrust = { ...leadTrust, confirm: null }; renderLeadTrust(); }));
+  } else if (c.suppression) {
+    if (c.suppression.removable) {
+      actions.appendChild(trustButton('Remove do-not-contact', () => trustAct('lift', { channel, suppressionId: c.suppression.id }, 'Do-not-contact removed.')));
+    }
+  } else {
+    actions.appendChild(trustButton('Record opt-in', () => { leadTrust = { ...leadTrust, form: channel, confirm: null }; renderLeadTrust(); }));
+    actions.appendChild(trustButton('Mark unsubscribed', () => { leadTrust = { ...leadTrust, confirm: channel, form: null }; renderLeadTrust(); }));
+    actions.appendChild(trustButton('Do not contact', () => trustAct('suppress', { channel, reason: 'manual', scope: 'global' }, 'Added to do-not-contact.')));
+  }
+  block.appendChild(actions);
+  if (leadTrust.form === channel && !c.suppression) block.appendChild(trustConsentForm(channel));
+  return block;
+}
+
+function renderLeadTrust() {
+  const host = typeof document !== 'undefined' ? document.getElementById('lead-drawer-trust') : null;
+  if (!host) return;
+  host.replaceChildren();
+  host.appendChild(trustEl('div', 'lead-drawer-section-title', 'Consent & do-not-contact'));
+  if (leadTrust.loading) { host.appendChild(trustEl('p', 'lead-drawer-muted', 'Loading\u2026')); return; }
+  if (leadTrust.error) host.appendChild(trustEl('p', 'lead-trust-error', leadTrust.error));
+  if (leadTrust.notice) host.appendChild(trustEl('p', 'lead-trust-notice', leadTrust.notice));
+  const v = leadTrust.view;
+  if (!v) return;
+  const channels = v.channels || {};
+  host.appendChild(trustChannelBlock('email', channels.email));
+  host.appendChild(trustChannelBlock('whatsapp', channels.whatsapp));
+  const prov = Array.isArray(v.provenance) ? v.provenance : [];
+  const box = trustEl('div', 'lead-trust-provenance');
+  box.appendChild(trustEl('div', 'lead-trust-channel-title', 'Where these details came from'));
+  if (!prov.length) box.appendChild(trustEl('div', 'lead-drawer-muted', 'Not recorded yet.'));
+  for (const p of prov) {
+    const kind = TRUST_SOURCE_KIND_LABEL[p.sourceKind] || 'Source not recorded';
+    const parts = [kind];
+    if (p.sourceRef) parts.push(p.sourceRef);
+    if (p.collectedAt) parts.push(trustDate(p.collectedAt));
+    box.appendChild(trustEl('div', 'lead-trust-prov-row', `${TRUST_FIELD_LABEL[p.field] || p.field}: ${parts.join(' \u00b7 ')}`));
+  }
+  host.appendChild(box);
+}
+
+// --- the mail-app handoff, inside the Prepare footer (email only) ---
+let f265HandoffState = { forPitchId: null, busy: false, result: null, error: null };
+
+function f265HandoffControls(footer, pitchId) {
+  const st = f265HandoffState.forPitchId === pitchId ? f265HandoffState : { forPitchId: pitchId, busy: false, result: null, error: null };
+  const wrap = trustEl('div', 'f265-handoff');
+  if (st.error) wrap.appendChild(trustEl('span', 'f19-send-blocked', st.error));
+  if (st.result) {
+    wrap.appendChild(trustEl('span', 'f265-handoff-result', st.result.kind === 'mailto'
+      ? 'Opened in your mail app. ZTech cannot see whether you send it.'
+      : `Copied. Paste it into a new email to ${st.result.to} with the subject "${st.result.subject}".`));
+    if (st.result.mailtoTooLong) wrap.appendChild(trustEl('span', 'f265-handoff-note', 'This text is long; some mail apps cut it off. If it looks incomplete, use Copy text.'));
+  }
+  const open = trustEl('button', 'btn btn-sm btn-secondary', 'Open in my mail app');
+  open.type = 'button';
+  open.disabled = st.busy;
+  open.addEventListener('click', () => f265Handoff(pitchId, 'mailto'));
+  const copy = trustEl('button', 'btn btn-sm btn-secondary', 'Copy text');
+  copy.type = 'button';
+  copy.disabled = st.busy;
+  copy.addEventListener('click', () => f265Handoff(pitchId, 'copy'));
+  wrap.append(open, copy);
+  wrap.appendChild(trustEl('span', 'f265-handoff-note', 'Your mail app sends this message, so ZTech cannot add the unsubscribe headers. The footer still gives the contact a way to opt out.'));
+  footer.appendChild(wrap);
+}
+
+async function f265Handoff(pitchId, kind) {
+  const bridge = trustBridge();
+  if (!bridge || typeof bridge.handoff !== 'function' || f265HandoffState.busy) return;
+  f265HandoffState = { forPitchId: pitchId, busy: true, result: null, error: null };
+  if (typeof f18PrepareRenderFooter === 'function') f18PrepareRenderFooter();
+  try {
+    const data = trustUnwrap(await bridge.handoff({ pitchId, kind }), 'The text could not be handed to your mail app.');
+    f265HandoffState = { forPitchId: pitchId, busy: false, result: data, error: null };
+  } catch (err) {
+    f265HandoffState = { forPitchId: pitchId, busy: false, result: null, error: (err && err.message) || 'The text could not be handed to your mail app.' };
+  }
+  if (typeof f18PrepareRenderFooter === 'function') f18PrepareRenderFooter();
+}
+// === END F26.5 Trust ===
+
 // This call MUST stay here, at the end of the module, and not beside the other
 // startup calls in the middle of this file. f12OutreachInit() reads F12_OUTREACH_STATUSES
 // and the F11 label maps synchronously, and those are module-scope `const`
@@ -10449,3 +10700,4 @@ f15ActivityInit();
 // F16: the Ready queue's controls, at the end of the module for the same TDZ reason.
 f16ReadyInit();
 f18PrepareInit();
+

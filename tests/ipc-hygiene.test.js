@@ -56,7 +56,10 @@ function leadIntelChannels() {
   // I6 declared lock update: the read-only lead timeline registrar.
   const timelineSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'timeline', 'timeline-ipc.js'), 'utf8');
   const timelineChannels = [...timelineSrc.matchAll(/'(lead-intel:timeline)'/g)].map(m => m[1]);
-  return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings, ...timelineChannels];
+  // F26.5 declared lock update: the trust registrar (five channels).
+  const trustSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'trust', 'trust-ipc.js'), 'utf8');
+  const trustChannels = [...trustSrc.matchAll(/'(lead-intel:trust-[a-z]+)'/g)].map(m => m[1]);
+  return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings, ...timelineChannels, ...trustChannels];
 }
 
 function preloadChannels(src) {

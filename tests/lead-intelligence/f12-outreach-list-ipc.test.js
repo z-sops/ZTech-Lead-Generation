@@ -290,9 +290,9 @@ test('F12 B2: preload exposes outreach.list and no email.send', () => {
       'lead-intel:opportunity-report',
       'lead-intel:opportunity-request',
     ];
-    const EXPECTED = [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends', ...OI_CHANNELS, 'lead-intel:timeline'].sort(); // I6 declared lock update: + timeline
+    const EXPECTED = [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends', ...OI_CHANNELS, 'lead-intel:timeline', 'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-suppress'].sort(); // I6 declared lock update: + timeline; F26.5: + five trust channels
     assert.deepEqual(leadIntel.slice().sort(), EXPECTED);
-    assert.equal(leadIntel.length, 20);
+    assert.equal(leadIntel.length, 25);
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(leadIntel.includes('lead-intel:outreach-list'), 'outreach.list must be exposed');
     assert.ok(!leadIntel.includes('lead-intel:email-send'), 'email.send must never be exposed');

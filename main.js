@@ -23,6 +23,7 @@ const { createOutreachSettings } = require('./src/main/lead-intelligence/outreac
 const { registerOutreachSettingsIpc } = require('./src/main/lead-intelligence/outreach/outreach-settings-ipc');
 const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/main/lead-intelligence/outreach-ipc');
 const { registerTimelineIpc } = require('./src/main/lead-intelligence/timeline/timeline-ipc');
+const { registerTrustIpc } = require('./src/main/lead-intelligence/trust/trust-ipc');
 
 let mainWindow = null;
 let providerManager = null;
@@ -1506,6 +1507,32 @@ function registerLeadIntelIpcHandlers() {
     }
   } catch (err) {
     logger.error('lead-intel', 'timeline IPC registration failed', { error: err.message });
+  }
+
+  // F26.5: suppression, consent, provenance view and the mail-app handoff. Same trusted-sender
+  // rule; addresses, refs and relay secrets never cross this boundary.
+  try {
+    if (leadIntelRuntime.li && leadIntelRuntime.li.trust) {
+      registerTrustIpc({
+        ipcMain,
+        trust: leadIntelRuntime.li.trust,
+        outreach: leadIntelRuntime.li.outreach,
+        isTrustedSender: (event) => {
+          try {
+            return leadIntelTrustedSender(event) === true;
+          } catch {
+            return false;
+          }
+        },
+        copyText: (text) => {
+          const { clipboard } = require('electron');
+          clipboard.writeText(String(text || ''));
+        },
+        logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
+      });
+    }
+  } catch (err) {
+    logger.error('lead-intel', 'trust IPC registration failed', { error: err.message });
   }
 }
 

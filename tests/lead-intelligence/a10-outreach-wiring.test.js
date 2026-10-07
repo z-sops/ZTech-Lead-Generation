@@ -705,8 +705,10 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     'lead-intel:pitch-get',
     'lead-intel:pitch-update',
     'lead-intel:timeline', // I6 declared lock update: the read-only lead timeline
+    // F26.5 declared lock update: the five trust channels (none of them sends).
+    'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-suppress',
     ]);
-    assert.equal(leadIntel.length, 20, 'exactly twenty Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview)');
+    assert.equal(leadIntel.length, 25, 'exactly twenty-five Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust)');
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 

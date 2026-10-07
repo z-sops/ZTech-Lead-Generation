@@ -201,9 +201,12 @@ function makeEnv(opts) {
   // The I2 OI panel is its own block; the drawer calls into it at runtime.
   const oiPanel = between(rendererSource, '// === I2 Opportunity Intelligence: Lead Drawer panel ===',
     '// === P1-G Collection Quality Report (read-only) ===');
+  // F26.5 declared harness update: the drawer now also calls the F26.5 trust block
+  // (consent, do-not-contact, provenance) when a lead renders, so it is evaluated too.
+  const trustBlock = between(rendererSource, '// === F26.5 Trust: consent, do-not-contact, provenance and the mail-app handoff ===', '// === END F26.5 Trust ===');
   const names = Object.keys(deps);
   const api = new Function(...names,
-    escapeHtmlSrc + '\n' + renderWebsiteSrc + '\n' + mobile + '\n' + researchConsts + '\n' + p1a + '\n' + f5 + '\n' + oiPanel +
+    escapeHtmlSrc + '\n' + renderWebsiteSrc + '\n' + mobile + '\n' + researchConsts + '\n' + p1a + '\n' + f5 + '\n' + oiPanel + '\n' + trustBlock +
     '\nreturn { showLeadDrawer, renderLeadDrawer, renderLeadDrawerResearch, resetLeadDrawer, selectLeadDrawerTab,' +
     ' updateLeadDrawerNav, setLeadDrawerSaveState, updateLeadDrawerQualificationBadge,' +
     ' get leadId() { return leadDrawerLeadId; }, get tab() { return leadDrawerTab; } };'
@@ -636,8 +639,8 @@ test('21. the IPC channel set and dependencies are unchanged', () => {
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 78, '78 preload invocations');
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total.
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 83, '83 preload invocations');
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'the F5 block performs no I/O');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);

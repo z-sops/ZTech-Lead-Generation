@@ -6086,3 +6086,68 @@ textarea {
   color: var(--text-1);
   white-space: pre-wrap;
 }
+
+/* F26.5 Trust: consent, do-not-contact, provenance, mail-app handoff */
+.lead-trust-channel,
+.lead-trust-provenance {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.lead-trust-channel-title {
+  font-size: var(--font-12);
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: var(--space-1);
+}
+
+.lead-trust-status,
+.lead-trust-prov-row {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.lead-trust-note,
+.lead-trust-confirm,
+.f265-handoff-note {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lead-trust-error {
+  font-size: var(--font-12);
+  color: var(--danger-f2);
+}
+
+.lead-trust-notice,
+.f265-handoff-result {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.lead-trust-actions,
+.f265-handoff {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.lead-trust-form {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.lead-trust-label {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lead-trust-input {
+  font-size: var(--font-12);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
