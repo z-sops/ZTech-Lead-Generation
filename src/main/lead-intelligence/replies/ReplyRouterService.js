@@ -142,10 +142,13 @@ class ReplyRouterService {
     // `pending` reads EVERY route, page by page, so an old pending reply - above all a possible
     // opt-out - never falls out of the list behind newer reviewed ones. `all` shows the newest.
     const out = [];
+    const seen = new Set(); // a route written mid-read shifts the pages: never list one twice
     const cap = show === 'all' ? LIST_LIMIT : Infinity;
     for (let offset = 0; offset < cap && offset < MAX_SCAN && out.length < LIST_LIMIT; offset += PAGE) {
       const rows = await this.store.replyRoutes.list({ kinds: ['reply', 'unsubscribe'], limit: PAGE, offset });
       for (const r of rows) {
+        if (seen.has(r.event_id)) continue;
+        seen.add(r.event_id);
         const v = await this._view(r, false);
         if (show === 'pending' && v.state !== 'pending') continue;
         if (category && v.category !== category) continue;
@@ -181,7 +184,7 @@ class ReplyRouterService {
       if (r.kind === 'away') { if (!away) away = { routedAt: r.routed_at }; continue; }
       if (latest) continue;
       const v = await this._view(r, false);
-      if (v.state === 'pending' || v.state === 'reviewed' || v.state === 'unsubscribed') latest = v;
+      if (v.state === 'pending' || v.state === 'reviewed' || v.state === 'unsubscribed' || v.state === 'suppressed') latest = v;
     }
     return { leadId: String(leadId), latest, away };
   }

@@ -320,7 +320,8 @@ test('T3b. review fix: a reply whose contact is already on do-not-contact is not
   assert.deepStrictEqual((await e.router.list()).replies, []);
   const all = (await e.router.list({ show: 'all' })).replies;
   assert.deepStrictEqual(all.map((v) => [v.state, v.possibleOptOut]), [['suppressed', false]]);
-  assert.strictEqual((await e.router.forLead({ leadId: 'L1' })).latest, null, 'the drawer no longer asks for a review it cannot take');
+  const latest = (await e.router.forLead({ leadId: 'L1' })).latest;
+  assert.deepStrictEqual([latest.eventId, latest.state, latest.possibleOptOut], [eventOf('in1'), 'suppressed', false], 'the drawer shows the newest reply as on do-not-contact, never an older one');
   // An "unsubscribe" reply cannot be re-categorised either.
   e.gmail.deliver('u1', reply('Unsubscribe'));
   await sync(e);
@@ -338,6 +339,18 @@ test('T3c. review fix: an old pending reply stays listed behind any number of ne
   }
   const pending = (await e.router.list()).replies;
   assert.deepStrictEqual(pending.map((v) => v.eventId), [eventOf('old')], 'found on the third page');
+  // A route written while the list is being read shifts the pages: nothing is listed twice.
+  const f = await env();
+  await firstEmail(f);
+  f.gmail.deliver('old', reply('Stop emailing me'));
+  await sync(f);
+  const fb = await f.store.replyRoutes.get(eventOf('old'));
+  for (let i = 0; i < 199; i += 1) await f.store.replyRoutes.put({ ...fb, event_id: 'gm_' + String(i).padStart(40, 'b'), routed_at: h.iso(f.clock.t + 1000 + i) });
+  const realList = f.store.replyRoutes.list.bind(f.store.replyRoutes);
+  let pages = 0;
+  f.store.replyRoutes.list = async (q) => { pages += 1; if (pages === 2) await f.store.replyRoutes.put({ ...fb, event_id: 'gm_' + 'f'.repeat(40), routed_at: h.iso(f.clock.t + 99999) }); return realList(q); };
+  const again = (await f.router.list()).replies.map((v) => v.eventId);
+  assert.deepStrictEqual(again, [eventOf('old')], 'listed once although a new route shifted it onto the next page');
   assert.strictEqual(pending[0].possibleOptOut, true);
   assert.strictEqual(pending[0].leadName, 'Acme Bakery');
   assert.strictEqual((await e.router.list({ show: 'all' })).replies.length, 200, '"all" shows the newest 200');

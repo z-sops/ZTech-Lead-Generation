@@ -8283,6 +8283,7 @@ function renderLeadReplyRoute() {
       ? `Matching review: ${F29_REVIEW_LABEL[v.suggestedReview]}. Nothing is recorded until you click a review button.`
       : 'No matching review: choose the review yourself.'));
     const row = trustEl('div', 'f29-controls');
+    if (v.state === 'suppressed') row.hidden = true;
     if (!v.confirmed && !f29Lead.changing) row.appendChild(f29Button('Confirm', () => f29LeadConfirm(v.eventId, v.suggested), 'btn-secondary', f29Lead.busy));
     if (f29Lead.changing) {
       const select = f29CategorySelect(v.category, 'Reply category');
@@ -8347,7 +8348,7 @@ function f29ListRow(v) {
     r.appendChild(open);
   }
   if (v.kind === 'reply' && v.state !== 'suppressed' && !v.confirmed) r.appendChild(f29Button('Confirm', () => f29ListConfirm(v.eventId, v.suggested), 'btn-secondary', f29List.busy));
-  if (v.kind === 'reply') {
+  if (v.kind === 'reply' && v.state !== 'suppressed') {
     const select = f29CategorySelect(v.category, 'Change the category');
     select.disabled = f29List.busy;
     select.addEventListener('change', () => f29ListConfirm(v.eventId, select.value));
