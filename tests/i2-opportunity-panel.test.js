@@ -49,8 +49,8 @@ function functionSource(source, marker) {
 }
 
 const OI_START = '// === I2 Opportunity Intelligence: Lead Drawer panel ===';
-// I6 declared update: the read-only Timeline block now follows the OI block.
-const OI_END = '// === I6 Lead timeline ===';
+// I6/I7 declared update: the I7 pitch-context block (then I6 Timeline) now follows the OI block.
+const OI_END = '// === I7 OI pitch context ===';
 const oiBlock = between(rendererSource, OI_START, OI_END);
 const oiCode = oiBlock.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const helpers = [

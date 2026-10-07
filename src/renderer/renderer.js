@@ -3906,6 +3906,8 @@ function renderLeadDrawer(lead) {
   if (leadDrawerLeadId) loadLeadDrawerOpportunity(leadDrawerLeadId);
   // I6: a new lead starts with an empty timeline; it loads when its tab is opened.
   resetLeadDrawerTimeline();
+  // I7: the Opportunity context starts collapsed for every lead.
+  resetPitchOiContext();
   if (leadDrawerTab === 'timeline' && leadDrawerLeadId) loadLeadDrawerTimeline(leadDrawerLeadId, false);
 }
 
@@ -3935,6 +3937,7 @@ function resetLeadDrawer() {
   leadDrawerOpportunitySeq += 1;
   leadDrawerOpportunity = { kind: 'idle', view: null, error: null, leadId: null, running: false, notice: null };
   resetLeadDrawerTimeline();
+  resetPitchOiContext();
   leadDrawerTab = 'overview';
   markLeadDrawerRow(null);
   setLeadDrawerSaveState('lead-drawer-save-state', null, '');
@@ -4837,6 +4840,203 @@ async function runLeadDrawerOpportunity(confirmFresh) {
   if (seq !== leadDrawerOpportunitySeq || leadDrawerLeadId !== leadId) return;
   leadDrawerOpportunity = next;
   renderLeadDrawerOpportunity();
+}
+
+// === I7 OI pitch context ===
+// Opportunity Intelligence context in the Pitch tab - REVIEW ONLY. It lists the facts and
+// estimates OI's bridge allows a pitch to rest on, with where each came from, and can show
+// an unsaved preview. Nothing here is stored, approved or delivered: the real draft, the
+// gate and every send keep using the Zuni-SEO evidence exactly as before. Loaded only when
+// the person expands the section; no timer, no polling; textContent only.
+
+const PC_FRESH_TEXT = { fresh: 'Fresh', stale: 'Stale', expired: 'Expired', unknown: 'Age unknown' };
+const PC_KIND_TEXT = { fact: 'Fact', estimate: 'Estimate' };
+let pitchOiContext = { leadId: null, open: false, loading: false, data: null, error: null, preview: null, previewLoading: false, previewError: null };
+let pitchOiContextSeq = 0;
+
+function resetPitchOiContext() {
+  pitchOiContextSeq += 1;
+  pitchOiContext = { leadId: null, open: false, loading: false, data: null, error: null, preview: null, previewLoading: false, previewError: null };
+  renderPitchOiContext();
+}
+
+function pitchOiApi() {
+  const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
+  return api && api.opportunity && typeof api.opportunity.pitchContext === 'function' ? api.opportunity : null;
+}
+
+function pitchOiUnwrap(res) {
+  if (res && res.ok === true) return res.data && typeof res.data === 'object' ? res.data : {};
+  const msg = res && res.error && typeof res.error.message === 'string' && res.error.message ? res.error.message : 'Opportunity context could not be read.';
+  throw new Error(msg);
+}
+
+function pcEl(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function pcButton(label, action, onClick, disabled) {
+  const b = pcEl('button', 'btn btn-sm btn-secondary', label);
+  b.type = 'button';
+  b.setAttribute('data-action', action);
+  b.disabled = Boolean(disabled);
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+async function loadPitchOiContext(leadId) {
+  const api = pitchOiApi();
+  if (!leadId) return;
+  if (!api) {
+    pitchOiContext = { ...pitchOiContext, leadId, loading: false, error: 'Opportunity Intelligence is unavailable.' };
+    renderPitchOiContext();
+    return;
+  }
+  const seq = ++pitchOiContextSeq;
+  pitchOiContext = { ...pitchOiContext, leadId, loading: true, error: null, data: null, preview: null, previewError: null };
+  renderPitchOiContext();
+  let next;
+  try {
+    const data = pitchOiUnwrap(await api.pitchContext({ leadId }));
+    next = { ...pitchOiContext, loading: false, data, error: null };
+  } catch (err) {
+    next = { ...pitchOiContext, loading: false, data: null, error: (err && err.message) || 'Opportunity context could not be read.' };
+  }
+  if (seq !== pitchOiContextSeq || leadDrawerLeadId !== leadId) return;
+  pitchOiContext = next;
+  renderPitchOiContext();
+}
+
+function togglePitchOiContext() {
+  const open = !pitchOiContext.open;
+  pitchOiContext = { ...pitchOiContext, open };
+  renderPitchOiContext();
+  if (open && leadDrawerLeadId && (!pitchOiContext.data || pitchOiContext.leadId !== leadDrawerLeadId)) loadPitchOiContext(leadDrawerLeadId);
+}
+
+async function previewPitchOiContext() {
+  const api = pitchOiApi();
+  const leadId = leadDrawerLeadId;
+  if (!api || typeof api.pitchPreview !== 'function' || !leadId) return;
+  const seq = pitchOiContextSeq;
+  pitchOiContext = { ...pitchOiContext, previewLoading: true, previewError: null, preview: null };
+  renderPitchOiContext();
+  let preview = null;
+  let previewError = null;
+  try {
+    const data = pitchOiUnwrap(await api.pitchPreview({ leadId }));
+    if (data.available === true && data.pitch) preview = data.pitch;
+    else previewError = data.reason || 'The preview could not be built.';
+  } catch (err) {
+    previewError = (err && err.message) || 'The preview could not be built.';
+  }
+  if (seq !== pitchOiContextSeq || leadDrawerLeadId !== leadId) return;
+  pitchOiContext = { ...pitchOiContext, previewLoading: false, preview, previewError };
+  renderPitchOiContext();
+}
+
+function pitchOiPreviewBox(p) {
+  const box = pcEl('div', 'pitch-oi-preview');
+  box.setAttribute('role', 'region');
+  box.setAttribute('aria-label', 'Unsaved preview');
+  box.appendChild(pcEl('p', 'lead-drawer-warning', 'Preview - not saved, not approved, cannot be sent.'));
+  const field = (label, value) => {
+    if (!value) return;
+    box.appendChild(pcEl('p', 'lead-drawer-muted', label));
+    box.appendChild(pcEl('p', 'pitch-oi-preview-text', value));
+  };
+  field('Subject', p.subject);
+  field('Opening', p.opening);
+  if (Array.isArray(p.observations) && p.observations.length) {
+    box.appendChild(pcEl('p', 'lead-drawer-muted', 'Observations'));
+    const ul = pcEl('ul', 'pitch-oi-preview-list');
+    for (const o of p.observations) ul.appendChild(pcEl('li', '', o && o.text ? o.text : ''));
+    box.appendChild(ul);
+  }
+  field('Value proposition', p.valueProposition);
+  field('Call to action', p.callToAction);
+  box.appendChild(pcEl('p', 'lead-drawer-muted',
+    'To use any of this, copy the wording into the draft above yourself. The draft keeps its own evidence checks.'));
+  box.appendChild(pcButton('Close preview', 'oi-ctx-preview-close', () => {
+    pitchOiContext = { ...pitchOiContext, preview: null, previewError: null };
+    renderPitchOiContext();
+  }));
+  return box;
+}
+
+function renderPitchOiContext() {
+  const box = document.getElementById('lead-drawer-oi-context');
+  if (!box) return;
+  const st = pitchOiContext;
+  const head = pcEl('button', 'pitch-oi-toggle', `${st.open ? '▾' : '▸'} Opportunity context (review only)`);
+  head.type = 'button';
+  head.setAttribute('data-action', 'oi-ctx-toggle');
+  head.setAttribute('aria-expanded', st.open ? 'true' : 'false');
+  head.addEventListener('click', togglePitchOiContext);
+  const nodes = [head];
+  if (!st.open) { box.replaceChildren(...nodes); return; }
+  nodes.push(pcEl('p', 'lead-drawer-muted',
+    'Facts and estimates from Opportunity Intelligence. Shown for review only - the pitch above is still built from the website research evidence.'));
+  if (st.loading) {
+    nodes.push(pcEl('p', 'lead-drawer-muted', 'Loading Opportunity context...'));
+    box.replaceChildren(...nodes);
+    return;
+  }
+  if (st.error) {
+    nodes.push(pcEl('p', 'lead-drawer-warning', st.error));
+    box.replaceChildren(...nodes);
+    return;
+  }
+  const d = st.data;
+  if (!d) { box.replaceChildren(...nodes); return; }
+  if (d.available !== true) {
+    nodes.push(pcEl('p', 'lead-drawer-empty', d.reason || 'No Opportunity Intelligence report for this lead yet.'));
+    box.replaceChildren(...nodes);
+    return;
+  }
+  const line = pcEl('div', 'lead-drawer-state-line');
+  const f = d.freshness && typeof d.freshness === 'object' ? d.freshness : null;
+  if (f) {
+    const chip = pcEl('span', 'pitch-oi-chip', PC_FRESH_TEXT[f.state] || 'Age unknown');
+    chip.setAttribute('data-state', PC_FRESH_TEXT[f.state] ? f.state : 'unknown');
+    line.appendChild(chip);
+  }
+  if (d.source && d.source.generated_at) line.appendChild(pcEl('span', 'lead-drawer-muted', `Report from ${leadDrawerFormatTime(d.source.generated_at)}`));
+  nodes.push(line);
+  if (d.older && d.older.message) nodes.push(pcEl('p', 'lead-drawer-warning', d.older.message));
+  if (d.eligible !== true) nodes.push(pcEl('p', 'lead-drawer-warning', d.message || 'Refresh research first.'));
+  const items = Array.isArray(d.items) ? d.items : [];
+  const counts = d.bridge && d.bridge.counts ? d.bridge.counts : {};
+  const excluded = d.bridge && d.bridge.excluded ? d.bridge.excluded : {};
+  nodes.push(pcEl('p', 'lead-drawer-muted',
+    `${items.filter((x) => x.eligible).length} usable item(s) · ${Number(counts.inference_findings || excluded.inferences || 0)} inference(s) left out · ${Number(excluded.opportunities_not_bridged || 0)} opportunity idea(s) not used`));
+  if (items.length) {
+    const ul = pcEl('ul', 'pitch-oi-items');
+    for (const it of items) {
+      const li = pcEl('li', 'pitch-oi-item');
+      li.setAttribute('data-eligible', it.eligible ? 'true' : 'false');
+      const kind = pcEl('span', 'pitch-oi-chip', PC_KIND_TEXT[it.claim_kind] || 'Evidence');
+      kind.setAttribute('data-kind', PC_KIND_TEXT[it.claim_kind] ? it.claim_kind : 'other');
+      li.appendChild(kind);
+      li.appendChild(pcEl('span', 'pitch-oi-item-title', it.title));
+      if (it.observed) li.appendChild(pcEl('p', 'lead-drawer-muted', it.observed));
+      const src = d.source ? `Source: ${d.source.research_id}` : '';
+      const ev = Array.isArray(it.evidence_ids) && it.evidence_ids.length ? ` · Evidence: ${it.evidence_ids.join(', ')}` : '';
+      li.appendChild(pcEl('p', 'lead-drawer-muted pitch-oi-prov', src + ev));
+      ul.appendChild(li);
+    }
+    nodes.push(ul);
+  } else {
+    nodes.push(pcEl('p', 'lead-drawer-empty', 'This report has no facts or estimates a pitch could rest on.'));
+  }
+  const canPreview = d.eligible === true && items.some((x) => x.eligible) && !st.previewLoading;
+  nodes.push(pcButton(st.previewLoading ? 'Building preview...' : 'Preview OI-informed draft', 'oi-ctx-preview', previewPitchOiContext, !canPreview));
+  if (st.previewError) nodes.push(pcEl('p', 'lead-drawer-warning', st.previewError));
+  if (st.preview) nodes.push(pitchOiPreviewBox(st.preview));
+  box.replaceChildren(...nodes);
 }
 
 // === I6 Lead timeline ===

@@ -6025,3 +6025,64 @@ textarea {
     grid-column: 1 / -1;
   }
 }
+
+/* === I7 OI pitch context (review only) =================================== */
+
+.pitch-oi-toggle {
+  background: transparent;
+  border: 0;
+  padding: var(--space-2) 0;
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.pitch-oi-chip {
+  display: inline-block;
+  margin-right: var(--space-2);
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.pitch-oi-items,
+.pitch-oi-preview-list {
+  margin: var(--space-2) 0 var(--space-3);
+  padding-left: var(--space-4);
+}
+
+.pitch-oi-item {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pitch-oi-item[data-eligible="false"] {
+  opacity: 0.6;
+}
+
+.pitch-oi-item-title {
+  color: var(--text-1);
+}
+
+.pitch-oi-prov {
+  font-size: var(--font-12);
+  overflow-wrap: anywhere;
+}
+
+.pitch-oi-preview {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-md);
+}
+
+.pitch-oi-preview-text {
+  margin: 0 0 var(--space-2);
+  color: var(--text-1);
+  white-space: pre-wrap;
+}
