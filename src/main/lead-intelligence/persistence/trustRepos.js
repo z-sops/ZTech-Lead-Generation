@@ -230,12 +230,15 @@ class SqlTrustEvents {
 class SqlRecipientRefs {
   constructor(store) { this.s = store; }
 
-  /** Idempotent per (channel, address): the first ref minted for an address is kept forever. */
+  /**
+   * Idempotent per ref: a ref is stored once and always maps to its first address. One address
+   * may hold several refs (a relay key rotation mints new ones), and every one stays resolvable.
+   */
   async ensure(rec) {
     const v = requireValid(normalizeRecipientRefRecord(rec));
     return this.s.tx(() => {
       this.s.db.run(`INSERT OR IGNORE INTO li_recipient_refs (${REF_COLS.join(', ')}) VALUES (${placeholders(REF_COLS)})`, REF_COLS.map((c) => v[c]));
-      return freeze(sqlRow(this.s.db, `SELECT ${REF_COLS.join(', ')} FROM li_recipient_refs WHERE channel = ? AND normalized_address = ?`, [v.channel, v.normalized_address]));
+      return freeze(sqlRow(this.s.db, `SELECT ${REF_COLS.join(', ')} FROM li_recipient_refs WHERE recipient_ref = ?`, [v.recipient_ref]));
     });
   }
 
@@ -246,7 +249,7 @@ class SqlRecipientRefs {
   async forAddress({ channel, address }) {
     const a = normalizeAddress(channel, address);
     if (!a) return null;
-    return freeze(sqlRow(this.s.db, `SELECT ${REF_COLS.join(', ')} FROM li_recipient_refs WHERE channel = ? AND normalized_address = ?`, [channel, a]));
+    return freeze(sqlRow(this.s.db, `SELECT ${REF_COLS.join(', ')} FROM li_recipient_refs WHERE channel = ? AND normalized_address = ? ORDER BY created_at DESC, recipient_ref DESC LIMIT 1`, [channel, a]));
   }
 }
 
@@ -401,9 +404,7 @@ class MemRecipientRefs {
 
   async ensure(rec) {
     const v = requireValid(normalizeRecipientRefRecord(rec));
-    const existing = [...this.rows.values()].find((r) => r.channel === v.channel && r.normalized_address === v.normalized_address);
-    if (existing) return freeze(existing);
-    if (this.rows.has(v.recipient_ref)) throw new Error('UNIQUE constraint failed: li_recipient_refs.recipient_ref');
+    if (this.rows.has(v.recipient_ref)) return freeze(this.rows.get(v.recipient_ref));
     this.rows.set(v.recipient_ref, { ...v });
     return freeze(v);
   }
@@ -413,7 +414,8 @@ class MemRecipientRefs {
   async forAddress({ channel, address }) {
     const a = normalizeAddress(channel, address);
     if (!a) return null;
-    return freeze([...this.rows.values()].find((r) => r.channel === channel && r.normalized_address === a) || null);
+    const hits = [...this.rows.values()].filter((r) => r.channel === channel && r.normalized_address === a).sort(byDesc('created_at', 'recipient_ref'));
+    return freeze(hits[0] || null);
   }
 }
 

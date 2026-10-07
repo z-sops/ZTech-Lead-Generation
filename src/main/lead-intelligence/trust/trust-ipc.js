@@ -55,11 +55,6 @@ const TRUST_SCHEMAS = Object.freeze({
   }, ['pitchId', 'kind']),
 });
 
-/** A date-only value means midnight UTC of that day. */
-function isoOf(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00.000Z` : value;
-}
-
 function registerTrustIpc({ ipcMain, trust, outreach, isTrustedSender, copyText = null, logger = console }) {
   if (typeof isTrustedSender !== 'function') throw new TypeError('isTrustedSender is required');
   if (!trust || typeof trust.leadTrust !== 'function') throw new TypeError('trust service is required');
@@ -67,7 +62,7 @@ function registerTrustIpc({ ipcMain, trust, outreach, isTrustedSender, copyText 
     [TRUST_CHANNELS_IPC.LEAD]: (a) => trust.leadTrust({ leadId: String(a.leadId) }),
     [TRUST_CHANNELS_IPC.SUPPRESS]: (a) => trust.suppressLead({ leadId: String(a.leadId), channel: a.channel, reason: a.reason, scope: a.scope || 'global' }),
     [TRUST_CHANNELS_IPC.LIFT]: (a) => trust.liftSuppression({ leadId: String(a.leadId), channel: a.channel, suppressionId: a.suppressionId }),
-    [TRUST_CHANNELS_IPC.CONSENT]: (a) => trust.recordConsent({ leadId: String(a.leadId), channel: a.channel, method: a.method, consentedAt: isoOf(a.consentedAt), evidenceNote: a.evidenceNote }),
+    [TRUST_CHANNELS_IPC.CONSENT]: (a) => trust.recordConsent({ leadId: String(a.leadId), channel: a.channel, method: a.method, consentedAt: a.consentedAt, evidenceNote: a.evidenceNote }),
     [TRUST_CHANNELS_IPC.HANDOFF]: async (a) => {
       if (!outreach || typeof outreach.handoff !== 'function') throw new ForbiddenError('Handoff is unavailable');
       const r = await outreach.handoff({ pitchId: a.pitchId, kind: a.kind });
@@ -76,7 +71,9 @@ function registerTrustIpc({ ipcMain, trust, outreach, isTrustedSender, copyText 
         await copyText(r.body);
         copied = true;
       }
-      return { kind: r.kind, to: r.to, subject: r.subject, body: r.body, copied, mailtoTooLong: r.mailtoTooLong, sent: false, headersGuaranteed: false, headerNote: r.headerNote };
+      // The body never crosses to the renderer: main opened it (mailto) or copied it. It can carry
+      // the personal unsubscribe link, whose recipient_ref the renderer must never receive.
+      return { kind: r.kind, to: r.to, subject: r.subject, copied, mailtoTooLong: r.mailtoTooLong, sent: false, headersGuaranteed: false, headerNote: r.headerNote };
     },
   };
   for (const [channel, run] of Object.entries(handlers)) {

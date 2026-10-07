@@ -249,14 +249,18 @@ for (const [kind, make] of KINDS) {
     }
   });
 
-  test(`${kind}: recipient refs - one opaque ref per address, resolvable only locally`, opts, async () => {
+  test(`${kind}: recipient refs - idempotent per ref, several refs per address (key rotation), resolvable only locally`, opts, async () => {
     const { store } = await make();
+    const REF2 = 'rref_' + 'b'.repeat(32);
     const r1 = await store.recipientRefs.ensure({ recipient_ref: REF, channel: 'email', normalized_address: 'Owner@Acme.Example', created_at: T(1) });
-    const r2 = await store.recipientRefs.ensure({ recipient_ref: 'rref_' + 'b'.repeat(32), channel: 'email', normalized_address: 'owner@acme.example', created_at: T(2) });
-    assert.equal(r2.recipient_ref, r1.recipient_ref, 'the first ref is kept');
+    const again = await store.recipientRefs.ensure({ recipient_ref: REF, channel: 'email', normalized_address: 'other@acme.example', created_at: T(3) });
+    assert.equal(again.normalized_address, r1.normalized_address, 'a ref keeps its first address');
+    const r2 = await store.recipientRefs.ensure({ recipient_ref: REF2, channel: 'email', normalized_address: 'owner@acme.example', created_at: T(2) });
+    assert.equal(r2.recipient_ref, REF2, 'a rotated ref for the same address is stored too');
     assert.equal((await store.recipientRefs.resolve(REF)).normalized_address, 'owner@acme.example');
+    assert.equal((await store.recipientRefs.resolve(REF2)).normalized_address, 'owner@acme.example');
     assert.equal(await store.recipientRefs.resolve('rref_' + 'c'.repeat(32)), null);
-    assert.equal((await store.recipientRefs.forAddress({ channel: 'email', address: 'OWNER@acme.example' })).recipient_ref, REF);
+    assert.equal((await store.recipientRefs.forAddress({ channel: 'email', address: 'OWNER@acme.example' })).recipient_ref, REF2, 'the newest ref is current');
     await assert.rejects(store.recipientRefs.ensure({ recipient_ref: 'owner@acme.example', channel: 'email', normalized_address: 'a@b.co', created_at: T(1) }), /Invalid trust record/);
   });
 

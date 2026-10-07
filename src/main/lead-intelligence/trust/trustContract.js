@@ -66,8 +66,11 @@ function cleanText(value, max) {
   return value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+// A UTC timestamp exactly as Date#toISOString writes it. A zone-less value would be read in
+// local time and shift windows (for example the 24h WhatsApp session), so it is refused.
+const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 function isIso(value) {
-  return typeof value === 'string' && value.length <= 40 && Number.isFinite(Date.parse(value));
+  return typeof value === 'string' && ISO_UTC_RE.test(value) && Number.isFinite(Date.parse(value));
 }
 
 function fail(error) { return { ok: false, error }; }

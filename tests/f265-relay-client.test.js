@@ -93,16 +93,19 @@ test('9b. pull -> verify -> intake -> ack -> cursor: an unsubscribe and a bounce
   assert.strictEqual((await store.suppressions.find({ channel: 'email', address: LEAD_EMAIL })).reason, 'unsubscribe');
 });
 
-test('9c. a forged event in the batch is rejected (no effect) and still acknowledged; the genuine ones apply', async () => {
+test('9c. a forged event is rejected with no effect and NOT acknowledged; the cursor holds so nothing is skipped', async () => {
   const { li, store } = runtime();
   const relay = fakeRelay();
-  const client = new RelayClient({ baseUrl: BASE, secret: SECRET, trust: li.trust, fetchImpl: relay.fetchImpl, cursorStore: memCursor() });
+  const cursor = memCursor();
+  const client = new RelayClient({ baseUrl: BASE, secret: SECRET, trust: li.trust, fetchImpl: relay.fetchImpl, cursorStore: cursor });
   const ref = recipientRefFor(keys.refKey, 'whatsapp', LEAD_PHONE);
-  relay.push({ kind: 'complaint', channel: 'whatsapp', recipient_ref: ref }, { forge: true });
-  relay.push({ kind: 'whatsapp_inbound', channel: 'whatsapp', recipient_ref: ref });
+  const forged = relay.push({ kind: 'complaint', channel: 'whatsapp', recipient_ref: ref }, { forge: true });
+  const good = relay.push({ kind: 'whatsapp_inbound', channel: 'whatsapp', recipient_ref: ref });
   const r = await client.pullOnce();
-  assert.deepStrictEqual(r, { ok: true, pulled: 2, applied: 1, rejected: 1 });
-  assert.strictEqual(relay.state.acked.size, 2, 'a forged event is not re-sent forever');
+  assert.deepStrictEqual(r, { ok: false, code: 'RELAY_EVENTS_REJECTED', pulled: 2, applied: 1, rejected: 1 });
+  assert.deepStrictEqual([...relay.state.acked], [good.event_id], 'only the accepted event is acknowledged');
+  assert.ok(!relay.state.acked.has(forged.event_id), 'a refused event stays at the relay: a clock or key problem never deletes an opt-out');
+  assert.strictEqual(cursor.peek(), null, 'the cursor does not move past a refused event');
   assert.strictEqual(await store.suppressions.find({ channel: 'whatsapp', address: LEAD_PHONE }), null);
   assert.strictEqual((await store.consents.listByLead('L1'))[0].source, 'relay');
 });
@@ -184,6 +187,25 @@ test('9g. linkFor is pure and matches the ref the relay computes; the renderer-f
   assert.strictEqual(await store.recipientRefs.resolve(link.recipientRef), null, 'linkFor writes nothing');
   const view = JSON.stringify(await li.trust.leadTrust({ leadId: 'L1' }));
   assert.ok(!/rref_/.test(view));
+});
+
+test('9i. a store failure inside a timed pull is logged, never an unhandled rejection', async () => {
+  const { li } = runtime();
+  const relay = fakeRelay();
+  relay.push({ kind: 'reply', channel: 'email', recipient_ref: 'rref_' + 'e'.repeat(64) });
+  const warns = [];
+  const badCursor = { get: () => null, set: () => { throw new Error('disk full'); } };
+  const c = new RelayClient({ baseUrl: BASE, secret: SECRET, trust: li.trust, fetchImpl: relay.fetchImpl, cursorStore: badCursor, logger: { warn: (m) => warns.push(m) } });
+  let unhandled = 0;
+  const onUnhandled = () => { unhandled += 1; };
+  process.on('unhandledRejection', onUnhandled);
+  const realSetInterval = global.setInterval;
+  global.setInterval = () => ({ unref() {} });
+  try { c.start(); } finally { global.setInterval = realSetInterval; }
+  for (let i = 0; i < 10; i += 1) await new Promise((r) => setImmediate(r));
+  process.off('unhandledRejection', onUnhandled);
+  assert.strictEqual(unhandled, 0);
+  assert.ok(warns.some((w) => /RELAY_PULL_ERROR/.test(w)), warns.join('|'));
 });
 
 test('9h. one pull at a time; start() never polls faster than once a minute and stop() clears it', async () => {

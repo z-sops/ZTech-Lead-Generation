@@ -957,7 +957,10 @@ class OutreachService {
         // body + configured signature). Prepare shows THIS for email so what a human
         // confirms is exactly what the transport sends. WhatsApp keeps the canonical body
         // unchanged - F24 owns any future WhatsApp message shaping.
-        ...(channel === 'email' ? { finalBody: this._emailFinalBody(pitch, { oneClickUrl: (this._oneClickFor(recipient.contact) || {}).url || null }) } : {}),
+        // F26.5: with a relay, the real email carries the contact's personal one-click link. The
+        // preview shows the same text with that link MASKED: its recipient_ref never reaches the
+        // renderer. Without a relay there is nothing to mask and the bytes are identical.
+        ...(channel === 'email' ? { finalBody: this._emailFinalBody(pitch, { oneClickUrl: (this._oneClickFor(recipient.contact) || {}).url || null }).replace(/\/u\/rref_[a-f0-9]{32,64}/g, '/u/[personal unsubscribe link]') } : {}),
         evidenceReferences: Array.isArray(pitch.evidenceReferences) ? pitch.evidenceReferences : [],
         transformationNote: channel === 'whatsapp'
           ? 'No WhatsApp-specific message transformation exists in this build. The canonical pitch text is shown unchanged as the message source.'
@@ -1218,6 +1221,13 @@ class OutreachService {
       mailbox: (providerStatus && providerStatus.replyTo) || capability.fromAddress,
       oneClickUrl: oneClick ? oneClick.url : null,
     });
+    // F26.5: a transport that must carry unsubscribe headers never sends without them.
+    const { transportPolicyOf } = require('../trust/TrustPolicy');
+    if (!unsubscribe && transportPolicyOf(this.emailProvider).enforcesUnsubscribeHeaders) {
+      const reason = 'The unsubscribe header could not be built from the sender mailbox, so nothing is sent.';
+      await this._recordSendEvent(pitchId, 'OUTREACH_SEND_BLOCKED', { reason, channel: 'email', contentHash: pitch.content_hash, blockedCode: 'UNSUBSCRIBE_HEADERS_UNAVAILABLE' });
+      throw new LiError('UNSUBSCRIBE_HEADERS_UNAVAILABLE', reason);
+    }
     const message = {
       to: facts.channels.email.contact,
       from: capability.fromAddress,

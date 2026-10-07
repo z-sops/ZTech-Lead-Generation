@@ -58,7 +58,7 @@ test('H1. "Open in my mail app" for a COLD lead: one mailto opened, compliant fo
   const pitch = await approved(li);
   const r = await li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'mailto' });
   assert.strictEqual(o.urls.length, 1);
-  assert.ok(o.urls[0].startsWith('mailto:' + encodeURIComponent(LEAD_EMAIL) + '?subject='));
+  assert.ok(o.urls[0].startsWith('mailto:' + LEAD_EMAIL + '?subject='), 'the To address keeps its @ (some mail apps do not decode %40)');
   const body = decodeURIComponent(o.urls[0].split('&body=')[1]);
   assert.strictEqual(body, r.body, 'the mail app gets exactly the text the result reports');
   assert.ok(body.includes(OFFER.sender_company) && body.includes(OFFER.postal_address), 'business name and postal address in the footer');
@@ -166,12 +166,14 @@ test('U2. with a relay: the one-click HTTPS link + List-Unsubscribe-Post; the re
   await grantTrust(store, { email: LEAD_EMAIL, now: iso(NOW) });
   const prep = await li.outreach.prepare({ pitchId: pitch.pitch_id, channel: 'email' });
   const ref = recipientRefFor(keys.refKey, 'email', LEAD_EMAIL);
-  assert.ok(prep.content.finalBody.includes(`${RELAY}/u/${ref}`));
+  assert.ok(prep.content.finalBody.includes(`${RELAY}/u/[personal unsubscribe link]`), 'Prepare shows where the link goes');
+  assert.ok(!prep.content.finalBody.includes(ref) && !/rref_/.test(JSON.stringify(prep)), 'the recipient_ref never reaches the renderer');
   assert.strictEqual(await store.recipientRefs.resolve(ref), null, 'Prepare writes nothing');
   await li.outreach.send({ pitchId: pitch.pitch_id, channel: 'email' });
   const h = payloadOf(emailSpy.calls[0]).headers;
   assert.strictEqual(h['List-Unsubscribe'], `<${RELAY}/u/${ref}>, <mailto:sender@verified-domain.test?subject=unsubscribe>`);
   assert.strictEqual(h['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
+  assert.ok(payloadOf(emailSpy.calls[0]).text.includes(`${RELAY}/u/${ref}`), 'the real email carries the real link');
   assert.strictEqual((await store.recipientRefs.resolve(ref)).normalized_address, LEAD_EMAIL, 'resolvable when the click comes back');
 });
 
@@ -342,6 +344,84 @@ test('I9. a WhatsApp consent survives intake re-delivery (stable consent id per 
   await waConsent(store); // an unrelated manual consent
   await li.trust.intake(e, { source: 'relay' });
   assert.strictEqual((await store.consents.listByLead('L1')).filter((c) => c.source === 'relay').length, 1);
+});
+
+test('R1. key rotation: an unsubscribe carrying an old OR a new ref still resolves and suppresses', async () => {
+  const { li, store } = runtime();
+  const oldKeys = deriveRelayKeys(SECRET);
+  const oldRef = recipientRefFor(oldKeys.refKey, 'email', LEAD_EMAIL);
+  await store.recipientRefs.ensure({ recipient_ref: oldRef, channel: 'email', normalized_address: LEAD_EMAIL, created_at: iso(NOW - 3 * HOUR) });
+  const newKeys = deriveRelayKeys(SECRET + '-rotated');
+  li.trust.setRelayKeys(newKeys);
+  const newRef = recipientRefFor(newKeys.refKey, 'email', LEAD_EMAIL);
+  await store.recipientRefs.ensure({ recipient_ref: newRef, channel: 'email', normalized_address: LEAD_EMAIL, created_at: iso(NOW - HOUR) });
+  assert.strictEqual((await store.recipientRefs.resolve(oldRef)).normalized_address, LEAD_EMAIL, 'the old ref still resolves');
+  assert.strictEqual((await store.recipientRefs.forAddress({ channel: 'email', address: LEAD_EMAIL })).recipient_ref, newRef, 'the newest ref is current');
+  const r = await li.trust.intake(relayEvent(newKeys, { kind: 'unsubscribe', channel: 'email', recipient_ref: oldRef }), { source: 'relay' });
+  assert.deepStrictEqual(r, { accepted: true, state: 'applied' });
+});
+
+test('R2. an email ref this desktop never stored (link minted under another key) is resolved from the lead list', async () => {
+  const { li, store } = runtime();
+  const keys = withRelay(li);
+  const ref = recipientRefFor(keys.refKey, 'email', LEAD_EMAIL);
+  assert.strictEqual(await store.recipientRefs.resolve(ref), null);
+  const r = await li.trust.intake(relayEvent(keys, { kind: 'unsubscribe', channel: 'email', recipient_ref: ref }), { source: 'relay' });
+  assert.deepStrictEqual(r, { accepted: true, state: 'applied' });
+  assert.ok(await store.suppressions.find({ channel: 'email', address: LEAD_EMAIL }));
+});
+
+test('R3. a relay event from a clock ahead of this desktop is ACCEPTED (an opt-out is never lost) and clamped to now', async () => {
+  const { li, store } = runtime();
+  const keys = withRelay(li);
+  const ref = recipientRefFor(keys.refKey, 'whatsapp', LEAD_PHONE);
+  const r = await li.trust.intake(relayEvent(keys, { kind: 'whatsapp_inbound', channel: 'whatsapp', recipient_ref: ref, received_at: iso(NOW + 6 * HOUR) }), { source: 'relay' });
+  assert.deepStrictEqual(r, { accepted: true, state: 'applied' });
+  const ev = (await store.trustEvents.list()).rows[0];
+  assert.strictEqual(ev.received_at, iso(NOW), 'clamped: a future time can never stretch the 24h window');
+  const user = await li.trust.intake({ event_id: 'u_future', kind: 'bounce', channel: 'email', address: LEAD_EMAIL, received_at: iso(NOW + 6 * HOUR) }, { source: 'user' });
+  assert.strictEqual(user.code, 'EVENT_INVALID', 'a user event still cannot claim the future');
+});
+
+test('R4. timestamps must be UTC ISO with Z: a zone-less time is refused', async () => {
+  const { li } = runtime();
+  const keys = withRelay(li);
+  const e = relayEvent(keys, { kind: 'reply', channel: 'email', recipient_ref: recipientRefFor(keys.refKey, 'email', LEAD_EMAIL), received_at: '2026-10-07T09:00:00' });
+  assert.strictEqual((await li.trust.intake(e, { source: 'relay' })).code, 'EVENT_INVALID');
+});
+
+test('R5. a consent dated "today" in Karachi before 05:00 is accepted; a date after today anywhere is refused', async () => {
+  const { li } = runtime({ now: () => Date.parse('2026-10-07T21:30:00.000Z') }); // 02:30 on 8 Oct in Karachi
+  const v = await li.trust.recordConsent({ leadId: 'L1', channel: 'whatsapp', method: 'in_person', consentedAt: '2026-10-08', evidenceNote: 'Signed up at our stall this morning' });
+  assert.strictEqual(v.channels.whatsapp.consent.consentedAt, '2026-10-08T12:00:00.000Z', 'stored as noon UTC: the same calendar day from UTC-11 to UTC+11');
+  await assert.rejects(li.trust.recordConsent({ leadId: 'L1', channel: 'whatsapp', method: 'in_person', consentedAt: '2026-10-10', evidenceNote: 'too early' }), (e) => e.code === 'VALIDATION_FAILED');
+});
+
+test('R6. a transport that enforces unsubscribe headers never sends without them', async () => {
+  const { li, store, emailSpy } = runtime();
+  const pitch = await approved(li);
+  await grantTrust(store, { email: LEAD_EMAIL, now: iso(NOW) });
+  // Simulate an unusable mailbox by making the capability's From address unparseable for the header builder.
+  li.outreach.emailConfigStore().data.settings.emailReplyTo = undefined;
+  const cap = li.outreach.sendCapability.bind(li.outreach);
+  li.outreach.sendCapability = (ch) => (ch === 'email' ? { ...cap(ch), fromAddress: 'not-a-mailbox' } : cap(ch));
+  await assert.rejects(li.outreach.send({ pitchId: pitch.pitch_id, channel: 'email' }), (e) => e.code === 'UNSUBSCRIBE_HEADERS_UNAVAILABLE');
+  assert.strictEqual(emailSpy.calls.length, 0);
+});
+
+test('R7. the handoff IPC result never carries the body (it can hold the personal unsubscribe link)', async () => {
+  const { registerTrustIpc, TRUST_CHANNELS_IPC } = require(path.join(LI, 'trust', 'trust-ipc.js'));
+  const o = opener();
+  const { li } = runtime({ openExternal: o.open });
+  withRelay(li);
+  const pitch = await approved(li);
+  const handlers = {};
+  const copied = [];
+  registerTrustIpc({ ipcMain: { handle: (c, f) => { handlers[c] = f; } }, trust: li.trust, outreach: li.outreach, isTrustedSender: () => true, copyText: (t) => copied.push(t), logger: { warn() {} } });
+  const res = await handlers[TRUST_CHANNELS_IPC.HANDOFF]({}, { pitchId: pitch.pitch_id, kind: 'copy' });
+  assert.strictEqual(res.ok, true);
+  assert.ok(!('body' in res.data) && !/rref_/.test(JSON.stringify(res)), 'nothing with a ref reaches the renderer');
+  assert.ok(/\/u\/rref_/.test(copied[0]), 'main copied the real text, link included');
 });
 
 (async () => {

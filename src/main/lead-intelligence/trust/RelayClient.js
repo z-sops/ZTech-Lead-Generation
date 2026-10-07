@@ -127,12 +127,17 @@ class RelayClient {
         const r = await this.trust.intake(e, { source: 'relay' });
         if (r.state === 'applied' && !r.duplicate) applied += 1;
         if (!r.accepted) rejected += 1;
-        if (typeof e.event_id === 'string' && e.event_id.length <= 128) ids.push(e.event_id);
+        // Only an ACCEPTED event (applied, stored, unresolved or a duplicate) is acknowledged.
+        // A refused one stays at the relay, so a clock or key problem never deletes an opt-out.
+        if (r.accepted && typeof e.event_id === 'string' && e.event_id.length <= 128) ids.push(e.event_id);
       }
       if (ids.length) {
         const ack = await this._request('POST', '/v1/events/ack', { event_ids: ids });
         if (!ack.ok) return { ok: false, code: ack.code, pulled: events.length, applied, rejected };
       }
+      // The cursor moves past this batch only when EVERY event in it was accepted; otherwise the
+      // batch is re-read next time (accepted events then come back as duplicates).
+      if (rejected) return { ok: false, code: 'RELAY_EVENTS_REJECTED', pulled: events.length, applied, rejected };
       if (next && this.cursorStore) this.cursorStore.set(next);
       return { ok: true, pulled: events.length, applied, rejected };
     } finally {
@@ -144,9 +149,10 @@ class RelayClient {
   start(intervalMs = 5 * 60 * 1000) {
     if (this.timer) return;
     const every = Math.max(Number(intervalMs) || 0, RELAY_LIMITS.MIN_INTERVAL_MS);
-    const tick = () => this.pullOnce().then((r) => {
-      if (!r.ok && this.logger && this.logger.warn) this.logger.warn(`[lead-intelligence] trust relay pull failed: ${r.code}`);
-    });
+    const warn = (code) => { if (this.logger && this.logger.warn) this.logger.warn(`[lead-intelligence] trust relay pull failed: ${code}`); };
+    const tick = () => this.pullOnce()
+      .then((r) => { if (!r.ok) warn(r.code); })
+      .catch(() => warn('RELAY_PULL_ERROR'));
     tick();
     this.timer = setInterval(tick, every);
     if (this.timer.unref) this.timer.unref();

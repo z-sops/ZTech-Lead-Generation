@@ -171,7 +171,15 @@ class TrustService {
     const note = cleanText(evidenceNote, TRUST_LIMITS.EVIDENCE_NOTE_MAX);
     if (note.length < 3) throw new ValidationError('evidence note required', [{ path: '$.evidenceNote', message: 'describe how and where the person opted in' }]);
     const now = this.now();
-    if (!isIso(consentedAt) || Date.parse(consentedAt) > now.getTime() + FUTURE_SKEW_MS) {
+    // A calendar day (YYYY-MM-DD) is the day the person chose in THEIR time zone. It is stored as
+    // noon UTC (the same calendar day from UTC-11 to UTC+11) and refused only when it is later
+    // than "today" anywhere on Earth (UTC+14), so a Karachi morning is never "in the future".
+    const dayOnly = typeof consentedAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(consentedAt);
+    const latestToday = new Date(now.getTime() + 14 * 3600000).toISOString().slice(0, 10);
+    const consentIso = dayOnly ? `${consentedAt}T12:00:00.000Z` : consentedAt;
+    const badDay = dayOnly && (consentedAt > latestToday || !Number.isFinite(Date.parse(consentIso)));
+    const badStamp = !dayOnly && (!isIso(consentedAt) || Date.parse(consentedAt) > now.getTime() + FUTURE_SKEW_MS);
+    if (badDay || badStamp) {
       throw new ValidationError('invalid date', [{ path: '$.consentedAt', message: 'the opt-in date must be a real date, not in the future' }]);
     }
     const view = await this._view(leadId);
@@ -179,7 +187,7 @@ class TrustService {
     if (!address) throw new LiError('CHANNEL_UNAVAILABLE', TRUST_SERVICE_MESSAGES.CHANNEL_UNAVAILABLE);
     await this.store.consents.record({
       consent_id: newId('con'), lead_id: view.id, channel, normalized_address: address, method,
-      evidence_note: note, recorded_by: this.operator, consented_at: new Date(Date.parse(consentedAt)).toISOString(),
+      evidence_note: note, recorded_by: this.operator, consented_at: new Date(Date.parse(consentIso)).toISOString(),
       recorded_at: now.toISOString(), source: 'user', event_id: null,
     });
     return this.leadTrust({ leadId: view.id });
@@ -201,10 +209,14 @@ class TrustService {
     const shapeOk = typeof e.event_id === 'string' && EVENT_ID_RE.test(e.event_id)
       && TRUST_EVENT_KINDS.includes(e.kind) && TRUST_CHANNELS.includes(e.channel)
       && !(e.kind === 'whatsapp_inbound' && e.channel !== 'whatsapp')
-      && isIso(e.received_at) && Date.parse(e.received_at) <= this.now().getTime() + FUTURE_SKEW_MS;
+      && isIso(e.received_at)
+      // A user event may not claim the future. A relay event may (this desktop's clock can be
+      // behind the relay's): it is accepted and its time is clamped to now below, so it can
+      // never stretch a window. Refusing it would lose a genuine opt-out.
+      && (source === 'relay' || Date.parse(e.received_at) <= this.now().getTime() + FUTURE_SKEW_MS);
     if (!shapeOk) return { accepted: false, state: 'invalid', code: 'EVENT_INVALID' };
 
-    const receivedAt = new Date(Date.parse(e.received_at)).toISOString();
+    const receivedAt = new Date(Math.min(Date.parse(e.received_at), this.now().getTime())).toISOString();
     const reject = async (code) => {
       // Recorded for the audit trail, outside the idempotency index, with no effect.
       await this.store.trustEvents.append({
@@ -223,7 +235,9 @@ class TrustService {
       ref = typeof e.recipient_ref === 'string' ? e.recipient_ref : null;
       const mapped = ref ? await this.store.recipientRefs.resolve(ref) : null;
       address = mapped && mapped.channel === e.channel ? mapped.normalized_address : null;
-      if (!address && ref && e.channel === 'whatsapp') address = await this._resolveRefByLeads(ref, e.channel);
+      // A ref this desktop never stored (an inbound from a number never written to, or a link
+      // minted under an earlier relay key) is resolved by recomputing refs for known leads.
+      if (!address && ref) address = await this._resolveRefByLeads(ref, e.channel);
     } else {
       if (!USER_EVENT_KINDS.includes(e.kind)) return reject('KIND_NOT_USER_RECORDABLE');
       address = normalizeAddress(e.channel, e.address);

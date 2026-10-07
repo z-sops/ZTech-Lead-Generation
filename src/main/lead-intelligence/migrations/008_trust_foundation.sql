@@ -85,4 +85,6 @@ CREATE TABLE IF NOT EXISTS li_recipient_refs (
   normalized_address TEXT NOT NULL,
   created_at         TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS li_recipient_refs_one ON li_recipient_refs (channel, normalized_address);
+-- Several refs may map to one address: a relay key rotation mints new refs, and an unsubscribe
+-- that comes back carrying an older or newer ref must still resolve.
+CREATE INDEX IF NOT EXISTS li_recipient_refs_by_address ON li_recipient_refs (channel, normalized_address, created_at DESC);

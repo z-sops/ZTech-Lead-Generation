@@ -86,7 +86,7 @@ function isValidUnsubscribeHeader(name, value) {
  * Long bodies can be cut off by some mail apps, which `tooLongForMailto` reports honestly.
  */
 function mailtoUrl({ to, subject, body }) {
-  const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const url = `mailto:${encodeURIComponent(to).replace(/%40/g, '@')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   return { url, tooLongForMailto: url.length > 1900 };
 }
 

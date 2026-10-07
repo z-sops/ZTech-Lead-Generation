@@ -10571,7 +10571,8 @@ function trustConsentForm(channel) {
   const date = trustEl('input', 'lead-trust-input');
   date.type = 'date';
   date.id = `lead-trust-date-${channel}`;
-  date.value = new Date().toISOString().slice(0, 10);
+  const today = new Date();
+  date.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   dateLabel.htmlFor = date.id;
   const noteLabel = trustEl('label', 'lead-trust-label', 'Evidence (where and how, e.g. "Signed up on our site form, 7 Oct")');
   const note = trustEl('textarea', 'lead-trust-input');
