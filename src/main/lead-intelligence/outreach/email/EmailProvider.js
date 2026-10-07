@@ -1,6 +1,7 @@
 'use strict';
 
 const { EMAIL } = require('../../contracts/leadView');
+const { isValidUnsubscribeHeader } = require('../../trust/unsubscribe');
 const { LiError } = require('../../core/errors');
 
 /**
@@ -60,6 +61,12 @@ function validateEmailMessage(m) {
     if (!m.headers || typeof m.headers !== 'object' || Array.isArray(m.headers)) bad('headers', 'must be an object');
     else {
       for (const [k, v] of Object.entries(m.headers)) {
+        // F26.5: exactly two standard headers are admitted besides simple X- headers - the
+        // RFC 2369 / RFC 8058 unsubscribe pair - and only in their strict, ZTech-built shape.
+        if (k === 'List-Unsubscribe' || k === 'List-Unsubscribe-Post') {
+          if (!isValidUnsubscribeHeader(k, v)) bad(`headers.${k}`, 'is not a valid unsubscribe header');
+          continue;
+        }
         if (!/^X-[A-Za-z0-9-]{1,60}$/.test(k) || typeof v !== 'string' || /[\r\n]/.test(v) || v.length > 200) bad(`headers.${k}`, 'only simple X- headers are allowed');
       }
     }

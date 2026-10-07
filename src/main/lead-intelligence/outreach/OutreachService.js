@@ -17,6 +17,13 @@ const { evaluateWhatsAppConfig } = require('./whatsapp/whatsappConfig');
 const { WhatsAppProvider } = require('./whatsapp/WhatsAppProvider');
 // F26.5: the trust checks of the send boundary (suppression, identity, transport, lint, consent).
 const { TrustPolicy } = require('../trust/TrustPolicy');
+const { complianceFooter, withFooter, unsubscribeHeaders, mailtoUrl, HANDOFF_HEADER_NOTE } = require('../trust/unsubscribe');
+const { normalizeEmail } = require('../trust/trustContract');
+
+// F26.5: the person's own mail app, as a "transport". It is not Resend, so Resend's rule does not
+// apply; and ZTech cannot make it carry headers, which the handoff result states plainly.
+const HANDOFF_TRANSPORT = Object.freeze({ transportPolicy: Object.freeze({ requiresPriorRelationship: false, enforcesUnsubscribeHeaders: false }) });
+const HANDOFF_KINDS = Object.freeze(['mailto', 'copy']);
 
 // === F17: factual contact facts for the derived Ready row ===
 //
@@ -120,7 +127,7 @@ function contactFactsFromView(view, rawEmailPresent) {
  * human-triggered) email hand-off. No scheduling, no batch sending, no auto-send.
  */
 class OutreachService {
-  constructor({ store, contexts, leadSource, freshness, config = {}, emailProvider = null, emailConfigStore = undefined, whatsappConfigStore = undefined, fieldMap, clock = () => new Date(), logger = null }) {
+  constructor({ store, contexts, leadSource, freshness, config = {}, emailProvider = null, emailConfigStore = undefined, whatsappConfigStore = undefined, fieldMap, clock = () => new Date(), logger = null, openExternal = null }) {
     this.store = store;
     this.contexts = contexts;
     this.leadSource = leadSource;
@@ -161,6 +168,34 @@ class OutreachService {
     this.trust = store && store.suppressions && store.consents && store.trustEvents
       ? new TrustPolicy({ store, clock })
       : null;
+    // F26.5: opens a mailto: URL in the person's own mail app (main process: shell.openExternal).
+    // Absent in tests and non-Electron processes, where a 'mailto' handoff is refused honestly.
+    this.openExternal = typeof openExternal === 'function' ? openExternal : null;
+    // F26.5: the relay link source ({ linkFor(channel, address) -> {url, recipientRef} | null }).
+    // Null until a relay is configured (F26.5b); then emails gain the one-click HTTPS link.
+    this.relayLinks = null;
+  }
+
+  /** F26.5: inject the relay link source once a relay is configured. Pure HMAC, no I/O. */
+  setRelayLinks(links) {
+    this.relayLinks = links && typeof links.linkFor === 'function' ? links : null;
+  }
+
+  /** The one-click unsubscribe link for an address, or null. Pure: writes nothing. */
+  _oneClickFor(address) {
+    if (!this.relayLinks) return null;
+    try {
+      const link = this.relayLinks.linkFor('email', address);
+      return link && typeof link.url === 'string' ? link : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Persist the ref -> address mapping for a link that is about to leave ZTech. */
+  async _rememberRef(link, address) {
+    if (!link || !this.store.recipientRefs) return;
+    await this.store.recipientRefs.ensure({ recipient_ref: link.recipientRef, channel: 'email', normalized_address: address, created_at: this.clock().toISOString() });
   }
 
   /**
@@ -531,14 +566,20 @@ class OutreachService {
    * bytes). The signature is added here, upstream of the provider: transport never edits
    * content, and the approval's content_hash still covers the canonical pitch underneath.
    */
-  _emailFinalBody(pitch) {
+  _emailFinalBody(pitch, { oneClickUrl = null } = {}) {
     const body = renderPitchText(pitch);
     const { readResendConfig, validateSignature } = require('./email/resendConfig');
     const check = validateSignature(readResendConfig(this.emailConfigStore()).signature);
     // A signature that fails validation is simply not appended: the payload falls back to
     // the canonical approved body rather than shipping unsafe text. Prepare and the send
     // boundary both come through this ONE function, so the bytes always match.
-    return check.ok && check.value ? `${body}\n\n${check.value}` : body;
+    const signed = check.ok && check.value ? `${body}\n\n${check.value}` : body;
+    // F26.5: every email carries the opt-out footer (business name, postal address, how to
+    // unsubscribe). It is added here so Prepare, the send boundary and the mail-app handoff all
+    // show and send the same bytes. Nothing is invented: absent identity is simply absent, and
+    // the send boundary refuses to send without it.
+    const o = this.offer && typeof this.offer === 'object' ? this.offer : {};
+    return withFooter(signed, complianceFooter({ company: o.sender_company, postalAddress: o.postal_address, oneClickUrl }));
   }
 
   /**
@@ -916,7 +957,7 @@ class OutreachService {
         // body + configured signature). Prepare shows THIS for email so what a human
         // confirms is exactly what the transport sends. WhatsApp keeps the canonical body
         // unchanged - F24 owns any future WhatsApp message shaping.
-        ...(channel === 'email' ? { finalBody: this._emailFinalBody(pitch) } : {}),
+        ...(channel === 'email' ? { finalBody: this._emailFinalBody(pitch, { oneClickUrl: (this._oneClickFor(recipient.contact) || {}).url || null }) } : {}),
         evidenceReferences: Array.isArray(pitch.evidenceReferences) ? pitch.evidenceReferences : [],
         transformationNote: channel === 'whatsapp'
           ? 'No WhatsApp-specific message transformation exists in this build. The canonical pitch text is shown unchanged as the message source.'
@@ -978,6 +1019,82 @@ class OutreachService {
     throw new ValidationError('unknown send channel', [
       { path: '$.channel', message: 'channel must be "email" or "whatsapp"' },
     ]);
+  }
+
+  /**
+   * F26.5 (C1): the MAIL-APP HANDOFF for an email pitch - "Open in my mail app" or "Copy".
+   *
+   * THIS IS NOT A SEND. ZTech hands the approved, compliant text to the person's own mail app
+   * (or clipboard) and cannot know whether they send it. So it:
+   *   - writes NO li_outreach_sends row and is never counted as a send;
+   *   - records one OUTREACH_HANDOFF_CREATED activity (per content and kind), never
+   *     OUTREACH_SEND_ATTEMPTED / ACCEPTED;
+   *   - claims nothing about delivery.
+   *
+   * The same safety holds as for a send: the gate re-check (approved, current evidence), the
+   * stored recipient (never the caller's), then suppression -> sender identity -> subject lint.
+   * Resend's transport rule does not apply - this is not Resend - and that is the whole point
+   * of C1: a first contact leaves from the person's own mailbox, under their own name.
+   *
+   * The footer (business name, postal address, opt-out line) is in the body. Custom headers
+   * cannot be guaranteed by another program, and the result says so in `headerNote`.
+   *
+   * @param {{pitchId: string, kind: 'mailto'|'copy'}} request
+   */
+  async handoff({ pitchId, kind }) {
+    if (!HANDOFF_KINDS.includes(kind)) {
+      throw new ValidationError('unknown handoff kind', [{ path: '$.kind', message: 'kind must be "mailto" or "copy"' }]);
+    }
+    if (kind === 'mailto' && !this.openExternal) {
+      throw new LiError('HANDOFF_UNAVAILABLE', 'Opening your mail app is not available here. Use Copy instead.');
+    }
+    const pitch = await this.get(pitchId);
+    const verdict = await this.gate({ pitchId });
+    if (!verdict || verdict.decision !== 'allowed') {
+      throw new LiError('NOT_READY', 'Only a pitch the Outreach Gate currently allows can be handed off.');
+    }
+    const ctx = await this.contexts.getContext(pitch.lead_id, { targetId: pitch.target_id ?? undefined });
+    const facts = ctx && ctx.view ? contactFactsFromView(ctx.view, ctx.view.email_raw_present) : null;
+    if (!facts || facts.channels.email.state !== 'available' || !facts.channels.email.contact) {
+      throw new LiError('CHANNEL_UNAVAILABLE', 'No valid email address is stored for this lead.');
+    }
+    if (!this.trust) throw new LiError('TRUST_UNAVAILABLE', 'The do-not-contact and consent records cannot be read.');
+    const to = facts.channels.email.contact;
+    const check = await this.trust.evaluate({
+      channel: 'email', recipient: to, offer: this.offer, sender: { fromName: this._senderProfile().displayName },
+      subject: pitch.subject, provider: HANDOFF_TRANSPORT,
+    });
+    if (!check.allowed) throw new LiError(check.code, check.message);
+
+    const address = normalizeEmail(to);
+    const oneClick = this._oneClickFor(address);
+    const body = this._emailFinalBody(pitch, { oneClickUrl: oneClick ? oneClick.url : null });
+    const link = mailtoUrl({ to, subject: pitch.subject, body });
+    await this._rememberRef(oneClick, address);
+    if (kind === 'mailto') {
+      if (!/^mailto:/.test(link.url)) throw new LiError('HANDOFF_UNAVAILABLE', 'The mail link could not be built.');
+      await this.openExternal(link.url);
+    }
+
+    // One activity row per (content, kind): opening the same text twice adds no duplicate line.
+    const previous = await this.store.activity.latestForPitch(pitch.pitch_id, 'OUTREACH_HANDOFF_CREATED');
+    const duplicate = previous && previous.metadata && previous.metadata.contentHash === pitch.content_hash && previous.metadata.handoffKind === kind;
+    if (!duplicate) {
+      await this._recordActivity(pitch, 'OUTREACH_HANDOFF_CREATED', { channel: 'email', contentHash: pitch.content_hash, handoffKind: kind });
+    }
+    return {
+      kind,
+      pitchId: pitch.pitch_id,
+      leadId: pitch.lead_id,
+      to,
+      subject: pitch.subject,
+      body,
+      mailtoTooLong: link.tooLongForMailto,
+      // Never a send: no ledger row, no provider, no delivery claim.
+      sent: false,
+      headersGuaranteed: false,
+      headerNote: HANDOFF_HEADER_NOTE,
+    };
   }
 
   // === F19: the email send boundary ===
@@ -1093,18 +1210,27 @@ class OutreachService {
     // final here: recipient and sender address come from stored configuration, the subject
     // is the approved pitch's own subject, and the text is the byte-for-byte body Prepare
     // showed (canonical pitch + configured signature). The provider gets no discretion.
+    // F26.5: ZTech's own transport ALWAYS carries the unsubscribe headers. The mailto goes to
+    // the sender's own reply mailbox; the one-click HTTPS link is added once a relay exists.
+    const recipientAddress = normalizeEmail(facts.channels.email.contact);
+    const oneClick = this._oneClickFor(recipientAddress);
+    const unsubscribe = unsubscribeHeaders({
+      mailbox: (providerStatus && providerStatus.replyTo) || capability.fromAddress,
+      oneClickUrl: oneClick ? oneClick.url : null,
+    });
     const message = {
       to: facts.channels.email.contact,
       from: capability.fromAddress,
       ...(providerStatus && providerStatus.fromName ? { fromName: providerStatus.fromName } : {}),
       ...(providerStatus && providerStatus.replyTo ? { replyTo: providerStatus.replyTo } : {}),
       subject: pitch.subject,
-      text: this._emailFinalBody(pitch),
+      text: this._emailFinalBody(pitch, { oneClickUrl: oneClick ? oneClick.url : null }),
       headers: {
         'X-ZTech-Pitch': pitch.pitch_id,
         // The idempotency key travels WITH the message, so a provider that supports
         // de-duplication can recognise a retry ZTech itself would treat as a replay.
-        'X-ZTech-Send-Key': idempotencyKey
+        'X-ZTech-Send-Key': idempotencyKey,
+        ...(unsubscribe || {})
       }
     };
     const valid = this.emailProvider.validate(message);
@@ -1118,6 +1244,10 @@ class OutreachService {
       throw new ValidationError('email message is invalid',
         (valid && valid.errors ? valid.errors : []).map((e) => ({ path: `$.${e.field}`, message: e.message })));
     }
+
+    // F26.5: the one-click link is about to leave ZTech, so its ref -> address mapping is kept
+    // first - an unsubscribe that comes back through the relay can then always be resolved.
+    await this._rememberRef(oneClick, recipientAddress);
 
     // (7) THE DURABLE ATTEMPT, written BEFORE the provider is touched.
     const sendId = newId('send');

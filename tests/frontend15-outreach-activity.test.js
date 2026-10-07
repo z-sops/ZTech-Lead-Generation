@@ -493,7 +493,9 @@ test('11. F12/F13/F14 behaviour is untouched by F15', () => {
   assert.ok(canSendInDefault, 'send() remains disabled in the default configuration');
   // Activity is emitted only from the two mutation boundaries.
   const emitters = [...serviceSource.matchAll(/this\._recordActivity\(([^,]+), '([A-Z_]+)'/g)].map((m) => m[2]);
-  assert.deepStrictEqual([...new Set(emitters)].sort(), ['APPROVAL_INVALIDATED', 'OUTREACH_READY', 'PITCH_APPROVED'],
+  // F26.5 declared lock update: + OUTREACH_HANDOFF_CREATED, emitted only by handoff() - a
+  // mutation boundary where the handoff provably happened. It is never a send event.
+  assert.deepStrictEqual([...new Set(emitters)].sort(), ['APPROVAL_INVALIDATED', 'OUTREACH_HANDOFF_CREATED', 'OUTREACH_READY', 'PITCH_APPROVED'],
     'all three types are emitted');
   for (const read of ['async list(', 'async activityList(', 'async gate(', 'async get(']) {
     const body = serviceSource.slice(serviceSource.indexOf(read));

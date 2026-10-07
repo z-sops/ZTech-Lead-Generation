@@ -334,7 +334,10 @@ test('J. the exact final Prepare body equals the transport body', async () => {
   const finalBody = prep.content.finalBody;
   assert.strictEqual(prep.content.body, renderPitchText(pitch), 'the canonical approved body is untouched');
   assert.ok(finalBody.startsWith(prep.content.body), 'the final body is the canonical body plus configuration');
-  assert.ok(finalBody.endsWith('--\nAcme Robotics Ltd'), 'the configured signature is visibly part of the final body');
+  // F26.5 declared update: the opt-out footer (business name, postal address, unsubscribe line)
+  // now follows the signature, so the signature is visible just before it rather than last.
+  assert.ok(finalBody.includes('--\nAcme Robotics Ltd\n\n--\n'), 'the configured signature is visibly part of the final body');
+  assert.ok(/\nDon't want emails from us\? Reply "unsubscribe"/.test(finalBody), 'and the opt-out footer closes it');
 
   await li.outreach.send({ pitchId: pitch.pitch_id, channel: 'email' });
   const transportBody = payloadOf(spy.calls[0]).text;

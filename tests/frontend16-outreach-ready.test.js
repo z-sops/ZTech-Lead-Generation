@@ -244,7 +244,9 @@ test('4. reading Ready records no activity and creates no OUTREACH_READY event',
     'reading Ready is not the thing that announces readiness');
   // F15's emitter is untouched: it lives only in approve() and update().
   const emitters = [...serviceSource.matchAll(/this\._recordActivity\(([^,]+), '([A-Z_]+)'/g)].map((m) => m[2]);
-  assert.deepStrictEqual([...new Set(emitters)].sort(), ['APPROVAL_INVALIDATED', 'OUTREACH_READY', 'PITCH_APPROVED'],
+  // F26.5 declared lock update: + OUTREACH_HANDOFF_CREATED, emitted only by handoff() - a
+  // mutation boundary where the handoff provably happened. It is never a send event.
+  assert.deepStrictEqual([...new Set(emitters)].sort(), ['APPROVAL_INVALIDATED', 'OUTREACH_HANDOFF_CREATED', 'OUTREACH_READY', 'PITCH_APPROVED'],
     'F15 still emits the same three types from the same transitions');
   const readyBody = serviceSource.slice(serviceSource.indexOf('async ready(query)'));
   assert.ok(!/_recordActivity/.test(readyBody.slice(0, readyBody.indexOf('\n  async gate('))),
