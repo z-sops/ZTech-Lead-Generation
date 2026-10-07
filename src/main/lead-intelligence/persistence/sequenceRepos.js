@@ -167,6 +167,19 @@ class SqlSequences {
     return sqlRows(this.s.db, `SELECT ${EVENT_COLS.join(', ')} FROM li_sequence_events WHERE sequence_id = ? ORDER BY at DESC, rowid DESC LIMIT ?`, [String(sequenceId), clampLimit(limit)]).map(freeze);
   }
 
+  /** The latest reply-history gap of a mailbox (kept as the LATEST one). */
+  async noteGap(mailboxId, atIso) {
+    return this.s.tx(() => {
+      this.s.db.run('INSERT INTO li_sequence_gaps (mailbox_id, gap_at) VALUES (?, ?) ON CONFLICT(mailbox_id) DO UPDATE SET gap_at = CASE WHEN excluded.gap_at > gap_at THEN excluded.gap_at ELSE gap_at END', [String(mailboxId), String(atIso)]);
+      return true;
+    });
+  }
+
+  async gapFor(mailboxId) {
+    const r = sqlRow(this.s.db, 'SELECT gap_at FROM li_sequence_gaps WHERE mailbox_id = ?', [String(mailboxId)]);
+    return r ? r.gap_at : null;
+  }
+
   async control() {
     const r = sqlRow(this.s.db, 'SELECT paused, updated_at FROM li_sequence_control WHERE id = 1');
     return Object.freeze({ paused: Boolean(r && r.paused === 1), updatedAt: r ? r.updated_at : null });
@@ -291,6 +304,14 @@ class MemSequences {
       .sort(([a, ia], [b, ib]) => (a.at === b.at ? ib - ia : (a.at < b.at ? 1 : -1)))
       .slice(0, clampLimit(limit)).map(([e]) => freeze(e));
   }
+
+  async noteGap(mailboxId, atIso) {
+    if (!this.gaps) this.gaps = new Map();
+    const prev = this.gaps.get(String(mailboxId));
+    if (!prev || String(atIso) > prev) this.gaps.set(String(mailboxId), String(atIso));
+    return true;
+  }
+  async gapFor(mailboxId) { return (this.gaps && this.gaps.get(String(mailboxId))) || null; }
 
   async control() { return Object.freeze({ paused: this.ctl.paused, updatedAt: this.ctl.updatedAt }); }
   async setControl({ paused, updatedAt }) { this.ctl = { paused: Boolean(paused), updatedAt: String(updatedAt) }; return this.control(); }

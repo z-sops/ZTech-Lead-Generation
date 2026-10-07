@@ -74,6 +74,8 @@ const LI_TABLES = Object.freeze([
   'li_sequence_steps',
   'li_sequence_events',
   'li_sequence_control',
+  // F28 review fix: the latest reply-history gap per mailbox (mailbox id + time only).
+  'li_sequence_gaps',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';

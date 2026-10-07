@@ -38,7 +38,6 @@ class GmailApi {
   }
 
   async _call(method, path, body = undefined) {
-    const token = await this.getAccessToken();
     // F28: every call is bounded. A request that never answers would otherwise hold the mailbox
     // lock and the follow-up scheduler forever. A SEND that times out may still have gone out, so
     // it is reported as unconfirmed (a human decides), never as refused.
@@ -46,7 +45,17 @@ class GmailApi {
     let timer = null;
     const timeout = new Promise((_, reject) => { timer = setTimeout(() => { if (controller) controller.abort(); reject(new Error('timeout')); }, this.timeoutMs); });
     const isSend = method === 'POST' && path === '/messages/send';
+    let token;
+    try {
+      // The token refresh is bounded too; it happens before anything is sent.
+      token = await Promise.race([this.getAccessToken(), timeout]);
+    } catch (err) {
+      clearTimeout(timer);
+      if (err instanceof LiError) throw err;
+      throw new LiError('MAILBOX_PROVIDER_UNAVAILABLE', 'Google could not be reached. Nothing was sent.');
+    }
     let res;
+    let json = {};
     try {
       res = await Promise.race([this.fetch(`${GOOGLE.GMAIL_API}${path}`, {
         method,
@@ -54,14 +63,13 @@ class GmailApi {
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         ...(controller ? { signal: controller.signal } : {}),
       }), timeout]);
+      try { json = await Promise.race([res.json(), timeout]); } catch { json = {}; }
     } catch {
       if (isSend) throw new LiError('MAILBOX_SEND_UNCONFIRMED', 'Gmail did not answer in time, so ZTech cannot tell whether it was sent. Nothing was retried.');
       throw new LiError('MAILBOX_PROVIDER_UNAVAILABLE', 'Gmail could not be reached. Nothing was retried.');
     } finally {
       clearTimeout(timer);
     }
-    let json = {};
-    try { json = await res.json(); } catch { json = {}; }
     if (res.ok) return json || {};
     const reason = json && json.error && Array.isArray(json.error.errors) && json.error.errors[0] ? json.error.errors[0].reason : null;
     if (res.status === 401) return this._authFailed('This mailbox needs to be reconnected.');

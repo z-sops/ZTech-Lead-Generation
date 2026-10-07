@@ -77,12 +77,18 @@ class SequenceScheduler {
     if (this._timer.unref) this._timer.unref();
   }
 
-  /** No new tick starts after this; resolves once a tick that is mid-send has finished recording. */
-  async stop() {
+  /**
+   * No new tick starts after this; resolves once a tick that is mid-send has finished recording, or
+   * after `maxWaitMs` (a send cut off then is held as an unknown outcome by the next start's recovery).
+   */
+  async stop({ maxWaitMs = 20 * 1000 } = {}) {
     this._stopped = true;
     if (this._timer) clearInterval(this._timer);
     this._timer = null;
-    if (this._running) { try { await this._running; } catch { /* already logged */ } }
+    if (!this._running) return;
+    let timer = null;
+    const cap = new Promise((resolve) => { timer = setTimeout(resolve, maxWaitMs); });
+    try { await Promise.race([this._running.catch(() => {}), cap]); } finally { clearTimeout(timer); }
   }
 }
 

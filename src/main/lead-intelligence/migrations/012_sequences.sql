@@ -23,7 +23,8 @@
 --
 -- Retention: purgeLead removes a lead's sequences and steps (lead data). li_sequence_events is an
 -- append-only audit (ids, codes, times - never content or an address) and is KEPT, like the send
--- ledger. li_sequence_control holds the one global "Pause all follow-ups" switch.
+-- ledger. li_sequence_control holds the one global "Pause all follow-ups" switch; li_sequence_gaps
+-- the latest reply-history gap per mailbox (no content, no address).
 
 CREATE TABLE IF NOT EXISTS li_sequences (
   sequence_id       TEXT PRIMARY KEY,
@@ -79,6 +80,13 @@ CREATE TABLE IF NOT EXISTS li_sequence_events (
   at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS li_sequence_events_by_sequence ON li_sequence_events (sequence_id, at);
+
+-- The latest reply-history gap per mailbox, so a sequence created AFTER a gap (from a first email
+-- sent before it) still knows a reply may be unread.
+CREATE TABLE IF NOT EXISTS li_sequence_gaps (
+  mailbox_id TEXT PRIMARY KEY,
+  gap_at     TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS li_sequence_control (
   id         INTEGER PRIMARY KEY CHECK (id = 1),

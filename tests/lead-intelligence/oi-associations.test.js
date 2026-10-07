@@ -101,7 +101,7 @@ test('006 applies on top of a database already at version 5, and only once', { s
   // F26.6 declared lock update: ... and 010 (mailbox transport).
   assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // F28 declared lock update: + 012 sequences
   const after = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
-  assert.deepEqual(after.filter((t) => !before.includes(t)), ['li_contact_consents', 'li_contact_provenance', 'li_mailbox_sent', 'li_mailboxes', 'li_market_rules', 'li_oi_associations', 'li_oi_refresh_requests', 'li_recipient_refs', 'li_reply_reviews', 'li_sequence_control', 'li_sequence_events', 'li_sequence_steps', 'li_sequences', 'li_suppressions', 'li_trust_events']); // F26.6 follow-up: + li_reply_reviews (011); F28 declared lock update: + the four sequence tables (012)
+  assert.deepEqual(after.filter((t) => !before.includes(t)), ['li_contact_consents', 'li_contact_provenance', 'li_mailbox_sent', 'li_mailboxes', 'li_market_rules', 'li_oi_associations', 'li_oi_refresh_requests', 'li_recipient_refs', 'li_reply_reviews', 'li_sequence_control', 'li_sequence_events', 'li_sequence_gaps', 'li_sequence_steps', 'li_sequences', 'li_suppressions', 'li_trust_events']); // F26.6 follow-up: + li_reply_reviews (011); F28 declared lock update: + the five sequence tables (012)
 });
 
 for (const kind of ['sql', 'memory']) {

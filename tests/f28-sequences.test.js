@@ -823,6 +823,91 @@ test('R8. a disconnected mailbox is said plainly (MAILBOX_GONE) instead of waiti
   assert.strictEqual((await seqOf(t, 'L2')).holdCode, 'PROVIDER_LIMIT_REPEATED');
 });
 
+test('N1. a Pause pressed while a send is in flight is never replaced by an automatic hold (limit or reconnect)', async () => {
+  for (const status of [429, 401]) {
+    const s = await setup();
+    const { sequenceId } = await active(s);
+    s.gmail.next = [{ status }];
+    const real = s.li.outreach.sendFromMailbox.bind(s.li.outreach);
+    s.li.outreach.sendFromMailbox = async (...a) => { await s.sequences.pause({ sequenceId }); return real(...a); };
+    s.advance(3 * DAY + 1000);
+    await s.scheduler.tick();
+    s.li.outreach.sendFromMailbox = real;
+    await s.store.mailboxes.setStatus(MBX, { status: 'ready', status_code: null, updated_at: iso(s.clock.t) });
+    s.advance(2 * DAY);
+    await s.scheduler.tick();
+    const v = await seqOf(s);
+    assert.strictEqual(v.holdCode, 'MANUAL', String(status));
+    assert.strictEqual(sendCalls(s.gmail).length, 2, `${status}: the refused attempt only`);
+  }
+});
+
+test('N2. a reply gap turns a manual pause into the reply check; after an unknown outcome, "not sent" and "no reply" are two separate human steps', async () => {
+  const s = await setup();
+  const { sequenceId } = await active(s);
+  await s.sequences.pause({ sequenceId });
+  await s.sequences.noteRepliesGap(MBX);
+  assert.strictEqual((await seqOf(s)).holdCode, 'REPLIES_UNCHECKED');
+  const t = await setup();
+  const q = await active(t);
+  t.gmail.next = [{ status: 503 }];
+  t.advance(3 * DAY + 1000);
+  await t.scheduler.tick();
+  await t.sequences.noteRepliesGap(MBX);
+  assert.strictEqual((await seqOf(t)).holdCode, 'SEND_OUTCOME_UNKNOWN', 'the unknown outcome keeps its own hold');
+  const after = await t.sequences.resume({ sequenceId: q.sequenceId, confirmNotSent: true });
+  assert.strictEqual(after.holdCode, 'REPLIES_UNCHECKED', 'then the reply check');
+  await t.scheduler.tick();
+  assert.strictEqual(sendCalls(t.gmail).length, 2);
+  await t.sequences.resume({ sequenceId: q.sequenceId });
+  await t.scheduler.tick();
+  assert.strictEqual(sendCalls(t.gmail).length, 3);
+});
+
+test('N3. a reply gap that happened BEFORE the sequence was created is shown on the draft and cleared only by activating', async () => {
+  const s = await setup();
+  await firstEmail(s);
+  s.advance(HOUR);
+  s.gmail.historyGone = true;
+  await s.svc.syncAll();
+  s.gmail.historyGone = false;
+  const v = await s.sequences.create({ leadId: 'L1' });
+  assert.ok(v.repliesGapAt, 'the draft carries the gap');
+  for (const st of v.steps) await s.li.outreach.approve({ pitchId: st.pitchId });
+  const a = await s.sequences.activate({ sequenceId: v.sequenceId });
+  assert.strictEqual(a.repliesGapAt, null);
+});
+
+test('N4. when a stop rule ends a sequence mid-send, the in-flight step shows "stopped", with its code kept', async () => {
+  const s = await setup();
+  await active(s);
+  const real = s.li.outreach.sendFromMailbox.bind(s.li.outreach);
+  s.li.outreach.sendFromMailbox = async (a, b) => { await s.li.trust.suppressLead({ leadId: 'L1', channel: 'email', reason: 'manual' }); return real(a, b); };
+  s.advance(3 * DAY + 1000);
+  await s.scheduler.tick();
+  const v = await seqOf(s);
+  assert.strictEqual(v.stopReason, 'suppressed');
+  assert.strictEqual(v.steps[0].state, 'stopped');
+  assert.ok(v.steps[0].lastCode, 'the refusal code is kept');
+});
+
+test('N5. a hung token refresh or a hung response body is bounded too; Scheduler.stop() never waits forever', async () => {
+  const { GmailApi } = require(path.join(LI, 'mailbox', 'gmail', 'GmailApi.js'));
+  const never = () => new Promise(() => {});
+  await rejectsCode(new GmailApi({ fetch: never, getAccessToken: never, timeoutMs: 30 }).sendRaw('abc'), 'MAILBOX_PROVIDER_UNAVAILABLE');
+  const bodyHangs = async () => ({ ok: true, status: 200, json: never });
+  await rejectsCode(new GmailApi({ fetch: bodyHangs, getAccessToken: async () => 't', timeoutMs: 30 }).sendRaw('abc'), 'MAILBOX_SEND_UNCONFIRMED');
+  const s = await setup();
+  await active(s);
+  s.li.outreach.sendFromMailbox = never;
+  s.advance(3 * DAY + 1000);
+  s.scheduler.tick();
+  for (let i = 0; i < 50; i += 1) await new Promise((r) => setImmediate(r));
+  const t0 = Date.now();
+  await s.scheduler.stop({ maxWaitMs: 50 });
+  assert.ok(Date.now() - t0 < 2000, 'stop gave up waiting');
+});
+
 (async () => {
   let passed = 0;
   let failed = 0;

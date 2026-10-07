@@ -214,13 +214,22 @@ class SequenceService {
    * (REPLIES_UNCHECKED). A draft shows the gap and Activate clears it; Resume clears it otherwise.
    */
   async noteRepliesGap(mailboxId, atIso = this._nowIso()) {
-    for (const seq of await this.store.sequences.listOpen()) {
-      if (seq.mailbox_id !== mailboxId) continue;
-      const marked = await this.store.sequences.update(seq.sequence_id, { replies_gap_at: atIso, updated_at: this._nowIso() }, { expect: [seq.status], expectHold: seq.hold_code });
-      if (!marked) continue;
-      if (seq.status === 'active' || (seq.status === 'paused' && AUTO_HOLDS.includes(seq.hold_code))) {
-        await this.store.sequences.update(seq.sequence_id, { status: 'paused', hold_code: HOLD.REPLIES_UNCHECKED, resume_at: null, updated_at: this._nowIso() }, { expect: [seq.status], expectHold: seq.hold_code });
-        await this._event(seq.sequence_id, 'paused', { actor: 'scheduler', code: HOLD.REPLIES_UNCHECKED });
+    await this.store.sequences.noteGap(mailboxId, atIso);
+    for (const listed of await this.store.sequences.listOpen()) {
+      if (listed.mailbox_id !== mailboxId) continue;
+      // Compare-and-set against a fresh read; a human action that lands at the same moment only
+      // means one more read, never a lost gap.
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const seq = await this.store.sequences.get(listed.sequence_id);
+        if (!seq || !OPEN_STATUSES.includes(seq.status)) break;
+        // Running, or held for anything but an unknown outcome -> held for the reply check. An
+        // unknown outcome keeps its hold (its own human decision comes first) and the gap after it.
+        const hold = seq.status === 'draft' || seq.hold_code === HOLD.SEND_OUTCOME_UNKNOWN ? seq.hold_code : HOLD.REPLIES_UNCHECKED;
+        const status = seq.status === 'draft' ? 'draft' : (hold ? 'paused' : seq.status);
+        const done = await this.store.sequences.update(seq.sequence_id, { status, hold_code: hold, resume_at: hold === seq.hold_code ? seq.resume_at : null, replies_gap_at: atIso, updated_at: this._nowIso() }, { expect: [seq.status], expectHold: seq.hold_code });
+        if (!done) continue;
+        if (hold !== seq.hold_code) await this._event(seq.sequence_id, 'paused', { actor: 'scheduler', code: HOLD.REPLIES_UNCHECKED });
+        break;
       }
     }
   }
@@ -264,6 +273,9 @@ class SequenceService {
       first_accepted_at: first.updated_at, status: 'draft', hold_code: null, resume_at: null, stop_reason: null, activated_at: null,
       created_at: nowIso, updated_at: nowIso,
     };
+    // A reply-history gap since the first email (seen before this sequence existed) still counts.
+    const gap = await this.store.sequences.gapFor(seq.mailbox_id);
+    if (gap && Date.parse(gap) >= Date.parse(seq.first_accepted_at)) seq.replies_gap_at = gap;
     const stop = await this._stopReason(seq);
     if (stop) throw new LiError('SEQUENCE_NOT_ALLOWED', stop === 'replied' ? 'They already replied, so no follow-ups are added.' : (stop === 'suppressed' ? 'This contact is on the do-not-contact list.' : 'The lead\'s email address changed since the first email.'));
 
@@ -293,7 +305,7 @@ class SequenceService {
     // mean a new idempotency key, so the same follow-up could go out twice.
     const ledger = (await this.store.sends.list({ pitchId: step.pitch_id, limit: 20 })).rows || [];
     if (step.last_code === HOLD.SEND_OUTCOME_UNKNOWN || step.state === 'sending' || ledger.some((r) => r.state === 'accepted' || r.state === 'attempted')) {
-      throw new LiError('STEP_LOCKED', 'This follow-up may already have been sent, so it can no longer change. Check Gmail\'s Sent folder, then stop or resume.');
+      throw new LiError('STEP_LOCKED', 'Gmail was already contacted for this follow-up, so its text can no longer change (new text could make it go out twice).');
     }
     const saved = await this.store.sequences.updateStep(step.sequence_id, step.step_no, { draft, updated_at: this._nowIso() }, { expect: ['waiting', 'scheduled'] });
     if (!saved) throw new LiError('STEP_LOCKED', 'This follow-up is being sent or was sent, so it can no longer change.');
@@ -380,6 +392,15 @@ class SequenceService {
     if (missing) throw new LiError('STEPS_NOT_APPROVED', `Approve every remaining follow-up first (not approved: ${missing.join(', ')}).`);
     if (seq.hold_code === HOLD.MAILBOX_GONE && !(this.store.mailboxes && await this.store.mailboxes.get(seq.mailbox_id))) {
       throw new LiError('MAILBOX_NOT_FOUND', 'The mailbox that sent the first email is no longer connected. These follow-ups can only be sent from it; stop them.');
+    }
+    if (seq.hold_code === HOLD.SEND_OUTCOME_UNKNOWN && seq.replies_gap_at) {
+      // Two separate human checks: first "it was not sent" (now confirmed), then "no reply hides in
+      // the gap". The sequence moves to the reply check instead of running.
+      const cur = await this._currentStep(seq.sequence_id);
+      if (cur && cur.last_code === HOLD.SEND_OUTCOME_UNKNOWN) await this.store.sequences.updateStep(seq.sequence_id, cur.step_no, { last_code: null, updated_at: this._nowIso() }, { expect: ['scheduled'] });
+      const next = await this.store.sequences.update(seq.sequence_id, { hold_code: HOLD.REPLIES_UNCHECKED, updated_at: this._nowIso() }, { expect: ['paused'], expectHold: HOLD.SEND_OUTCOME_UNKNOWN });
+      if (!next) throw new LiError('SEQUENCE_CHANGED', 'These follow-ups changed. Look again.');
+      return this._view(next);
     }
     const done = await this._rearm(seq, 'operator', seq.hold_code, { clearGap: true });
     if (done && seq.hold_code === HOLD.SEND_OUTCOME_UNKNOWN) {
@@ -508,7 +529,7 @@ class SequenceService {
     const repeated = strikes > LIMITS.LIMIT_BACKOFF_MS.length;
     const until = repeated ? null : iso(this._now().getTime() + LIMITS.LIMIT_BACKOFF_MS[strikes - 1]);
     // Pause FIRST, then move the step back: a crash in between leaves a paused sequence.
-    await this._pause(seq, repeated ? HOLD.PROVIDER_LIMIT_REPEATED : HOLD.PROVIDER_LIMIT, { resumeAt: until });
+    await this._pause(seq, repeated ? HOLD.PROVIDER_LIMIT_REPEATED : HOLD.PROVIDER_LIMIT, { resumeAt: until, expect: repeated ? ['active', 'paused'] : ['active'] });
     await this.store.sequences.updateStep(seq.sequence_id, step.step_no, {
       state: 'scheduled', limit_strikes: Math.min(strikes, 10), last_code: 'MAILBOX_PROVIDER_LIMIT', ...(until ? { next_attempt_at: until } : {}), updated_at: this._nowIso(),
     }, { expect: ['sending', 'scheduled'] });
@@ -598,7 +619,7 @@ class SequenceService {
     const stop = (await this._stopReason(seq)) || STOP_CODES[code] || null;
     if (stop) {
       await this._stop(seq, stop, 'scheduler');
-      await back();
+      await back({ state: 'stopped', next_attempt_at: null });
       return 'stopped';
     }
     if (unknown) { await this._pause(seq, HOLD.SEND_OUTCOME_UNKNOWN); await back(); return 'held'; }
@@ -617,7 +638,9 @@ class SequenceService {
     else if (RECONNECT_CODES.has(code)) hold = HOLD.MAILBOX_RECONNECT_REQUIRED;
     else if (code === 'THREAD_UNAVAILABLE') hold = HOLD.THREAD_UNAVAILABLE;
     else if (code === 'NOT_READY' && !(await this._approved((await this._currentStep(seq.sequence_id) || step).draft))) hold = HOLD.NEEDS_APPROVAL;
-    await this._pause(seq, hold);
+    // An AUTO hold is set only on a still-running sequence: it must never replace a Pause (or any
+    // other hold) that a human set while this send was in flight, or the sweep would undo it.
+    await this._pause(seq, hold, { expect: AUTO_HOLDS.includes(hold) ? ['active'] : ['active', 'paused'] });
     await back();
     return hold === HOLD.MAILBOX_RECONNECT_REQUIRED ? 'paused' : 'held';
   }
