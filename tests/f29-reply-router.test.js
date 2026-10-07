@@ -135,6 +135,29 @@ test('S2. no route for anything unverified: an unmatched id, a forward from anot
   e.gmail.deliver('i', { From: FROM, Subject: 'Pricing?' }); // cites nothing
   await sync(e);
   assert.strictEqual(e.store.replyRoutes.rows.size, 0);
+  // The sync offers the router only what the intake ACCEPTED (and auto-replies citing an id).
+  const seen = [];
+  e.svc.setReplyRouter((m) => { seen.push(m.kind); });
+  e.gmail.deliver('j', reply('Pricing?', cites('<CAnot-ours-2@mail.gmail.com>')));
+  e.gmail.deliver('k', { ...reply('Pricing?'), From: '"Colleague" <someone@else.example>' });
+  await sync(e);
+  assert.deepStrictEqual(seen, [], 'a rejected reply is never offered to the router');
+});
+
+test('S2b. the router re-verifies what it is handed: no trust event, a different kind, or an auto-reply that has one is skipped', async () => {
+  const e = await env({ router: false });
+  await firstEmail(e);
+  e.gmail.deliver('in1', reply('Pricing?'));
+  await sync(e);
+  const base = { mailboxId: MBX, from: LEAD_EMAIL, refs: [STORED], subject: 'Pricing?' };
+  assert.strictEqual(await e.router.onMailboxMessage({ ...base, kind: 'reply', eventId: eventOf('never-accepted') }), 'skipped', 'no trust event');
+  assert.strictEqual(await e.router.onMailboxMessage({ ...base, kind: 'unsubscribe', eventId: eventOf('in1') }), 'skipped', 'the trust event is a reply, not an unsubscribe');
+  assert.strictEqual(await e.router.onMailboxMessage({ ...base, kind: 'away', eventId: eventOf('in1') }), 'skipped', 'a message with a trust event is never "away"');
+  assert.strictEqual(await e.router.onMailboxMessage({ ...base, kind: 'reply', eventId: eventOf('in1'), refs: [] }), 'skipped', 'no cited id');
+  assert.strictEqual(await e.router.onMailboxMessage({ ...base, kind: 'reply', eventId: eventOf('in1'), from: 'other@else.example' }), 'skipped', 'not the recipient');
+  assert.strictEqual(e.store.replyRoutes.rows.size, 0);
+  assert.strictEqual(await e.router.onMailboxMessage({ ...base, kind: 'reply', eventId: eventOf('in1') }), 'routed');
+  assert.strictEqual(await e.router.onMailboxMessage({ ...base, kind: 'reply', eventId: eventOf('in1') }), 'duplicate');
 });
 
 test('S3. D4: an out-of-office auto-reply citing our id is an "Away" note only - intake still skips it and F28 still sends', async () => {
@@ -345,7 +368,9 @@ test('I1. three channels, closed schemas, trusted sender only; none can send, su
   await bad(C.LIST, { send: true });
   await bad(C.CONFIRM, { eventId: eventOf('in1') });
   await bad(C.CONFIRM, { eventId: eventOf('in1'), category: 'interested', review: 'interested' });
-  await bad(C.CONFIRM, { eventId: 'gm_' + 'z'.repeat(40), category: 'interested' });
+  for (const eventId of ['gm_' + 'z'.repeat(40), 'gm_' + 'a'.repeat(39), 'tev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'x']) {
+    assert.strictEqual((await bad(C.CONFIRM, { eventId, category: 'interested' })).error.code, 'VALIDATION_FAILED', eventId);
+  }
   await bad(C.CONFIRM, { eventId: eventOf('in1'), category: 'interested', to: 'x@y.example' });
   await bad(C.FOR_LEAD, { leadId: 'L1', mailboxId: MBX });
   const missing = await bad(C.CONFIRM, { eventId: eventOf('nope'), category: 'interested' });

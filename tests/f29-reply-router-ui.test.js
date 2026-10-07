@@ -64,7 +64,7 @@ async function env({ leads } = {}) {
   const opened = [];
   const window = { ztechLeadIntel: bridge };
   const ui = new Function('document', 'window', 'openLeadDetail',
-    `let leadDrawerLeadId = null;\n${TRUST_EL}\n${block}\nreturn { load: (id) => { leadDrawerLeadId = id; return loadLeadReplyRoute(id); }, list: f29ListLoad };`)(document, window, (id) => opened.push(id));
+    `let leadDrawerLeadId = null;\n${TRUST_EL}\n${block}\nreturn { load: (id) => { leadDrawerLeadId = id; return loadLeadReplyRoute(id); }, close: () => { leadDrawerLeadId = null; }, list: f29ListLoad, get lead() { return f29Lead; } };`)(document, window, (id) => opened.push(id));
   const drawer = () => els['lead-drawer-reply-route'];
   const panel = () => els['f29-replies'];
   const button = (host, label) => host.all().find((e) => e.tagName === 'BUTTON' && e.textContent === label) || null;
@@ -96,6 +96,12 @@ test('U1. drawer: a "Re: <our subject>" reply says "No clear signal from subject
   assert.deepStrictEqual(e.calls.filter((c) => c[0] === 'lead-intel:reply-route-confirm').at(-1)[1], { eventId: e.ev('in1'), category: 'later' });
   assert.ok(/Later · reply received/.test(e.drawer().textContent));
   assert.strictEqual(e.s.store.replyReviews.rows.size, 0, 'no review is recorded from the drawer section');
+  // A late answer for a drawer that was closed (or moved to another lead) is never shown.
+  e.ui.load('L1');
+  e.ui.close();
+  await settle();
+  assert.strictEqual(e.ui.lead.view, null);
+  assert.ok(/Loading/.test(e.drawer().textContent));
 });
 
 test('U2. drawer: a changed subject says "Suggested from the subject/headers" and names the matching review; Away and opt-out notes', async () => {

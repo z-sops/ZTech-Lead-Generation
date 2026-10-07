@@ -113,8 +113,8 @@ function classifyReply({ kind, subject, firstSubject } = {}) {
   let s = normalizeSubject(subject);
   const ours = normalizeSubject(firstSubject);
   if (!s) return { category: 'unknown', ruleId: 'no_subject', input: 'subject', confidence: 'low' };
-  if (ours && s === ours) return { category: 'unknown', ruleId: 'subject_echo', input: 'subject', confidence: 'low' };
-  // Our own words never count: drop the first email's subject wherever it appears.
+  // Our own words never count: drop the first email's subject wherever it appears. A subject that
+  // was ONLY our subject ("Re: <our subject>") is then empty: subject_echo.
   if (ours && ours.length >= 3) s = s.split(ours).join(' ').replace(/\s+/g, ' ').trim();
   if (!s) return { category: 'unknown', ruleId: 'subject_echo', input: 'subject', confidence: 'low' };
   for (const rule of RULES) {
