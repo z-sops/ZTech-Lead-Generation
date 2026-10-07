@@ -77,6 +77,8 @@ test('F29 store: put is idempotent on event id; confirm changes only the confirm
     assert.deepEqual(all, [EV(4), EV(3), EV(1)], 'newest first');
     assert.deepEqual(replies, [EV(4), EV(1)]);
     assert.deepEqual(l1, [EV(3), EV(1)]);
+    assert.deepEqual((await s.replyRoutes.list({ limit: 1, offset: 1 })).map((r) => r.event_id), [EV(3)], `${name}: offset pages`);
+    assert.deepEqual((await s.replyRoutes.list({ limit: 5, offset: 3 })).map((r) => r.event_id), [], `${name}: past the end`);
     await s.purgeLead('L1');
     assert.deepEqual((await s.replyRoutes.list({})).map((r) => r.event_id), [EV(4)], `${name}: the lead's routes go with it`);
   }

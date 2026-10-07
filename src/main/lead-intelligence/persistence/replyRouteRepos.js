@@ -28,6 +28,7 @@ const sqlRow = (db, sql, params) => sqlRows(db, sql, params)[0] || null;
 const ph = (cols) => cols.map(() => '?').join(', ');
 const freeze = (r) => (r ? Object.freeze({ ...r }) : null);
 const clampLimit = (n) => Math.max(1, Math.min(MAX_LIST, Number.isInteger(n) ? n : MAX_LIST));
+const clampOffset = (n) => (Number.isInteger(n) && n > 0 ? n : 0);
 const byNewest = (a, b) => (a.routed_at < b.routed_at ? 1 : a.routed_at > b.routed_at ? -1 : (a.event_id < b.event_id ? 1 : -1));
 
 function checkConfirm({ category, by, at }) {
@@ -66,10 +67,10 @@ class SqlReplyRoutes {
   }
 
   /** Newest first; `kinds` limits the kinds returned. */
-  async list({ kinds = null, limit } = {}) {
+  async list({ kinds = null, limit, offset = 0 } = {}) {
     const ks = Array.isArray(kinds) && kinds.length ? kinds.map(String) : null;
     const where = ks ? `WHERE kind IN (${ks.map(() => '?').join(', ')})` : '';
-    return sqlRows(this.s.db, `SELECT ${ROUTE_COLS.join(', ')} FROM li_reply_routes ${where} ORDER BY routed_at DESC, event_id DESC LIMIT ?`, [...(ks || []), clampLimit(limit)]).map(freeze);
+    return sqlRows(this.s.db, `SELECT ${ROUTE_COLS.join(', ')} FROM li_reply_routes ${where} ORDER BY routed_at DESC, event_id DESC LIMIT ? OFFSET ?`, [...(ks || []), clampLimit(limit), clampOffset(offset)]).map(freeze);
   }
 
   /** Inside purgeLead's transaction: the lead's routes go with the lead (trust events stay). */
@@ -104,9 +105,10 @@ class MemReplyRoutes {
     return [...this.rows.values()].filter((r) => r.lead_id === String(leadId)).sort(byNewest).slice(0, clampLimit(limit)).map(freeze);
   }
 
-  async list({ kinds = null, limit } = {}) {
+  async list({ kinds = null, limit, offset = 0 } = {}) {
     const ks = Array.isArray(kinds) && kinds.length ? new Set(kinds.map(String)) : null;
-    return [...this.rows.values()].filter((r) => !ks || ks.has(r.kind)).sort(byNewest).slice(0, clampLimit(limit)).map(freeze);
+    const from = clampOffset(offset);
+    return [...this.rows.values()].filter((r) => !ks || ks.has(r.kind)).sort(byNewest).slice(from, from + clampLimit(limit)).map(freeze);
   }
 
   deleteByLead(leadId) {

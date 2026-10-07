@@ -8166,10 +8166,13 @@ const F29_CATEGORY_LABEL = Object.freeze({
 });
 const F29_CATEGORIES = Object.freeze(Object.keys(F29_CATEGORY_LABEL));
 const F29_REVIEW_LABEL = Object.freeze({ interested: 'Interested', not_interested: 'Not interested', unsubscribe: 'Unsubscribe' });
+const F29_OUTCOME_LABEL = Object.freeze({ ...F29_REVIEW_LABEL, neutral: 'Neutral / unclear' });
+const F29_STATE_LABEL = Object.freeze({ reviewed: 'Reviewed', superseded: 'A newer reply arrived', unsubscribed: 'Unsubscribed', suppressed: 'On the do-not-contact list' });
 const F29_BODY_NOTE = 'ZTech reads only the subject and headers of a reply, never its body. A stop request written only in the body is not detected: read the reply in Gmail.';
 let f29Lead = { leadId: null, view: null, loading: false, error: null, notice: null, busy: false, changing: false };
 let f29LeadSeq = 0;
 let f29List = { data: null, loading: false, error: null, busy: false, category: '', showAll: false };
+let f29ListSeq = 0;
 
 function f29Bridge() {
   const api = typeof window !== 'undefined' ? window.ztechLeadIntel : null;
@@ -8271,10 +8274,12 @@ function renderLeadReplyRoute() {
   if (v && v.kind === 'unsubscribe') {
     host.appendChild(trustEl('p', 'f29-line', `Unsubscribe: their reply's subject asked to opt out (${f29When(v.receivedAt)}). They are already on the do-not-contact list.`));
   } else if (v) {
-    if (v.possibleOptOut) host.appendChild(trustEl('p', 'f29-optout', 'Possible opt-out - review now. Only the review button "Unsubscribe" adds them to do-not-contact.'));
+    if (v.possibleOptOut) host.appendChild(trustEl('p', 'f29-optout', 'Possible opt-out - review now. A category never adds anyone to do-not-contact: your review ("Unsubscribe" or "Not interested") or the do-not-contact buttons do.'));
     host.appendChild(trustEl('p', 'f29-line', `${f29CategoryText(v)} · reply received ${f29When(v.receivedAt)}`));
     host.appendChild(trustEl('p', 'f29-source', f29SourceNote(v)));
-    host.appendChild(trustEl('p', 'f29-review-hint', v.suggestedReview
+    if (v.state === 'reviewed') host.appendChild(trustEl('p', 'f29-review-hint', `You reviewed this reply as: ${F29_OUTCOME_LABEL[v.reviewOutcome] || v.reviewOutcome}.`));
+    else if (v.state === 'suppressed') host.appendChild(trustEl('p', 'f29-review-hint', 'This contact is on the do-not-contact list.'));
+    else host.appendChild(trustEl('p', 'f29-review-hint', v.suggestedReview
       ? `Matching review: ${F29_REVIEW_LABEL[v.suggestedReview]}. Nothing is recorded until you click a review button.`
       : 'No matching review: choose the review yourself.'));
     const row = trustEl('div', 'f29-controls');
@@ -8289,7 +8294,7 @@ function renderLeadReplyRoute() {
     }
     host.appendChild(row);
   }
-  if (view.away) host.appendChild(trustEl('p', 'f29-away', `Away (out of office): an automatic reply arrived ${f29When(view.away.routedAt)}. A note only: it is not a reply and stops or changes nothing.`));
+  if (view.away) host.appendChild(trustEl('p', 'f29-away', `Away (out of office): an automatic reply (marked automatic in its headers) arrived ${f29When(view.away.routedAt)}. A note only: it is not counted as a reply and stops or changes nothing.`));
   host.appendChild(trustEl('p', 'f29-note', F29_BODY_NOTE));
 }
 
@@ -8302,11 +8307,15 @@ async function f29ListLoad() {
   renderF29List();
   const payload = { show: f29List.showAll ? 'all' : 'pending' };
   if (f29List.category) payload.category = f29List.category;
+  const seq = ++f29ListSeq;
+  let next;
   try {
-    f29List = { ...f29List, data: f29Unwrap(await bridge.list(payload), 'Replies could not be read.'), loading: false };
+    next = { data: f29Unwrap(await bridge.list(payload), 'Replies could not be read.'), loading: false };
   } catch (err) {
-    f29List = { ...f29List, loading: false, error: (err && err.message) || 'Replies could not be read.' };
+    next = { loading: false, error: (err && err.message) || 'Replies could not be read.' };
   }
+  if (seq !== f29ListSeq) return; // a newer filter's answer wins
+  f29List = { ...f29List, ...next };
   renderF29List();
 }
 
@@ -8331,13 +8340,13 @@ function f29ListRow(v) {
   r.appendChild(trustEl('span', 'f29-row-when', f29When(v.receivedAt)));
   r.appendChild(trustEl('span', 'f29-row-category', f29CategoryText(v)));
   r.appendChild(trustEl('span', 'f29-row-source', v.kind === 'unsubscribe' ? 'Already unsubscribed.' : f29SourceNote(v)));
-  if (v.state !== 'pending') r.appendChild(trustEl('span', 'f29-row-state', v.state === 'reviewed' ? 'Reviewed' : v.state === 'superseded' ? 'A newer reply arrived' : 'Unsubscribed'));
+  if (v.state !== 'pending') r.appendChild(trustEl('span', 'f29-row-state', F29_STATE_LABEL[v.state] || v.state));
   if (typeof openLeadDetail === 'function') {
     const open = f29Button('Open lead', () => openLeadDetail(String(v.leadId)), 'btn-secondary', false);
     open.setAttribute('data-lead-id', String(v.leadId));
     r.appendChild(open);
   }
-  if (v.kind === 'reply' && !v.confirmed) r.appendChild(f29Button('Confirm', () => f29ListConfirm(v.eventId, v.suggested), 'btn-secondary', f29List.busy));
+  if (v.kind === 'reply' && v.state !== 'suppressed' && !v.confirmed) r.appendChild(f29Button('Confirm', () => f29ListConfirm(v.eventId, v.suggested), 'btn-secondary', f29List.busy));
   if (v.kind === 'reply') {
     const select = f29CategorySelect(v.category, 'Change the category');
     select.disabled = f29List.busy;
@@ -11164,6 +11173,8 @@ async function trustAct(method, payload, notice) {
   if (seq !== leadTrustSeq || leadDrawerLeadId !== leadId) return;
   leadTrust = next;
   renderLeadTrust();
+  // F29: a review or do-not-contact changes the reply's state; refresh its category section.
+  if (!next.error && typeof loadLeadReplyRoute === 'function') loadLeadReplyRoute(leadId);
 }
 
 function trustStatusLine(channel, c) {

@@ -27,6 +27,8 @@ const { classifyReply } = require('./replyRules');
 const { REPLY_CATEGORIES, SUGGESTED_REVIEW } = require('./replyRouteContract');
 
 const LIST_LIMIT = 200;
+const PAGE = 200;
+const MAX_SCAN = 100 * PAGE; // a hard stop: 20,000 routes
 const SHOW = Object.freeze(['pending', 'all']);
 
 class ReplyRouterService {
@@ -89,7 +91,7 @@ class ReplyRouterService {
     return created ? 'routed' : 'duplicate';
   }
 
-  /** pending | reviewed | superseded | unsubscribed | away - from the trust records, never stored. */
+  /** pending | reviewed | suppressed | superseded | unsubscribed | away - from the trust records, never stored. */
   async _state(route) {
     if (route.kind === 'away') return { state: 'away', receivedAt: null };
     const te = this.store.trustEvents ? await this.store.trustEvents.get(route.event_id) : null;
@@ -97,19 +99,26 @@ class ReplyRouterService {
     if (route.kind === 'unsubscribe') return { state: 'unsubscribed', receivedAt: te.received_at };
     const review = this.store.replyReviews ? await this.store.replyReviews.forEvent(route.event_id) : null;
     if (review) return { state: 'reviewed', receivedAt: te.received_at, reviewOutcome: review.outcome };
+    // Already on do-not-contact (a "Do not contact" / "Mark unsubscribed" click, or any other
+    // suppression): the review buttons are hidden, so it is not waiting for a review.
+    if (this.store.suppressions && await this.store.suppressions.find({ channel: 'email', address: te.normalized_address })) {
+      return { state: 'suppressed', receivedAt: te.received_at };
+    }
     // The human review applies to the NEWEST mailbox reply from this address (F26.6 follow-up).
     const latest = await this.store.trustEvents.latestFor({ channel: 'email', address: te.normalized_address, kinds: ['reply'], sources: ['mailbox'] });
     if (!latest || latest.event_id !== route.event_id) return { state: 'superseded', receivedAt: te.received_at };
     return { state: 'pending', receivedAt: te.received_at };
   }
 
+  async _leadName(leadId) {
+    if (!this.leadName) return null;
+    try { const n = await this.leadName(leadId); return typeof n === 'string' ? n : null; } catch { return null; }
+  }
+
   async _view(route, withName) {
     const st = await this._state(route);
     const category = route.confirmed || route.suggested;
-    let leadName = null;
-    if (withName && this.leadName) {
-      try { const n = await this.leadName(route.lead_id); leadName = typeof n === 'string' ? n : null; } catch { leadName = null; }
-    }
+    const leadName = withName ? await this._leadName(route.lead_id) : null;
     return {
       eventId: route.event_id, leadId: route.lead_id, leadName, kind: route.kind,
       suggested: route.suggested, ruleId: route.rule_id, input: route.input, confidence: route.confidence,
@@ -130,14 +139,21 @@ class ReplyRouterService {
   async list({ category = null, show = 'pending' } = {}) {
     if (category !== null && !REPLY_CATEGORIES.includes(category)) throw new ValidationError('Invalid category', [{ path: '$.category', message: 'unknown category' }]);
     if (!SHOW.includes(show)) throw new ValidationError('Invalid show', [{ path: '$.show', message: 'must be pending or all' }]);
-    const rows = await this.store.replyRoutes.list({ kinds: ['reply', 'unsubscribe'], limit: LIST_LIMIT });
+    // `pending` reads EVERY route, page by page, so an old pending reply - above all a possible
+    // opt-out - never falls out of the list behind newer reviewed ones. `all` shows the newest.
     const out = [];
-    for (const r of rows) {
-      const v = await this._view(r, true);
-      if (show === 'pending' && v.state !== 'pending') continue;
-      if (category && v.category !== category) continue;
-      out.push(v);
+    const cap = show === 'all' ? LIST_LIMIT : Infinity;
+    for (let offset = 0; offset < cap && offset < MAX_SCAN && out.length < LIST_LIMIT; offset += PAGE) {
+      const rows = await this.store.replyRoutes.list({ kinds: ['reply', 'unsubscribe'], limit: PAGE, offset });
+      for (const r of rows) {
+        const v = await this._view(r, false);
+        if (show === 'pending' && v.state !== 'pending') continue;
+        if (category && v.category !== category) continue;
+        if (out.length < LIST_LIMIT) out.push(v);
+      }
+      if (rows.length < PAGE) break;
     }
+    for (const v of out) v.leadName = await this._leadName(v.leadId);
     out.sort((a, b) => (a.possibleOptOut === b.possibleOptOut ? 0 : a.possibleOptOut ? -1 : 1));
     return { replies: out, show, category };
   }
@@ -151,6 +167,7 @@ class ReplyRouterService {
     const route = await this.store.replyRoutes.get(String(eventId));
     if (!route) throw new NotFoundError('Reply category');
     if (route.kind === 'away') throw new LiError('REPLY_ROUTE_AWAY', 'An out-of-office message is a note only; it has no category to confirm.');
+    if (route.kind === 'unsubscribe') throw new LiError('REPLY_ROUTE_UNSUBSCRIBED', 'This reply already unsubscribed them; it has no category to confirm.');
     const next = await this.store.replyRoutes.confirm(route.event_id, { category, by: this.operator, at: this.clock().toISOString() });
     return this._view(next, true);
   }

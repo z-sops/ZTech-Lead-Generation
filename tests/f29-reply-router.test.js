@@ -83,6 +83,18 @@ test('R3. negations: "not interested" is never interested; "no need to call" / "
   assert.strictEqual(classifyReply({ kind: 'reply', subject: 'No need to call', firstSubject: FIRST }).category, 'not_interested');
   assert.strictEqual(classifyReply({ kind: 'reply', subject: "please don't call", firstSubject: FIRST }).category, 'unknown');
   assert.strictEqual(classifyReply({ kind: 'reply', subject: 'never interested', firstSubject: FIRST }).category, 'unknown');
+  // Review fix: weak "no" phrases rank below a meeting / pricing ask and are low confidence.
+  assert.strictEqual(classifyReply({ kind: 'reply', subject: "No need to wait - let's schedule a call", firstSubject: FIRST }).category, 'meeting_request');
+  assert.strictEqual(classifyReply({ kind: 'reply', subject: 'Already have a slot: meeting Tuesday', firstSubject: FIRST }).category, 'meeting_request');
+  assert.deepStrictEqual(classifyReply({ kind: 'reply', subject: 'interested? not really', firstSubject: FIRST }), { category: 'not_interested', ruleId: 'subject_not_interested_weak', input: 'subject', confidence: 'low' });
+  assert.strictEqual(classifyReply({ kind: 'reply', subject: 'No need to call', firstSubject: FIRST }).confidence, 'low');
+  assert.strictEqual(classifyReply({ kind: 'reply', subject: 'Not interested', firstSubject: FIRST }).confidence, 'high');
+  for (const s of ["don't email", 'dont email us', 'do not contact']) assert.strictEqual(classifyReply({ kind: 'reply', subject: s, firstSubject: FIRST }).category, 'unsubscribe', s);
+  // Our subject is removed as whole words only; many prefixes are still stripped.
+  assert.strictEqual(classifyReply({ kind: 'reply', subject: `${'Re: '.repeat(15)}${FIRST}`, firstSubject: FIRST }).ruleId, 'subject_echo');
+  assert.strictEqual(classifyReply({ kind: 'reply', subject: 'Hi, call me', firstSubject: 'Hi' }).category, 'meeting_request', 'a very short first subject is not stripped');
+  assert.strictEqual(classifyReply({ kind: 'reply', subject: 'Re: Notes - call me', firstSubject: 'Notes' }).category, 'meeting_request', 'our words go, theirs stay');
+  assert.strictEqual(classifyReply({ kind: 'reply', subject: 'Re: All - call me', firstSubject: 'All' }).category, 'meeting_request', 'removed as whole words: "call" keeps its "all"');
 });
 
 test('R4. priority: opt-out beats everything; out-of-office beats interest; our own subject words never count', () => {
@@ -296,6 +308,39 @@ test('T3. confirming a category never records a review, never suppresses and nev
   assert.strictEqual(e.store.suppressions.rows.size, 1);
   assert.strictEqual((await e.router.list()).replies.length, 0, 'a reviewed reply leaves the pending list');
   assert.strictEqual((await e.router.list({ show: 'all' })).replies[0].reviewOutcome, 'not_interested');
+});
+
+test('T3b. review fix: a reply whose contact is already on do-not-contact is not pending and not a possible opt-out', async () => {
+  const e = await env();
+  await firstEmail(e);
+  e.gmail.deliver('in1', reply('Stop emailing me'));
+  await sync(e);
+  assert.strictEqual((await e.router.list()).replies[0].possibleOptOut, true);
+  await e.li.trust.suppressLead({ leadId: 'L1', channel: 'email', reason: 'manual', scope: 'global' }); // the "Do not contact" button
+  assert.deepStrictEqual((await e.router.list()).replies, []);
+  const all = (await e.router.list({ show: 'all' })).replies;
+  assert.deepStrictEqual(all.map((v) => [v.state, v.possibleOptOut]), [['suppressed', false]]);
+  assert.strictEqual((await e.router.forLead({ leadId: 'L1' })).latest, null, 'the drawer no longer asks for a review it cannot take');
+  // An "unsubscribe" reply cannot be re-categorised either.
+  e.gmail.deliver('u1', reply('Unsubscribe'));
+  await sync(e);
+  await assert.rejects(e.router.confirm({ eventId: eventOf('u1'), category: 'interested' }), (x) => x.code === 'REPLY_ROUTE_UNSUBSCRIBED');
+});
+
+test('T3c. review fix: an old pending reply stays listed behind any number of newer reviewed ones', async () => {
+  const e = await env();
+  await firstEmail(e);
+  e.gmail.deliver('old', reply('Stop emailing me'));
+  await sync(e);
+  const base = (await e.store.replyRoutes.get(eventOf('old')));
+  for (let i = 0; i < 450; i += 1) {
+    await e.store.replyRoutes.put({ ...base, event_id: 'gm_' + String(i).padStart(40, 'a'), routed_at: h.iso(e.clock.t + 1000 + i) });
+  }
+  const pending = (await e.router.list()).replies;
+  assert.deepStrictEqual(pending.map((v) => v.eventId), [eventOf('old')], 'found on the third page');
+  assert.strictEqual(pending[0].possibleOptOut, true);
+  assert.strictEqual(pending[0].leadName, 'Acme Bakery');
+  assert.strictEqual((await e.router.list({ show: 'all' })).replies.length, 200, '"all" shows the newest 200');
 });
 
 test('T4. the review applies to the NEWEST reply: an older one is shown as superseded, never pending', async () => {

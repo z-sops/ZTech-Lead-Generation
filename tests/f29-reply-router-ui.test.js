@@ -69,7 +69,7 @@ async function env({ leads } = {}) {
   const panel = () => els['f29-replies'];
   const button = (host, label) => host.all().find((e) => e.tagName === 'BUTTON' && e.textContent === label) || null;
   const deliver = async (id, subject, extra = {}) => { s.gmail.deliver(id, { From: FROM, Subject: subject, 'In-Reply-To': STORED, References: STORED, ...extra }); await s.svc.syncReplies({ mailboxId: h.MBX }); };
-  return { s, ui, calls, drawer, panel, button, nav, deliver, opened, ev: (id) => mailboxEventId(h.MBX, id) };
+  return { s, ui, calls, drawer, panel, button, nav, deliver, opened, bridge, ev: (id) => mailboxEventId(h.MBX, id) };
 }
 
 test('U1. drawer: a "Re: <our subject>" reply says "No clear signal from subject/headers"; Confirm and Change record the category only', async () => {
@@ -118,8 +118,8 @@ test('U2. drawer: a changed subject says "Suggested from the subject/headers" an
   await e.deliver('in2', 'Stop emailing me');
   await e.ui.load('L1');
   t = e.drawer().textContent;
-  assert.ok(/Possible opt-out - review now\. Only the review button "Unsubscribe" adds them to do-not-contact\./.test(t));
-  assert.ok(/Away \(out of office\): an automatic reply arrived .*A note only: it is not a reply and stops or changes nothing\./.test(t));
+  assert.ok(/Possible opt-out - review now\. A category never adds anyone to do-not-contact: your review \("Unsubscribe" or "Not interested"\) or the do-not-contact buttons do\./.test(t));
+  assert.ok(/Away \(out of office\): an automatic reply \(marked automatic in its headers\) arrived .*A note only: it is not counted as a reply and stops or changes nothing\./.test(t));
   assert.ok(!t.includes(h.LEAD_EMAIL), 'no address is shown');
 });
 
@@ -158,6 +158,23 @@ test('U3. Outreach > Replies: opt-outs first, filter and "show reviewed" go to m
   await settle();
   assert.deepStrictEqual(e.calls.filter((c) => c[0] === 'lead-intel:reply-route-confirm').at(-1)[1], { eventId: e.ev('p1'), category: 'meeting_request' });
   assert.strictEqual(h.sendCalls(e.s.gmail).length, 2, 'nothing was sent from the list');
+  // Review fix: a slow answer for an older filter never overwrites the newer one.
+  const real = e.s;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const orig = e.bridge.replyRoutes.list;
+  let n = 0;
+  e.bridge.replyRoutes.list = async (p) => { n += 1; if (n === 1) await gate; return orig(p); };
+  box.checked = false;
+  box.fire('change'); // slow: show pending, meeting_request
+  filter.value = 'unsubscribe';
+  filter.fire('change'); // fast: show pending, unsubscribe
+  await settle();
+  release();
+  await settle();
+  const shown = e.panel().all().filter((x) => x.className === 'f29-row-category').map((x) => x.textContent);
+  assert.deepStrictEqual(shown, ['Unsubscribe (suggested)'], 'the newest filter wins');
+  assert.ok(real);
 });
 
 test('U4. static: the block reaches only the reply-route bridge, uses no innerHTML, cannot send; hosts exist; no static Outreach control', () => {
@@ -169,6 +186,10 @@ test('U4. static: the block reaches only the reply-route bridge, uses no innerHT
   assert.ok(htmlSource.includes('id="lead-drawer-reply-route"') && htmlSource.includes('id="f29-replies"'), 'both hosts exist');
   const view = htmlSource.slice(htmlSource.indexOf('<section class="view" id="view-outreach">'), htmlSource.indexOf('<section class="view" id="view-targets">'));
   assert.deepStrictEqual([...view.matchAll(/<button[^>]*>([^<]*)</g)].map((m) => m[1].trim()).sort(), ['Next', 'Previous', 'Refresh'], 'no static control was added to the Outreach view');
+  // Review fix: a review or do-not-contact click in the trust block refreshes the category section.
+  const trustAct = rendererSource.slice(rendererSource.indexOf('async function trustAct('), rendererSource.indexOf('function trustStatusLine('));
+  assert.ok(trustAct.includes("if (!next.error && typeof loadLeadReplyRoute === 'function') loadLeadReplyRoute(leadId);"));
+  assert.ok(!/only the review button/i.test(code), 'no false claim about what adds someone to do-not-contact');
   // Placed between the F28 block and the F11 marker, outside the F11 / F12 / F19 slices.
   const at = rendererSource.indexOf(START);
   assert.ok(at > rendererSource.indexOf('// === END F28 Follow-ups ===') && at < rendererSource.indexOf('// === F11 Outreach: Lead Drawer Pitch tab ==='));

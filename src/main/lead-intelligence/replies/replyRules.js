@@ -24,7 +24,7 @@ const MAX_SUBJECT = 500;
 /** Lower-case, strip reply/forward prefixes, keep letters, digits and apostrophes, collapse spaces. */
 function normalizeSubject(subject) {
   let s = typeof subject === 'string' ? subject.slice(0, MAX_SUBJECT) : '';
-  for (let i = 0; i < 10 && PREFIX_RE.test(s); i += 1) s = s.replace(PREFIX_RE, '');
+  for (let i = 0; i < 25 && PREFIX_RE.test(s); i += 1) s = s.replace(PREFIX_RE, '');
   return s.toLowerCase().replace(/[’`]/g, "'").replace(/[^a-z0-9'\s]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -39,7 +39,7 @@ const RULES = Object.freeze([
     category: 'unsubscribe', ruleId: 'subject_opt_out', confidence: 'high', negatable: false,
     re: phrases([
       'unsubscribe', 'remove me', 'opt ?out', 'stop emailing', 'stop sending', 'stop contacting',
-      "don't (?:email|contact|message) me", 'do not (?:email|contact|message)', 'dont (?:email|contact|message)',
+      "(?:don't|dont|do not) (?:email|contact|message)",
       'no more emails?', 'take me off', 'email na (?:karein|karen|kren|karo|bhejein|bhejen)', 'email mat (?:karein|karen|karo|bhejo|bhejein)',
       'mujhe email na', 'rabta na (?:karein|karen)',
     ]),
@@ -51,8 +51,7 @@ const RULES = Object.freeze([
   {
     category: 'not_interested', ruleId: 'subject_not_interested', confidence: 'high', negatable: false,
     re: phrases([
-      'not interested', 'no longer interested', 'not really interested', 'no thanks?', 'no thank you', "we're all set", 'we are all set', 'all set',
-      'already have', 'no need', 'not needed', "don't need", 'dont need', 'do not need', 'not required', 'not for us',
+      'not interested', 'no longer interested', 'not really interested', 'no thanks?', 'no thank you', 'not for us',
       'zaroorat nahi', 'zarurat nahi', 'zaroorat nahin', 'zarurat nahin', 'dilchaspi nahi', 'dilchaspi nahin', 'nahi chahiye', 'nahin chahiye',
     ]),
   },
@@ -69,6 +68,12 @@ const RULES = Object.freeze([
       'price', 'prices', 'pricing', 'cost', 'costs', 'quote', 'quotation', 'how much', 'rates?', 'rate card', 'charges', 'fees?', 'budget',
       'kitne ka', 'kitne ki', 'kitna', 'qeemat', 'keemat', 'qimat',
     ]),
+  },
+  {
+    // Weaker "no" phrases rank BELOW a meeting or pricing ask and are low confidence: "no need to
+    // wait - let's schedule a call" is a meeting, "interested? not really" is not interested.
+    category: 'not_interested', ruleId: 'subject_not_interested_weak', confidence: 'low', negatable: false,
+    re: phrases(["we're all set", 'we are all set', 'all set', 'already have', 'no need', 'not needed', "don't need", 'dont need', 'do not need', 'not required', 'not really']),
   },
   {
     category: 'later', ruleId: 'subject_later', confidence: 'low', negatable: false,
@@ -115,7 +120,7 @@ function classifyReply({ kind, subject, firstSubject } = {}) {
   if (!s) return { category: 'unknown', ruleId: 'no_subject', input: 'subject', confidence: 'low' };
   // Our own words never count: drop the first email's subject wherever it appears. A subject that
   // was ONLY our subject ("Re: <our subject>") is then empty: subject_echo.
-  if (ours && ours.length >= 3) s = s.split(ours).join(' ').replace(/\s+/g, ' ').trim();
+  if (ours && ours.length >= 3) s = ` ${s} `.split(` ${ours} `).join('  ').replace(/\s+/g, ' ').trim();
   if (!s) return { category: 'unknown', ruleId: 'subject_echo', input: 'subject', confidence: 'low' };
   for (const rule of RULES) {
     if (matches(rule, s)) return { category: rule.category, ruleId: rule.ruleId, input: 'subject', confidence: rule.confidence };
