@@ -4576,12 +4576,66 @@ function oiRunButton(label, disabled) {
   btn.type = 'button';
   btn.setAttribute('data-action', 'oi-run');
   btn.disabled = Boolean(disabled);
-  if (!disabled) btn.addEventListener('click', () => { runLeadDrawerOpportunity(); });
+  if (!disabled) btn.addEventListener('click', () => { runLeadDrawerOpportunity(false); });
   return btn;
 }
 
-function oiReloadButton() {
-  const btn = leadDrawerEl('button', 'btn btn-sm btn-secondary', 'Retry');
+// I5: report-level freshness, exactly as main derived it. The renderer never computes an
+// age or a threshold itself; it only words the state it was given.
+const OI_FRESHNESS_TONE = { fresh: 'ok', stale: 'warn', expired: 'bad', unknown: 'warn' };
+
+function oiFreshnessText(f) {
+  if (!f || typeof f !== 'object') return null;
+  const days = Number.isInteger(f.ageDays) ? f.ageDays : null;
+  if (f.state === 'fresh') return 'Fresh';
+  if (f.state === 'stale') return days === null ? 'Stale' : `${days} days old`;
+  if (f.state === 'expired') return days === null ? 'Expired' : `Expired (${days} days)`;
+  return 'Age unknown';
+}
+
+function oiFreshnessBadge(f) {
+  const text = oiFreshnessText(f);
+  return text ? oiBadge(text, OI_FRESHNESS_TONE[f.state] || 'warn') : null;
+}
+
+// I5 (E3): main answered confirm_required for a still-fresh report. Nothing was sent.
+function oiConfirmBox(message) {
+  const box = leadDrawerEl('div', 'lead-drawer-warning oi-confirm');
+  box.appendChild(leadDrawerEl('p', '', message));
+  const yes = leadDrawerEl('button', 'btn btn-sm', 'Refresh anyway');
+  yes.type = 'button';
+  yes.setAttribute('data-action', 'oi-confirm-refresh');
+  yes.addEventListener('click', () => { runLeadDrawerOpportunity(true); });
+  const no = leadDrawerEl('button', 'btn btn-sm btn-secondary', 'Cancel');
+  no.type = 'button';
+  no.setAttribute('data-action', 'oi-cancel-refresh');
+  no.addEventListener('click', () => {
+    leadDrawerOpportunity = { ...leadDrawerOpportunity, confirm: null };
+    renderLeadDrawerOpportunity();
+  });
+  return oiAppend(box, [oiActions([yes, no])]);
+}
+
+function oiRunLabel(running, view, model) {
+  if (running) return 'Running research...';
+  if (view && view.refresh_pending === true) return 'Retry research';
+  return model ? 'Refresh research' : 'Run Opportunity Research';
+}
+
+// Main-reported live state: a run in progress (this window or before the drawer was
+// reopened), or an unfinished request a retry can settle without a second paid run.
+function oiLiveNotice(view) {
+  if (view && view.running === true) {
+    return 'Research is running for this lead. Press Check again to see the result.';
+  }
+  if (view && view.refresh_pending === true) {
+    return 'A previous research request did not finish. Retry research checks on it without starting a second paid run.';
+  }
+  return null;
+}
+
+function oiReloadButton(label) {
+  const btn = leadDrawerEl('button', 'btn btn-sm btn-secondary', label || 'Retry');
   btn.type = 'button';
   btn.setAttribute('data-action', 'oi-retry');
   btn.addEventListener('click', () => { if (leadDrawerLeadId) loadLeadDrawerOpportunity(leadDrawerLeadId); });
@@ -4620,10 +4674,17 @@ function renderLeadDrawerOpportunity() {
   const view = st.view && typeof st.view === 'object' ? st.view : null;
   const model = view && view.model && typeof view.model === 'object' ? view.model : null;
   const notice = st.notice ? leadDrawerEl('p', 'lead-drawer-warning', st.notice) : null;
-  const runLabel = running ? 'Running research...' : (model ? 'Run research again' : 'Run Opportunity Research');
+  const busy = running || (view && view.running === true);
+  const runLabel = oiRunLabel(busy, view, model);
+  const live = oiLiveNotice(view);
+  const liveNode = live && !running ? leadDrawerEl('p', 'lead-drawer-muted', live) : null;
+  const confirm = st.confirm ? oiConfirmBox(st.confirm) : null;
+  const runRow = oiActions(view && view.running === true && !running
+    ? [oiRunButton(runLabel, true), oiReloadButton('Check again')]
+    : [oiRunButton(runLabel, busy || Boolean(st.confirm))]);
 
   if (!model) {
-    const nodes = [title, notice];
+    const nodes = [title, notice, liveNode];
     if (view && view.state === 'not_researched') {
       nodes.push(leadDrawerEl('p', 'lead-drawer-empty', 'No Opportunity Intelligence research has been run for this lead yet.'));
       nodes.push(leadDrawerEl('p', 'lead-drawer-muted',
@@ -4631,7 +4692,7 @@ function renderLeadDrawerOpportunity() {
     } else {
       nodes.push(leadDrawerEl('p', 'lead-drawer-empty', (view && oiText(view.message)) || 'No Opportunity Intelligence report is available.'));
     }
-    nodes.push(oiActions([oiRunButton(runLabel, running)]));
+    nodes.push(confirm, runRow);
     box.replaceChildren(...nodes.filter(Boolean));
     return;
   }
@@ -4648,12 +4709,28 @@ function renderLeadDrawerOpportunity() {
     stateLine.appendChild(oiBadge('Report available', 'ok'));
   }
   if (model.generated_at) stateLine.appendChild(leadDrawerEl('span', 'lead-drawer-muted', `Generated ${leadDrawerFormatTime(model.generated_at)}`));
+  const freshness = view.freshness && typeof view.freshness === 'object' ? view.freshness : null;
+  const freshBadge = oiFreshnessBadge(freshness);
+  if (freshBadge) stateLine.appendChild(freshBadge);
+
+  // I5 (E2): an older report is never presented as the current one.
+  const older = view.state === 'older_report'
+    ? leadDrawerEl('p', 'lead-drawer-warning', `${oiText(view.message) || 'Showing an older report because the latest report is no longer available.'}`
+      + (model.generated_at ? ` This report is from ${leadDrawerFormatTime(model.generated_at)}.` : ''))
+    : null;
+  const staleLine = freshness && freshness.refreshRecommended === true && freshness.state !== 'unknown'
+    ? leadDrawerEl('p', 'lead-drawer-muted', 'Refresh to get current evidence.')
+    : null;
 
   const nodes = [
     title,
     stateLine,
+    older,
+    staleLine,
     notice,
-    oiActions([oiRunButton(runLabel, running)]),
+    liveNode,
+    confirm,
+    runRow,
     oiOverviewGroup(model, view),
     oiProviderGroup(model, names),
     oiOpportunitiesGroup(model),
@@ -4672,6 +4749,8 @@ function renderLeadDrawerOpportunity() {
 function oiClassify(view) {
   if (view && view.model && typeof view.model === 'object') return 'view';
   if (view && (view.state === 'not_researched' || view.state === 'report_missing')) return 'view';
+  // I5: a run in progress or an unfinished request is a state to show, not an outage.
+  if (view && (view.running === true || view.refresh_pending === true)) return 'view';
   return 'unavailable';
 }
 
@@ -4705,39 +4784,48 @@ async function loadLeadDrawerOpportunity(leadId) {
 
 // The one write: the user asked OI to research this lead. Main resolves the
 // business identity from its own store; the renderer sends the lead id only.
-async function runLeadDrawerOpportunity() {
+// I5: `confirmFresh` is the human's answer to main's "still fresh" question (E3). Main
+// decides whether the question is needed; the renderer never skips it on its own.
+async function runLeadDrawerOpportunity(confirmFresh) {
   const leadId = leadDrawerLeadId;
   const bridge = oiBridge();
   if (!leadId || !bridge || typeof bridge.request !== 'function') return;
   if (leadDrawerOpportunity.running) return;
   const seq = ++leadDrawerOpportunitySeq;
   const previous = leadDrawerOpportunity.kind === 'view' ? leadDrawerOpportunity.view : null;
-  leadDrawerOpportunity = { kind: 'view', view: previous || { state: 'not_researched', model: null }, error: null, leadId, running: true, notice: null };
+  const keep = previous || { state: 'not_researched', model: null };
+  leadDrawerOpportunity = { kind: 'view', view: keep, error: null, leadId, running: true, notice: null, confirm: null };
   renderLeadDrawerOpportunity();
   let next;
   try {
-    const view = oiUnwrap(await bridge.request({ leadId, force: true }));
+    const payload = { leadId, force: true };
+    if (confirmFresh === true) payload.confirmFresh = true;
+    const view = oiUnwrap(await bridge.request(payload));
     if (view.model && typeof view.model === 'object') {
-      next = { kind: 'view', view, error: null, leadId, running: false, notice: null };
+      next = { kind: 'view', view, error: null, leadId, running: false, notice: null, confirm: null };
+    } else if (view.state === 'confirm_required') {
+      next = { kind: 'view', view: keep, error: null, leadId, running: false, notice: null, confirm: oiText(view.message) };
     } else {
       // Research did not produce a report. Keep the last good report on screen and say why.
       next = {
         kind: 'view',
-        view: previous || { state: 'not_researched', model: null },
+        view: { ...keep, refresh_pending: view.refresh_pending === true, running: false },
         error: null,
         leadId,
         running: false,
-        notice: `Research did not complete: ${oiText(view.message) || 'Opportunity Intelligence unavailable.'}`
+        notice: `Research did not complete: ${oiText(view.message) || 'Opportunity Intelligence unavailable.'}`,
+        confirm: null
       };
     }
   } catch (err) {
     next = {
       kind: 'view',
-      view: previous || { state: 'not_researched', model: null },
+      view: keep,
       error: null,
       leadId,
       running: false,
-      notice: `Research did not complete: ${(err && err.message) || 'Opportunity Intelligence unavailable.'}`
+      notice: `Research did not complete: ${(err && err.message) || 'Opportunity Intelligence unavailable.'}`,
+      confirm: null
     };
   }
   if (seq !== leadDrawerOpportunitySeq || leadDrawerLeadId !== leadId) return;

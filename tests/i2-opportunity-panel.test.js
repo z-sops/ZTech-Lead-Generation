@@ -171,7 +171,7 @@ function makePanel(api) {
     ' open(id) { leadDrawerLeadId = id; return loadLeadDrawerOpportunity(id); },' +
     ' switchTo(id) { leadDrawerLeadId = id; leadDrawerOpportunitySeq += 1;' +
     "   leadDrawerOpportunity = { kind: 'idle', view: null, error: null, leadId: null, running: false, notice: null }; }," +
-    ' run: () => runLeadDrawerOpportunity(),' +
+    ' run: (confirmFresh) => runLeadDrawerOpportunity(confirmFresh),' +
     ' get state() { return leadDrawerOpportunity; } };'
   )(doc, window);
   const box = doc.getElementById('lead-drawer-opportunity');
@@ -258,7 +258,8 @@ test('5. Run calls opportunity.request with exactly { leadId, force:true } and r
     assert.ok(t.includes(s), 'section rendered: ' + s);
   }
   assert.ok(t.includes('res_20261005120000_abcdef01'), 'research id shown');
-  assert.ok(t.includes('Run research again'));
+  // I5 declared copy update: 'Run research again' -> 'Refresh research'.
+  assert.ok(t.includes('Refresh research'));
 });
 
 test('6. FACT, ESTIMATE and INFERENCE are all shown, as OI stated them', async () => {
@@ -351,7 +352,7 @@ test('12. once researched, reopening the lead reads the latest report back', asy
   const q = makePanel(main.api);
   await q.ctl.open('L1');
   assert.ok(q.text().includes('res_20261005120000_abcdef01'));
-  assert.ok(q.text().includes('Run research again'));
+  assert.ok(q.text().includes('Refresh research')); // I5 declared copy update
 });
 
 test('13. a failed re-run keeps the last good report and says why', async () => {
@@ -365,7 +366,11 @@ test('13. a failed re-run keeps the last good report and says why', async () => 
   await p.ctl.open('L1');
   await p.ctl.run();
   down = true;
+  // I5 declared update: the report is still fresh, so main first asks (E3); the human
+  // confirms, and only then does the (failing) request leave ZTech.
   await p.ctl.run();
+  assert.ok(p.text().includes('This report is still fresh.'));
+  await p.ctl.run(true);
   const t = p.text();
   assert.ok(t.includes('Research did not complete:'), t.slice(0, 300));
   assert.ok(t.includes('res_20261005120000_abcdef01'), 'the previous report stays on screen');
@@ -456,6 +461,149 @@ test('20. I4: a crashed managed service renders unavailable with the supervisor\
   assert.ok(q.text().includes(MESSAGES.crashed));
   assert.ok(q.button('oi-retry'));
   assert.ok(!main.log.some((c) => c.key === REPORT && c.after), 'no call crossed the closed gate');
+});
+
+// ============================================================ I5: freshness, refresh, recovery
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const T_REPORT = Date.parse('2026-10-05T12:00:00Z');
+const at = (main, days) => { main.svc.clock = () => new Date(T_REPORT + days * DAY_MS); };
+const rid = (n) => `res_2026100${n}120000_abcdef0${n}`;
+const reportN = (n, days) => fixtures.report({
+  research_id: rid(n), snapshot_id: `snap_2026100${n}120000_abcdef0${n}`, generated_at: new Date(T_REPORT + days * DAY_MS).toISOString(),
+});
+
+test('I5-1. the freshness chip shows only what main derived: Fresh, N days old, Expired (N days)', async () => {
+  const main = mainProcess({ [RESEARCH]: { body: fixtures.report() }, [REPORT]: { body: fixtures.report() } });
+  const p = makePanel(main.api);
+  await p.ctl.open('L1');
+  await p.ctl.run();
+  assert.ok(p.badges().includes('Fresh'), p.badges().join('|'));
+  assert.ok(!p.text().includes('Refresh to get current evidence.'));
+  at(main, 10);
+  const q = makePanel(main.api);
+  await q.ctl.open('L1');
+  assert.ok(q.badges().includes('10 days old'), q.badges().join('|'));
+  assert.ok(q.text().includes('Refresh to get current evidence.'));
+  at(main, 40);
+  const r = makePanel(main.api);
+  await r.ctl.open('L1');
+  assert.ok(r.badges().includes('Expired (40 days)'));
+  // The renderer never computes an age or a threshold itself.
+  const code = oiBlock.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.equal(/86400000|24 \* 60|FRESH_MAX|EXPIRED_AFTER|Date\.now\(/.test(code), false);
+});
+
+test('I5-2. E3: Refresh of a fresh report asks first; Cancel sends nothing; Refresh anyway sends confirmFresh', async () => {
+  const main = mainProcess({ [RESEARCH]: { body: fixtures.report() }, [REPORT]: { body: fixtures.report() } });
+  const p = makePanel(main.api);
+  await p.ctl.open('L1');
+  await p.ctl.run();
+  const posts = () => main.log.filter((c) => c.key === RESEARCH).length;
+  assert.equal(posts(), 1);
+  p.button('oi-run').click();
+  await flush(); await flush();
+  assert.ok(p.text().includes('This report is still fresh. Refreshing may call configured paid providers again. Continue?'));
+  assert.equal(posts(), 1, 'the question itself sent nothing');
+  assert.equal(p.button('oi-run').disabled, true, 'no second click while the question is open');
+  p.button('oi-cancel-refresh').click();
+  assert.equal(p.button('oi-confirm-refresh'), null);
+  assert.equal(posts(), 1, 'Cancel sends nothing');
+  p.button('oi-run').click();
+  await flush(); await flush();
+  p.button('oi-confirm-refresh').click();
+  await flush(); await flush(); await flush();
+  assert.equal(posts(), 2);
+  const last = main.sent.filter((x) => x.ch === CHANNELS.REQUEST).pop();
+  assert.deepStrictEqual(last.payload, { leadId: 'L1', force: true, confirmFresh: true });
+});
+
+test('I5-3. a stale report refreshes without the question', async () => {
+  const main = mainProcess({ [RESEARCH]: { body: fixtures.report() }, [REPORT]: { body: fixtures.report() } });
+  const p = makePanel(main.api);
+  await p.ctl.open('L1');
+  await p.ctl.run();
+  at(main, 9);
+  await p.ctl.run();
+  assert.ok(!p.text().includes('This report is still fresh.'));
+  assert.equal(main.log.filter((c) => c.key === RESEARCH).length, 2);
+});
+
+test('I5-4. newest report gone: the older one is shown, labelled, with its own date and age', async () => {
+  let n = 0;
+  const reports = { 1: reportN(1, 0), 2: reportN(2, 10) };
+  const routes = (key) => {
+    if (key === RESEARCH) { n += 1; return { body: reports[n] }; }
+    if (key === `GET ${BASE}/v1/reports/${rid(1)}`) return { body: reports[1] };
+    return null; // rid(2) is no longer in OI -> 404
+  };
+  const main = mainProcess(routes);
+  const p = makePanel(main.api);
+  await p.ctl.open('L1');
+  await p.ctl.run();
+  at(main, 10);
+  await p.ctl.run();
+  at(main, 12);
+  const q = makePanel(main.api);
+  await q.ctl.open('L1');
+  const t = q.text();
+  assert.ok(t.includes('Showing an older report because the latest report is no longer available.'), t.slice(0, 400));
+  assert.ok(t.includes('This report is from'));
+  assert.ok(t.includes(rid(1)) && !t.includes(rid(2)));
+  assert.ok(q.badges().includes('12 days old'), 'the shown report\'s own age');
+});
+
+test('I5-5. no report available at all: the approved copy and a Run button, nothing invented', async () => {
+  const main = mainProcess((key) => (key === RESEARCH ? { body: fixtures.report() } : null));
+  const p = makePanel(main.api);
+  await p.ctl.open('L1');
+  await p.ctl.run();
+  const q = makePanel(main.api);
+  await q.ctl.open('L1');
+  assert.ok(q.text().includes("This lead's reports are no longer available. Run research again."));
+  assert.ok(!q.text().includes('res_20261005120000_abcdef01'));
+  assert.ok(q.button('oi-run') && !q.button('oi-run').disabled);
+});
+
+test('I5-6. an unfinished request: Retry research, and the same notice after reopening', async () => {
+  let down = false;
+  const main = mainProcess((key) => (down ? 'refused' : (key === RESEARCH || key === REPORT ? { body: fixtures.report() } : null)));
+  const p = makePanel(main.api);
+  await p.ctl.open('L1');
+  down = true;
+  await p.ctl.run();
+  assert.ok(p.text().includes('will not start a second paid run'), p.text().slice(0, 300));
+  assert.equal(p.button('oi-run').textContent, 'Retry research');
+  const q = makePanel(main.api);
+  await q.ctl.open('L1');
+  assert.ok(q.text().includes('A previous research request did not finish.'), q.text().slice(0, 300));
+  assert.equal(q.button('oi-run').textContent, 'Retry research');
+  down = false;
+  await q.ctl.run();
+  const keys = main.log.filter((c) => c.key === RESEARCH).map((c) => c.body.options.idempotency_key);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[0], keys[1], 'the retry reused the persisted key');
+});
+
+test('I5-7. reopening during a run shows Running with Check again, and never starts a second run', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const main = mainProcess({});
+  const realRequest = main.svc.gateway.requestResearch.bind(main.svc.gateway);
+  main.svc.gateway.requestResearch = async (a) => { await gate; return { ok: true, report: fixtures.report() }; };
+  const p = makePanel(main.api);
+  await p.ctl.open('L1');
+  const running = p.ctl.run();
+  await flush();
+  const q = makePanel(main.api);
+  await q.ctl.open('L1');
+  assert.ok(q.text().includes('Research is running for this lead.'), q.text().slice(0, 300));
+  assert.equal(q.button('oi-run').disabled, true);
+  assert.equal(q.button('oi-run').textContent, 'Running research...');
+  assert.ok(q.button('oi-retry'), 'Check again is offered');
+  release();
+  await running;
+  void realRequest;
 });
 
 (async () => {
