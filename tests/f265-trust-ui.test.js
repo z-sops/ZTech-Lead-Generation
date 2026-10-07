@@ -210,6 +210,7 @@ test('12i. Prepare handoff: Copy goes to main (clipboard there), the result says
   const labels = footer.all().filter((n) => n.tagName === 'BUTTON').map((n) => n.textContent);
   assert.deepStrictEqual(labels, ['Open in my mail app', 'Copy text']);
   assert.ok(footer.textContent.includes('ZTech cannot add the unsubscribe headers'));
+  assert.ok(footer.textContent.includes('Temporary option'), 'C1 revision: the handoff is labelled a temporary fallback');
   footer.all().find((n) => n.textContent === 'Copy text').click();
   await flush();
   assert.deepStrictEqual(m.sent.at(-1), { ch: TRUST_CHANNELS_IPC.HANDOFF, p: { pitchId: pitch.pitch_id, kind: 'copy' } });

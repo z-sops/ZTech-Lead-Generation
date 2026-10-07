@@ -10667,6 +10667,8 @@ function f265HandoffControls(footer, pitchId) {
   copy.addEventListener('click', () => f265Handoff(pitchId, 'copy'));
   wrap.append(open, copy);
   wrap.appendChild(trustEl('span', 'f265-handoff-note', 'Your mail app sends this message, so ZTech cannot add the unsubscribe headers. The footer still gives the contact a way to opt out.'));
+  // C1 (revised 7 Oct): the handoff is a TEMPORARY fallback; F26.6 brings connected-mailbox sending.
+  wrap.appendChild(trustEl('span', 'f265-handoff-note', 'Temporary option: sending from a connected Gmail or Microsoft 365 mailbox comes in a later update.'));
   footer.appendChild(wrap);
 }
 
