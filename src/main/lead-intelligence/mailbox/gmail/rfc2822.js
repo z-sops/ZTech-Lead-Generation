@@ -22,8 +22,26 @@ function assertSingleLine(name, value) {
 /** RFC 2047 encoded-word when the text is not plain printable ASCII. */
 function encodeWord(text) {
   const s = String(text);
-  if (SAFE_ATOM.test(s)) return s;
+  if (SAFE_ATOM.test(s) && !s.includes('=?')) return s;
   return `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
+}
+
+/**
+ * A Subject value folded per RFC 5322 / 2047: plain short ASCII stays as is; anything else becomes
+ * encoded-words of at most 75 characters (whole code points, never split), joined by CRLF + space.
+ */
+function foldedSubject(text) {
+  const s = String(text);
+  if (SAFE_ATOM.test(s) && !s.includes('=?') && s.length <= 66) return s;
+  const words = [];
+  let chunk = '';
+  // 45 UTF-8 bytes -> a 72-char encoded-word; the first is shorter so "Subject: " + it stays <= 78.
+  for (const ch of s) {
+    if (Buffer.byteLength(chunk + ch, 'utf8') > (words.length ? 45 : 39)) { words.push(chunk); chunk = ''; }
+    chunk += ch;
+  }
+  if (chunk) words.push(chunk);
+  return words.map((w) => `=?UTF-8?B?${Buffer.from(w, 'utf8').toString('base64')}?=`).join('\r\n ');
 }
 
 /** A display name for From:, quoted (ASCII) or encoded (non-ASCII). */
@@ -50,7 +68,8 @@ function buildRawMessage(m) {
   const name = m.fromName ? displayName(m.fromName) : '';
   add('From', name ? `${name} <${m.from}>` : m.from);
   add('To', m.to);
-  add('Subject', encodeWord(m.subject));
+  assertSingleLine('Subject', m.subject);
+  lines.push(`Subject: ${foldedSubject(m.subject)}`);
   add('Date', (m.date instanceof Date ? m.date : new Date()).toUTCString().replace('GMT', '+0000'));
   for (const [k, v] of Object.entries(m.headers || {})) {
     if (/^message-id$/i.test(k)) throw new TypeError('a Message-ID is never supplied: Gmail stores its own');
@@ -70,11 +89,19 @@ function parseMessageIds(value, max = 50) {
   return (value.match(/<[^<>\s]{3,298}>/g) || []).slice(-max);
 }
 
-/** The bare address of a From value ("Name <a@b>" or "a@b"), lower-cased, or null. */
+/**
+ * The bare address of a From value, lower-cased, or null. Quoted strings and comments are removed
+ * FIRST, so a display name like "\"<ceo@big.co>\" <x@evil.example>" yields x@evil.example; then the
+ * LAST angle-address wins; a bare address is accepted only when it is the whole value.
+ */
 function parseFromAddress(value) {
-  if (typeof value !== 'string') return null;
-  const m = value.match(/<([^<>\s]+@[^<>\s]+)>/) || value.match(/([^\s<>"]+@[^\s<>"]+)/);
-  return m ? m[1].toLowerCase() : null;
+  if (typeof value !== 'string' || value.length > 2000) return null;
+  let s = value.replace(/"(?:[^"\\]|\\.)*"/g, ' ');
+  for (let i = 0; i < 5 && /\([^()]*\)/.test(s); i += 1) s = s.replace(/\([^()]*\)/g, ' ');
+  const angles = [...s.matchAll(/<([^<>\s]+@[^<>\s]+)>/g)];
+  if (angles.length) return angles[angles.length - 1][1].toLowerCase();
+  const bare = s.trim().match(/^([^\s<>"(),;:]+@[^\s<>"(),;:]+)$/);
+  return bare ? bare[1].toLowerCase() : null;
 }
 
 /** A stable trust-event id for one Gmail message in one mailbox (idempotent intake). */
@@ -82,4 +109,4 @@ function mailboxEventId(mailboxId, gmailMessageId) {
   return 'gm_' + crypto.createHash('sha256').update(`${mailboxId}:${gmailMessageId}`).digest('hex').slice(0, 40);
 }
 
-module.exports = { buildRawMessage, toBase64Url, encodeWord, displayName, parseMessageIds, parseFromAddress, mailboxEventId };
+module.exports = { buildRawMessage, toBase64Url, encodeWord, foldedSubject, displayName, parseMessageIds, parseFromAddress, mailboxEventId };

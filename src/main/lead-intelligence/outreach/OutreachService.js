@@ -1272,6 +1272,10 @@ class OutreachService {
     // first - an unsubscribe that comes back through the relay can then always be resolved.
     await this._rememberRef(oneClick, recipientAddress);
 
+    // F26.6: one in-flight send per content across every email transport; replay re-checked inside.
+    return this._withSendKey(idempotencyKey, async () => {
+    const replayInside = await this.store.sends.findAccepted(idempotencyKey);
+    if (replayInside) return this._sendResult({ pitch, outcome: 'replayed', send: replayInside, gate: verdict });
     // (7) THE DURABLE ATTEMPT, written BEFORE the provider is touched.
     const sendId = newId('send');
     const now = this.clock().toISOString();
@@ -1336,6 +1340,7 @@ class OutreachService {
       idempotencyKey, providerMessageId: winner.provider_message_id
     });
     return this._sendResult({ pitch, outcome: 'accepted', send: winner, gate: verdict, providerStatus: receipt && receipt.status });
+    });
   }
 
   /**
@@ -1363,6 +1368,19 @@ class OutreachService {
       trust,
       canSend: gate.allowed === true && trust.allowed === true,
     };
+  }
+
+  /**
+   * F26.6: ONE send in flight per idempotency key, across EVERY email transport (the configured
+   * provider and any mailbox). Two confirms of the same content - on two transports, or two
+   * mailboxes - can no longer both reach a provider before either is accepted. Inside the guard
+   * the accepted-replay lookup runs again.
+   */
+  async _withSendKey(idempotencyKey, fn) {
+    if (!this._sendKeysInFlight) this._sendKeysInFlight = new Set();
+    if (this._sendKeysInFlight.has(idempotencyKey)) throw new LiError('SEND_IN_PROGRESS', 'This exact email is already being sent. Nothing else was sent; wait for that result.');
+    this._sendKeysInFlight.add(idempotencyKey);
+    try { return await fn(); } finally { this._sendKeysInFlight.delete(idempotencyKey); }
   }
 
   /** F26.6: the connected-mailbox service (main-only), set by the runtime. */
@@ -1455,7 +1473,9 @@ class OutreachService {
     }
     await this._rememberRef(oneClick, recipientAddress);
 
-    return this.mailboxes.withMailboxLock(mailboxId, async () => {
+    return this._withSendKey(idempotencyKey, () => this.mailboxes.withMailboxLock(mailboxId, async () => {
+      const replay = await this.store.sends.findAccepted(idempotencyKey);
+      if (replay) return this._sendResult({ pitch, outcome: 'replayed', send: replay, gate: verdict });
       // (6b) Pacing, inside the lock: judged on the ledger as it is now.
       const again = await this.mailboxes.sendGate(mailboxId);
       if (!again.allowed) {
@@ -1497,21 +1517,28 @@ class OutreachService {
       } catch {
         readBack = null; // the send happened; matching for it is simply unavailable
       }
-      await this.store.mailboxSent.record({
-        send_id: sendId, mailbox_id: mailboxId, provider_message_id: receipt.messageId,
-        stored_message_id: readBack ? readBack.storedMessageId : null, thread_id: (readBack && readBack.threadId) || receipt.threadId || null,
-        recorded_at: this.clock().toISOString(),
-      });
+      let matchable = Boolean(readBack && readBack.storedMessageId);
+      try {
+        await this.store.mailboxSent.record({
+          send_id: sendId, mailbox_id: mailboxId, provider_message_id: receipt.messageId,
+          stored_message_id: readBack ? readBack.storedMessageId : null, thread_id: (readBack && readBack.threadId) || receipt.threadId || null,
+          recipient_address: recipientAddress, recorded_at: this.clock().toISOString(),
+        });
+      } catch (err) {
+        // The email DID go out; only reply matching for it is lost. Never report the send as failed.
+        matchable = false;
+        if (this.logger && typeof this.logger.warn === 'function') this.logger.warn('[lead-intelligence] mailbox sent id not recorded', { error: err && err.code ? err.code : 'ERROR' });
+      }
       await this.mailboxes.noteReadBack(mailboxId, readBack);
       const result = this._sendResult({ pitch, outcome: settled && settled.ok === false ? 'replayed' : 'accepted', send: winner, gate: verdict });
       return {
         ...result,
         mailboxId,
         // Whether a reply to THIS message can be recognised: only with a readable stored Message-ID.
-        replyMatching: readBack && readBack.storedMessageId ? 'ready' : 'unavailable',
+        replyMatching: matchable ? 'ready' : 'unavailable',
         unsubscribeHeadersKept: readBack ? readBack.listUnsubscribeKept : null,
       };
-    });
+    }));
   }
 
   // === F20: the WhatsApp send boundary ===

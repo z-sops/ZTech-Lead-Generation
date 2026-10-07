@@ -7,7 +7,8 @@
 --    no token, no auth code, no PKCE verifier, no client secret (those live in the main
 --    process credential vault and never reach this database).
 -- 3. li_mailbox_sent: for each mailbox send, the identifiers the PROVIDER stored (read back
---    after sending). Reply matching uses stored_message_id, never a ZTech-supplied value.
+--    after sending) and the normalized address it went to. A reply counts only when it cites
+--    stored_message_id (never a ZTech-supplied value) AND comes from that same address.
 -- 4. li_market_rules: the per-country market (jurisdiction) rule Zee sets after review.
 --    No row = "consent required".
 -- 5. li_trust_events is rebuilt to admit the source 'mailbox' (verified replies and
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS li_mailbox_sent (
   provider_message_id TEXT,
   stored_message_id   TEXT,
   thread_id           TEXT,
+  recipient_address   TEXT,
   recorded_at         TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS li_mailbox_sent_stored_id

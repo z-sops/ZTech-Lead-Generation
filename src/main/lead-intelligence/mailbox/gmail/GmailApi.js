@@ -22,11 +22,17 @@ const MAX_ID = 200;
 function idOk(id) { return typeof id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(id); }
 
 class GmailApi {
-  /** @param {{fetch?: Function, getAccessToken: () => Promise<string>}} deps */
-  constructor({ fetch: fetchImpl = globalThis.fetch, getAccessToken } = {}) {
+  /** @param {{fetch?: Function, getAccessToken: () => Promise<string>, onAuthFailure?: () => Promise<void>}} deps */
+  constructor({ fetch: fetchImpl = globalThis.fetch, getAccessToken, onAuthFailure = null } = {}) {
     if (typeof getAccessToken !== 'function') throw new TypeError('GmailApi needs getAccessToken');
     this.fetch = fetchImpl;
     this.getAccessToken = getAccessToken;
+    this.onAuthFailure = typeof onAuthFailure === 'function' ? onAuthFailure : null;
+  }
+
+  async _authFailed(message) {
+    if (this.onAuthFailure) { try { await this.onAuthFailure(); } catch { /* the refusal still reaches the caller */ } }
+    throw new LiError('MAILBOX_RECONNECT_NEEDED', message);
   }
 
   async _call(method, path, body = undefined) {
@@ -45,9 +51,9 @@ class GmailApi {
     try { json = await res.json(); } catch { json = {}; }
     if (res.ok) return json || {};
     const reason = json && json.error && Array.isArray(json.error.errors) && json.error.errors[0] ? json.error.errors[0].reason : null;
-    if (res.status === 401) throw new LiError('MAILBOX_RECONNECT_NEEDED', 'This mailbox needs to be reconnected.');
+    if (res.status === 401) return this._authFailed('This mailbox needs to be reconnected.');
     if (res.status === 429 || (res.status === 403 && LIMIT_REASONS.has(reason))) throw new LiError('MAILBOX_PROVIDER_LIMIT', 'Gmail refused because a sending or usage limit was reached. Nothing was retried.');
-    if (res.status === 403) throw new LiError('MAILBOX_RECONNECT_NEEDED', 'Gmail refused this permission. Reconnect the mailbox and grant both permissions.');
+    if (res.status === 403) return this._authFailed('Gmail refused this permission. Reconnect the mailbox and grant both permissions.');
     if (res.status === 404) throw new LiError('MAILBOX_REMOTE_NOT_FOUND', 'Gmail did not find what ZTech asked for.');
     if (res.status === 400) throw new LiError('MAILBOX_PROVIDER_REJECTED', 'Gmail rejected the request.');
     throw new LiError('MAILBOX_PROVIDER_UNAVAILABLE', 'Gmail could not process the request right now. Nothing was retried.');

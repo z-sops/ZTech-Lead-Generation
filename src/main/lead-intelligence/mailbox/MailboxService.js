@@ -38,7 +38,8 @@ const { unsubscribeHeaders } = require('../trust/unsubscribe');
 const CHECK_MIN_INTERVAL_MS = 60 * 1000;
 const SYNC_MAX_PAGES = 10;
 const SYNC_MAX_MESSAGES = 200;
-const REPLY_HEADERS = Object.freeze(['From', 'Subject', 'In-Reply-To', 'References', 'Auto-Submitted', 'Content-Type', 'Precedence', 'X-Autoreply', 'X-Autorespond']);
+const REPLY_HEADERS = Object.freeze(['From', 'Subject', 'In-Reply-To', 'References', 'Auto-Submitted', 'Content-Type', 'Precedence', 'X-Autoreply', 'X-Autorespond', 'List-Id']);
+const ACCESS_TOKEN_TTL_MS = 45 * 60 * 1000; // Google issues ~60 min tokens; refreshed well before
 const UNSUBSCRIBE_SUBJECT = /\b(unsubscribe|remove me|opt[ -]?out)\b/i;
 const DELIVERY_REPORT_FROM = /^(mailer-daemon|postmaster)@/i;
 
@@ -88,6 +89,8 @@ class MailboxService {
     this._busy = new Set(); // mailbox_ids with a send or check in flight (one at a time per mailbox)
     this._lastCheck = new Map();
     this._syncing = null;
+    this._syncByMailbox = new Map(); // one reply sync per mailbox at a time (timer and button share it)
+    this._accessCache = new Map(); // mailbox_id -> { token, until } - main-only, memory only
   }
 
   /** The trust service that receives mailbox events (main-only). */
@@ -292,8 +295,13 @@ class MailboxService {
       await this._mark(row, 'reconnect_needed', 'MAILBOX_RECONNECT_NEEDED');
       throw new LiError('MAILBOX_RECONNECT_NEEDED', 'This mailbox needs to be reconnected.');
     }
+    const cached = this._accessCache.get(row.mailbox_id);
+    const nowMs = this._now().getTime();
+    if (cached && cached.until > nowMs) return cached.token;
     try {
-      return await this.googleOAuth.accessToken({ ...client, refreshToken });
+      const token = await this.googleOAuth.accessToken({ ...client, refreshToken });
+      this._accessCache.set(row.mailbox_id, { token, until: nowMs + ACCESS_TOKEN_TTL_MS });
+      return token;
     } catch (e) {
       const err = mailboxError(e);
       if (err && err.code === 'MAILBOX_RECONNECT_NEEDED') await this._mark(row, 'reconnect_needed', 'MAILBOX_RECONNECT_NEEDED');
@@ -310,9 +318,12 @@ class MailboxService {
   _api(row) {
     return new GmailApi({
       fetch: this.fetch,
-      getAccessToken: async () => {
-        const token = await this._accessToken(row);
-        return token;
+      getAccessToken: () => this._accessToken(row),
+      // Gmail itself refused the grant (revoked scope, 401): forget the token in memory and mark
+      // the mailbox "Reconnect needed", so neither sends nor syncs keep failing against it.
+      onAuthFailure: async () => {
+        this._accessCache.delete(row.mailbox_id);
+        await this._mark(row, 'reconnect_needed', 'MAILBOX_RECONNECT_NEEDED');
       },
     });
   }
@@ -338,9 +349,11 @@ class MailboxService {
 
   /** After a real send: a stripped unsubscribe header takes the mailbox out of Ready. */
   async noteReadBack(mailboxId, readBack) {
-    if (readBack && readBack.listUnsubscribeKept === false) {
+    if (!readBack) return; // a failed READ is not evidence about the mailbox
+    const code = readBack.listUnsubscribeKept === false ? 'MAILBOX_HEADER_STRIPPED' : (!readBack.storedMessageId ? 'MAILBOX_MESSAGE_ID_UNREADABLE' : null);
+    if (code) {
       const row = await this.store.mailboxes.get(mailboxId);
-      if (row) await this._mark(row, 'needs_check', 'MAILBOX_HEADER_STRIPPED');
+      if (row) await this._mark(row, 'needs_check', code);
     }
   }
 
@@ -392,6 +405,15 @@ class MailboxService {
    * The cursor advances only after every candidate was handed over.
    */
   async syncReplies({ mailboxId } = {}) {
+    // The timer and "Check replies now" share one run per mailbox: never two cursors in flight.
+    const running = this._syncByMailbox.get(mailboxId);
+    if (running) return running;
+    const run = this._syncRepliesOnce({ mailboxId }).finally(() => this._syncByMailbox.delete(mailboxId));
+    this._syncByMailbox.set(mailboxId, run);
+    return run;
+  }
+
+  async _syncRepliesOnce({ mailboxId }) {
     const row = await this._rowOrThrow(mailboxId);
     const cap = PROVIDER_CAPABILITY[row.provider];
     if (!cap || !cap.canSyncReplies || row.provider !== 'gmail') throw new LiError(cap ? cap.code || 'MAILBOX_PROVIDER_UNVERIFIED' : 'MAILBOX_PROVIDER_UNVERIFIED', PROVIDER_NOTICE[row.provider] || 'Reply sync is not available for this mailbox.');
@@ -452,7 +474,8 @@ class MailboxService {
     if (!from || from === row.email_address) return;
     if (DELIVERY_REPORT_FROM.test(from) || /multipart\/report/i.test(h['content-type'] || '')) { summary.skippedDeliveryReports += 1; return; }
     const auto = h['auto-submitted'] && h['auto-submitted'].trim().toLowerCase() !== 'no';
-    if (auto || h['x-autoreply'] || h['x-autorespond'] || /^(auto_reply|bulk|junk|list)$/i.test((h.precedence || '').trim())) { summary.skippedAutomatic += 1; return; }
+    // Automatic and mailing-list traffic is never a person replying (and never their opt-out).
+    if (auto || h['x-autoreply'] || h['x-autorespond'] || h['list-id'] || /^(auto_reply|bulk|junk|list)$/i.test((h.precedence || '').trim())) { summary.skippedAutomatic += 1; return; }
     const refs = [...parseMessageIds(h['in-reply-to']), ...parseMessageIds(h.references)];
     const kind = UNSUBSCRIBE_SUBJECT.test(h.subject || '') ? 'unsubscribe' : 'reply';
     if (kind === 'reply' && !refs.length) return;

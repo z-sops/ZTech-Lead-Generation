@@ -11,7 +11,7 @@
 const { requireValid, normalizeMailboxRecord, normalizeMarketRule, normalizeLimits } = require('../mailbox/mailboxContract');
 
 const MAILBOX_COLS = ['mailbox_id', 'provider', 'email_address', 'display_name', 'status', 'status_code', 'paused_until', 'daily_cap', 'hourly_cap', 'min_gap_seconds', 'window_start', 'window_end', 'window_days', 'time_zone', 'is_default', 'sync_cursor', 'connected_at', 'updated_at'];
-const SENT_COLS = ['send_id', 'mailbox_id', 'provider_message_id', 'stored_message_id', 'thread_id', 'recorded_at'];
+const SENT_COLS = ['send_id', 'mailbox_id', 'provider_message_id', 'stored_message_id', 'thread_id', 'recipient_address', 'recorded_at'];
 const RULE_COLS = ['country_code', 'rule', 'note', 'reviewed_by', 'reviewed_at'];
 const SENT_ID_MAX = 300;
 
@@ -37,7 +37,9 @@ function normalizeSent(rec) {
   if (typeof rec.recorded_at !== 'string') throw new TypeError('mailbox sent: recorded_at');
   return {
     send_id: rec.send_id, mailbox_id: rec.mailbox_id, provider_message_id: strOrNull(rec.provider_message_id),
-    stored_message_id: strOrNull(rec.stored_message_id), thread_id: strOrNull(rec.thread_id), recorded_at: rec.recorded_at,
+    stored_message_id: strOrNull(rec.stored_message_id), thread_id: strOrNull(rec.thread_id),
+    recipient_address: rec.recipient_address == null ? null : String(rec.recipient_address).trim().toLowerCase().slice(0, 320) || null,
+    recorded_at: rec.recorded_at,
   };
 }
 
@@ -138,7 +140,7 @@ class SqlMailboxSent {
       // row on a stored-id clash, where the unique (mailbox_id, stored_message_id) index must refuse.
       this.s.db.run(`INSERT INTO li_mailbox_sent (${SENT_COLS.join(', ')}) VALUES (${ph(SENT_COLS)})
         ON CONFLICT(send_id) DO UPDATE SET mailbox_id = excluded.mailbox_id, provider_message_id = excluded.provider_message_id,
-        stored_message_id = excluded.stored_message_id, thread_id = excluded.thread_id, recorded_at = excluded.recorded_at`, SENT_COLS.map((c) => v[c]));
+        stored_message_id = excluded.stored_message_id, thread_id = excluded.thread_id, recipient_address = excluded.recipient_address, recorded_at = excluded.recorded_at`, SENT_COLS.map((c) => v[c]));
       return freeze(sqlRow(this.s.db, `SELECT ${SENT_COLS.join(', ')} FROM li_mailbox_sent WHERE send_id = ?`, [v.send_id]));
     });
   }

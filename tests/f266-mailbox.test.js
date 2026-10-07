@@ -407,7 +407,10 @@ test('6a. a mailbox reply counts ONLY when it cites a provider-STORED Message-ID
   // Nothing stored yet: same sender, plausible references - still not a reply.
   let r = await rt.li.trust.intake({ ...base, event_id: 'mbxevt_0', reference_ids: ['<ztech-supplied@ridgeline.example>'] }, { source: 'mailbox' });
   assert.deepStrictEqual(r, { accepted: false, state: 'rejected', code: 'REPLY_NOT_MATCHED' });
-  await rt.store.mailboxSent.record({ send_id: 's1', mailbox_id: 'mbx_aaaaaaaaaaaa', provider_message_id: '18c', stored_message_id: '<CAstored@mail.gmail.com>', thread_id: 't1', recorded_at: iso(NOW - 2 * HOUR) });
+  await rt.store.mailboxSent.record({ send_id: 's1', mailbox_id: 'mbx_aaaaaaaaaaaa', provider_message_id: '18c', stored_message_id: '<CAstored@mail.gmail.com>', thread_id: 't1', recipient_address: LEAD_EMAIL, recorded_at: iso(NOW - 2 * HOUR) });
+  // A colleague who answers a forwarded copy cites the right id but is not the person written to.
+  r = await rt.li.trust.intake({ ...base, event_id: 'mbxevt_02', address: 'colleague@acme.example.com', reference_ids: ['<CAstored@mail.gmail.com>'] }, { source: 'mailbox' });
+  assert.strictEqual(r.code, 'REPLY_NOT_FROM_RECIPIENT');
   r = await rt.li.trust.intake({ ...base, event_id: 'mbxevt_00', reference_ids: ['<ztech-supplied@ridgeline.example>'] }, { source: 'mailbox' });
   assert.strictEqual(r.code, 'REPLY_NOT_MATCHED', 'the id ZTech attempted is never trusted');
   r = await rt.li.trust.intake({ ...base, event_id: 'mbxevt_01', mailbox_id: 'mbx_bbbbbbbbbbbb', reference_ids: ['<CAstored@mail.gmail.com>'] }, { source: 'mailbox' });

@@ -29,8 +29,8 @@ const REFRESH = '1//refresh-never-leaks';
 const ACCESS = 'ya29.access-never-leaks';
 
 /** A fake Gmail with the behaviour Step 1A observed. */
-function fakeGmail({ stripListUnsubscribe = false, readBackFails = false, sendStatus = 200 } = {}) {
-  const st = { sent: [], messages: new Map(), history: [], historyId: '500', calls: [], n: 0 };
+function fakeGmail({ stripListUnsubscribe = false, readBackFails = false, sendStatus = 200, storedIdMissing = false, pageSize = 0, apiStatus = 0 } = {}) {
+  const st = { sent: [], messages: new Map(), history: [], historyId: '500', calls: [], n: 0, failMeta: new Set(), apiStatus };
   const json = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   const parse = (raw) => {
     const text = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
@@ -46,6 +46,7 @@ function fakeGmail({ stripListUnsubscribe = false, readBackFails = false, sendSt
     if (u.startsWith(GOOGLE.REVOKE_URL)) return json(200, {});
     assert.strictEqual(init.headers.Authorization, `Bearer ${ACCESS}`, 'every Gmail call carries the access token');
     const api = u.slice(GOOGLE.GMAIL_API.length);
+    if (st.apiStatus) return json(st.apiStatus, { error: { errors: [{ reason: 'authError', message: 'REMOTE TEXT' }] } });
     if (api === '/profile') return json(200, { emailAddress: MBX_ADDR, historyId: st.historyId });
     if (api === '/messages/send') {
       if (sendStatus !== 200) return json(sendStatus, { error: { errors: [{ reason: 'userRateLimitExceeded', message: 'REMOTE TEXT' }] } });
@@ -53,6 +54,7 @@ function fakeGmail({ stripListUnsubscribe = false, readBackFails = false, sendSt
       st.n += 1;
       const id = `msg${st.n}`;
       const stored = { ...m.headers, 'message-id': `<CAstored-${st.n}@mail.gmail.com>` }; // Gmail REPLACES it
+      if (storedIdMissing) delete stored['message-id'];
       if (stripListUnsubscribe) delete stored['list-unsubscribe'];
       st.sent.push({ id, ...m });
       st.messages.set(id, { headers: stored, labelIds: ['SENT'], threadId: `t${st.n}` });
@@ -60,7 +62,7 @@ function fakeGmail({ stripListUnsubscribe = false, readBackFails = false, sendSt
     }
     let m = api.match(/^\/messages\/([A-Za-z0-9_-]+)\?format=metadata&(.*)$/);
     if (m) {
-      if (readBackFails) return json(503, {});
+      if (readBackFails || st.failMeta.has(m[1])) return json(503, {});
       const msg = st.messages.get(m[1]);
       if (!msg) return json(404, {});
       const names = [...m[2].matchAll(/metadataHeaders=([^&]+)/g)].map((x) => decodeURIComponent(x[1]).toLowerCase());
@@ -71,8 +73,11 @@ function fakeGmail({ stripListUnsubscribe = false, readBackFails = false, sendSt
     if (m) {
       const q = new URLSearchParams(m[1]);
       if (q.get('startHistoryId') === '1') return json(404, {}); // older than Gmail keeps
-      const after = st.history.filter((h) => Number(h.id) > Number(q.get('startHistoryId')));
-      return json(200, { history: after.map((h) => ({ id: h.id, messagesAdded: [{ message: { id: h.msgId, labelIds: h.labelIds } }] })), historyId: st.historyId });
+      let after = st.history.filter((h) => Number(h.id) > Number(q.get('startHistoryId')));
+      const offset = q.get('pageToken') ? Number(q.get('pageToken').slice(1)) : 0;
+      let next;
+      if (pageSize) { next = offset + pageSize < after.length ? `p${offset + pageSize}` : undefined; after = after.slice(offset, offset + pageSize); }
+      return json(200, { history: after.map((h) => ({ id: h.id, messagesAdded: [{ message: { id: h.msgId, labelIds: h.labelIds } }] })), historyId: st.historyId, ...(next ? { nextPageToken: next } : {}) });
     }
     return json(404, {});
   };
@@ -374,6 +379,104 @@ test('4e. syncAll reads every Gmail mailbox, never sends, and a revoked grant ma
   assert.strictEqual(sendCalls(s.gmail).length, before, 'sync never sends');
   const p = await approved(s.li);
   await assert.rejects(s.li.outreach.send({ pitchId: p.pitch_id, channel: 'email', mailboxId: MBX }), (e) => e.code === 'MAILBOX_NOT_READY');
+});
+
+/* ============================ independent-review fixes ============================ */
+
+test('5a. a spoofed display name cannot pick the address, and only the person written to can verify a reply', async () => {
+  assert.strictEqual(parseFromAddress('"\\"<ceo@big.co>\\" x" <x@evil.example>'), 'x@evil.example');
+  assert.strictEqual(parseFromAddress('"<ceo@big.co>" <x@evil.example>'), 'x@evil.example');
+  assert.strictEqual(parseFromAddress('x@evil.example (<ceo@big.co>)'), 'x@evil.example');
+  assert.strictEqual(parseFromAddress('nonsense <ceo@big.co'), null);
+  assert.strictEqual(parseFromAddress('<x@evil.example> "<ceo@big.co>"'), 'x@evil.example', 'an address inside a quoted string never counts');
+  const s = await sentOnce();
+  const cite = { 'In-Reply-To': '<CAstored-1@mail.gmail.com>' };
+  s.gmail.deliver('sp1', { From: '"<ceo@big.co>" <x@evil.example>', Subject: 'Re: hello', ...cite });
+  s.gmail.deliver('fw1', { From: 'colleague@acme.example.com', Subject: 'Re: hello', ...cite });
+  const sum = await s.svc.syncReplies({ mailboxId: MBX });
+  assert.strictEqual(sum.replies, 0);
+  for (const a of ['ceo@big.co', 'x@evil.example', 'colleague@acme.example.com']) {
+    assert.strictEqual(await s.store.trustEvents.latestFor({ channel: 'email', address: a, kinds: ['reply'] }).then((e) => e && e.state !== 'rejected' ? e : null), null, a);
+  }
+});
+
+test('5b. one in-flight send per content across transports: the configured provider and the mailbox never both send', async () => {
+  const s = await setup();
+  await allowMarket(s.store);
+  await grantTrust(s.store, { email: LEAD_EMAIL, now: iso(NOW - HOUR) }); // so the transactional provider may send too
+  const p = await approved(s.li);
+  const results = await Promise.allSettled([
+    s.li.outreach.send({ pitchId: p.pitch_id, channel: 'email', mailboxId: MBX }),
+    s.li.outreach.send({ pitchId: p.pitch_id, channel: 'email' }),
+  ]);
+  const contacted = sendCalls(s.gmail).length + s.emailSpy.calls.length;
+  assert.strictEqual(contacted, 1, 'exactly one provider was contacted: ' + results.map((x) => x.status === 'fulfilled' ? x.value.outcome : x.reason.code).join(','));
+  const after = await s.li.outreach.send({ pitchId: p.pitch_id, channel: 'email', mailboxId: MBX });
+  assert.strictEqual(after.outcome, 'replayed');
+});
+
+test('5c. tokens: one refresh serves a whole sync; Gmail refusing the grant marks the mailbox "Reconnect needed"', async () => {
+  const s = await sentOnce();
+  const tokenCalls = () => s.gmail.calls.filter((c) => c.url === GOOGLE.TOKEN_URL).length;
+  const before = tokenCalls();
+  for (let i = 0; i < 3; i += 1) s.gmail.deliver(`r${i}`, { From: LEAD_EMAIL, Subject: 'Re: hello', 'In-Reply-To': '<CAstored-1@mail.gmail.com>' });
+  await s.svc.syncReplies({ mailboxId: MBX });
+  assert.strictEqual(tokenCalls() - before, 0, 'the access token from the send is reused (cached in memory, main only)');
+  s.gmail.apiStatus = 401;
+  await assert.rejects(s.svc.syncReplies({ mailboxId: MBX }), (e) => e.code === 'MAILBOX_RECONNECT_NEEDED' && !/REMOTE TEXT/.test(e.message));
+  assert.strictEqual((await s.store.mailboxes.get(MBX)).status, 'reconnect_needed');
+});
+
+test('5d. "Check replies now" and the timer share ONE run per mailbox (never two cursors in flight)', async () => {
+  const s = await sentOnce();
+  s.gmail.deliver('c1', { From: LEAD_EMAIL, Subject: 'Re: hello', 'In-Reply-To': '<CAstored-1@mail.gmail.com>' });
+  const [a, b] = await Promise.all([s.svc.syncReplies({ mailboxId: MBX }), s.svc.syncAll()]);
+  assert.strictEqual(a.read, 1);
+  assert.strictEqual(b[0].read, 1, 'the same run, not a second one');
+  assert.strictEqual(s.gmail.calls.filter((c) => /\/messages\/c1\?/.test(c.url)).length, 1);
+});
+
+test('5e. pagination: the cursor moves page by page; an interrupted run resumes without skipping or double-counting', async () => {
+  const s = await setup({ gmail: fakeGmail({ pageSize: 2 }) });
+  await allowMarket(s.store);
+  const p = await approved(s.li);
+  await s.li.outreach.send({ pitchId: p.pitch_id, channel: 'email', mailboxId: MBX });
+  for (let i = 0; i < 5; i += 1) s.gmail.deliver(`pg${i}`, { From: LEAD_EMAIL, Subject: i === 4 ? 'unsubscribe' : 'Re: hello', 'In-Reply-To': '<CAstored-1@mail.gmail.com>' });
+  s.gmail.failMeta.add('pg3'); // page 2 breaks mid-run
+  await assert.rejects(s.svc.syncReplies({ mailboxId: MBX }), (e) => e.code === 'MAILBOX_PROVIDER_UNAVAILABLE');
+  const page1End = s.gmail.history.find((h) => h.msgId === 'pg1').id;
+  assert.strictEqual((await s.store.mailboxes.get(MBX)).sync_cursor, page1End, 'the cursor stops after the last COMPLETE page');
+  s.gmail.failMeta.clear();
+  const sum = await s.svc.syncReplies({ mailboxId: MBX });
+  assert.strictEqual(sum.read, 3, 'only pg2-pg4 are read again');
+  assert.strictEqual(sum.unsubscribes, 1);
+  assert.strictEqual((await s.store.mailboxes.get(MBX)).sync_cursor, s.gmail.historyId);
+});
+
+test('5f. headers: a long or non-ASCII subject is folded into <=75-char encoded-words; mailing-list mail never suppresses', async () => {
+  const raw = buildRawMessage({ from: MBX_ADDR, to: 'a@b.example', subject: 'Ã'.repeat(70), text: 'x' });
+  const subj = raw.slice(raw.indexOf('Subject: '), raw.indexOf('\r\nDate:'));
+  for (const line of subj.split('\r\n')) assert.ok(line.length <= 78, line.length);
+  assert.ok(subj.split('\r\n').slice(1).every((l) => l.startsWith(' =?UTF-8?B?')));
+  const decoded = subj.replace('Subject: ', '').split('\r\n ').map((w) => Buffer.from(w.slice(10, -2), 'base64').toString('utf8')).join('');
+  assert.strictEqual(decoded, 'Ã'.repeat(70));
+  assert.ok(buildRawMessage({ from: MBX_ADDR, to: 'a@b.example', subject: 'see =?x?=', text: 'x' }).includes('Subject: =?UTF-8?B?'), 'a literal =? is encoded, never decoded by a client');
+  const s = await sentOnce();
+  s.gmail.deliver('l1', { From: LEAD_EMAIL, Subject: 'Unsubscribe instructions', 'List-Id': '<news.acme.example.com>' });
+  const sum = await s.svc.syncReplies({ mailboxId: MBX });
+  assert.strictEqual(sum.unsubscribes, 0);
+  assert.strictEqual(sum.skippedAutomatic, 1);
+});
+
+test('5g. a stored copy without a readable Message-ID takes the mailbox out of Ready (replies could not be matched)', async () => {
+  const s = await setup({ gmail: fakeGmail({ storedIdMissing: true }) });
+  await allowMarket(s.store);
+  const p = await approved(s.li);
+  const r = await s.li.outreach.send({ pitchId: p.pitch_id, channel: 'email', mailboxId: MBX });
+  assert.strictEqual(r.replyMatching, 'unavailable');
+  const m = await s.store.mailboxes.get(MBX);
+  assert.strictEqual(m.status, 'needs_check');
+  assert.strictEqual(m.status_code, 'MAILBOX_MESSAGE_ID_UNREADABLE');
 });
 
 (async () => {

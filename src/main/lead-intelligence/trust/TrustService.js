@@ -260,6 +260,9 @@ class TrustService {
         const matched = typeof e.mailbox_id === 'string' && refs.length && this.store.mailboxSent
           ? await this.store.mailboxSent.findByStoredIds(e.mailbox_id, refs) : null;
         if (!matched) return reject('REPLY_NOT_MATCHED');
+        // ...and only from the address that send went to: a forward answered by a colleague (or a
+        // spoofed display name) never becomes a verified relationship for anyone else.
+        if (!matched.recipient_address || normalizeAddress('email', matched.recipient_address) !== address) return reject('REPLY_NOT_FROM_RECIPIENT');
       }
     } else {
       if (!USER_EVENT_KINDS.includes(e.kind)) return reject('KIND_NOT_USER_RECORDABLE');
