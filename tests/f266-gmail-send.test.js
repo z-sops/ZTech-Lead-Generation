@@ -325,7 +325,7 @@ test('4a. a real reply cites the STORED id -> verified reply (source mailbox); t
   sum = await s.svc.syncReplies({ mailboxId: MBX });
   assert.strictEqual(sum.replies, 1);
   const lt = await s.li.trust.leadTrust({ leadId: 'L1' });
-  assert.ok(lt.channels.email.verifiedReply, 'the verified reply is on the lead');
+  assert.ok(lt.channels.email.mailboxReply && lt.channels.email.mailboxReply.reviewPending, 'the verified mailbox reply is on the lead, awaiting review');
   assert.strictEqual((await s.store.mailboxes.get(MBX)).sync_cursor, s.gmail.historyId, 'the cursor moved past what was read');
   const again = await s.svc.syncReplies({ mailboxId: MBX });
   assert.strictEqual(again.read, 0, 'nothing is read twice');
@@ -494,7 +494,8 @@ test('6a. a synced verified reply stops being "permission": the next email needs
   const prep = await s2.li.outreach.prepare({ pitchId: p2.pitch_id, channel: 'email' });
   assert.strictEqual(prep.mailbox.trust.code, 'REPLY_REVIEW_REQUIRED');
   assert.strictEqual(prep.trust.replyReviewPending, true);
-  await s2.li.trust.reviewReply({ leadId: 'L1', outcome: 'interested' });
+  const seen = (await s2.li.trust.leadTrust({ leadId: 'L1' })).channels.email.mailboxReply;
+  await s2.li.trust.reviewReply({ leadId: 'L1', outcome: 'interested', replyReceivedAt: seen.receivedAt });
   const r = await s2.li.outreach.send({ pitchId: p2.pitch_id, channel: 'email', mailboxId: MBX });
   assert.strictEqual(r.outcome, 'accepted');
 });

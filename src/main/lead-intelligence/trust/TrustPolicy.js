@@ -47,8 +47,6 @@ const { DEFAULT_WORKSPACE_ID, TRUST_LIMITS, normalizeAddress } = require('./trus
 // says "interested"; "neutral" establishes nothing; negative outcomes are suppressions.
 const { normalizeCountry } = require('../mailbox/mailboxContract');
 
-/** Trust-event sources that prove a reply really arrived (never a user entry). */
-const VERIFIED_REPLY_SOURCES = Object.freeze(['relay', 'mailbox']);
 
 const TRUST_CODES = Object.freeze({
   SUPPRESSED: 'CONTACT_SUPPRESSED',
@@ -120,19 +118,19 @@ class TrustPolicy {
       this.store.consents.latestFor({ channel, address }),
     ]);
     const inbound = channel === 'whatsapp' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['whatsapp_inbound'] }) : null;
-    // Prior relationship from a reply: a relay reply (F26.5), or a mailbox reply whose LATEST human
-    // review for this address is "interested". An unreviewed mailbox reply is pending review.
+    // Prior relationship from a reply: a relay reply (F26.5), or a mailbox reply whose OWN human
+    // review is "interested" - judged on the NEWEST mailbox reply, so a later reply that nobody has
+    // reviewed (it could say "please stop") always waits for its review again.
     let verifiedReply = null;
     let replyReviewPending = false;
     if (channel === 'email') {
       const relay = await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'], sources: ['relay'] });
       const mailbox = await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'], sources: ['mailbox'] });
       const reviews = this.store.replyReviews || null;
-      const latestReview = reviews ? await reviews.latestFor({ channel, address }) : null;
       const reviewed = mailbox && reviews ? await reviews.forEvent(mailbox.event_id) : null;
       replyReviewPending = Boolean(mailbox && !reviewed);
       if (relay) verifiedReply = relay;
-      else if (mailbox && latestReview && latestReview.outcome === 'interested') verifiedReply = { ...mailbox, review: latestReview };
+      else if (mailbox && reviewed && reviewed.outcome === 'interested') verifiedReply = { ...mailbox, review: reviewed };
     }
     const verifiedInbound = inbound && inbound.source === 'relay' ? inbound : null;
     const sessionOpenUntil = verifiedInbound
@@ -199,4 +197,4 @@ class TrustPolicy {
   }
 }
 
-module.exports = { TrustPolicy, TRUST_CODES, TRUST_MESSAGES, VERIFIED_REPLY_SOURCES, lintSubject, transportPolicyOf };
+module.exports = { TrustPolicy, TRUST_CODES, TRUST_MESSAGES, lintSubject, transportPolicyOf };

@@ -10700,9 +10700,10 @@ function trustChannelBlock(channel, c) {
     for (const outcome of ['interested', 'neutral', 'not_interested', 'unsubscribe']) {
       const notice = outcome === 'interested' ? 'Reviewed as interested: you may email this contact again.'
         : (outcome === 'neutral' ? 'Reviewed as neutral: this does not give permission to email again.' : 'Reviewed: added to do-not-contact.');
-      review.appendChild(trustButton(TRUST_REVIEW_LABEL[outcome], () => trustAct('reviewReply', { outcome }, notice)));
+      review.appendChild(trustButton(TRUST_REVIEW_LABEL[outcome], () => trustAct('reviewReply', { outcome, replyReceivedAt: c.mailboxReply.receivedAt }, notice)));
     }
     block.appendChild(review);
+    if (c.verifiedReply) block.appendChild(trustEl('div', 'lead-trust-note', `A signed reply also came through the relay (${trustDate(c.verifiedReply.receivedAt)}); email is permitted on that basis.`));
   }
   if (leadTrust.form === channel && !c.suppression) block.appendChild(trustConsentForm(channel));
   return block;

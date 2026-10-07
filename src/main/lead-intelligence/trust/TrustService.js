@@ -38,7 +38,6 @@ const { HANDOFF_HEADER_NOTE } = require('./unsubscribe');
 const USER_EVENT_KINDS = Object.freeze(['unsubscribe', 'bounce', 'complaint']);
 // F26.6: what a connected mailbox may report. Bounce (DSN) parsing is deferred.
 const MAILBOX_EVENT_KINDS = Object.freeze(['reply', 'unsubscribe']);
-const { VERIFIED_REPLY_SOURCES } = require('./TrustPolicy');
 const SUPPRESSING_KINDS = Object.freeze(['unsubscribe', 'bounce', 'complaint']);
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const LEAD_SCAN_MAX = 20000;
@@ -104,7 +103,7 @@ class TrustService {
         this.store.suppressions.find({ channel, address, workspaceId: this.workspaceId }),
         this.store.consents.latestFor({ channel, address }),
       ]);
-      const reply = channel === 'email' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'] }) : null;
+      const relayReply = channel === 'email' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'], sources: ['relay'] }) : null;
       // F26.6 follow-up: the newest mailbox reply and its human review. A reply is a fact; only an
       // "interested" review turns it into permission (see TrustPolicy).
       const mailboxReply = channel === 'email' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'], sources: ['mailbox'] }) : null;
@@ -118,7 +117,9 @@ class TrustService {
           createdAt: suppression.created_at, removable: suppression.reason === 'manual' && suppression.source === 'user',
         } : null,
         consent: consent ? { method: consent.method, consentedAt: consent.consented_at, recordedBy: consent.recorded_by, evidenceNote: consent.evidence_note, source: consent.source } : null,
-        verifiedReply: reply && VERIFIED_REPLY_SOURCES.includes(reply.source) ? { receivedAt: reply.received_at, source: reply.source } : null,
+        // The SIGNED relay reply (F26.5): a basis for emailing. A mailbox reply is reported apart,
+        // with its review, because on its own it is not permission (F26.6 follow-up).
+        verifiedReply: relayReply ? { receivedAt: relayReply.received_at, source: 'relay' } : null,
         mailboxReply: mailboxReply ? {
           receivedAt: mailboxReply.received_at,
           review: review ? { outcome: review.outcome, reviewedAt: review.reviewed_at, reviewedBy: review.reviewed_by } : null,
@@ -143,23 +144,29 @@ class TrustService {
    *   neutral        -> recorded; establishes nothing
    * The reviewer is the operator. Nothing here reads a message body.
    */
-  async reviewReply({ leadId, outcome }) {
+  async reviewReply({ leadId, outcome, replyReceivedAt }) {
     if (!REPLY_REVIEW_OUTCOMES.includes(outcome)) throw new ValidationError('unknown outcome', [{ path: '$.outcome', message: 'outcome must be interested, not_interested, unsubscribe or neutral' }]);
     const view = await this._view(leadId);
     const address = this._addressOf(view, 'email');
     if (!address) throw new LiError('CHANNEL_UNAVAILABLE', 'No valid email address is stored for this lead.');
     const reply = await this.store.trustEvents.latestFor({ channel: 'email', address, kinds: ['reply'], sources: ['mailbox'] });
     if (!reply) throw new LiError('NO_REPLY_TO_REVIEW', 'There is no verified mailbox reply from this contact to review.');
+    // The review applies to the reply the person SAW: a newer reply that arrived since is never
+    // reviewed by a click made on the older one.
+    if (typeof replyReceivedAt !== 'string' || Date.parse(replyReceivedAt) !== Date.parse(reply.received_at)) {
+      throw new LiError('REVIEW_STALE', 'A newer reply has arrived. Look at it, then review again.');
+    }
     if (!this.store.replyReviews) throw new LiError('TRUST_UNAVAILABLE', 'The review could not be recorded.');
-    const now = this.now().toISOString();
-    await this.store.replyReviews.put({
-      review_id: newId('rvw'), event_id: reply.event_id, channel: 'email', normalized_address: address,
-      outcome, reviewed_by: this.operator, reviewed_at: now,
-    });
+    // A negative outcome suppresses FIRST: if that fails, no review is recorded and the person sees
+    // the failure - never a "not interested" on record without the do-not-contact behind it.
     if (outcome === 'unsubscribe' || outcome === 'not_interested') {
       const existing = await this.store.suppressions.find({ channel: 'email', address, workspaceId: this.workspaceId });
       if (!existing) await this.suppressLead({ leadId, channel: 'email', reason: outcome === 'unsubscribe' ? 'unsubscribe' : 'manual', scope: 'global' });
     }
+    await this.store.replyReviews.put({
+      review_id: newId('rvw'), event_id: reply.event_id, channel: 'email', normalized_address: address,
+      outcome, reviewed_by: this.operator, reviewed_at: this.now().toISOString(),
+    });
     return this.leadTrust({ leadId });
   }
 

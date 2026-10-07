@@ -249,7 +249,7 @@ test('12k. F26.6 follow-up: a verified mailbox reply is shown as needing review;
   for (const l of ['Interested', 'Neutral / unclear', 'Not interested', 'Unsubscribe']) assert.ok(labels.includes(l), l);
   u.btn('Interested', 'email').click();
   await flush();
-  assert.deepStrictEqual(m.sent.at(-1), { ch: TRUST_CHANNELS_IPC.REVIEW, p: { leadId: 'L1', outcome: 'interested' } });
+  assert.deepStrictEqual(m.sent.at(-1), { ch: TRUST_CHANNELS_IPC.REVIEW, p: { leadId: 'L1', outcome: 'interested', replyReceivedAt: iso(NOW - 3600000) } }, 'the review names the reply that was shown, never an event id');
   assert.ok(u.text().includes('reviewed: Interested'));
   assert.ok(u.text().includes('Reviewed as interested: you may email this contact again.'));
 });
