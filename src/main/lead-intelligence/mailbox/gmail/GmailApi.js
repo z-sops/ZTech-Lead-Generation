@@ -52,7 +52,7 @@ class GmailApi {
     } catch (err) {
       clearTimeout(timer);
       if (err instanceof LiError) throw err;
-      throw new LiError('MAILBOX_PROVIDER_UNAVAILABLE', 'Google could not be reached. Nothing was sent.');
+      throw new LiError('MAILBOX_TOKEN_UNAVAILABLE', 'Google could not be reached to sign in to the mailbox. Nothing was sent.');
     }
     let res;
     let json = {};

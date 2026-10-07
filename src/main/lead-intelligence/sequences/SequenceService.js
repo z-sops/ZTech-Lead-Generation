@@ -39,10 +39,12 @@ const RECONNECT_CODES = new Set([
   'MAILBOX_CLIENT_NOT_CONFIGURED', 'MAILBOX_VAULT_UNAVAILABLE',
 ]);
 // Gmail did NOT accept the message, for certain: safe to treat as "not sent".
-const DEFINITELY_NOT_SENT = new Set([...RECONNECT_CODES, 'MAILBOX_PROVIDER_LIMIT', 'MAILBOX_PROVIDER_REJECTED', 'MAILBOX_REMOTE_NOT_FOUND', 'VALIDATION_FAILED', 'MAILBOX_PACING', 'MAILBOX_BUSY', 'SEND_IN_PROGRESS']);
+const DEFINITELY_NOT_SENT = new Set([...RECONNECT_CODES, 'MAILBOX_TOKEN_UNAVAILABLE', 'MAILBOX_PROVIDER_LIMIT', 'MAILBOX_PROVIDER_REJECTED', 'MAILBOX_REMOTE_NOT_FOUND', 'VALIDATION_FAILED', 'MAILBOX_PACING', 'MAILBOX_BUSY', 'SEND_IN_PROGRESS']);
 // Gmail may or may not have accepted it.
 const OUTCOME_UNKNOWN = new Set(['MAILBOX_PROVIDER_UNAVAILABLE', 'MAILBOX_SEND_UNCONFIRMED', 'EMAIL_SEND_FAILED']);
 const RETRY_NEXT_TICK = new Set(['MAILBOX_BUSY', 'SEND_IN_PROGRESS']);
+// Failed before anything left ZTech (the token refresh): nothing was sent; try again later.
+const RETRY_LATER = new Set(['MAILBOX_TOKEN_UNAVAILABLE']);
 // A failed reply check is a READ that failed: the follow-up waits; it is never sent unchecked.
 const REPLY_CHECK_RETRY_MS = 15 * 60 * 1000;
 const STOP_CODES = Object.freeze({ CONTACT_CHANGED: 'contact_changed', REPLY_REVIEW_REQUIRED: 'replied' });
@@ -393,12 +395,13 @@ class SequenceService {
     if (seq.hold_code === HOLD.MAILBOX_GONE && !(this.store.mailboxes && await this.store.mailboxes.get(seq.mailbox_id))) {
       throw new LiError('MAILBOX_NOT_FOUND', 'The mailbox that sent the first email is no longer connected. These follow-ups can only be sent from it; stop them.');
     }
-    if (seq.hold_code === HOLD.SEND_OUTCOME_UNKNOWN && seq.replies_gap_at) {
-      // Two separate human checks: first "it was not sent" (now confirmed), then "no reply hides in
-      // the gap". The sequence moves to the reply check instead of running.
+    if (seq.replies_gap_at && seq.hold_code !== HOLD.REPLIES_UNCHECKED) {
+      // A reply gap is acknowledged ONLY from the reply-check hold. From any other hold (an unknown
+      // outcome now confirmed "not sent", or a Pause pressed on top) the sequence moves to the reply
+      // check instead of running: two separate human checks.
       const cur = await this._currentStep(seq.sequence_id);
       if (cur && cur.last_code === HOLD.SEND_OUTCOME_UNKNOWN) await this.store.sequences.updateStep(seq.sequence_id, cur.step_no, { last_code: null, updated_at: this._nowIso() }, { expect: ['scheduled'] });
-      const next = await this.store.sequences.update(seq.sequence_id, { hold_code: HOLD.REPLIES_UNCHECKED, updated_at: this._nowIso() }, { expect: ['paused'], expectHold: HOLD.SEND_OUTCOME_UNKNOWN });
+      const next = await this.store.sequences.update(seq.sequence_id, { hold_code: HOLD.REPLIES_UNCHECKED, resume_at: null, updated_at: this._nowIso() }, { expect: ['paused'], expectHold: seq.hold_code });
       if (!next) throw new LiError('SEQUENCE_CHANGED', 'These follow-ups changed. Look again.');
       return this._view(next);
     }
@@ -630,6 +633,7 @@ class SequenceService {
       return 'held';
     }
     if (RETRY_NEXT_TICK.has(code)) { await this._reschedule(seq, step, iso(this._now().getTime() + 60 * 1000), code); return 'rescheduled'; }
+    if (RETRY_LATER.has(code)) { await this._reschedule(seq, step, iso(this._now().getTime() + REPLY_CHECK_RETRY_MS), code); return 'rescheduled'; }
     if (code === 'MAILBOX_PROVIDER_LIMIT') { await this._providerLimit(seq, step); return 'paused'; }
     // Every hold below: pause FIRST, then put the step back, so a crash in between can never leave
     // an active sequence with a step the next tick would send again.

@@ -894,7 +894,7 @@ test('N4. when a stop rule ends a sequence mid-send, the in-flight step shows "s
 test('N5. a hung token refresh or a hung response body is bounded too; Scheduler.stop() never waits forever', async () => {
   const { GmailApi } = require(path.join(LI, 'mailbox', 'gmail', 'GmailApi.js'));
   const never = () => new Promise(() => {});
-  await rejectsCode(new GmailApi({ fetch: never, getAccessToken: never, timeoutMs: 30 }).sendRaw('abc'), 'MAILBOX_PROVIDER_UNAVAILABLE');
+  await rejectsCode(new GmailApi({ fetch: never, getAccessToken: never, timeoutMs: 30 }).sendRaw('abc'), 'MAILBOX_TOKEN_UNAVAILABLE');
   const bodyHangs = async () => ({ ok: true, status: 200, json: never });
   await rejectsCode(new GmailApi({ fetch: bodyHangs, getAccessToken: async () => 't', timeoutMs: 30 }).sendRaw('abc'), 'MAILBOX_SEND_UNCONFIRMED');
   const s = await setup();
@@ -906,6 +906,24 @@ test('N5. a hung token refresh or a hung response body is bounded too; Scheduler
   const t0 = Date.now();
   await s.scheduler.stop({ maxWaitMs: 50 });
   assert.ok(Date.now() - t0 < 2000, 'stop gave up waiting');
+});
+
+test('N7. Pause on top of the reply check, then Resume, returns to the reply check (the gap is acknowledged only there); a failed sign-in refresh just waits', async () => {
+  const s = await setup();
+  const { sequenceId } = await active(s);
+  await s.sequences.noteRepliesGap(MBX);
+  await s.sequences.pause({ sequenceId });
+  assert.strictEqual((await seqOf(s)).holdCode, 'MANUAL');
+  assert.strictEqual((await s.sequences.resume({ sequenceId })).holdCode, 'REPLIES_UNCHECKED');
+  assert.strictEqual((await s.sequences.resume({ sequenceId })).status, 'active');
+  const t = await setup();
+  await active(t);
+  const real = t.li.outreach.sendFromMailbox.bind(t.li.outreach);
+  t.li.outreach.sendFromMailbox = async () => { const e = new Error('x'); e.code = 'MAILBOX_TOKEN_UNAVAILABLE'; throw e; };
+  t.advance(3 * DAY + 1000);
+  assert.deepStrictEqual((await t.scheduler.tick()).outcomes, ['rescheduled']);
+  assert.strictEqual((await seqOf(t)).status, 'active');
+  t.li.outreach.sendFromMailbox = real;
 });
 
 (async () => {
