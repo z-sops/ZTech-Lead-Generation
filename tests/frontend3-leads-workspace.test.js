@@ -737,8 +737,8 @@ test('28. no new IPC channel, no dependency change, no network call', () => {
   // F19 declared lock update: 50 -> 51, the single send boundary.
   // F21 declared lock update: 51 -> 52, the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
-  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods = 76 total.
-  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 76, '76 preload invocations');
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline = 77 total.
+  assert.strictEqual((preloadSource.split('ipcRenderer.invoke').length - 1), 77, '77 preload invocations');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
     'production dependencies unchanged');

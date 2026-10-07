@@ -594,7 +594,8 @@ test('S3. the preload bridge adds exactly one read-only prepare method plus the 
   assert.ok(methods.includes('sends'), 'the bridge exposes the F21 ledger read');
   // Phase I2: +7 Opportunity Intelligence channels = 18 total.
   // Phase I2: +5 Opportunity Intelligence methods with payload pattern = 16 total.
-  assert.strictEqual(methods.length, 16, 'exactly sixteen Lead Intelligence methods: ' + methods.join(','));
+  // I6 declared lock update: + forLead (the read-only lead timeline) = 17.
+  assert.strictEqual(methods.length, 17, 'exactly seventeen Lead Intelligence methods: ' + methods.join(','));
   assert.strictEqual([...bridge.matchAll(/\bprepare\s*:/g)].length, 1, 'prepare is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\boutreachSend\s*:/g)].length, 1, 'outreachSend is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\bsends\s*:/g)].length, 1, 'the ledger read is declared exactly once');

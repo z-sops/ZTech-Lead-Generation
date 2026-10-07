@@ -27,7 +27,8 @@ const { ValidationError } = require('../core/errors');
  * savedSearches: upsert(rec), get(id), list(), delete(id)
  * segments:     upsert(rec), get(id), list(), delete(id), addMembers(id, leadIds, atIso),
  *               removeMembers(id, leadIds), members(id)
- * pitches:      upsert(rec), get(id), latestForLead(leadId), list({limit, offset, status})
+ * pitches:      upsert(rec), get(id), latestForLead(leadId), list({limit, offset, status}),
+ *               listByLead(leadId, limit<=500) - I6 read-only, newest created first
  * approvals:    insert(rec), latestForPitch(pitchId)
  * enrichmentJobs: insert(job) (DuplicateActiveJobError if the lead already has an active job),
  *               update(job, expectedVersion), get(id), findActiveForLead(leadId), listByLead(leadId),

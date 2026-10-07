@@ -601,7 +601,10 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F26 declared lock update: the outreach-settings registrar.
     const outreachSettingsSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'outreach-settings-ipc.js'), 'utf8');
     const outreachSettings = [...outreachSettingsSrc.matchAll(/'(outreach-settings:[a-z-]+)'/g)].map(m => m[1]);
-    return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings];
+    // I6 declared lock update: the read-only lead timeline registrar.
+    const timelineSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'timeline', 'timeline-ipc.js'), 'utf8');
+    const timelineChannels = [...timelineSrc.matchAll(/'(lead-intel:timeline)'/g)].map(m => m[1]);
+    return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings, ...timelineChannels];
   }
 
   function allChannels() {
@@ -734,9 +737,9 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // F19 declared lock update: 51 -> 52, the single outreach send boundary.
     // F21 declared lock update: 52 -> 53, the single read-only send-ledger read.
     // Phase I2: +7 Opportunity Intelligence channels = 60 total.
-    // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods = 77 total.
-    assert.strictEqual(channels.length, 77, 'exactly 77 channels');
-    assert.strictEqual(new Set(channels).size, 77, 'no duplicate channel names');
+    // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline = 78 total.
+    assert.strictEqual(channels.length, 78, 'exactly 78 channels');
+    assert.strictEqual(new Set(channels).size, 78, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1442,8 +1445,8 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
   // F19 declared lock update: 51 -> 52, adding the single outreach send boundary.
   // F21 declared lock update: 52 -> 53, adding the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 60 total.
-  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods = 77 total.
-  assert.strictEqual(allChannels().length, 77, 'exactly 77 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send, F21 send-ledger read, Phase I2 Opportunity Intelligence)');
+  // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline = 78 total.
+  assert.strictEqual(allChannels().length, 78, 'exactly 78 channels (A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send, F21 send-ledger read, Phase I2 Opportunity Intelligence)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

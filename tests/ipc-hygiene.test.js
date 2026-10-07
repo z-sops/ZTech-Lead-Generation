@@ -53,7 +53,10 @@ function leadIntelChannels() {
   // F26 declared lock update: the outreach-settings registrar.
   const outreachSettingsSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'outreach-settings-ipc.js'), 'utf8');
   const outreachSettings = [...outreachSettingsSrc.matchAll(/'(outreach-settings:[a-z-]+)'/g)].map(m => m[1]);
-  return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings];
+  // I6 declared lock update: the read-only lead timeline registrar.
+  const timelineSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'timeline', 'timeline-ipc.js'), 'utf8');
+  const timelineChannels = [...timelineSrc.matchAll(/'(lead-intel:timeline)'/g)].map(m => m[1]);
+  return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings, ...timelineChannels];
 }
 
 function preloadChannels(src) {

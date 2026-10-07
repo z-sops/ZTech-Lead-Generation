@@ -579,7 +579,8 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const expectedOutreach = ['activity', 'approve', 'gate', 'list', 'outreachSend', 'prepare', 'ready', 'sends'];
   const expectedOI = ['health', 'engine', 'request', 'report', 'latest', 'associations', 'pitchContext'];
   const expectedI3 = ['status', 'setKey', 'clearKey', 'setSetting', 'chooseFolder', 'setMode', 'start', 'stop', 'restart', 'copyLog']; // I3/I4 declared lock update
-  assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI, ...expectedI3].sort(),
+  const expectedI6 = ['forLead']; // I6 declared lock update: the read-only lead timeline
+  assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedI3].sort(),
     'F17 added no preload method of its own; F18 adds exactly prepare, F19 exactly outreachSend, F21 exactly the reads; Phase I2 adds Opportunity Intelligence');
   for (const forbidden of [/contact/i, /schedule/i, /whatsapp/i, /verify/i]) {
     assert.ok(!forbidden.test(bridge), 'no preload method for ' + forbidden);

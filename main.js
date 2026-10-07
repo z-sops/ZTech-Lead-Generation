@@ -22,6 +22,7 @@ const { registerOiServiceIpc } = require('./src/main/lead-intelligence/opportuni
 const { createOutreachSettings } = require('./src/main/lead-intelligence/outreach/outreachSettings');
 const { registerOutreachSettingsIpc } = require('./src/main/lead-intelligence/outreach/outreach-settings-ipc');
 const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/main/lead-intelligence/outreach-ipc');
+const { registerTimelineIpc } = require('./src/main/lead-intelligence/timeline/timeline-ipc');
 
 let mainWindow = null;
 let providerManager = null;
@@ -1444,6 +1445,26 @@ function registerLeadIntelIpcHandlers() {
   }
 
   registerOpportunityIntelIpcHandlers();
+
+  // I6: the read-only lead timeline channel. Same trusted-sender rule as every LI channel.
+  try {
+    if (leadIntelRuntime.timeline) {
+      registerTimelineIpc({
+        ipcMain,
+        timeline: leadIntelRuntime.timeline,
+        isTrustedSender: (event) => {
+          try {
+            return leadIntelTrustedSender(event) === true;
+          } catch {
+            return false;
+          }
+        },
+        logger: { warn: (msg) => logger.warn('lead-intel', String(msg)) },
+      });
+    }
+  } catch (err) {
+    logger.error('lead-intel', 'timeline IPC registration failed', { error: err.message });
+  }
 }
 
 /**

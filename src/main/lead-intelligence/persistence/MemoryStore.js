@@ -168,6 +168,13 @@ class MemPitches extends MemKeyed {
         : a.pitch_id < b.pitch_id ? 1 : a.pitch_id > b.pitch_id ? -1 : 0));
     return { rows: all.slice(offset, offset + limit).map(clone), total: all.length, limit, offset, status };
   }
+  /** I6: same contract as SqlPitches.listByLead. */
+  async listByLead(leadId, limit = 500) {
+    const n = Math.max(1, Math.min(500, Number.isInteger(limit) ? limit : 500));
+    return [...this.rows.values()].filter((p) => p.lead_id === String(leadId))
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : a.pitch_id < b.pitch_id ? 1 : -1))
+      .slice(0, n).map(clone);
+  }
   async deleteByLead(leadId) { for (const [id, p] of this.rows) if (p.lead_id === String(leadId)) this.rows.delete(id); }
 }
 

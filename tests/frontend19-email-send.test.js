@@ -784,7 +784,8 @@ test('S1. the bridge exposes exactly one send method and no scheduling surface',
   // Phase I2: +5 Opportunity Intelligence methods with payload pattern = 16 total.
   const expectedOutreach = ['generate', 'get', 'update', 'approve', 'gate', 'list', 'activity', 'ready', 'prepare', 'outreachSend', 'sends'];
   const expectedOI = ['request', 'report', 'latest', 'associations', 'pitchContext'];
-  assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI],
+  const expectedI6 = ['forLead']; // I6 declared lock update: the read-only lead timeline
+  assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI, ...expectedI6],
     'the bridge method list is exactly the eleven declared channels plus Phase I2 Opportunity Intelligence');
   assert.deepStrictEqual(methods.filter((m) => /send/i.test(m) && !/^sends$/.test(m)), ['outreachSend'],
     'outreachSend is still the only sending method; `sends` is the ledger read');

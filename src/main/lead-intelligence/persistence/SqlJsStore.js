@@ -420,6 +420,13 @@ class SqlPitches {
     return this._from(row(this.s.db, 'SELECT pitch_id, draft_json FROM li_pitch_drafts WHERE lead_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1', [String(leadId)]));
   }
 
+  /** I6: read-only, newest first by created_at, bounded. Used by the lead timeline only. */
+  async listByLead(leadId, limit = 500) {
+    const n = Math.max(1, Math.min(500, Number.isInteger(limit) ? limit : 500));
+    return rows(this.s.db, 'SELECT pitch_id, draft_json FROM li_pitch_drafts WHERE lead_id = ? ORDER BY created_at DESC, pitch_id DESC LIMIT ?', [String(leadId), n])
+      .map((r) => this._from(r)).filter(Boolean);
+  }
+
   /**
    * F12 Batch 1: enumerate persisted pitch drafts. Read-only enumeration only - it
    * computes no gate, reads no packet, evaluates no ICP and never generates, edits,

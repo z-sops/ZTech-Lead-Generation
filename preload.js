@@ -186,6 +186,11 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     // Returns { available, bridge: { packet, claim_kinds, oi, counts, excluded, boundaries } }.
     pitchContext: (payload) => ipcRenderer.invoke('lead-intel:opportunity-pitch-context', payload || {}),
   }),
+  // I6: the read-only unified lead timeline. Payload is { leadId, limit?, before?, sources? };
+  // it returns events built from ZTech's own records. Nothing on it can write or send.
+  timeline: Object.freeze({
+    forLead: (payload) => ipcRenderer.invoke('lead-intel:timeline', payload || {}),
+  }),
   // I3: Opportunity Intelligence provider configuration - WRITE-ONLY for keys.
   // setKey sends a key to the main process, which seals it; nothing ever returns it.
   // status returns booleans per provider (stored / readable / loaded by OI) and the

@@ -1,5 +1,7 @@
 'use strict';
 
+const { LeadTimeline } = require('./timeline/LeadTimeline');
+
 /**
  * A10 — Lead Intelligence runtime for the ZTech Electron main process.
  *
@@ -196,11 +198,16 @@ async function initializeLeadIntelligenceRuntime({ accountStore, targetSource = 
   // a restart. load() never throws; a failure leaves the store empty ("not researched").
   if (oi && typeof oi.loadAssociations === 'function') await oi.loadAssociations();
 
+  // I6: the read-only lead timeline. It reads the stores above and OI's LOCAL association
+  // ledger; it writes nothing and calls no service.
+  const timeline = new LeadTimeline({ store, leadSource, round1: port, opportunity: oi ? oi.service : null });
+
   return {
     li,
     store,
     round1Port: port,
     opportunity: oi,
+    timeline,
     get available() { return !closed; },
     /** Clean shutdown: stops nothing that was never started, closes LI resources. */
     async shutdown() {
