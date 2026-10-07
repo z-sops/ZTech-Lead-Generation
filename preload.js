@@ -204,6 +204,8 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     lift: (payload) => ipcRenderer.invoke('lead-intel:trust-lift', payload || {}),
     recordConsent: (payload) => ipcRenderer.invoke('lead-intel:trust-consent', payload || {}),
     handoff: (payload) => ipcRenderer.invoke('lead-intel:trust-handoff', payload || {}),
+    // F26.6 follow-up: review a verified mailbox reply (interested / not interested / unsubscribe / neutral).
+    reviewReply: (payload) => ipcRenderer.invoke('lead-intel:trust-review', payload || {}),
   }),
   // F26.6: connected mailboxes and market rules. Records are sanitized (mailbox_id, provider,
   // address, display name, connection and pacing status). No token, auth code, PKCE verifier or

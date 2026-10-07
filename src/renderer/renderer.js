@@ -10531,6 +10531,9 @@ const TRUST_METHOD_LABEL = { inbound_message: 'They messaged us first', website_
 const TRUST_REASON_LABEL = { unsubscribe: 'Unsubscribed', bounce: 'Bounced', complaint: 'Marked as spam', manual: 'Do not contact' };
 const TRUST_SOURCE_KIND_LABEL = { collection_run: 'Collection run', import: 'Import', manual: 'Added by hand', enrichment: 'Enrichment', unknown: 'Source not recorded (added before tracking began)' };
 const TRUST_FIELD_LABEL = { phone: 'Phone', email: 'Email', website: 'Website' };
+// F26.6 follow-up: the human review of a verified mailbox reply. Only "Interested" may establish
+// permission to keep emailing; the two negative outcomes add a do-not-contact; Neutral records nothing more.
+const TRUST_REVIEW_LABEL = { interested: 'Interested', neutral: 'Neutral / unclear', not_interested: 'Not interested', unsubscribe: 'Unsubscribe' };
 let leadTrust = { leadId: null, view: null, error: null, loading: false, form: null, confirm: null, busy: false, notice: null };
 let leadTrustSeq = 0;
 
@@ -10620,6 +10623,11 @@ function trustStatusLine(channel, c) {
   if (c.consent) {
     return `Opted in: ${TRUST_METHOD_LABEL[c.consent.method] || c.consent.method} \u00b7 ${trustDate(c.consent.consentedAt)} \u00b7 recorded by ${c.consent.recordedBy}`;
   }
+  if (channel === 'email' && c.mailboxReply) {
+    const r = c.mailboxReply;
+    const review = r.review ? `reviewed: ${TRUST_REVIEW_LABEL[r.review.outcome] || r.review.outcome}` : 'review needed - a reply is not permission to keep emailing';
+    return `Replied to your mailbox (verified) \u00b7 ${trustDate(r.receivedAt)} \u00b7 ${review}`;
+  }
   if (channel === 'email' && c.verifiedReply) return `Replied (verified) \u00b7 ${trustDate(c.verifiedReply.receivedAt)}`;
   return channel === 'email'
     ? 'No opt-in recorded. A first email can go from your own mail app only where your reviewed market rule allows it (Settings > Mailboxes).'
@@ -10686,6 +10694,16 @@ function trustChannelBlock(channel, c) {
     actions.appendChild(trustButton('Do not contact', () => trustAct('suppress', { channel, reason: 'manual', scope: 'global' }, 'Added to do-not-contact.')));
   }
   block.appendChild(actions);
+  if (channel === 'email' && c.mailboxReply && !c.suppression) {
+    const review = trustEl('div', 'lead-trust-actions lead-trust-review');
+    review.appendChild(trustEl('span', 'lead-trust-note', c.mailboxReply.reviewPending ? 'How did they reply?' : 'Change the review:'));
+    for (const outcome of ['interested', 'neutral', 'not_interested', 'unsubscribe']) {
+      const notice = outcome === 'interested' ? 'Reviewed as interested: you may email this contact again.'
+        : (outcome === 'neutral' ? 'Reviewed as neutral: this does not give permission to email again.' : 'Reviewed: added to do-not-contact.');
+      review.appendChild(trustButton(TRUST_REVIEW_LABEL[outcome], () => trustAct('reviewReply', { outcome }, notice)));
+    }
+    block.appendChild(review);
+  }
   if (leadTrust.form === channel && !c.suppression) block.appendChild(trustConsentForm(channel));
   return block;
 }

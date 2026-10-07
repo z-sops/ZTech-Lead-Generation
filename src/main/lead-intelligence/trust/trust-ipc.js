@@ -8,6 +8,7 @@
  *   lead-intel:trust-lift      { leadId, channel, suppressionId }                  write
  *   lead-intel:trust-consent   { leadId, channel, method, consentedAt, evidenceNote } write
  *   lead-intel:trust-handoff   { pitchId, kind }                                   mail app / copy
+ *   lead-intel:trust-review    { leadId, outcome }                                  F26.6: review a mailbox reply
  *
  * WHAT THE RENDERER CAN NEVER SAY: an address, a recipient_ref, a recorder, a source, an
  * event, a relay URL or secret, or "they replied". Addresses come from the stored lead in the
@@ -27,6 +28,8 @@ const TRUST_CHANNELS_IPC = Object.freeze({
   LIFT: 'lead-intel:trust-lift',
   CONSENT: 'lead-intel:trust-consent',
   HANDOFF: 'lead-intel:trust-handoff',
+  // F26.6 follow-up: the human review of a verified mailbox reply (a reply is not permission).
+  REVIEW: 'lead-intel:trust-review',
 });
 
 const CHANNEL = { type: 'string', enum: ['email', 'whatsapp'] };
@@ -49,6 +52,10 @@ const TRUST_SCHEMAS = Object.freeze({
     consentedAt: { type: 'string', minLength: 10, maxLength: 40, pattern: /^\d{4}-\d{2}-\d{2}(T[0-9:.]+Z)?$/ },
     evidenceNote: { type: 'string', minLength: 3, maxLength: TRUST_LIMITS.EVIDENCE_NOTE_MAX },
   }, ['leadId', 'channel', 'method', 'consentedAt', 'evidenceNote']),
+  [TRUST_CHANNELS_IPC.REVIEW]: obj({
+    leadId: S.leadId,
+    outcome: { type: 'string', enum: ['interested', 'not_interested', 'unsubscribe', 'neutral'] },
+  }, ['leadId', 'outcome']),
   [TRUST_CHANNELS_IPC.HANDOFF]: obj({
     pitchId: { type: 'string', minLength: 3, maxLength: 120, pattern: /^[A-Za-z0-9_.:-]+$/ },
     kind: { type: 'string', enum: ['mailto', 'copy'] },
@@ -63,6 +70,7 @@ function registerTrustIpc({ ipcMain, trust, outreach, isTrustedSender, copyText 
     [TRUST_CHANNELS_IPC.SUPPRESS]: (a) => trust.suppressLead({ leadId: String(a.leadId), channel: a.channel, reason: a.reason, scope: a.scope || 'global' }),
     [TRUST_CHANNELS_IPC.LIFT]: (a) => trust.liftSuppression({ leadId: String(a.leadId), channel: a.channel, suppressionId: a.suppressionId }),
     [TRUST_CHANNELS_IPC.CONSENT]: (a) => trust.recordConsent({ leadId: String(a.leadId), channel: a.channel, method: a.method, consentedAt: a.consentedAt, evidenceNote: a.evidenceNote }),
+    [TRUST_CHANNELS_IPC.REVIEW]: (a) => trust.reviewReply({ leadId: String(a.leadId), outcome: a.outcome }),
     [TRUST_CHANNELS_IPC.HANDOFF]: async (a) => {
       if (!outreach || typeof outreach.handoff !== 'function') throw new ForbiddenError('Handoff is unavailable');
       const r = await outreach.handoff({ pitchId: a.pitchId, kind: a.kind });

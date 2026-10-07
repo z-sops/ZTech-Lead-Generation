@@ -19,7 +19,7 @@
 const {
   DEFAULT_WORKSPACE_ID, normalizeAddress, requireValid,
   normalizeSuppressionRecord, normalizeConsentRecord, normalizeProvenanceRecord,
-  normalizeTrustEventRecord, normalizeRecipientRefRecord, TRUST_EVENT_KINDS,
+  normalizeTrustEventRecord, normalizeRecipientRefRecord, TRUST_EVENT_KINDS, TRUST_EVENT_SOURCES,
 } = require('../trust/trustContract');
 
 const SUPPRESSION_COLS = ['suppression_id', 'scope', 'workspace_id', 'channel', 'normalized_address', 'reason', 'source', 'created_at'];
@@ -208,14 +208,18 @@ class SqlTrustEvents {
   }
 
   /** The newest accepted event of the given kinds for this address, or null. */
-  async latestFor({ channel, address, kinds = TRUST_EVENT_KINDS }) {
+  async latestFor({ channel, address, kinds = TRUST_EVENT_KINDS, sources = null }) {
     const a = normalizeAddress(channel, address);
     const ks = (Array.isArray(kinds) ? kinds : []).filter((k) => TRUST_EVENT_KINDS.includes(k));
     if (!a || !ks.length) return null;
+    const ss = Array.isArray(sources) ? sources.filter((x) => TRUST_EVENT_SOURCES.includes(x)) : null;
+    if (ss && !ss.length) return null;
     return freeze(sqlRow(this.s.db,
       `SELECT ${EVENT_COLS.join(', ')} FROM li_trust_events WHERE channel = ? AND normalized_address = ? AND state != 'rejected' `
-      + `AND kind IN (${ks.map(() => '?').join(', ')}) ORDER BY received_at DESC, row_id DESC LIMIT 1`,
-      [channel, a, ...ks]));
+      + `AND kind IN (${ks.map(() => '?').join(', ')})`
+      + (ss ? ` AND source IN (${ss.map(() => '?').join(', ')})` : '')
+      + ' ORDER BY received_at DESC, row_id DESC LIMIT 1',
+      [channel, a, ...ks, ...(ss || [])]));
   }
 
   async list({ limit, offset } = {}) {
@@ -382,12 +386,14 @@ class MemTrustEvents {
     return freeze([...this.rows.values()].find((r) => r.event_id === String(eventId) && r.state !== 'rejected') || null);
   }
 
-  async latestFor({ channel, address, kinds = TRUST_EVENT_KINDS }) {
+  async latestFor({ channel, address, kinds = TRUST_EVENT_KINDS, sources = null }) {
     const a = normalizeAddress(channel, address);
     const ks = (Array.isArray(kinds) ? kinds : []).filter((k) => TRUST_EVENT_KINDS.includes(k));
     if (!a || !ks.length) return null;
+    const ss = Array.isArray(sources) ? sources.filter((x) => TRUST_EVENT_SOURCES.includes(x)) : null;
+    if (ss && !ss.length) return null;
     const hits = [...this.rows.values()]
-      .filter((r) => r.channel === channel && r.normalized_address === a && r.state !== 'rejected' && ks.includes(r.kind))
+      .filter((r) => r.channel === channel && r.normalized_address === a && r.state !== 'rejected' && ks.includes(r.kind) && (!ss || ss.includes(r.source)))
       .sort(byDesc('received_at', 'row_id'));
     return freeze(hits[0] || null);
   }

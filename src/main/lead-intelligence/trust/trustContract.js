@@ -16,6 +16,8 @@ const { EMAIL, toE164 } = require('../contracts/leadView');
 const TRUST_CHANNELS = Object.freeze(['email', 'whatsapp']);
 const SUPPRESSION_SCOPES = Object.freeze(['workspace', 'global']);
 const SUPPRESSION_REASONS = Object.freeze(['unsubscribe', 'bounce', 'complaint', 'manual']);
+// F26.6 follow-up: the human review of a verified mailbox reply (migration 011).
+const REPLY_REVIEW_OUTCOMES = Object.freeze(['interested', 'not_interested', 'unsubscribe', 'neutral']);
 // F26.6: + 'mailbox' (an unsubscribe reply read from a connected mailbox; migration 010).
 const SUPPRESSION_SOURCES = Object.freeze(['user', 'relay', 'import', 'mailbox']);
 const CONSENT_METHODS = Object.freeze(['inbound_message', 'website_form', 'in_person', 'other']);
@@ -192,6 +194,7 @@ function requireValid(result) {
 }
 
 module.exports = {
+  REPLY_REVIEW_OUTCOMES,
   TRUST_CHANNELS,
   SUPPRESSION_SCOPES,
   SUPPRESSION_REASONS,

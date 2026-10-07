@@ -48,7 +48,7 @@ const checkOf = (sql, table, col) => {
 /* ================================ migration 010 ================================ */
 
 test('M1. 010 is the tenth migration; its CHECK lists equal the mailbox contract (one vocabulary)', () => {
-  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   assert.deepEqual(checkOf(SQL10, 'CREATE TABLE IF NOT EXISTS li_mailboxes', 'provider'), [...M.MAILBOX_PROVIDERS]);
   assert.deepEqual(checkOf(SQL10, 'CREATE TABLE IF NOT EXISTS li_mailboxes', 'status'), [...M.MAILBOX_STATUSES]);
   assert.deepEqual(checkOf(SQL10, 'CREATE TABLE IF NOT EXISTS li_market_rules', 'rule'), [...M.MARKET_RULES]);
@@ -85,7 +85,7 @@ test('M3. 010 on a populated v9 database: legacy sends keep mailbox_id NULL, tru
   const store = new SqlJsStore({ db, logger: SILENT });
   await store.migrate();
   await store.migrate();
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   assert.deepEqual(db.exec('SELECT * FROM li_trust_events ORDER BY row_id')[0].values, before.ev, 'trust events byte for byte');
   assert.deepEqual(db.exec('SELECT * FROM li_suppressions ORDER BY suppression_id')[0].values, before.sup, 'suppressions byte for byte');
   const old = await store.sends.get('s_old');
@@ -135,11 +135,16 @@ for (const kind of ['sql', 'memory']) {
     await assert.rejects(store.mailboxes.setLimits(a.mailbox_id, { time_zone: 'Mars/Olympus' }, at), /Invalid mailbox record/);
   });
 
-  test(`R3 ${kind}. sends carry an optional mailbox_id; mailboxSendTimes is keyed by mailbox and ignores blocked rows`, opt, async () => {
+  test(`R3 ${kind}. sends carry an optional mailbox_id; pacing counts ONLY provider-accepted sends of that mailbox`, opt, async () => {
     const store = await make();
     await store.sends.record(send({ send_id: 's1', mailbox_id: 'mbx_aaaaaaaaaaaa', created_at: '2026-10-07T05:00:00.000Z' }));
+    await store.sends.accept({ sendId: 's1', providerId: 'gmail', providerMessageId: 'msg1', at: '2026-10-07T05:00:01.000Z' });
     await store.sends.record(send({ send_id: 's2', mailbox_id: 'mbx_aaaaaaaaaaaa', created_at: '2026-10-07T05:10:00.000Z' }));
     await store.sends.block({ sendId: 's2', failureCode: 'X', failureMessage: 'x', at: '2026-10-07T05:10:00.000Z' });
+    await store.sends.record(send({ send_id: 's5', mailbox_id: 'mbx_aaaaaaaaaaaa', created_at: '2026-10-07T05:11:00.000Z' }));
+    await store.sends.fail({ sendId: 's5', failureCode: 'MAILBOX_RECONNECT_NEEDED', failureMessage: 'x', at: '2026-10-07T05:11:00.000Z' });
+    await store.sends.record(send({ send_id: 's6', mailbox_id: 'mbx_aaaaaaaaaaaa', created_at: '2026-10-07T05:12:00.000Z' })); // still attempted
+    assert.equal((await store.sends.get('s5')).state, 'failed', 'kept for audit');
     await store.sends.record(send({ send_id: 's3', mailbox_id: 'mbx_bbbbbbbbbbbb', created_at: '2026-10-07T05:20:00.000Z' }));
     await store.sends.record(send({ send_id: 's4', created_at: '2026-10-07T05:30:00.000Z' }));
     assert.equal((await store.sends.get('s4')).mailbox_id, null, 'no mailbox = NULL, exactly as before');
@@ -169,6 +174,24 @@ for (const kind of ['sql', 'memory']) {
     assert.equal((await store.marketRules.get('us')).rule, 'opt_out_allowed');
     await store.marketRules.remove('US');
     assert.equal(await store.marketRules.get('US'), null);
+  });
+}
+
+for (const kind of ['sql', 'memory']) {
+  test(`R8 ${kind}. reply reviews (011): one per reply event, a re-review replaces it, latest per address; CHECK = contract`, { skip: kind === 'sql' ? skip : false }, async () => {
+    const C = require(path.join(LI, 'trust', 'trustContract'));
+    const sql11 = fs.readFileSync(path.join(LI, 'migrations', '011_reply_reviews.sql'), 'utf8');
+    assert.deepEqual(checkOf(sql11, 'CREATE TABLE IF NOT EXISTS li_reply_reviews', 'outcome'), [...C.REPLY_REVIEW_OUTCOMES]);
+    const store = kind === 'sql' ? (await sqlStore()).store : new MemoryStore();
+    const rv = (o) => ({ review_id: 'rvw_' + Math.random().toString(16).slice(2), event_id: 'gm_1', channel: 'email', normalized_address: 'Owner@Acme.Example', outcome: 'neutral', reviewed_by: 'Zee', reviewed_at: '2026-10-07T05:00:00.000Z', ...o });
+    await store.replyReviews.put(rv());
+    const again = await store.replyReviews.put(rv({ outcome: 'interested', reviewed_at: '2026-10-07T06:00:00.000Z' }));
+    assert.equal(again.outcome, 'interested');
+    assert.equal((await store.replyReviews.forEvent('gm_1')).outcome, 'interested', 'replaced, not duplicated');
+    await store.replyReviews.put(rv({ event_id: 'gm_2', outcome: 'not_interested', reviewed_at: '2026-10-07T07:00:00.000Z' }));
+    assert.equal((await store.replyReviews.latestFor({ channel: 'email', address: 'owner@acme.example' })).outcome, 'not_interested');
+    await assert.rejects(store.replyReviews.put(rv({ event_id: 'gm_3', outcome: 'maybe' })), /Invalid reply review/);
+    await assert.rejects(store.replyReviews.put(rv({ event_id: 'gm_4', channel: 'whatsapp' })), /Invalid reply review/);
   });
 }
 

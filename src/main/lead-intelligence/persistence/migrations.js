@@ -348,6 +348,12 @@ const MIGRATION_010 = fs.readFileSync(
   'utf8'
 );
 
+// F26.6 follow-up: human review of mailbox replies (a verified reply is not permission).
+const MIGRATION_011 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '011_reply_reviews.sql'),
+  'utf8'
+);
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
@@ -359,6 +365,7 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 8, name: '008_trust_foundation.sql', sql: MIGRATION_008 }),
   Object.freeze({ version: 9, name: '009_outreach_handoff_activity.sql', sql: MIGRATION_009 }),
   Object.freeze({ version: 10, name: '010_mailbox_transport.sql', sql: MIGRATION_010 }),
+  Object.freeze({ version: 11, name: '011_reply_reviews.sql', sql: MIGRATION_011 }),
 ]);
 
 module.exports = { MIGRATIONS };

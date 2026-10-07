@@ -9,10 +9,27 @@
  */
 
 const { requireValid, normalizeMailboxRecord, normalizeMarketRule, normalizeLimits } = require('../mailbox/mailboxContract');
+const { REPLY_REVIEW_OUTCOMES, normalizeAddress } = require('../trust/trustContract');
 
 const MAILBOX_COLS = ['mailbox_id', 'provider', 'email_address', 'display_name', 'status', 'status_code', 'paused_until', 'daily_cap', 'hourly_cap', 'min_gap_seconds', 'window_start', 'window_end', 'window_days', 'time_zone', 'is_default', 'sync_cursor', 'connected_at', 'updated_at'];
 const SENT_COLS = ['send_id', 'mailbox_id', 'provider_message_id', 'stored_message_id', 'thread_id', 'recipient_address', 'recorded_at'];
 const RULE_COLS = ['country_code', 'rule', 'note', 'reviewed_by', 'reviewed_at'];
+const REVIEW_COLS = ['review_id', 'event_id', 'channel', 'normalized_address', 'outcome', 'reviewed_by', 'reviewed_at'];
+
+/** F26.6 follow-up (migration 011): a human review of one verified mailbox reply. */
+function normalizeReview(rec) {
+  const bad = (m) => { const { ValidationError } = require('../core/errors'); throw new ValidationError('Invalid reply review', [{ path: '$', message: m }]); };
+  if (!rec || typeof rec.review_id !== 'string' || !/^[A-Za-z0-9_.:-]{3,128}$/.test(rec.review_id)) bad('reply review: review_id');
+  if (typeof rec.event_id !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(rec.event_id)) bad('reply review: event_id');
+  if (rec.channel !== 'email') bad('reply review: channel');
+  const address = normalizeAddress('email', rec.normalized_address);
+  if (!address) bad('reply review: normalized_address');
+  if (!REPLY_REVIEW_OUTCOMES.includes(rec.outcome)) bad('reply review: outcome');
+  const by = typeof rec.reviewed_by === 'string' ? rec.reviewed_by.trim().slice(0, 80) : '';
+  if (!by) bad('reply review: reviewed_by');
+  if (typeof rec.reviewed_at !== 'string' || !Number.isFinite(Date.parse(rec.reviewed_at))) bad('reply review: reviewed_at');
+  return { review_id: rec.review_id, event_id: rec.event_id, channel: 'email', normalized_address: address, outcome: rec.outcome, reviewed_by: by, reviewed_at: rec.reviewed_at };
+}
 const SENT_ID_MAX = 300;
 
 function sqlRows(db, sql, params = []) {
@@ -293,7 +310,52 @@ class MemMarketRules {
   async remove(code) { return this.rows.delete(String(code || '').toUpperCase()); }
 }
 
+class SqlReplyReviews {
+  constructor(store) { this.s = store; }
+
+  /** One review per reply event: a re-review replaces it. */
+  async put(rec) {
+    const v = normalizeReview(rec);
+    return this.s.tx(() => {
+      this.s.db.run(`INSERT INTO li_reply_reviews (${REVIEW_COLS.join(', ')}) VALUES (${ph(REVIEW_COLS)})
+        ON CONFLICT(event_id) DO UPDATE SET outcome = excluded.outcome, reviewed_by = excluded.reviewed_by, reviewed_at = excluded.reviewed_at`, REVIEW_COLS.map((c) => v[c]));
+      return freeze(sqlRow(this.s.db, `SELECT ${REVIEW_COLS.join(', ')} FROM li_reply_reviews WHERE event_id = ?`, [v.event_id]));
+    });
+  }
+
+  async forEvent(eventId) {
+    return freeze(sqlRow(this.s.db, `SELECT ${REVIEW_COLS.join(', ')} FROM li_reply_reviews WHERE event_id = ?`, [String(eventId)]));
+  }
+
+  /** The newest review for this address, or null. */
+  async latestFor({ channel, address }) {
+    const a = normalizeAddress(channel, address);
+    if (!a) return null;
+    return freeze(sqlRow(this.s.db, `SELECT ${REVIEW_COLS.join(', ')} FROM li_reply_reviews WHERE channel = ? AND normalized_address = ? ORDER BY reviewed_at DESC, review_id DESC LIMIT 1`, [channel, a]));
+  }
+}
+
+class MemReplyReviews {
+  constructor() { this.rows = new Map(); }
+  async put(rec) {
+    const v = normalizeReview(rec);
+    const prev = this.rows.get(v.event_id);
+    const row = prev ? { ...prev, outcome: v.outcome, reviewed_by: v.reviewed_by, reviewed_at: v.reviewed_at } : v;
+    this.rows.set(v.event_id, row);
+    return freeze(row);
+  }
+  async forEvent(eventId) { return freeze(this.rows.get(String(eventId)) || null); }
+  async latestFor({ channel, address }) {
+    const a = normalizeAddress(channel, address);
+    if (!a) return null;
+    const hits = [...this.rows.values()].filter((r) => r.channel === channel && r.normalized_address === a)
+      .sort((x, y) => (x.reviewed_at < y.reviewed_at ? 1 : x.reviewed_at > y.reviewed_at ? -1 : (x.review_id < y.review_id ? 1 : -1)));
+    return freeze(hits[0] || null);
+  }
+}
+
 module.exports = {
   SqlMailboxes, SqlMailboxSent, SqlMarketRules, MemMailboxes, MemMailboxSent, MemMarketRules,
-  MAILBOX_TABLE_COLUMNS: Object.freeze({ li_mailboxes: MAILBOX_COLS, li_mailbox_sent: SENT_COLS, li_market_rules: RULE_COLS }),
+  MAILBOX_TABLE_COLUMNS: Object.freeze({ li_mailboxes: MAILBOX_COLS, li_mailbox_sent: SENT_COLS, li_market_rules: RULE_COLS, li_reply_reviews: REVIEW_COLS }),
+  SqlReplyReviews, MemReplyReviews,
 };

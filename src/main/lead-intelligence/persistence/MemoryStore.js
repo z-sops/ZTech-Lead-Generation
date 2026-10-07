@@ -4,7 +4,7 @@ const { clone } = require('../core/objects');
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { ACTIVE_STATES } = require('../contracts/constants');
 const { MemSuppressions, MemConsents, MemProvenance, MemTrustEvents, MemRecipientRefs } = require('./trustRepos');
-const { MemMailboxes, MemMailboxSent, MemMarketRules } = require('./mailboxRepos');
+const { MemMailboxes, MemMailboxSent, MemMarketRules, MemReplyReviews } = require('./mailboxRepos');
 const { MAILBOX_ID_RE } = require('../mailbox/mailboxContract');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
@@ -456,7 +456,7 @@ class MemSends {
 
   async mailboxSendTimes(mailboxId, sinceIso) {
     return [...this.rows.values()]
-      .filter((r) => r.mailbox_id === String(mailboxId) && r.created_at >= String(sinceIso) && r.state !== 'blocked')
+      .filter((r) => r.mailbox_id === String(mailboxId) && r.created_at >= String(sinceIso) && r.state === 'accepted')
       .map((r) => r.created_at).sort();
   }
 
@@ -542,6 +542,7 @@ class MemoryStore {
     this.mailboxes = new MemMailboxes();
     this.mailboxSent = new MemMailboxSent();
     this.marketRules = new MemMarketRules();
+    this.replyReviews = new MemReplyReviews();
   }
 
   async purgeLead(leadId) {

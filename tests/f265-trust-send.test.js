@@ -305,7 +305,8 @@ test('P. Prepare shows the trust verdict the send will apply - verdicts and date
   const cold = await li.outreach.prepare({ pitchId: pitch.pitch_id, channel: 'email' });
   // F26.6 declared lock update: + 'market' (country code + rule, never the address), and the
   // handoff is offered to a cold lead only where a reviewed opt-out market rule allows it.
-  assert.deepStrictEqual(Object.keys(cold.trust).sort(), ['allowed', 'code', 'consent', 'handoffAvailable', 'market', 'message', 'sessionOpenUntil', 'suppressed', 'verifiedReply']);
+  // F26.6 follow-up declared lock update: + 'replyReviewPending' (a mailbox reply awaiting its human review).
+  assert.deepStrictEqual(Object.keys(cold.trust).sort(), ['allowed', 'code', 'consent', 'handoffAvailable', 'market', 'message', 'replyReviewPending', 'sessionOpenUntil', 'suppressed', 'verifiedReply']);
   assert.strictEqual(cold.trust.allowed, false);
   assert.strictEqual(cold.trust.code, TRUST_CODES.EMAIL_COLD);
   assert.deepStrictEqual(cold.trust.market, { countryCode: 'US', rule: 'consent_required', reviewed: false });

@@ -41,6 +41,10 @@
  */
 
 const { DEFAULT_WORKSPACE_ID, TRUST_LIMITS, normalizeAddress } = require('./trustContract');
+// F26.6 follow-up (Zee, 7 Oct): "verified reply" and "permission to continue emailing" are separate.
+// A relay reply keeps its F26.5 meaning. A reply read from a connected mailbox is a FACT (it stops
+// sequences via its reply event) but establishes a prior relationship ONLY after a human review
+// says "interested"; "neutral" establishes nothing; negative outcomes are suppressions.
 const { normalizeCountry } = require('../mailbox/mailboxContract');
 
 /** Trust-event sources that prove a reply really arrived (never a user entry). */
@@ -52,6 +56,7 @@ const TRUST_CODES = Object.freeze({
   EMAIL_COLD: 'EMAIL_TRANSPORT_NOT_ALLOWED_FOR_COLD',
   SUBJECT: 'SUBJECT_MISLEADING',
   MARKET: 'MARKET_CONSENT_REQUIRED',
+  REVIEW: 'REPLY_REVIEW_REQUIRED',
   WA_CONSENT: 'WHATSAPP_CONSENT_REQUIRED',
   WA_SESSION: 'WHATSAPP_SESSION_CLOSED',
   ADDRESS: 'CONTACT_ADDRESS_INVALID',
@@ -62,6 +67,7 @@ const TRUST_MESSAGES = Object.freeze({
   SENDER_IDENTITY_INCOMPLETE: 'Add your business name and postal address in Settings > Business Profile before sending.',
   SENDER_NAME_MISSING: 'Add a sender name (Business Profile representative or email From name) before sending email.',
   EMAIL_TRANSPORT_NOT_ALLOWED_FOR_COLD: 'This email provider does not allow cold outreach. Use "Open in my mail app" for a first contact, or record the lead\'s consent first.',
+  REPLY_REVIEW_REQUIRED: 'This contact replied to your mailbox. Review the reply in the lead (Interested, Not interested, Unsubscribe or Neutral) before emailing again - a reply alone is not permission.',
   MARKET_CONSENT_REQUIRED: 'This contact\'s country has no reviewed opt-out rule, so email needs a recorded consent or a verified reply first. Market rules are in Settings > Mailboxes.',
   SUBJECT_MISLEADING: 'The subject looks like a reply, a forward or a billing notice. Change it so it matches the pitch.',
   WHATSAPP_CONSENT_REQUIRED: 'WhatsApp needs a recorded opt-in from this contact first.',
@@ -108,19 +114,31 @@ class TrustPolicy {
   async facts({ channel, recipient, country = null }) {
     const address = normalizeAddress(channel, recipient);
     const market = channel === 'email' ? await this.marketFor(country) : null;
-    if (!address) return { address: null, suppression: null, consent: null, reply: null, inbound: null, sessionOpenUntil: null, market };
+    if (!address) return { address: null, suppression: null, consent: null, reply: null, replyReviewPending: false, inbound: null, sessionOpenUntil: null, market };
     const [suppression, consent] = await Promise.all([
       this.store.suppressions.find({ channel, address, workspaceId: this.workspaceId }),
       this.store.consents.latestFor({ channel, address }),
     ]);
-    const reply = channel === 'email' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'] }) : null;
     const inbound = channel === 'whatsapp' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['whatsapp_inbound'] }) : null;
-    const verifiedReply = reply && VERIFIED_REPLY_SOURCES.includes(reply.source) ? reply : null;
+    // Prior relationship from a reply: a relay reply (F26.5), or a mailbox reply whose LATEST human
+    // review for this address is "interested". An unreviewed mailbox reply is pending review.
+    let verifiedReply = null;
+    let replyReviewPending = false;
+    if (channel === 'email') {
+      const relay = await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'], sources: ['relay'] });
+      const mailbox = await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'], sources: ['mailbox'] });
+      const reviews = this.store.replyReviews || null;
+      const latestReview = reviews ? await reviews.latestFor({ channel, address }) : null;
+      const reviewed = mailbox && reviews ? await reviews.forEvent(mailbox.event_id) : null;
+      replyReviewPending = Boolean(mailbox && !reviewed);
+      if (relay) verifiedReply = relay;
+      else if (mailbox && latestReview && latestReview.outcome === 'interested') verifiedReply = { ...mailbox, review: latestReview };
+    }
     const verifiedInbound = inbound && inbound.source === 'relay' ? inbound : null;
     const sessionOpenUntil = verifiedInbound
       ? new Date(Date.parse(verifiedInbound.received_at) + TRUST_LIMITS.WHATSAPP_SESSION_MS).toISOString()
       : null;
-    return { address, suppression, consent, reply: verifiedReply, inbound: verifiedInbound, sessionOpenUntil, market };
+    return { address, suppression, consent, reply: verifiedReply, replyReviewPending, inbound: verifiedInbound, sessionOpenUntil, market };
   }
 
   /**
@@ -157,10 +175,12 @@ class TrustPolicy {
     if (channel === 'email') {
       // EMAIL 3: transport eligibility, decided by the transport's own declared policy.
       const policy = transportPolicyOf(provider);
-      if (policy.requiresPriorRelationship && !facts.consent && !facts.reply) return refuse('transport', TRUST_CODES.EMAIL_COLD);
+      // A mailbox reply waiting for its human review is named as such, never as "cold".
+      const noRelationship = (code) => (facts.replyReviewPending ? TRUST_CODES.REVIEW : code);
+      if (policy.requiresPriorRelationship && !facts.consent && !facts.reply) return refuse('transport', noRelationship(TRUST_CODES.EMAIL_COLD));
       // EMAIL 3b (F26.6): the market rule. A transport's permission is never a permission to
       // contact this person; without consent or a verified reply, only a reviewed opt-out market passes.
-      if (!facts.consent && !facts.reply && (!facts.market || facts.market.rule !== 'opt_out_allowed')) return refuse('market', TRUST_CODES.MARKET);
+      if (!facts.consent && !facts.reply && (!facts.market || facts.market.rule !== 'opt_out_allowed')) return refuse('market', noRelationship(TRUST_CODES.MARKET));
       // EMAIL 4: subject lint.
       if (lintSubject(subject)) return refuse('subject', TRUST_CODES.SUBJECT);
       return { allowed: true, facts };

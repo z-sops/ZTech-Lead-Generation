@@ -234,6 +234,8 @@ class OutreachService {
       suppressed: Boolean(f.suppression),
       consent: f.consent ? { method: f.consent.method, consentedAt: f.consent.consented_at, recordedBy: f.consent.recorded_by } : null,
       verifiedReply: Boolean(f.reply),
+      // F26.6 follow-up: a mailbox reply waiting for its human review (a reply is not permission).
+      replyReviewPending: Boolean(f.replyReviewPending),
       sessionOpenUntil: f.sessionOpenUntil || null,
       // F26.6: the market rule this email is judged by (country code + rule; never the address).
       market: f.market ? { countryCode: f.market.countryCode || null, rule: f.market.rule, reviewed: f.market.reviewed === true } : null,

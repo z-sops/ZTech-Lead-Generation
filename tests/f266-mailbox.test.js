@@ -259,6 +259,9 @@ test('3. pacing is keyed by mailbox_id: one mailbox at its cap never blocks anot
   const mb = await b.svc.connect({ provider: 'gmail' });
   await a.svc.setLimits({ mailboxId: ma.mailboxId, limits: { dailyCap: 1, hourlyCap: 1 } });
   await store.sends.record({ send_id: 's1', lead_id: 'L1', pitch_id: 'p1', channel: 'email', content_hash: 'h'.repeat(64), idempotency_key: 'k1', state: 'attempted', provider_id: 'gmail', provider_message_id: null, mailbox_id: ma.mailboxId, created_at: '2026-10-07T05:59:00.000Z', updated_at: '2026-10-07T05:59:00.000Z' });
+  // Only a PROVIDER-ACCEPTED send counts (Zee, 7 Oct): the attempt alone uses up nothing.
+  assert.strictEqual((await a.svc.get(ma.mailboxId)).pacing.allowed, true, 'an attempt that Gmail never accepted does not count');
+  await store.sends.accept({ sendId: 's1', providerId: 'gmail', providerMessageId: 'msg1', at: '2026-10-07T05:59:01.000Z' });
   const [va, vb] = await Promise.all([a.svc.get(ma.mailboxId), a.svc.get(mb.mailboxId)]);
   assert.strictEqual(va.pacing.allowed, false);
   assert.strictEqual(va.pacing.reason, 'daily_cap');
@@ -365,17 +368,40 @@ test('5b. a reviewed consent_required rule stays strict; opt_out_allowed passes;
   assert.strictEqual(r.sent, false, 'a recorded consent satisfies the market gate in any market');
 });
 
-test('5c. a verified reply from a connected mailbox (source "mailbox") counts; a user-entered one never does', async () => {
+test('5c. a mailbox reply is a FACT, not permission: it needs a human review; only "interested" establishes a relationship', async () => {
   const o = { urls: [], open: (u) => { o.urls.push(u); } };
   const rt = runtime({ openExternal: o.open });
   const pitch = await approved(rt.li);
   await reply(rt.store, { source: 'user' });
-  await assert.rejects(rt.li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' }), (e) => e.code === TRUST_CODES.MARKET);
+  await assert.rejects(rt.li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' }), (e) => e.code === TRUST_CODES.MARKET, 'a user-entered reply never counts');
+  assert.strictEqual((await rt.li.trust.leadTrust({ leadId: 'L1' })).channels.email.verifiedReply, null, 'nor is it shown as a verified reply');
   await reply(rt.store, { source: 'mailbox' });
+  await assert.rejects(rt.li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' }), (e) => e.code === 'REPLY_REVIEW_REQUIRED', 'an unreviewed mailbox reply is not permission');
+  let lt = await rt.li.trust.leadTrust({ leadId: 'L1' });
+  assert.strictEqual(lt.channels.email.mailboxReply.reviewPending, true);
+  lt = await rt.li.trust.reviewReply({ leadId: 'L1', outcome: 'neutral' });
+  assert.deepStrictEqual({ ...lt.channels.email.mailboxReply.review, reviewedAt: null }, { outcome: 'neutral', reviewedAt: null, reviewedBy: 'local-user' });
+  await assert.rejects(rt.li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' }), (e) => e.code === TRUST_CODES.MARKET, 'neutral establishes nothing');
+  await rt.li.trust.reviewReply({ leadId: 'L1', outcome: 'interested' });
   const r = await rt.li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' });
-  assert.strictEqual(r.sent, false);
-  const lt = await rt.li.trust.leadTrust({ leadId: 'L1' });
-  assert.ok(lt.channels.email.verifiedReply, 'the lead trust view shows the verified mailbox reply');
+  assert.strictEqual(r.sent, false, 'interested: a prior relationship now exists');
+  await rt.li.trust.reviewReply({ leadId: 'L1', outcome: 'not_interested' });
+  lt = await rt.li.trust.leadTrust({ leadId: 'L1' });
+  assert.strictEqual(lt.channels.email.suppression.reason, 'manual', 'not interested -> do not contact');
+  await assert.rejects(rt.li.outreach.handoff({ pitchId: pitch.pitch_id, kind: 'copy' }), (e) => e.code === 'CONTACT_SUPPRESSED');
+});
+
+test('5c2. review outcomes: unsubscribe suppresses as an unsubscribe; nothing to review is refused; relay replies keep their F26.5 meaning', async () => {
+  const rt = runtime();
+  await assert.rejects(rt.li.trust.reviewReply({ leadId: 'L1', outcome: 'interested' }), (e) => e.code === 'NO_REPLY_TO_REVIEW');
+  await assert.rejects(rt.li.trust.reviewReply({ leadId: 'L1', outcome: 'maybe' }), (e) => e.code === 'VALIDATION_FAILED');
+  await reply(rt.store, { source: 'mailbox' });
+  const lt = await rt.li.trust.reviewReply({ leadId: 'L1', outcome: 'unsubscribe' });
+  assert.strictEqual(lt.channels.email.suppression.reason, 'unsubscribe');
+  const rt2 = runtime();
+  const p2 = await approved(rt2.li);
+  await reply(rt2.store, { source: 'relay' });
+  assert.strictEqual((await rt2.li.outreach.handoff({ pitchId: p2.pitch_id, kind: 'copy' })).sent, false, 'a signed relay reply still counts as before');
 });
 
 test('5d. order: transport before market - Resend with no consent still says EMAIL_TRANSPORT_NOT_ALLOWED_FOR_COLD', async () => {

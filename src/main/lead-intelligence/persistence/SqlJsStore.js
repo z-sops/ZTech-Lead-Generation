@@ -3,7 +3,7 @@
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { MIGRATIONS } = require('./migrations');
 const { SqlSuppressions, SqlConsents, SqlProvenance, SqlTrustEvents, SqlRecipientRefs } = require('./trustRepos');
-const { SqlMailboxes, SqlMailboxSent, SqlMarketRules } = require('./mailboxRepos');
+const { SqlMailboxes, SqlMailboxSent, SqlMarketRules, SqlReplyReviews } = require('./mailboxRepos');
 const { MAILBOX_ID_RE } = require('../mailbox/mailboxContract');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
@@ -74,6 +74,8 @@ class SqlJsStore {
     this.mailboxes = new SqlMailboxes(this);
     this.mailboxSent = new SqlMailboxSent(this);
     this.marketRules = new SqlMarketRules(this);
+    // F26.6 follow-up (migration 011): human review of verified mailbox replies.
+    this.replyReviews = new SqlReplyReviews(this);
   }
 
   /** Apply pending migrations in one transaction each. Idempotent. */
@@ -626,12 +628,13 @@ class SqlSends {
   }
 
   /**
-   * F26.6 pacing input: created_at of every send through this mailbox since `sinceIso` that
-   * reached (or may have reached) the provider. 'blocked' rows never contacted it and do not count.
+   * F26.6 pacing input: created_at of every send through this mailbox since `sinceIso` that the
+   * PROVIDER ACCEPTED (Zee, 7 Oct). A blocked, failed or still-attempted row is kept for audit but
+   * never counts: only a message Gmail actually took uses up the mailbox's limits.
    */
   async mailboxSendTimes(mailboxId, sinceIso) {
     return rows(this.s.db,
-      "SELECT created_at FROM li_outreach_sends WHERE mailbox_id = ? AND created_at >= ? AND state != 'blocked' ORDER BY created_at ASC",
+      "SELECT created_at FROM li_outreach_sends WHERE mailbox_id = ? AND created_at >= ? AND state = 'accepted' ORDER BY created_at ASC",
       [String(mailboxId), String(sinceIso)]).map((r) => r.created_at);
   }
 

@@ -30,6 +30,7 @@ const { toLeadView } = require('../contracts/leadView');
 const {
   DEFAULT_WORKSPACE_ID, TRUST_CHANNELS, CONSENT_METHODS, TRUST_EVENT_KINDS, TRUST_LIMITS,
   normalizeAddress, cleanText, isIso, EVENT_ID_RE, RECIPIENT_REF_RE,
+  REPLY_REVIEW_OUTCOMES,
 } = require('./trustContract');
 const { verifyEvent } = require('./relaySignature');
 const { HANDOFF_HEADER_NOTE } = require('./unsubscribe');
@@ -104,6 +105,10 @@ class TrustService {
         this.store.consents.latestFor({ channel, address }),
       ]);
       const reply = channel === 'email' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'] }) : null;
+      // F26.6 follow-up: the newest mailbox reply and its human review. A reply is a fact; only an
+      // "interested" review turns it into permission (see TrustPolicy).
+      const mailboxReply = channel === 'email' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['reply'], sources: ['mailbox'] }) : null;
+      const review = mailboxReply && this.store.replyReviews ? await this.store.replyReviews.forEvent(mailboxReply.event_id) : null;
       const inbound = channel === 'whatsapp' ? await this.store.trustEvents.latestFor({ channel, address, kinds: ['whatsapp_inbound'] }) : null;
       const verifiedInbound = inbound && inbound.source === 'relay' ? inbound : null;
       channels[channel] = {
@@ -113,7 +118,12 @@ class TrustService {
           createdAt: suppression.created_at, removable: suppression.reason === 'manual' && suppression.source === 'user',
         } : null,
         consent: consent ? { method: consent.method, consentedAt: consent.consented_at, recordedBy: consent.recorded_by, evidenceNote: consent.evidence_note, source: consent.source } : null,
-        verifiedReply: reply && VERIFIED_REPLY_SOURCES.includes(reply.source) ? { receivedAt: reply.received_at } : null,
+        verifiedReply: reply && VERIFIED_REPLY_SOURCES.includes(reply.source) ? { receivedAt: reply.received_at, source: reply.source } : null,
+        mailboxReply: mailboxReply ? {
+          receivedAt: mailboxReply.received_at,
+          review: review ? { outcome: review.outcome, reviewedAt: review.reviewed_at, reviewedBy: review.reviewed_by } : null,
+          reviewPending: !review,
+        } : null,
         sessionOpenUntil: verifiedInbound ? new Date(Date.parse(verifiedInbound.received_at) + TRUST_LIMITS.WHATSAPP_SESSION_MS).toISOString() : null,
       };
     }
@@ -124,6 +134,34 @@ class TrustService {
   }
 
   /* ------------------------------ user actions ------------------------------ */
+
+  /**
+   * F26.6 follow-up: the human review of the newest verified MAILBOX reply for this lead's email.
+   *   interested     -> may establish a prior relationship (TrustPolicy reads it)
+   *   not_interested -> "Do not contact" (manual suppression, global)
+   *   unsubscribe    -> "Unsubscribed" (suppression through the user intake, global)
+   *   neutral        -> recorded; establishes nothing
+   * The reviewer is the operator. Nothing here reads a message body.
+   */
+  async reviewReply({ leadId, outcome }) {
+    if (!REPLY_REVIEW_OUTCOMES.includes(outcome)) throw new ValidationError('unknown outcome', [{ path: '$.outcome', message: 'outcome must be interested, not_interested, unsubscribe or neutral' }]);
+    const view = await this._view(leadId);
+    const address = this._addressOf(view, 'email');
+    if (!address) throw new LiError('CHANNEL_UNAVAILABLE', 'No valid email address is stored for this lead.');
+    const reply = await this.store.trustEvents.latestFor({ channel: 'email', address, kinds: ['reply'], sources: ['mailbox'] });
+    if (!reply) throw new LiError('NO_REPLY_TO_REVIEW', 'There is no verified mailbox reply from this contact to review.');
+    if (!this.store.replyReviews) throw new LiError('TRUST_UNAVAILABLE', 'The review could not be recorded.');
+    const now = this.now().toISOString();
+    await this.store.replyReviews.put({
+      review_id: newId('rvw'), event_id: reply.event_id, channel: 'email', normalized_address: address,
+      outcome, reviewed_by: this.operator, reviewed_at: now,
+    });
+    if (outcome === 'unsubscribe' || outcome === 'not_interested') {
+      const existing = await this.store.suppressions.find({ channel: 'email', address, workspaceId: this.workspaceId });
+      if (!existing) await this.suppressLead({ leadId, channel: 'email', reason: outcome === 'unsubscribe' ? 'unsubscribe' : 'manual', scope: 'global' });
+    }
+    return this.leadTrust({ leadId });
+  }
 
   /**
    * "Mark unsubscribed" (reason unsubscribe: goes through intake as a user event, so it is

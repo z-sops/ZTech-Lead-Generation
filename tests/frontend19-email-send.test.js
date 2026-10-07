@@ -790,7 +790,7 @@ test('S1. the bridge exposes exactly one send method and no scheduling surface',
   const expectedOutreach = ['generate', 'get', 'update', 'approve', 'gate', 'list', 'activity', 'ready', 'prepare', 'outreachSend', 'sends'];
   const expectedOI = ['request', 'report', 'latest', 'associations', 'pitchContext', 'pitchPreview']; // I7 declared lock update: + pitchPreview
   const expectedI6 = ['forLead']; // I6 declared lock update: the read-only lead timeline
-  const expectedF265 = ['forLead', 'suppress', 'lift', 'recordConsent', 'handoff']; // F26.5 declared lock update: trust (handoff is not a send)
+  const expectedF265 = ['forLead', 'suppress', 'lift', 'recordConsent', 'handoff', 'reviewReply']; // F26.5 declared lock update: trust (handoff is not a send) // F26.6 follow-up: + reviewReply (a review, not a send)
   // F26.6 declared lock update: the mailbox methods that take a payload (none sends; there is no
   // mailbox send method on the bridge).
   const expectedF266 = ['connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'setMarketRule', 'removeMarketRule', 'check', 'checkReplies'];

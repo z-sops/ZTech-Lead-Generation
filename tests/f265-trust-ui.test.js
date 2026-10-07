@@ -48,7 +48,7 @@ function mainSide(opts = {}) {
   registerTrustIpc({ ipcMain: { handle: (c, f) => { handlers[c] = f; } }, trust: rt.li.trust, outreach: rt.li.outreach, isTrustedSender: () => true, copyText: (t) => copied.push(t), logger: { warn() {} } });
   const sent = [];
   const inv = (ch) => (p) => { sent.push({ ch, p }); return handlers[ch]({}, p); };
-  const api = { forLead: inv(TRUST_CHANNELS_IPC.LEAD), suppress: inv(TRUST_CHANNELS_IPC.SUPPRESS), lift: inv(TRUST_CHANNELS_IPC.LIFT), recordConsent: inv(TRUST_CHANNELS_IPC.CONSENT), handoff: inv(TRUST_CHANNELS_IPC.HANDOFF) };
+  const api = { forLead: inv(TRUST_CHANNELS_IPC.LEAD), suppress: inv(TRUST_CHANNELS_IPC.SUPPRESS), lift: inv(TRUST_CHANNELS_IPC.LIFT), recordConsent: inv(TRUST_CHANNELS_IPC.CONSENT), handoff: inv(TRUST_CHANNELS_IPC.HANDOFF), reviewReply: inv(TRUST_CHANNELS_IPC.REVIEW) };
   return { ...rt, api, sent, copied };
 }
 
@@ -85,7 +85,10 @@ test('12a. markup + code rules: own section in Overview, textContent only, no ti
   assert.deepStrictEqual(calls, ['[method]', 'forLead', 'handoff']);
   assert.ok(/trustAct\('(suppress|lift|recordConsent)'/.test(code));
   assert.ok(!/\.(send|outreachSend|approve)\(/.test(code), 'the block never sends or approves');
-  assert.ok(!/replied/i.test(code.replace(/Replied \(verified\)/g, '')), 'no "they replied" control exists');
+  // F26.6 follow-up declared lock update: the status line may now also say "Replied to your mailbox
+  // (verified)" - a reply READ from a connected mailbox, which the user can only REVIEW, never create.
+  assert.ok(!/replied/i.test(code.replace(/Replied \(verified\)/g, '').replace(/Replied to your mailbox \(verified\)/g, '')), 'no "they replied" control exists');
+  assert.ok(!/trustAct\('(intake|recordReply|reply)'/.test(code), 'a reply can be reviewed, never entered');
 });
 
 test('12b. an empty lead shows honest states; nothing is written by reading', async () => {
@@ -232,6 +235,23 @@ test('12j. the Prepare footer hides the send control when trust refuses, and off
   assert.ok(/const canSend = Boolean\(delivery && delivery\.canSend\) && !trustBlocks;/.test(footerFn));
   assert.ok(/if \(trust && trust\.handoffAvailable === true && !isWhatsApp && data && data\.pitchId\) f265HandoffControls\(footer, data\.pitchId\);/.test(footerFn));
   assert.ok(footerFn.indexOf('trustBlocks && !result') > footerFn.indexOf("'Send this WhatsApp' : 'Send this email'"), 'the refusal replaces the control, it does not sit beside it');
+});
+
+test('12k. F26.6 follow-up: a verified mailbox reply is shown as needing review; the review goes to main and only "Interested" gives permission', async () => {
+  const m = mainSide();
+  await m.store.trustEvents.append({ row_id: 'tev_mbx1', event_id: 'gm_review_1', kind: 'reply', channel: 'email', recipient_ref: null, normalized_address: LEAD_EMAIL, source: 'mailbox', state: 'stored', reject_code: null, received_at: iso(NOW - 3600000), recorded_at: iso(NOW - 3600000) });
+  const u = makeUi(m.api);
+  await u.ui.load('L1');
+  await flush();
+  assert.ok(u.text().includes('Replied to your mailbox (verified)'));
+  assert.ok(u.text().includes('review needed - a reply is not permission to keep emailing'));
+  const labels = u.nodes().filter((n) => n.tagName === 'BUTTON').map((n) => n.textContent);
+  for (const l of ['Interested', 'Neutral / unclear', 'Not interested', 'Unsubscribe']) assert.ok(labels.includes(l), l);
+  u.btn('Interested', 'email').click();
+  await flush();
+  assert.deepStrictEqual(m.sent.at(-1), { ch: TRUST_CHANNELS_IPC.REVIEW, p: { leadId: 'L1', outcome: 'interested' } });
+  assert.ok(u.text().includes('reviewed: Interested'));
+  assert.ok(u.text().includes('Reviewed as interested: you may email this contact again.'));
 });
 
 (async () => {

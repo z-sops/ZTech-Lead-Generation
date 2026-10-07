@@ -66,6 +66,8 @@ const LI_TABLES = Object.freeze([
   'li_mailboxes',
   'li_mailbox_sent',
   'li_market_rules',
+  // F26.6 follow-up (migration 011): the human review of a verified mailbox reply.
+  'li_reply_reviews',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';

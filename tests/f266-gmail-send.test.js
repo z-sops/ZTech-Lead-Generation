@@ -30,7 +30,7 @@ const ACCESS = 'ya29.access-never-leaks';
 
 /** A fake Gmail with the behaviour Step 1A observed. */
 function fakeGmail({ stripListUnsubscribe = false, readBackFails = false, sendStatus = 200, storedIdMissing = false, pageSize = 0, apiStatus = 0 } = {}) {
-  const st = { sent: [], messages: new Map(), history: [], historyId: '500', calls: [], n: 0, failMeta: new Set(), apiStatus };
+  const st = { sent: [], messages: new Map(), history: [], historyId: '500', calls: [], n: 0, failMeta: new Set(), apiStatus, sendStatus };
   const json = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   const parse = (raw) => {
     const text = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
@@ -49,7 +49,7 @@ function fakeGmail({ stripListUnsubscribe = false, readBackFails = false, sendSt
     if (st.apiStatus) return json(st.apiStatus, { error: { errors: [{ reason: 'authError', message: 'REMOTE TEXT' }] } });
     if (api === '/profile') return json(200, { emailAddress: MBX_ADDR, historyId: st.historyId });
     if (api === '/messages/send') {
-      if (sendStatus !== 200) return json(sendStatus, { error: { errors: [{ reason: 'userRateLimitExceeded', message: 'REMOTE TEXT' }] } });
+      if (st.sendStatus !== 200) return json(st.sendStatus, { error: { errors: [{ reason: 'userRateLimitExceeded', message: 'REMOTE TEXT' }] } });
       const m = parse(JSON.parse(init.body).raw);
       st.n += 1;
       const id = `msg${st.n}`;
@@ -477,6 +477,55 @@ test('5g. a stored copy without a readable Message-ID takes the mailbox out of R
   const m = await s.store.mailboxes.get(MBX);
   assert.strictEqual(m.status, 'needs_check');
   assert.strictEqual(m.status_code, 'MAILBOX_MESSAGE_ID_UNREADABLE');
+});
+
+/* ======================== F26.6 follow-up: review + accepted-only pacing ======================== */
+
+test('6a. a synced verified reply stops being "permission": the next email needs a human review; "interested" re-opens it', async () => {
+  // A lead in a consent-required market whose ONLY possible basis is the reply to an earlier
+  // mailbox send (its stored id and recipient are on record).
+  const s2 = await setup({ leads: { L1: lead({ country: 'Atlantis' }) } });
+  const p2 = await approved(s2.li);
+  await s2.store.mailboxSent.record({ send_id: 'sx', mailbox_id: MBX, provider_message_id: 'm0', stored_message_id: '<CAold@mail.gmail.com>', thread_id: 't0', recipient_address: LEAD_EMAIL, recorded_at: iso(NOW - HOUR) });
+  s2.gmail.deliver('rv1', { From: LEAD_EMAIL, Subject: 'Re: hello', 'In-Reply-To': '<CAold@mail.gmail.com>' });
+  const sum = await s2.svc.syncReplies({ mailboxId: MBX });
+  assert.strictEqual(sum.replies, 1);
+  await assert.rejects(s2.li.outreach.send({ pitchId: p2.pitch_id, channel: 'email', mailboxId: MBX }), (e) => e.code === 'REPLY_REVIEW_REQUIRED');
+  const prep = await s2.li.outreach.prepare({ pitchId: p2.pitch_id, channel: 'email' });
+  assert.strictEqual(prep.mailbox.trust.code, 'REPLY_REVIEW_REQUIRED');
+  assert.strictEqual(prep.trust.replyReviewPending, true);
+  await s2.li.trust.reviewReply({ leadId: 'L1', outcome: 'interested' });
+  const r = await s2.li.outreach.send({ pitchId: p2.pitch_id, channel: 'email', mailboxId: MBX });
+  assert.strictEqual(r.outcome, 'accepted');
+});
+
+test('6b. pacing counts ONLY provider-accepted sends: a Gmail refusal or a trust/market refusal uses up nothing', async () => {
+  const s = await setup({ gmail: fakeGmail({ sendStatus: 429 }), leads: { L1: lead({}), L2: lead({ id: 'L2', email: 'two@acme.example.com', website: 'https://two.example.com' }), L3: lead({ id: 'L3', email: 'three@acme.example.com', website: 'https://three.example.com', country: 'Atlantis' }) } });
+  await allowMarket(s.store);
+  const a = await approved(s.li, 'L1');
+  const b = await approved(s.li, 'L2');
+  const c = await approved(s.li, 'L3');
+  await assert.rejects(s.li.outreach.send({ pitchId: c.pitch_id, channel: 'email', mailboxId: MBX }), (e) => e.code === 'MARKET_CONSENT_REQUIRED');
+  await assert.rejects(s.li.outreach.send({ pitchId: a.pitch_id, channel: 'email', mailboxId: MBX }), (e) => e.code === 'MAILBOX_PROVIDER_LIMIT');
+  s.gmail.sendStatus = 200;
+  // Same instant: had the failed attempt counted, the 180 s gap would refuse this.
+  const ok = await s.svc.sendGate(MBX);
+  assert.strictEqual(ok.allowed, true, 'neither the market refusal nor the Gmail refusal counted');
+  assert.strictEqual(ok.mailbox.pacing.sentToday, 0);
+  const rows = (await s.store.sends.list({ limit: 10 })).rows;
+  assert.ok(rows.some((r) => r.state === 'failed' && r.mailbox_id === MBX), 'the failed attempt is kept for audit');
+  assert.strictEqual((await s.li.outreach.send({ pitchId: b.pitch_id, channel: 'email', mailboxId: MBX })).outcome, 'accepted', 'the next click goes through at once');
+});
+
+test('6c. an accepted send counts even when its read-back failed', async () => {
+  const s = await setup({ gmail: fakeGmail({ readBackFails: true }), leads: { L1: lead({}), L2: lead({ id: 'L2', email: 'two@acme.example.com', website: 'https://two.example.com' }) } });
+  await allowMarket(s.store);
+  const a = await approved(s.li, 'L1');
+  const b = await approved(s.li, 'L2');
+  const r = await s.li.outreach.send({ pitchId: a.pitch_id, channel: 'email', mailboxId: MBX });
+  assert.strictEqual(r.replyMatching, 'unavailable');
+  await assert.rejects(s.li.outreach.send({ pitchId: b.pitch_id, channel: 'email', mailboxId: MBX }), (e) => e.code === 'MAILBOX_PACING');
+  assert.strictEqual((await s.svc.get(MBX)).pacing.sentToday, 1);
 });
 
 (async () => {
