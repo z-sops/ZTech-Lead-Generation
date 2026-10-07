@@ -247,9 +247,31 @@ test('P6. DST: a window in a zone that changes its clocks still opens at local 0
   assert.equal(new Date(t).toISOString(), '2026-10-26T09:00:00.000Z');
 });
 
-test('P7. future-dated or unparseable send times never count', () => {
-  const v = evaluatePacing({ mailbox: box(), sendTimes: ['garbage', K('11:00').toISOString()], now: K('10:00') });
-  assert.equal(v.allowed, true);
+test('P7. unparseable times are ignored; a send dated after now (clock moved back) counts AS now', () => {
+  assert.equal(evaluatePacing({ mailbox: box(), sendTimes: ['garbage'], now: K('10:00') }).allowed, true);
+  const v = evaluatePacing({ mailbox: box(), sendTimes: [K('11:00').toISOString()], now: K('10:00') });
+  assert.equal(v.allowed, false, 'a clock change never reopens a cap or the gap');
+  assert.equal(v.reason, 'min_gap');
+  assert.equal(v.counts.hour, 1);
+});
+
+test('P6b. DST spring-forward night: the next opening is the exact local 09:00, not an hour late', () => {
+  // New York springs forward on Sun 8 Mar 2026. From Sat 7 Mar 18:00 EST, Mon 9 Mar 09:00 EDT = 13:00Z.
+  const t = nextWindowOpen(Date.parse('2026-03-07T23:00:00.000Z'), { ...box(), time_zone: 'America/New_York' });
+  assert.equal(new Date(t).toISOString(), '2026-03-09T13:00:00.000Z');
+  const sun = nextWindowOpen(Date.parse('2026-03-07T23:00:00.000Z'), { ...box(), time_zone: 'America/New_York', window_days: '0,1,2,3,4,5,6' });
+  assert.equal(new Date(sun).toISOString(), '2026-03-08T13:00:00.000Z', 'the spring-forward Sunday itself opens at 09:00 EDT');
+});
+
+test('P9. country normalisation: aliases first, ISO codes only - "UK" is GB, "EN" is unknown; a rule must use an ISO code', async () => {
+  assert.equal(M.normalizeCountry('UK'), 'GB');
+  assert.equal(M.normalizeCountry('uk'), 'GB');
+  assert.equal(M.normalizeCountry('United States'), 'US');
+  assert.equal(M.normalizeCountry('pk'), 'PK');
+  assert.equal(M.normalizeCountry('EN'), null);
+  assert.equal(M.normalizeCountry('Atlantis'), null);
+  const store = new MemoryStore();
+  await assert.rejects(store.marketRules.set({ country_code: 'UK', rule: 'opt_out_allowed', note: 'reviewed', reviewed_by: 'Zee', reviewed_at: '2026-10-07T05:00:00.000Z' }), /Invalid mailbox record/);
 });
 
 test('P8. pacing is pure: no timers, no queue, no store, no network', () => {

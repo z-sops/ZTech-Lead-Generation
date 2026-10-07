@@ -82,11 +82,10 @@ function memClient(initial = CLIENT) {
   return { get: () => v, set: (x) => { v = x; }, clear: () => { v = null; } };
 }
 
-function service({ google = fakeGoogle(), browser = fakeBrowser(), client = memClient(), store = new MemoryStore(), now = () => new Date(NOW) } = {}) {
-  const tokens = memTokens();
+function service({ google = fakeGoogle(), browser = fakeBrowser(), client = memClient(), store = new MemoryStore(), now = () => new Date(NOW), tokens = memTokens(), timeoutMs = 3000 } = {}) {
   const svc = new MailboxService({
     store, clock: now, tokenStore: tokens, clientConfig: client, fetch: google.fetch,
-    googleOAuth: new GoogleOAuth({ fetch: google.fetch, openExternal: browser.open, timeoutMs: 3000 }),
+    googleOAuth: new GoogleOAuth({ fetch: google.fetch, openExternal: browser.open, timeoutMs }),
     operator: 'Zee', defaultTimeZone: 'Asia/Karachi',
   });
   return { svc, tokens, google, browser, store, client };
@@ -163,8 +162,10 @@ test('1d. a grant missing a scope, a refused consent, a forged state and a missi
 
   const denied = service({ browser: fakeBrowser({ deny: true }) });
   await assert.rejects(denied.svc.connect({ provider: 'gmail' }), (e) => e.code === 'MAILBOX_AUTH_REFUSED');
-  const forged = service({ browser: fakeBrowser({ tamperState: true }) });
-  await assert.rejects(forged.svc.connect({ provider: 'gmail' }), (e) => e.code === 'MAILBOX_AUTH_FAILED');
+  // A request with a forged state is ignored (400), so it can neither complete nor cancel the
+  // sign-in; the wait ends at the timeout.
+  const forged = service({ browser: fakeBrowser({ tamperState: true }), timeoutMs: 400 });
+  await assert.rejects(forged.svc.connect({ provider: 'gmail' }), (e) => e.code === 'MAILBOX_AUTH_TIMEOUT');
   assert.strictEqual(forged.google.calls.length, 0, 'a forged state never reaches the token endpoint');
 
   const noClient = service({ client: memClient(null) });
@@ -200,6 +201,38 @@ test('1f. only one sign-in at a time; a second Connect while the browser is open
   await assert.rejects(svc.connect({ provider: 'gmail' }), (e) => e.code === 'MAILBOX_CONNECT_IN_PROGRESS');
   release();
   await first;
+});
+
+test('1g. secure storage: no vault = refused before any consent; a failed save revokes the grant and leaves no orphan; an unreadable token never blocks disconnect', async () => {
+  const noVault = memTokens();
+  noVault.available = () => false;
+  const a = service({ tokens: noVault });
+  await assert.rejects(a.svc.connect({ provider: 'gmail' }), (e) => e.code === 'MAILBOX_VAULT_UNAVAILABLE');
+  assert.strictEqual(a.browser.opened.length, 0, 'no consent is asked for a token that could not be kept');
+
+  const failing = memTokens();
+  failing.set = () => { throw new Error('vault: encryption failed'); };
+  const b = service({ tokens: failing });
+  await assert.rejects(b.svc.connect({ provider: 'gmail' }), (e) => e.code === 'MAILBOX_CONNECT_FAILED' && !/vault/.test(e.message));
+  assert.ok(b.google.calls.some((c) => c.url.startsWith(GOOGLE.REVOKE_URL) && new URLSearchParams(c.init.body).get('token') === REFRESH), 'the new grant is revoked');
+  assert.deepStrictEqual(await b.svc.list(), []);
+
+  const c = service();
+  const m = await c.svc.connect({ provider: 'gmail' });
+  c.tokens.get = () => { throw new Error('vault: decryption failed'); };
+  assert.deepStrictEqual(await c.svc.disconnect({ mailboxId: m.mailboxId }), { mailboxId: m.mailboxId, disconnected: true });
+  assert.deepStrictEqual(await c.svc.list(), []);
+});
+
+test('1h. a reconnect that issues a new refresh token revokes the superseded one', async () => {
+  const store = new MemoryStore();
+  const tokens = memTokens();
+  const first = service({ store, tokens, google: fakeGoogle({ refresh: '1//first-grant' }) });
+  const m = await first.svc.connect({ provider: 'gmail' });
+  const second = service({ store, tokens, google: fakeGoogle({ refresh: '1//second-grant' }) });
+  await second.svc.connect({ provider: 'gmail' });
+  assert.strictEqual(tokens.m.get(m.mailboxId), '1//second-grant');
+  assert.ok(second.google.calls.some((c) => c.url.startsWith(GOOGLE.REVOKE_URL) && new URLSearchParams(c.init.body).get('token') === '1//first-grant'));
 });
 
 /* ======================== 2-3. capability, readiness, pacing ======================== */
@@ -366,9 +399,18 @@ test('5e. market rules from Settings: the reviewer is the operator (never the re
 
 /* ===================== 6. mailbox-source trust intake (main-only) ===================== */
 
-test('6a. intake from a mailbox accepts a reply (stored) and an unsubscribe reply (suppresses, source mailbox); idempotent', async () => {
+test('6a. a mailbox reply counts ONLY when it cites a provider-STORED Message-ID of that mailbox; an unsubscribe reply suppresses (source mailbox); idempotent', async () => {
   const rt = runtime();
-  const r1 = await rt.li.trust.intake({ event_id: 'mbxevt_1', kind: 'reply', channel: 'email', address: LEAD_EMAIL, received_at: iso(NOW - HOUR) }, { source: 'mailbox' });
+  const base = { kind: 'reply', channel: 'email', address: LEAD_EMAIL, received_at: iso(NOW - HOUR), mailbox_id: 'mbx_aaaaaaaaaaaa' };
+  // Nothing stored yet: same sender, plausible references - still not a reply.
+  let r = await rt.li.trust.intake({ ...base, event_id: 'mbxevt_0', reference_ids: ['<ztech-supplied@ridgeline.example>'] }, { source: 'mailbox' });
+  assert.deepStrictEqual(r, { accepted: false, state: 'rejected', code: 'REPLY_NOT_MATCHED' });
+  await rt.store.mailboxSent.record({ send_id: 's1', mailbox_id: 'mbx_aaaaaaaaaaaa', provider_message_id: '18c', stored_message_id: '<CAstored@mail.gmail.com>', thread_id: 't1', recorded_at: iso(NOW - 2 * HOUR) });
+  r = await rt.li.trust.intake({ ...base, event_id: 'mbxevt_00', reference_ids: ['<ztech-supplied@ridgeline.example>'] }, { source: 'mailbox' });
+  assert.strictEqual(r.code, 'REPLY_NOT_MATCHED', 'the id ZTech attempted is never trusted');
+  r = await rt.li.trust.intake({ ...base, event_id: 'mbxevt_01', mailbox_id: 'mbx_bbbbbbbbbbbb', reference_ids: ['<CAstored@mail.gmail.com>'] }, { source: 'mailbox' });
+  assert.strictEqual(r.code, 'REPLY_NOT_MATCHED', 'another mailbox\'s stored id never matches');
+  const r1 = await rt.li.trust.intake({ ...base, event_id: 'mbxevt_1', reference_ids: ['<other@x>', '<CAstored@mail.gmail.com>'] }, { source: 'mailbox' });
   assert.deepStrictEqual(r1, { accepted: true, state: 'stored' });
   const r2 = await rt.li.trust.intake({ event_id: 'mbxevt_2', kind: 'unsubscribe', channel: 'email', address: LEAD_EMAIL, received_at: iso(NOW - HOUR) }, { source: 'mailbox' });
   assert.strictEqual(r2.state, 'applied');

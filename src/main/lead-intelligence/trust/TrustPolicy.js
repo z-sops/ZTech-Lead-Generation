@@ -7,7 +7,7 @@
  *             2 sender identity                 SENDER_IDENTITY_INCOMPLETE
  *   EMAIL     3 transport eligibility           EMAIL_TRANSPORT_NOT_ALLOWED_FOR_COLD
  *             3b market (jurisdiction) rule     MARKET_CONSENT_REQUIRED      (F26.6)
-             4 subject / policy lint           SUBJECT_MISLEADING
+ *             4 subject / policy lint           SUBJECT_MISLEADING
  *   WHATSAPP  3 consent                         WHATSAPP_CONSENT_REQUIRED
  *             4 session policy                  WHATSAPP_SESSION_CLOSED
  *   (5 provider capability is the existing F19-F24 configuration check, which needs no

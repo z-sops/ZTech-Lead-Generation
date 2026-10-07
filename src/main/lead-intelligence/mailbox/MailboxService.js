@@ -172,6 +172,10 @@ class MailboxService {
     const client = this._client();
     if (!client) throw new LiError('MAILBOX_CLIENT_NOT_CONFIGURED', 'Add your Google OAuth client ID and secret in Settings > Mailboxes first.');
     if (!this.googleOAuth) throw new LiError('MAILBOX_UNAVAILABLE', 'Mailbox sign-in is not available here.');
+    // Refuse BEFORE any consent if the token could not be stored safely afterwards.
+    if (typeof this.tokenStore.available === 'function' && this.tokenStore.available() !== true) {
+      throw new LiError('MAILBOX_VAULT_UNAVAILABLE', 'Secure storage is not available on this computer, so no mailbox can be connected.');
+    }
     let tokens;
     try {
       tokens = await this.googleOAuth.authorize(client);
@@ -186,25 +190,46 @@ class MailboxService {
     const nowIso = this._now().toISOString();
     const existing = (await this.store.mailboxes.list()).find((m) => m.provider === 'gmail' && m.email_address === profile.emailAddress.trim().toLowerCase());
     const mailboxId = existing ? existing.mailbox_id : this.newId();
-    // Token first: a row never exists without the credential it needs.
-    await this.tokenStore.set(mailboxId, tokens.refreshToken);
-    const row = await this.store.mailboxes.upsert({
-      mailbox_id: mailboxId, provider: 'gmail', email_address: profile.emailAddress, display_name: null,
-      status: 'needs_check', status_code: PROVIDER_CAPABILITY.gmail.code, paused_until: null,
-      ...MAILBOX_DEFAULTS, time_zone: this.defaultTimeZone, is_default: 0, sync_cursor: null,
-      connected_at: nowIso, updated_at: nowIso,
-    });
+    const previous = existing ? await this._tokenOf(mailboxId) : null;
+    let row;
+    try {
+      // Token first: a row never exists without the credential it needs.
+      await this.tokenStore.set(mailboxId, tokens.refreshToken);
+      row = await this.store.mailboxes.upsert({
+        mailbox_id: mailboxId, provider: 'gmail', email_address: profile.emailAddress, display_name: null,
+        status: 'needs_check', status_code: PROVIDER_CAPABILITY.gmail.code, paused_until: null,
+        ...MAILBOX_DEFAULTS, time_zone: this.defaultTimeZone, is_default: 0, sync_cursor: null,
+        connected_at: nowIso, updated_at: nowIso,
+      });
+    } catch {
+      // Never leave a live grant (or an orphaned sealed token) behind a failed connect.
+      await this.googleOAuth.revoke(tokens.refreshToken);
+      try {
+        if (previous) await this.tokenStore.set(mailboxId, previous);
+        else await this.tokenStore.remove(mailboxId);
+      } catch { /* the grant is already revoked */ }
+      throw new LiError('MAILBOX_CONNECT_FAILED', 'The mailbox could not be saved on this computer. Nothing was connected.');
+    }
+    // A reconnect replaces the grant: the superseded refresh token is revoked (best effort).
+    if (previous && previous !== tokens.refreshToken) await this.googleOAuth.revoke(previous);
     return sanitizeMailbox(row, await this._pacingFor(row));
   }
 
   /** Disconnect: revoke (best effort), forget the token, remove the row. Past sends keep their history. */
   async disconnect({ mailboxId } = {}) {
     const row = await this._rowOrThrow(mailboxId);
-    const token = await Promise.resolve(this.tokenStore.get(mailboxId)).catch(() => null);
+    // An unreadable token (vault reset, decryption failure) must never make a mailbox impossible
+    // to disconnect: revoke what can be revoked, then forget everything locally.
+    const token = await this._tokenOf(mailboxId);
     if (token && row.provider === 'gmail' && this.googleOAuth) await this.googleOAuth.revoke(token);
-    await this.tokenStore.remove(mailboxId);
+    try { await this.tokenStore.remove(mailboxId); } catch { /* removing the row still disconnects it */ }
     await this.store.mailboxes.remove(mailboxId);
     return { mailboxId, disconnected: true };
+  }
+
+  /** The stored refresh token, or null if it is missing or cannot be revealed. Main-only. */
+  async _tokenOf(mailboxId) {
+    try { return (await this.tokenStore.get(mailboxId)) || null; } catch { return null; }
   }
 
   async setDefault({ mailboxId } = {}) {

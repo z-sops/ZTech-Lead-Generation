@@ -47,12 +47,23 @@ function nextWindowOpen(ms, { window_start, window_end, window_days, time_zone }
   const start = hhmm(window_start);
   const end = hhmm(window_end);
   let t = ms;
+  let jumped = false;
   for (let i = 0; i < 64 && t - ms <= 8 * DAY_MS; i += 1) {
     const { day, minute } = localParts(t, time_zone);
-    if (days.has(day) && minute >= start && minute < end) return t;
+    if (days.has(day) && minute >= start && minute < end) {
+      // A jump across a DST change can overshoot the local opening (e.g. spring-forward night):
+      // step back to the exact opening minute when that instant is still inside the window.
+      if (jumped && minute > start) {
+        const back = t - (minute - start) * MIN_MS;
+        const b = localParts(back, time_zone);
+        if (back >= ms && b.day === day && b.minute === start) return back;
+      }
+      return t;
+    }
     const floor = t - (t % MIN_MS);
     if (days.has(day) && minute < start) t = floor + (start - minute) * MIN_MS;
     else t = floor + (1440 - minute) * MIN_MS; // to the next local midnight
+    jumped = true;
   }
   return null;
 }
@@ -65,7 +76,9 @@ function nextWindowOpen(ms, { window_start, window_end, window_days, time_zone }
  */
 function evaluatePacing({ mailbox, sendTimes = [], now }) {
   const nowMs = now instanceof Date ? now.getTime() : Number(now);
-  const times = sendTimes.map((s) => Date.parse(s)).filter(Number.isFinite).filter((t) => t <= nowMs).sort((a, b) => a - b);
+  // A send dated after "now" (the clock moved back) is counted AS now, never dropped: a clock
+  // change must not reopen a cap.
+  const times = sendTimes.map((s) => Date.parse(s)).filter(Number.isFinite).map((t) => Math.min(t, nowMs)).sort((a, b) => a - b);
   const inDay = times.filter((t) => t > nowMs - DAY_MS);
   const inHour = inDay.filter((t) => t > nowMs - HOUR_MS);
   const counts = { day: inDay.length, hour: inHour.length };

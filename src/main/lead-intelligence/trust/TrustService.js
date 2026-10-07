@@ -203,8 +203,9 @@ class TrustService {
    * @param {object} event  relay: { event_id, kind, channel, recipient_ref, received_at, signature }
    *                        user:  { event_id, kind, channel, address, received_at } (main-built)
    *                        mailbox (F26.6): { event_id, kind: 'reply'|'unsubscribe', channel: 'email',
-   *                                       address, received_at } built in main by mailbox sync
-   *                                       from a reply MATCHED to a stored sent Message-ID
+   *                                       address (the From), received_at, mailbox_id,
+   *                                       reference_ids (In-Reply-To + References) } built in
+   *                                       main by mailbox sync from headers only
    * @param {{source: 'relay'|'user'|'mailbox'}} opts
    * @returns {Promise<{accepted: boolean, duplicate?: boolean, state: string, code?: string}>}
    */
@@ -250,6 +251,16 @@ class TrustService {
       if (e.channel !== 'email' || !MAILBOX_EVENT_KINDS.includes(e.kind)) return reject('KIND_NOT_MAILBOX_RECORDABLE');
       address = normalizeAddress(e.channel, e.address);
       if (!address) return { accepted: false, state: 'invalid', code: 'EVENT_INVALID' };
+      // A REPLY counts only when its In-Reply-To / References cite the PROVIDER-STORED Message-ID
+      // of one of this mailbox's own sends (never a ZTech-supplied id, never "same sender").
+      // An unsubscribe needs no match: a suppression can only ever restrict, and an RFC 2369
+      // mailto unsubscribe is a new message that cites nothing.
+      if (e.kind === 'reply') {
+        const refs = Array.isArray(e.reference_ids) ? e.reference_ids.filter((x) => typeof x === 'string' && x.length <= 300) : [];
+        const matched = typeof e.mailbox_id === 'string' && refs.length && this.store.mailboxSent
+          ? await this.store.mailboxSent.findByStoredIds(e.mailbox_id, refs) : null;
+        if (!matched) return reject('REPLY_NOT_MATCHED');
+      }
     } else {
       if (!USER_EVENT_KINDS.includes(e.kind)) return reject('KIND_NOT_USER_RECORDABLE');
       address = normalizeAddress(e.channel, e.address);

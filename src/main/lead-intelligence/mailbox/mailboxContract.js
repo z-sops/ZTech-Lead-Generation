@@ -155,17 +155,25 @@ const COUNTRY_NAMES = Object.freeze({
   thailand: 'TH', malaysia: 'MY', turkey: 'TR', 'türkiye': 'TR',
 });
 
+// ISO 3166-1 alpha-2, officially assigned codes (249). A two-letter value outside this list
+// ("UK", "EN") is never a country code: it is looked up as an alias or treated as unknown.
+const ISO_COUNTRY_CODES = Object.freeze(new Set('AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ')));
+
+function isCountryCode(code) { return typeof code === 'string' && ISO_COUNTRY_CODES.has(code); }
+
+/** A lead's raw country -> ISO alpha-2, or null (unknown = consent required). Aliases first. */
 function normalizeCountry(raw) {
   if (typeof raw !== 'string') return null;
   const s = raw.trim();
-  if (/^[A-Za-z]{2}$/.test(s)) return s.toUpperCase();
-  return COUNTRY_NAMES[s.toLowerCase()] || null;
+  const alias = COUNTRY_NAMES[s.toLowerCase()];
+  if (alias) return alias;
+  return /^[A-Za-z]{2}$/.test(s) && isCountryCode(s.toUpperCase()) ? s.toUpperCase() : null;
 }
 
 function normalizeMarketRule(rec) {
   if (!rec || typeof rec !== 'object') return fail('market rule: record');
   const code = typeof rec.country_code === 'string' && /^[A-Za-z]{2}$/.test(rec.country_code) ? rec.country_code.toUpperCase() : null;
-  if (!code) return fail('market rule: country_code');
+  if (!code || !isCountryCode(code)) return fail('market rule: country_code must be an ISO 3166-1 two-letter code (e.g. GB, not UK)');
   if (!MARKET_RULES.includes(rec.rule)) return fail('market rule: rule');
   const note = cleanLine(rec.note, 500);
   if (note.length < 3) return fail('market rule: note (what was reviewed, and by whom)');
@@ -184,5 +192,5 @@ function requireValid(result) {
 module.exports = {
   MAILBOX_PROVIDERS, MAILBOX_STATUSES, MARKET_RULES, PROVIDER_CAPABILITY, PROVIDER_LABEL, PROVIDER_NOTICE,
   MAILBOX_DEFAULTS, MAILBOX_LIMITS, MAILBOX_ID_RE, isTimeZone, normalizeLimits, normalizeMailboxRecord,
-  sanitizeMailbox, normalizeCountry, normalizeMarketRule, requireValid,
+  sanitizeMailbox, normalizeCountry, normalizeMarketRule, isCountryCode, requireValid,
 };

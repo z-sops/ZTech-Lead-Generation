@@ -1571,6 +1571,7 @@ function mailboxDepsFromStore() {
   const tokens = () => new Store().get('mailboxTokens', {}) || {};
   return {
     tokenStore: {
+      available: () => credentialVault.isAvailable(),
       get: (id) => {
         const sealed = tokens()[id];
         return typeof sealed === 'string' && sealed ? credentialVault.reveal(sealed) : null;

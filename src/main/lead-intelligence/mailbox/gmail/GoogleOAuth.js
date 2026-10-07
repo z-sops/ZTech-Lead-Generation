@@ -87,10 +87,12 @@ class GoogleOAuth {
         server.on('request', (req, res) => {
           const q = new URL(req.url, redirectUri).searchParams;
           if (settled || (!q.has('code') && !q.has('error'))) { res.writeHead(404); res.end(); return; } // favicon etc.
+          // A request without OUR state is ignored, not fatal: a local process probing the port
+          // cannot cancel (or complete) the sign-in. The timeout still bounds the wait.
+          if (q.get('state') !== state) { res.writeHead(400); res.end(); return; }
           settled = true;
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
           res.end(LANDING);
-          if (q.get('state') !== state) return reject(new MailboxAuthError('MAILBOX_AUTH_FAILED', 'The Google sign-in could not be verified. Try Connect again.'));
           if (q.get('error')) return reject(new MailboxAuthError('MAILBOX_AUTH_REFUSED', 'Google sign-in was cancelled or refused.'));
           return resolve(q.get('code'));
         });
