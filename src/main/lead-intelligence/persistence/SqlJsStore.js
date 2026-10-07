@@ -2,6 +2,7 @@
 
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { MIGRATIONS } = require('./migrations');
+const { SqlSuppressions, SqlConsents, SqlProvenance, SqlTrustEvents, SqlRecipientRefs } = require('./trustRepos');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
 /**
@@ -61,6 +62,12 @@ class SqlJsStore {
     this.enrichmentObservations = new SqlEnrichmentObservations(this);
     this.oiAssociations = new SqlOiAssociations(this);
     this.oiRefreshRequests = new SqlOiRefreshRequests(this);
+    // F26.5 Compliance & Trust Foundation (migration 008).
+    this.suppressions = new SqlSuppressions(this);
+    this.consents = new SqlConsents(this);
+    this.provenance = new SqlProvenance(this);
+    this.trustEvents = new SqlTrustEvents(this);
+    this.recipientRefs = new SqlRecipientRefs(this);
   }
 
   /** Apply pending migrations in one transaction each. Idempotent. */
@@ -124,6 +131,11 @@ class SqlJsStore {
       this.db.run('DELETE FROM li_oi_associations WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_oi_refresh_requests WHERE lead_id = ?', [id]);
       this.db.run('DELETE FROM li_enrichment_jobs WHERE lead_id = ?', [id]);
+      // F26.5: provenance and consents are lead data and go with the lead. Suppressions, trust
+      // events and recipient refs are address-keyed and deliberately KEPT, so a purged and
+      // re-imported address is still suppressed.
+      this.provenance._deleteByLeadSql(id);
+      this.consents._deleteByLeadSql(id);
     });
   }
 }

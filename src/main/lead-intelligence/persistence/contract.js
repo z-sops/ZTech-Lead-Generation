@@ -129,6 +129,8 @@ function packetMeta(packet) {
 // observes an inbox, so such a row could only ever be fabrication. Those facts stay
 // 'unknown' forever unless a real observer exists to report them. CALL_PLACED and
 // CAMPAIGN_STARTED remain absent for the same reason.
+// F26.5: OUTREACH_HANDOFF_CREATED is a mail-app handoff (mailto or copy). It is NOT a send:
+// it writes no li_outreach_sends row and is never counted as a send (migration 009).
 const ACTIVITY_TYPES = Object.freeze([
   'PITCH_APPROVED',
   'OUTREACH_READY',
@@ -136,7 +138,8 @@ const ACTIVITY_TYPES = Object.freeze([
   'OUTREACH_SEND_BLOCKED',
   'OUTREACH_SEND_ATTEMPTED',
   'OUTREACH_SEND_ACCEPTED',
-  'OUTREACH_SEND_FAILED'
+  'OUTREACH_SEND_FAILED',
+  'OUTREACH_HANDOFF_CREATED'
 ]);
 const ACTIVITY_DEFAULT_LIMIT = 20;
 const ACTIVITY_MAX_LIMIT = 100;
@@ -157,7 +160,11 @@ const ACTIVITY_METADATA_KEYS = Object.freeze([
   'providerId',
   'providerMessageId',
   'idempotencyKey',
-  'failureCode'
+  'failureCode',
+  // F26.5: how a handoff left ZTech ('mailto' | 'copy') and the stable refusal code of a
+  // trust check. Codes only - never an address, a body or a subject.
+  'handoffKind',
+  'blockedCode'
 ]);
 const ACTIVITY_METADATA_MAX_LENGTH = 200;
 

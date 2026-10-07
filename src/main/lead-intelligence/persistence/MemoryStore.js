@@ -3,6 +3,7 @@
 const { clone } = require('../core/objects');
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('../core/errors');
 const { ACTIVE_STATES } = require('../contracts/constants');
+const { MemSuppressions, MemConsents, MemProvenance, MemTrustEvents, MemRecipientRefs } = require('./trustRepos');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('./contract');
 
 /** In-memory implementation of the repository contract. Used by tests and dev tools. */
@@ -519,6 +520,12 @@ class MemoryStore {
     this.enrichmentObservations = new MemEnrichmentObservations();
     this.oiAssociations = new MemOiAssociations();
     this.oiRefreshRequests = new MemOiRefreshRequests();
+    // F26.5 Compliance & Trust Foundation: twins of the migration 008 repositories.
+    this.suppressions = new MemSuppressions();
+    this.consents = new MemConsents();
+    this.provenance = new MemProvenance();
+    this.trustEvents = new MemTrustEvents();
+    this.recipientRefs = new MemRecipientRefs();
   }
 
   async purgeLead(leadId) {
@@ -533,6 +540,9 @@ class MemoryStore {
     await this.enrichmentObservations.deleteByLead(leadId);
     await this.oiAssociations.deleteByLead(leadId);
     await this.oiRefreshRequests.deleteByLead(leadId);
+    // F26.5: lead data goes; address-keyed suppressions, trust events and refs stay.
+    await this.provenance.deleteByLead(leadId);
+    await this.consents.deleteByLead(leadId);
   }
 }
 

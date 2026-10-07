@@ -38,6 +38,8 @@ const ACTIVITY_KIND = Object.freeze({
   OUTREACH_SEND_ATTEMPTED: { source: 'outreach', kind: 'OUTREACH_SEND_ATTEMPTED', title: 'Send attempted', open: 'outreach' },
   OUTREACH_SEND_ACCEPTED: { source: 'outreach', kind: 'OUTREACH_SEND_ACCEPTED', title: 'Send accepted by the provider', open: 'outreach' },
   OUTREACH_SEND_FAILED: { source: 'outreach', kind: 'OUTREACH_SEND_FAILED', title: 'Send failed', open: 'outreach' },
+  // F26.5: a mail-app handoff is NOT a send. The title says only what ZTech knows.
+  OUTREACH_HANDOFF_CREATED: { source: 'outreach', kind: 'OUTREACH_HANDOFF_CREATED', title: 'Handed off to your mail app (ZTech cannot see whether it was sent)', open: 'outreach' },
 });
 
 const EVENT_KINDS = Object.freeze([

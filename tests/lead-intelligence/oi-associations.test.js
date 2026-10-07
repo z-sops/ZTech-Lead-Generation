@@ -72,7 +72,8 @@ const tableCols = (db, t) => db.exec(`PRAGMA table_info(${t})`)[0].values.map((r
 
 test('006 is the sixth migration and creates exactly the seven approved columns', { skip }, async () => {
   // I5 declared lock update: + 7 (li_oi_refresh_requests). 006 itself is unchanged.
-  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7]);
+  // F26.5 declared lock update: + 8 (five trust tables) and 9 (activity CHECK + handoff).
+  assert.deepEqual(MIGRATIONS.map((m) => m.version), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   const SQL = await initSqlJs();
   const db = new SQL.Database();
   await new SqlJsStore({ db, logger: SILENT }).migrate();
@@ -95,9 +96,10 @@ test('006 applies on top of a database already at version 5, and only once', { s
   await store.migrate();
   await store.migrate();
   // I5 declared lock update: the same upgrade now also applies 007.
-  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7]);
+  // F26.5 declared lock update: the same upgrade now also applies 008 (five new trust tables) and 009.
+  assert.deepEqual(db.exec('SELECT version FROM li_schema_migrations')[0].values.flat(), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   const after = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
-  assert.deepEqual(after.filter((t) => !before.includes(t)), ['li_oi_associations', 'li_oi_refresh_requests']);
+  assert.deepEqual(after.filter((t) => !before.includes(t)), ['li_contact_consents', 'li_contact_provenance', 'li_oi_associations', 'li_oi_refresh_requests', 'li_recipient_refs', 'li_suppressions', 'li_trust_events']);
 });
 
 for (const kind of ['sql', 'memory']) {

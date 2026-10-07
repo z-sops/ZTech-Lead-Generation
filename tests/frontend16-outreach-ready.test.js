@@ -561,7 +561,8 @@ test('9. no new persisted ready status, flag or table exists', () => {
     ['draft', 'insufficient_evidence', 'needs_revision'], 'no ready status was added to the pitch model');
   const migrations = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'migrations.js'), 'utf8');
   const version = migrations.match(/Object\.freeze\(\{ version: (\d+), name: '([^']+)'/g).map((s) => s.match(/version: (\d+)/)[1]);
-  assert.deepStrictEqual(version, ['1', '2', '3', '4', '5', '6', '7'], 'migrations include F20 WhatsApp send, I3 OI associations and I5 OI refresh requests (declared): ' + version.join(','));
+  // F26.5 declared lock update: + 8 (five trust tables) and 9 (activity CHECK + handoff).
+  assert.deepStrictEqual(version, ['1', '2', '3', '4', '5', '6', '7', '8', '9'], 'migrations include F20 WhatsApp send, I3 OI associations and I5 OI refresh requests and F26.5 trust tables + handoff activity (declared): ' + version.join(','));
   // Schema-scoped, not prose-scoped: F15's migration comment legitimately discusses
   // "readiness", so the claim is that no TABLE or COLUMN is named ready.
   const created = [...migrations.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]);

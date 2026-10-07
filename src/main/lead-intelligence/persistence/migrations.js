@@ -327,6 +327,20 @@ const MIGRATION_007 = fs.readFileSync(
   'utf8'
 );
 
+// F26.5: Compliance & Trust Foundation - five NEW tables (suppressions, consents, provenance,
+// trust events, desktop-only recipient refs). No existing table is touched.
+const MIGRATION_008 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '008_trust_foundation.sql'),
+  'utf8'
+);
+
+// F26.5: widens the activity CHECK by OUTREACH_HANDOFF_CREATED (a mail-app handoff, never a
+// send). Same verbatim-copy rebuild as 004.
+const MIGRATION_009 = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '009_outreach_handoff_activity.sql'),
+  'utf8'
+);
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 1, name: '001_lead_intelligence.sql', sql: MIGRATION_001 }),
   Object.freeze({ version: 2, name: '002_enrichment.sql', sql: MIGRATION_002 }),
@@ -335,6 +349,8 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 5, name: '005_whatsapp_send.sql', sql: MIGRATION_005 }),
   Object.freeze({ version: 6, name: '006_oi_associations.sql', sql: MIGRATION_006 }),
   Object.freeze({ version: 7, name: '007_oi_refresh_requests.sql', sql: MIGRATION_007 }),
+  Object.freeze({ version: 8, name: '008_trust_foundation.sql', sql: MIGRATION_008 }),
+  Object.freeze({ version: 9, name: '009_outreach_handoff_activity.sql', sql: MIGRATION_009 }),
 ]);
 
 module.exports = { MIGRATIONS };

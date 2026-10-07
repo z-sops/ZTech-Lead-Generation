@@ -276,7 +276,9 @@ test('11. no delivered / opened / read / replied event can be produced', () => {
 });
 
 test('12. the timeline adds no Activity type and writes nothing to Activity', () => {
-  assert.deepEqual([...ACTIVITY_TYPES].sort(), ['APPROVAL_INVALIDATED', 'OUTREACH_READY', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_BLOCKED', 'OUTREACH_SEND_FAILED', 'PITCH_APPROVED']);
+  // F26.5 declared lock update: + OUTREACH_HANDOFF_CREATED (migration 009). It is added by the
+  // F26.5 handoff, not by the timeline; the timeline still writes nothing.
+  assert.deepEqual([...ACTIVITY_TYPES].sort(), ['APPROVAL_INVALIDATED', 'OUTREACH_HANDOFF_CREATED', 'OUTREACH_READY', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_BLOCKED', 'OUTREACH_SEND_FAILED', 'PITCH_APPROVED']);
   const dir = path.join(LI, 'timeline');
   for (const f of fs.readdirSync(dir)) {
     const src = fs.readFileSync(path.join(dir, f), 'utf8');

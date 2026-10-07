@@ -271,9 +271,12 @@ test('7. no sent or delivered status exists, and none is invented', () => {
   // is the invariant that matters, because nothing in this build observes an inbox.
   const activityTypes = (contractSource.match(/ACTIVITY_TYPES = Object\.freeze\(\[([^\]]*)\]/s) || [])[1] || '';
   const allowed = activityTypes.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  // F26.5 declared lock update: + OUTREACH_HANDOFF_CREATED - a mail-app handoff, which is
+  // explicitly NOT a send (no ledger row, no delivery claim). Still no delivered/opened type.
   assert.deepStrictEqual(allowed, ['PITCH_APPROVED', 'OUTREACH_READY', 'APPROVAL_INVALIDATED',
-    'OUTREACH_SEND_BLOCKED', 'OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_FAILED'],
-  'the closed activity allowlist is the three approval types plus the four F19 send-boundary events');
+    'OUTREACH_SEND_BLOCKED', 'OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_FAILED',
+    'OUTREACH_HANDOFF_CREATED'],
+  'the closed activity allowlist is the three approval types, the four F19 send-boundary events and the F26.5 handoff');
   // The four added events describe ZTech's OWN actions, not an inbox's state.
   for (const added of ['OUTREACH_SEND_BLOCKED', 'OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_FAILED']) {
     assert.ok(allowed.includes(added), 'the send event is declared: ' + added);

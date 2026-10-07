@@ -54,6 +54,13 @@ const LI_TABLES = Object.freeze([
   'li_oi_associations',
   // I5: one persisted idempotency key per human OI refresh intent. IDs and state only.
   'li_oi_refresh_requests',
+  // F26.5 (migration 008): suppressions, consents, provenance, trust events and the
+  // desktop-only recipient_ref map. Codes, ids, normalized addresses and timestamps only.
+  'li_suppressions',
+  'li_contact_consents',
+  'li_contact_provenance',
+  'li_trust_events',
+  'li_recipient_refs',
 ]);
 
 const ROUND1_TABLE = 'prospect_research';

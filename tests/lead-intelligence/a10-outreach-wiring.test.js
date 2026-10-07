@@ -380,7 +380,7 @@ test('A10 runtime: initialises only after AccountStore readiness, on the shared 
   assert.equal(runtime.available, false);
 });
 
-test('A10 runtime: runs the additive li_* migrations (001-007) on whatsapp.db and changes no ZTech table', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
+test('A10 runtime: runs the additive li_* migrations (001-009) on whatsapp.db and changes no ZTech table', { skip: initSqlJs ? false : 'sql.js not installed' }, async () => {
   const SQL = await initSqlJs();
   const db = new SQL.Database();
   db.run('CREATE TABLE numbers (id INTEGER PRIMARY KEY, phone TEXT, title TEXT)');
@@ -398,9 +398,10 @@ test('A10 runtime: runs the additive li_* migrations (001-007) on whatsapp.db an
   // F19 declared lock update: 12 -> 13 additive li_* tables, adding the send ledger.
   // I3 declared lock update: 13 -> 14, adding li_oi_associations (OI ids only, migration 006).
   // I5 declared lock update: 14 -> 15, adding li_oi_refresh_requests (migration 007).
-  assert.equal(LI_TABLES.length, 15, 'fifteen additive LI tables are declared');
+  // F26.5 declared lock update: 15 -> 20, adding the five trust tables of migration 008.
+  assert.equal(LI_TABLES.length, 20, 'twenty additive LI tables are declared');
   for (const t of LI_TABLES) assert.ok(tables.includes(t), 'missing additive table: ' + t);
-  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 15, 'exactly the fifteen li_* tables were added');
+  assert.equal(tables.filter((t) => String(t).startsWith('li_')).length, 20, 'exactly the twenty li_* tables were added');
 
   // Every pre-existing ZTech table is still present and its data is intact.
   const ztechAfter = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat();
@@ -412,7 +413,7 @@ test('A10 runtime: runs the additive li_* migrations (001-007) on whatsapp.db an
 
   // Migrations are idempotent: a second init adds nothing.
   const again = await initializeLeadIntelligenceRuntime({ accountStore, logger: SILENT });
-  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 15); // F19 12 -> 13; I3 13 -> 14; I5 14 -> 15 (li_oi_refresh_requests)
+  assert.equal(tableNames().filter((t) => String(t).startsWith('li_')).length, 20); // F19 12 -> 13; I3 13 -> 14; I5 14 -> 15; F26.5 15 -> 20 (five trust tables)
   await again.shutdown();
 });
 
