@@ -783,7 +783,7 @@ test('S1. the bridge exposes exactly one send method and no scheduling surface',
   const methods = [...block.matchAll(/(\w+):\s*\(payload\)\s*=>\s*ipcRenderer\.invoke\('lead-intel:/g)].map((m) => m[1]);
   // Phase I2: +5 Opportunity Intelligence methods with payload pattern = 16 total.
   const expectedOutreach = ['generate', 'get', 'update', 'approve', 'gate', 'list', 'activity', 'ready', 'prepare', 'outreachSend', 'sends'];
-  const expectedOI = ['request', 'report', 'latest', 'associations', 'pitchContext'];
+  const expectedOI = ['request', 'report', 'latest', 'associations', 'pitchContext', 'pitchPreview']; // I7 declared lock update: + pitchPreview
   const expectedI6 = ['forLead']; // I6 declared lock update: the read-only lead timeline
   assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI, ...expectedI6],
     'the bridge method list is exactly the eleven declared channels plus Phase I2 Opportunity Intelligence');

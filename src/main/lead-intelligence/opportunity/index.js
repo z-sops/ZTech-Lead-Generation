@@ -49,7 +49,7 @@ function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, 
     async stop() { await service.associations.flush(); return service.stop(); },
     /** Load persisted lead <-> research associations (migration 006). Never throws. */
     async loadAssociations() { return service.associations.load(); },
-    registerIpc({ ipcMain, isTrustedSender, leadSource, logger: lg }) {
+    registerIpc({ ipcMain, isTrustedSender, leadSource, offer = null, logger: lg }) {
       if (!service.enabled) {
         return registerUnavailableOpportunityIpc({
           ipcMain,
@@ -58,7 +58,7 @@ function createOpportunityIntelligence({ config = {}, fetchImpl, clock, logger, 
           logger: lg || logger,
         });
       }
-      return registerOpportunityIpc({ ipcMain, opportunity: service, isTrustedSender, leadSource, logger: lg || logger });
+      return registerOpportunityIpc({ ipcMain, opportunity: service, isTrustedSender, leadSource, offer, logger: lg || logger });
     },
   };
 }

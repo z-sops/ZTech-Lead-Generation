@@ -185,6 +185,9 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
     // Pitch Evidence Bridge: bounded context for the existing PitchGenerator.
     // Returns { available, bridge: { packet, claim_kinds, oi, counts, excluded, boundaries } }.
     pitchContext: (payload) => ipcRenderer.invoke('lead-intel:opportunity-pitch-context', payload || {}),
+    // I7: an unsaved preview built from OI facts and estimates. Payload is { leadId }. The
+    // result has no pitch id: it can never be approved, saved or sent.
+    pitchPreview: (payload) => ipcRenderer.invoke('lead-intel:opportunity-pitch-preview', payload || {}),
   }),
   // I6: the read-only unified lead timeline. Payload is { leadId, limit?, before?, sources? };
   // it returns events built from ZTech's own records. Nothing on it can write or send.

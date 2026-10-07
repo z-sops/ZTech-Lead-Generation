@@ -689,6 +689,7 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     'lead-intel:opportunity-health',
     'lead-intel:opportunity-latest',
     'lead-intel:opportunity-pitch-context',
+    'lead-intel:opportunity-pitch-preview', // I7 declared lock update
     'lead-intel:opportunity-report',
     'lead-intel:opportunity-request',
     'lead-intel:outreach-activity',
@@ -704,7 +705,7 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     'lead-intel:pitch-update',
     'lead-intel:timeline', // I6 declared lock update: the read-only lead timeline
     ]);
-    assert.equal(leadIntel.length, 19, 'exactly nineteen Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline)');
+    assert.equal(leadIntel.length, 20, 'exactly twenty Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview)');
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 

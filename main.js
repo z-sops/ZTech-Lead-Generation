@@ -1637,7 +1637,7 @@ function registerOpportunityIntelIpcHandlers() {
       logger.info('lead-intel', 'opportunity-intelligence registered as unavailable');
       return;
     }
-    const channels = oi.registerIpc({ ipcMain, isTrustedSender: isTrusted, leadSource: oi.leadSource, logger: oiLogger });
+    const channels = oi.registerIpc({ ipcMain, isTrustedSender: isTrusted, leadSource: oi.leadSource, offer: () => businessProfileFromSettings(), logger: oiLogger });
     logger.info('lead-intel', `registered ${channels.length} opportunity-intelligence channels`);
   } catch (err) {
     logger.error('lead-intel', 'opportunity-intelligence IPC registration failed', { error: err.message });

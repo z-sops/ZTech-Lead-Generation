@@ -5,7 +5,7 @@ const { OpportunityAssociationStore, MIGRATION_NEED } = require('./OpportunityAs
 const { buildOpportunityReadModel, summariseReadModel } = require('./OpportunityReadModel');
 const { buildPitchEvidenceBridge } = require('./PitchEvidenceBridge');
 const { generatePitch } = require('../outreach/PitchGenerator');
-const { classifyOiFreshness } = require('./oiFreshness');
+const { classifyOiFreshness, OI_FRESHNESS_POLICY } = require('./oiFreshness');
 const { OpportunityRefreshLedger } = require('./OpportunityRefreshLedger');
 
 /** I5 (E2): how many associations, newest first, are tried before "no longer available". */
@@ -20,7 +20,12 @@ const I5_COPY = Object.freeze({
   stillRunningInOi: 'Research is still running in Opportunity Intelligence. Check again shortly; no new paid run will start.',
   retrySafe: 'Retry reuses the same request, so it will not start a second paid run.',
   notRecorded: 'The refresh request could not be recorded, so nothing was sent to Opportunity Intelligence.',
+  refreshFirst: 'Refresh research first. This report is too old to inform a pitch.',
+  noReportForPitch: 'No Opportunity Intelligence report for this lead yet.',
 });
+
+/** I7: the pitch context is refused for a report that is not fresh or stale. */
+const OI_CONTEXT_EXPIRED = 'OI_CONTEXT_EXPIRED';
 
 /**
  * OpportunityIntelligenceService - the composition ZTech talks to.
@@ -207,12 +212,31 @@ class OpportunityIntelligenceService {
    * unavailable - ZTech never says a report is missing when it could not ask. Nothing is
    * deleted; no row is changed.
    */
+  /**
+   * I5/I7: the ONE report-selection rule, shared by the drawer and the pitch context.
+   * Newest association first, then up to MAX_REPORT_LOOKUPS in total; a 404 moves on, any
+   * other failure stops (never "missing" when OI could not be asked).
+   */
+  async selectReportForLead(lead) {
+    const list = this.associations.listForLead(lead);
+    if (list.length === 0) return { state: 'not_researched', list, missing: 0 };
+    let missing = 0;
+    for (const assoc of list.slice(0, MAX_REPORT_LOOKUPS)) {
+      const res = await this.gateway.getReport(assoc.research_id);
+      if (res.ok) return { state: missing === 0 ? 'ok' : 'older_report', report: res.report, assoc, list, missing };
+      if (res.status === 404) { missing += 1; continue; }
+      return { state: 'unavailable', res, list, missing };
+    }
+    return { state: 'report_missing', list, missing };
+  }
+
   async latestForLead({ leadId }) {
     if (!this.enabled) return this.unavailableView('Opportunity Intelligence is disabled in configuration.');
     const lead = leadId == null ? null : String(leadId);
     const live = await this.liveState(lead);
-    const list = this.associations.listForLead(lead);
-    if (list.length === 0) {
+    const now = this.clock();
+    const sel = await this.selectReportForLead(lead);
+    if (sel.state === 'not_researched') {
       return {
         available: false,
         state: 'not_researched',
@@ -226,29 +250,26 @@ class OpportunityIntelligenceService {
         ...live,
       };
     }
-    const now = this.clock();
-    let missing = 0;
-    for (const assoc of list.slice(0, MAX_REPORT_LOOKUPS)) {
-      const res = await this.gateway.getReport(assoc.research_id);
-      if (res.ok) {
-        const view = this.toView(lead, res.report, assoc);
-        const freshness = classifyOiFreshness(res.report.generated_at || assoc.generated_at, now);
-        if (missing === 0) return { ...view, freshness, ...live };
-        return {
-          ...view,
-          state: 'older_report',
-          message: I5_COPY.olderReport,
-          freshness,
-          missing_newer: missing,
-          latest_generated_at: list[0].generated_at,
-          ...live,
-        };
-      }
-      if (res.status === 404) { missing += 1; continue; }
+    const { list } = sel;
+    if (sel.state === 'ok' || sel.state === 'older_report') {
+      const view = this.toView(lead, sel.report, sel.assoc);
+      const freshness = classifyOiFreshness(sel.report.generated_at || sel.assoc.generated_at, now);
+      if (sel.state === 'ok') return { ...view, freshness, ...live };
+      return {
+        ...view,
+        state: 'older_report',
+        message: I5_COPY.olderReport,
+        freshness,
+        missing_newer: sel.missing,
+        latest_generated_at: list[0].generated_at,
+        ...live,
+      };
+    }
+    if (sel.state === 'unavailable') {
       // Could not ask: unavailable, with the stored age of the newest report.
       return {
-        ...this.unavailableView(res.error),
-        state: res.state,
+        ...this.unavailableView(sel.res.error),
+        state: sel.res.state,
         lead_id: lead,
         research_id: list[0].research_id,
         freshness: classifyOiFreshness(list[0].generated_at, now),
@@ -261,7 +282,7 @@ class OpportunityIntelligenceService {
       message: I5_COPY.noneAvailable,
       lead_id: lead,
       research_id: list[0].research_id,
-      checked: missing,
+      checked: sel.missing,
       model: null,
       summary: null,
       sections: null,
@@ -350,15 +371,35 @@ class OpportunityIntelligenceService {
    * anything, and it does not touch the Zuni-SEO packet, the pitch draft or the
    * Activity ledger.
    */
-  async pitchContextForLead({ leadId, leadView = {} }) {
-    if (!this.enabled) {
-      return { available: false, reason: 'Opportunity Intelligence is unavailable.', bridge: null, affects_outreach: false };
-    }
-    const assoc = this.associations.latestForLead(leadId);
-    if (!assoc) return { available: false, reason: 'No Opportunity Intelligence research for this lead yet.', bridge: null, affects_outreach: false };
-    const res = await this.gateway.getReport(assoc.research_id);
-    if (!res.ok) return { available: false, reason: res.error, bridge: null, research_id: assoc.research_id, affects_outreach: false };
-    return this.bridge({ leadId, leadView, report: res.report, association: assoc });
+  async pitchContextForLead({ leadId, leadView = {}, freshness = null } = {}) {
+    const closed = (state, reason, extra = {}) => ({ available: false, state, reason, bridge: null, items: [], eligible: false, affects_outreach: false, ...extra });
+    if (!this.enabled) return closed('unavailable', 'Opportunity Intelligence is unavailable.');
+    const lead = leadId == null ? null : String(leadId);
+    // I7 (rule 1): the same report the drawer shows - including the I5 older-report walk.
+    const sel = await this.selectReportForLead(lead);
+    if (sel.state === 'not_researched') return closed('not_researched', I5_COPY.noReportForPitch);
+    if (sel.state === 'unavailable') return closed('unavailable', sel.res.error, { research_id: sel.list[0].research_id });
+    if (sel.state === 'report_missing') return closed('report_missing', I5_COPY.noneAvailable, { research_id: sel.list[0].research_id });
+
+    // I7 (rule 2): freshness from the ONE policy; the packet expires with it.
+    const reportFreshness = classifyOiFreshness(sel.report.generated_at || sel.assoc.generated_at, this.clock());
+    const staleAfterHours = freshness && Number.isInteger(freshness.staleAfterHours)
+      ? freshness.staleAfterHours
+      : OI_FRESHNESS_POLICY.EXPIRED_AFTER_DAYS * 24;
+    const out = this.bridge({ leadId: lead, leadView, report: sel.report, association: sel.assoc, freshness: { staleAfterHours } });
+    const eligible = Boolean(out.available) && (reportFreshness.state === 'fresh' || reportFreshness.state === 'stale');
+    return {
+      ...out,
+      state: sel.state,
+      lead_id: lead,
+      freshness: reportFreshness,
+      eligible,
+      code: eligible ? null : (out.available ? OI_CONTEXT_EXPIRED : null),
+      message: eligible ? null : (out.available ? I5_COPY.refreshFirst : out.reason),
+      older: sel.state === 'older_report' ? { message: I5_COPY.olderReport, missing_newer: sel.missing } : null,
+      items: contextItems(out.bridge, eligible),
+      source: { research_id: sel.report.research_id, snapshot_id: sel.report.snapshot_id, generated_at: sel.report.generated_at },
+    };
   }
 
   bridge({ leadId, leadView = {}, report, association = null, freshness = {} }) {
@@ -394,9 +435,12 @@ class OpportunityIntelligenceService {
    * write a pitch draft, does not approve, and does not touch the gate - those
    * remain the existing F12-F25 pipeline's job, unchanged.
    */
-  async previewPitchFromOI({ leadId, leadView = {}, offer = {}, icpFit = null, now = new Date(), freshness = {} }) {
+  async previewPitchFromOI({ leadId, leadView = {}, offer = {}, icpFit = null, now = this.clock(), freshness = null } = {}) {
+    const never = { persisted: false, approved: false, sendable: false, affects_outreach: false };
+    // I7 (rule 6): freshness is passed THROUGH to the context (it used to be dropped).
     const ctx = await this.pitchContextForLead({ leadId, leadView, freshness });
-    if (!ctx.available) return { available: false, reason: ctx.reason, pitch: null, affects_outreach: false };
+    if (!ctx.available) return { available: false, state: ctx.state, reason: ctx.reason, pitch: null, ...never };
+    if (!ctx.eligible) return { available: false, state: ctx.state, code: OI_CONTEXT_EXPIRED, reason: I5_COPY.refreshFirst, freshness: ctx.freshness, pitch: null, ...never };
     const draft = generatePitch({
       view: { id: leadId, ...leadView },
       packet: ctx.bridge.packet,
@@ -407,7 +451,19 @@ class OpportunityIntelligenceService {
     });
     return {
       available: true,
-      pitch: draft,
+      state: ctx.state,
+      freshness: ctx.freshness,
+      older: ctx.older,
+      // A projection, not the draft: no pitch id, no packet, nothing an approve or send
+      // channel could accept. It is never stored anywhere.
+      pitch: {
+        subject: draft.subject,
+        opening: draft.opening,
+        observations: (draft.observations || []).map((o) => ({ text: o.text, refs: [...(o.refs || [])] })),
+        valueProposition: draft.valueProposition,
+        callToAction: draft.callToAction,
+        unsupportedClaims: draft.unsupportedClaims || [],
+      },
       provenance: {
         source: 'opportunity-intelligence',
         research_id: ctx.bridge.oi.research_id,
@@ -416,9 +472,7 @@ class OpportunityIntelligenceService {
         claim_kinds: ctx.bridge.claim_kinds,
       },
       // Explicitly NOT persisted, NOT approved, NOT sendable from here.
-      persisted: false,
-      approved: false,
-      affects_outreach: false,
+      ...never,
     };
   }
 
@@ -500,6 +554,32 @@ function firstText(...candidates) {
 }
 
 /**
+ * I7: the renderer-safe list of pitch-eligible OI findings, with their provenance.
+ * Sales-angle findings stay in the OI tab (an angle is OI's inference), and only basis
+ * standard (fact) and research (estimate) are ever listed. `eligible` is false for every
+ * item when the report is expired or of unknown age.
+ */
+function contextItems(bridge, eligible) {
+  if (!bridge || !bridge.packet || !Array.isArray(bridge.packet.findings)) return [];
+  const out = [];
+  for (const f of bridge.packet.findings) {
+    if (String(f.rule_id || '').startsWith('oi.angle.')) continue;
+    if (f.basis !== 'standard' && f.basis !== 'research') continue;
+    const ids = bridge.oi_ids && bridge.oi_ids[f.finding_id] ? bridge.oi_ids[f.finding_id].evidence_refs : [];
+    out.push({
+      finding_id: f.finding_id,
+      title: String(f.title || ''),
+      observed: String(f.observed || '').slice(0, 600),
+      claim_kind: (bridge.claim_kinds && bridge.claim_kinds[f.finding_id]) || null,
+      basis: f.basis,
+      evidence_ids: Array.isArray(ids) ? ids.slice(0, 20).map(String) : [],
+      eligible: Boolean(eligible),
+    });
+  }
+  return out;
+}
+
+/**
  * How a failed research request is settled (E4):
  *   in_progress - OI is still running this key: keep the intent open
  *   terminal    - OI gave a final answer (a replayed failure, a refusal, an invalid report):
@@ -518,4 +598,4 @@ function classifyResearchFailure(res) {
   return 'retryable';
 }
 
-module.exports = { OpportunityIntelligenceService, READ_SECTIONS, identityFromView, projectSections, classifyResearchFailure, MAX_REPORT_LOOKUPS, I5_COPY };
+module.exports = { OpportunityIntelligenceService, READ_SECTIONS, identityFromView, projectSections, classifyResearchFailure, contextItems, MAX_REPORT_LOOKUPS, I5_COPY, OI_CONTEXT_EXPIRED };

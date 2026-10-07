@@ -33,6 +33,8 @@ const CHANNELS = Object.freeze({
   LATEST: 'lead-intel:opportunity-latest',
   ASSOCIATIONS: 'lead-intel:opportunity-associations',
   PITCH_CONTEXT: 'lead-intel:opportunity-pitch-context',
+  // I7: an unsaved, unapprovable, unsendable preview built from OI facts and estimates.
+  PITCH_PREVIEW: 'lead-intel:opportunity-pitch-preview',
 });
 
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -57,6 +59,7 @@ const INPUT_SCHEMAS = Object.freeze({
   [CHANNELS.LATEST]: obj({ leadId: S.leadId }, ['leadId']),
   [CHANNELS.ASSOCIATIONS]: obj({ leadId: S.leadId }, ['leadId']),
   [CHANNELS.PITCH_CONTEXT]: obj({ leadId: S.leadId }, ['leadId']),
+  [CHANNELS.PITCH_PREVIEW]: obj({ leadId: S.leadId }, ['leadId']),
 });
 
 /** True when a renderer payload tried to smuggle a destination or a credential. */
@@ -113,7 +116,7 @@ async function resolveLeadView(leadSource, leadId) {
   }
 }
 
-function registerOpportunityIpc({ ipcMain, opportunity, isTrustedSender, leadSource = null, logger = console }) {
+function registerOpportunityIpc({ ipcMain, opportunity, isTrustedSender, leadSource = null, offer = null, logger = console }) {
   if (typeof isTrustedSender !== 'function') throw new TypeError('isTrustedSender is required');
   if (!opportunity || typeof opportunity.healthView !== 'function') throw new TypeError('opportunity service is required');
 
@@ -154,6 +157,14 @@ function registerOpportunityIpc({ ipcMain, opportunity, isTrustedSender, leadSou
   handle(CHANNELS.PITCH_CONTEXT, async (a) => {
     const leadView = await resolveLeadView(leadSource, a.leadId);
     return opportunity.pitchContextForLead({ leadId: a.leadId, leadView });
+  });
+  handle(CHANNELS.PITCH_PREVIEW, async (a) => {
+    const leadView = await resolveLeadView(leadSource, a.leadId);
+    // The sender identity is main-process configuration (the Business Profile), never
+    // renderer input. Without one the preview is identity-free, exactly like a real draft.
+    let profile = {};
+    try { profile = typeof offer === 'function' ? (offer() || {}) : {}; } catch { profile = {}; }
+    return opportunity.previewPitchFromOI({ leadId: a.leadId, leadView, offer: profile });
   });
 
   return registered;

@@ -577,7 +577,7 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   // ledger F19/F20 write; it cannot cause a send, so F17's "no send method" property holds.
   // Phase I2: +7 Opportunity Intelligence channels.
   const expectedOutreach = ['activity', 'approve', 'gate', 'list', 'outreachSend', 'prepare', 'ready', 'sends'];
-  const expectedOI = ['health', 'engine', 'request', 'report', 'latest', 'associations', 'pitchContext'];
+  const expectedOI = ['health', 'engine', 'request', 'report', 'latest', 'associations', 'pitchContext', 'pitchPreview']; // I7 declared lock update: + pitchPreview
   const expectedI3 = ['status', 'setKey', 'clearKey', 'setSetting', 'chooseFolder', 'setMode', 'start', 'stop', 'restart', 'copyLog']; // I3/I4 declared lock update
   const expectedI6 = ['forLead']; // I6 declared lock update: the read-only lead timeline
   assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedI3].sort(),
