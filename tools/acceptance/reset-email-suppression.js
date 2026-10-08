@@ -147,17 +147,19 @@ function defaultDbPath(env = process.env) {
 
 /** ZTech keeps the database in memory and writes it back: a reset while it runs would be overwritten. */
 // Process names via PowerShell in UTF-8 (tasklist prints in the OEM code page, which garbles the
-// packaged "phone全球获客" name). An ASCII "phone" prefix is matched too, so a garbled name still counts.
-const ZTECH_PROCESS = /^(electron|phone.*|ztech.*)$/i;
+// packaged "phone全球获客" name). The packaged name also counts when garbled: "phone" followed only
+// by non-ASCII characters or "?". Windows' own "PhoneExperienceHost" (Phone Link) is NOT ZTech.
+const ZTECH_PROCESS = /^(electron|phone-global-leads|phone[^\x00-\x7F?]+|phone\?+|ztech)$/i;
+/** The names of running processes that could be ZTech: [] when none, ['(could not check)'] when unknown. */
 function ztechRunning(exec = require('child_process').execSync, platform = process.platform) {
-  if (platform !== 'win32') return false;
+  if (platform !== 'win32') return [];
   let out;
   try {
     out = String(exec('powershell -NoProfile -Command "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Process | ForEach-Object { $_.ProcessName }"', { encoding: 'utf8' }));
   } catch {
-    return true; // cannot tell: fail closed
+    return ['(could not check)']; // cannot tell: fail closed
   }
-  return out.split(/\r?\n/).map((l) => l.trim()).some((name) => ZTECH_PROCESS.test(name));
+  return [...new Set(out.split(/\r?\n/).map((l) => l.trim()).filter((name) => ZTECH_PROCESS.test(name)))];
 }
 
 async function main(argv = process.argv.slice(2), io = { log: console.log, env: process.env, running: ztechRunning, initSqlJs: () => require('sql.js')() }) {
@@ -168,7 +170,13 @@ async function main(argv = process.argv.slice(2), io = { log: console.log, env: 
   if (auto && auto.found.length > 1) { io.log(`More than one ZTech database found - pick one with --db:\n${auto.found.join('\n')}`); return 2; }
   const file = args.db || (auto && auto.file);
   if (!file || !fs.existsSync(file)) { io.log('ZTech database not found. Pass it with --db "<path>\\whatsapp.db".'); return 2; }
-  if (io.running()) { io.log('ZTech (or another Electron app) is running, or this could not be checked. Close ZTech completely (it rewrites the database), then run this again.'); return 3; }
+  const r = io.running();
+  const blocking = r === true ? ['ZTech'] : (Array.isArray(r) ? r : []);
+  if (blocking.length) {
+    io.log(`Refused: ZTech must be closed (it rewrites the database). Still running: ${blocking.join(', ')}.`);
+    io.log('Close every ZTech window (and any "npm start" terminal), then run this again.');
+    return 3;
+  }
 
   const SQL = await io.initSqlJs();
   const before = fs.statSync(file).mtimeMs;

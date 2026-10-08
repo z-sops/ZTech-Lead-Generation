@@ -224,13 +224,31 @@ test('R5. the tool never opens the settings file (mailbox connection, tokens, Go
   assert.ok(/channel = 'email' AND normalized_address = \?/.test(src));
 });
 
-test('R6. running-app detection on Windows: dev, packaged (even garbled), unknown = refuse', () => {
+test('R6. running-app detection on Windows: dev, packaged (even garbled), Phone Link is not ZTech, unknown = refuse', () => {
   const exec = (out) => () => out;
-  assert.strictEqual(tool.ztechRunning(exec('svchost\r\nelectron\r\nexplorer\r\n'), 'win32'), true, 'npm start');
-  assert.strictEqual(tool.ztechRunning(exec('explorer\r\nphone全球获客\r\n'), 'win32'), true, 'packaged');
-  assert.strictEqual(tool.ztechRunning(exec('explorer\r\nphone????\r\n'), 'win32'), true, 'packaged, garbled');
-  assert.strictEqual(tool.ztechRunning(exec('Code\r\nclaude\r\nchrome\r\nelectronic-thing\r\nmyphone\r\n'), 'win32'), false, 'similar names are not ZTech');
-  assert.strictEqual(tool.ztechRunning(() => { throw new Error('no powershell'); }, 'win32'), true, 'cannot check = refuse');
+  assert.deepStrictEqual(tool.ztechRunning(exec('svchost\r\nelectron\r\nelectron\r\nexplorer\r\n'), 'win32'), ['electron'], 'npm start');
+  assert.deepStrictEqual(tool.ztechRunning(exec('explorer\r\nphone全球获客\r\n'), 'win32'), ['phone全球获客'], 'packaged');
+  assert.deepStrictEqual(tool.ztechRunning(exec('explorer\r\nphone????\r\nphoneå…¨çƒ\r\n'), 'win32'), ['phone????', 'phoneå…¨çƒ'], 'packaged, garbled');
+  assert.deepStrictEqual(tool.ztechRunning(exec('phone-global-leads\r\n'), 'win32'), ['phone-global-leads']);
+  // Windows 11 always runs Phone Link; it blocked the first Windows run (8 Oct 2026).
+  assert.deepStrictEqual(tool.ztechRunning(exec('PhoneExperienceHost\r\nCode\r\nclaude\r\nchrome\r\nelectronic-thing\r\nmyphone\r\nPhone\r\nphonebook\r\n'), 'win32'), [], 'similar names are not ZTech');
+  assert.deepStrictEqual(tool.ztechRunning(() => { throw new Error('no powershell'); }, 'win32'), ['(could not check)'], 'cannot check = refuse');
+  assert.deepStrictEqual(tool.ztechRunning(exec('electron'), 'linux'), []);
+});
+
+test('R6b. the refusal names the process that blocks it', async () => {
+  const w = await world();
+  await unsubscribedWithEverything(w);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztech-reset-'));
+  const file = path.join(dir, 'whatsapp.db');
+  fs.writeFileSync(file, Buffer.from(w.db.export()));
+  const lines = [];
+  const code = await tool.main(['--db', file, '--email', ADDR], { log: (l) => lines.push(l), env: {}, running: () => ['electron'], initSqlJs: () => require('sql.js')() });
+  assert.strictEqual(code, 3);
+  assert.ok(/Still running: electron\./.test(lines.join('\n')));
+  const l2 = [];
+  assert.strictEqual(await tool.main(['--db', file, '--email', ADDR], { log: (l) => l2.push(l), env: {}, running: () => [], initSqlJs: () => require('sql.js')() }), 0);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('R7. an address with reply history is refused (a reviewed reply can itself allow emailing)', async () => {
