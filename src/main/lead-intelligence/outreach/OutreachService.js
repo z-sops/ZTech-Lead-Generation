@@ -262,6 +262,47 @@ class OutreachService {
     return pitch;
   }
 
+  /**
+   * Acceptance fix (8 Oct 2026): rebuild an UNAPPROVED, UNSENT draft from the lead's latest stored
+   * research, IN PLACE (same pitch_id). A draft written before research finished (no evidence) or
+   * before newer research arrived (EVIDENCE_OUTDATED) is otherwise stuck. In place on purpose:
+   * the stale text no longer exists anywhere, so it can never be approved or sent by mistake.
+   *
+   * Refused - nothing changes - for:
+   *   a follow-up step (F28 drafts belong to their sequence);
+   *   a pitch approved for its CURRENT content (an approved pitch is never rewritten silently;
+   *     editing it withdraws the approval, after which it may be regenerated);
+   *   a pitch any send was recorded for (attempted / accepted / failed: it is history).
+   * The result is a fresh draft with the same generator and the same inputs as Generate; it needs
+   * a new human approval like any other draft.
+   */
+  async regenerate({ pitchId }) {
+    const p = await this._pitchById(pitchId);
+    if (!p) throw new NotFoundError('Pitch', pitchId);
+    if (p.kind === 'followup') throw new LiError('PITCH_REGENERATE_FOLLOWUP', 'A follow-up is written from its first email and cannot be regenerated here.');
+    const approval = await this.store.approvals.latestForPitch(p.pitch_id);
+    if (approval && approval.content_hash === p.content_hash) {
+      throw new LiError('PITCH_APPROVED', 'This pitch is approved, so it is not rewritten. Edit it first (that withdraws the approval) if it must change.');
+    }
+    const sends = await this.store.sends.list({ pitchId: p.pitch_id, limit: 50 });
+    if ((sends.rows || []).some((r) => r.state !== 'blocked')) {
+      throw new LiError('PITCH_ALREADY_SENT', 'This pitch was already sent (or a send was attempted), so it is kept as it is.');
+    }
+    const ctx = await this.contexts.getContext(p.lead_id, { targetId: p.target_id ?? undefined });
+    const fresh = generatePitch({ view: ctx.view, packet: ctx.packet, icpFit: ctx.icp_fit, offer: this.offer, now: this.clock(), targetId: p.target_id ?? null });
+    const next = { ...fresh, pitch_id: p.pitch_id, created_at: p.created_at };
+    // A regenerated draft ALWAYS needs a fresh approval, even if its text happens to equal content
+    // approved earlier: earlier approvals of this pitch (none matches its current content, checked
+    // above) are withdrawn FIRST, and that is recorded. A crash in between leaves the old draft,
+    // still unapproved - never an approved new one.
+    if (approval) {
+      await this.store.approvals.deleteForPitches([p.pitch_id]);
+      await this._recordActivity(p, 'APPROVAL_INVALIDATED', { reason: 'The pitch was regenerated from the latest research.', contentHash: next.content_hash });
+    }
+    await this.store.pitches.upsert(next);
+    return next;
+  }
+
   async get(pitchId) {
     const p = await this._pitchById(pitchId);
     if (!p) throw new NotFoundError('Pitch', pitchId);

@@ -113,7 +113,9 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
   pitch: Object.freeze({
     generate: (payload) => ipcRenderer.invoke('lead-intel:pitch-generate', payload || {}),
     get: (payload) => ipcRenderer.invoke('lead-intel:pitch-get', payload || {}),
-    update: (payload) => ipcRenderer.invoke('lead-intel:pitch-update', payload || {})
+    update: (payload) => ipcRenderer.invoke('lead-intel:pitch-update', payload || {}),
+    // Rebuilds an unapproved, unsent draft from the latest stored research; never approves.
+    regenerate: (payload) => ipcRenderer.invoke('lead-intel:pitch-regenerate', payload || {})
   }),
   outreach: Object.freeze({
     approve: (payload) => ipcRenderer.invoke('lead-intel:outreach-approve', payload || {}),

@@ -113,11 +113,12 @@ test('F12 B2: outreach:list is registered, and the five previous channels are un
   // F18 declared lock update: + the single read-only prepare channel.
   // F19 declared lock update: + the single send boundary.
   // F21 declared lock update: + the single read-only send-ledger read.
-  assert.deepEqual(registered, [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends'].sort());
+  // Acceptance-fix declared lock update: + pitch-regenerate (rebuilds an unapproved, unsent draft).
+  assert.deepEqual(registered, [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends', 'lead-intel:pitch-regenerate'].sort());
   // F15/F16 declared lock update: the read-only activity and ready channels are now also
   // registered. F18 declared lock update: + prepare. F19 declared lock update: 9 -> 10.
   // F21 declared lock update: 10 -> 11, the read-only send-ledger read.
-  assert.equal(handlers.size, 11);
+  assert.equal(handlers.size, 12); // acceptance-fix declared lock update: 11 -> 12
   for (const c of PREVIOUS_FIVE) assert.ok(handlers.has(c), 'previous channel must survive: ' + c);
   assert.ok(handlers.has('lead-intel:outreach-list'));
   // No new channel beyond these: email-send, searches, segments, enrichment,
@@ -290,9 +291,9 @@ test('F12 B2: preload exposes outreach.list and no email.send', () => {
       'lead-intel:opportunity-report',
       'lead-intel:opportunity-request',
     ];
-    const EXPECTED = [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends', ...OI_CHANNELS, 'lead-intel:timeline', 'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-review', 'lead-intel:trust-suppress', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules', 'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities', 'lead-intel:mailbox-check', 'lead-intel:mailbox-replies', 'lead-intel:sequence-activate', 'lead-intel:sequence-create', 'lead-intel:sequence-for-lead', 'lead-intel:sequence-list', 'lead-intel:sequence-pause', 'lead-intel:sequence-pause-all', 'lead-intel:sequence-resume', 'lead-intel:sequence-stop', 'lead-intel:reply-route-confirm', 'lead-intel:reply-route-lead', 'lead-intel:reply-routes'].sort(); // I6 declared lock update: + timeline; F26.5: + five trust channels; F26.6: + twelve mailbox channels; F28: + eight sequence channels; F29: + three reply-route channels
+    const EXPECTED = [...PREVIOUS_FIVE, 'lead-intel:outreach-list', 'lead-intel:outreach-activity', 'lead-intel:outreach-prepare', 'lead-intel:outreach-ready', 'lead-intel:outreach-send', 'lead-intel:outreach-sends', ...OI_CHANNELS, 'lead-intel:timeline', 'lead-intel:trust-consent', 'lead-intel:trust-handoff', 'lead-intel:trust-lead', 'lead-intel:trust-lift', 'lead-intel:trust-review', 'lead-intel:trust-suppress', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules', 'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities', 'lead-intel:mailbox-check', 'lead-intel:mailbox-replies', 'lead-intel:sequence-activate', 'lead-intel:sequence-create', 'lead-intel:sequence-for-lead', 'lead-intel:sequence-list', 'lead-intel:sequence-pause', 'lead-intel:sequence-pause-all', 'lead-intel:sequence-resume', 'lead-intel:sequence-stop', 'lead-intel:reply-route-confirm', 'lead-intel:reply-route-lead', 'lead-intel:reply-routes', 'lead-intel:pitch-regenerate'].sort(); // acceptance fix: + pitch-regenerate; I6 declared lock update: + timeline; F26.5: + five trust channels; F26.6: + twelve mailbox channels; F28: + eight sequence channels; F29: + three reply-route channels
     assert.deepEqual(leadIntel.slice().sort(), EXPECTED);
-    assert.equal(leadIntel.length, 49); // F26.6 declared lock update: 25 -> 37; follow-up + trust-review = 38; F28 + 8 sequence channels = 46; F29 + 3 reply-route channels = 49
+    assert.equal(leadIntel.length, 50); // acceptance fix: + pitch-regenerate = 50; F26.6 declared lock update: 25 -> 37; follow-up + trust-review = 38; F28 + 8 sequence channels = 46; F29 + 3 reply-route channels = 49
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(leadIntel.includes('lead-intel:outreach-list'), 'outreach.list must be exposed');
     assert.ok(!leadIntel.includes('lead-intel:email-send'), 'email.send must never be exposed');

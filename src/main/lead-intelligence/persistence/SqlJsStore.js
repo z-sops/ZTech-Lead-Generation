@@ -502,6 +502,13 @@ class SqlApprovals {
   async latestForPitch(pitchId) {
     return row(this.s.db, 'SELECT * FROM li_outreach_approvals WHERE pitch_id = ? ORDER BY approved_at DESC, rowid DESC LIMIT 1', [pitchId]);
   }
+
+  /** Acceptance fix: a regenerated draft drops every earlier approval of its pitch (twin of Memory). */
+  async deleteForPitches(ids) {
+    const list = (Array.isArray(ids) ? ids : []).map(String);
+    if (!list.length) return;
+    await this.s.tx(() => this.s.db.run(`DELETE FROM li_outreach_approvals WHERE pitch_id IN (${list.map(() => '?').join(', ')})`, list));
+  }
 }
 
 /* ---------------------------- outreach activity ---------------------------- */

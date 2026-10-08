@@ -8713,7 +8713,7 @@ function f11RenderPitch(lead, pitch, gate, seq) {
     const research = f11Text(pitch.research_status);
     const hint = research === 'failed' ? F11_PITCH_FAILED_HINT
       : pitch.packet_id ? 'The stored evidence produced no usable observations, so this draft has nothing to cite.'
-        : F11_PITCH_NO_EVIDENCE_HINT;
+        : F11_PITCH_NO_EVIDENCE_HINT + ' If research has finished since, use "Regenerate from latest research".';
     box.appendChild(f11El('p', 'lead-drawer-muted', hint));
   }
 
@@ -8781,6 +8781,25 @@ function f11RenderPitch(lead, pitch, gate, seq) {
   }, status !== 'draft'));
   box.appendChild(actions);
 
+  // Acceptance fix: a draft that is NOT approved for its current content (the gate still asks
+  // for Human approval) can be rebuilt from the latest stored research, in place. Two clicks;
+  // it never approves and never sends. An approved or sent pitch is refused by the backend.
+  const needsApproval = Boolean(gate) && Array.isArray(gate.reasons) && gate.reasons.some((r) => r && r.code === 'HUMAN_APPROVAL');
+  if (needsApproval && pitch.pitch_id) {
+    let armed = false;
+    const note = f11El('p', 'lead-drawer-muted f11-regenerate-note', 'Regenerate rebuilds this draft from the latest stored research. Unsaved edits on screen are lost, and the new draft must be approved again.');
+    const regenerate = f11ActionButton('Regenerate from latest research', 'btn btn-sm btn-secondary', () => {
+      if (!armed) {
+        armed = true;
+        regenerate.textContent = 'Yes, regenerate';
+        actions.appendChild(note);
+        return;
+      }
+      f11Run(lead, { regenerate: pitch.pitch_id });
+    });
+    actions.appendChild(regenerate);
+  }
+
   if (gate) box.appendChild(f11RenderGate(gate));
   box.appendChild(f11El('p', 'lead-drawer-muted', 'Nothing is sent from this drawer.'));
   return controls;
@@ -8846,6 +8865,8 @@ async function f11Run(lead, action) {
       pitch = f11Unwrap(await api.pitch.generate({ leadId }));
     } else if (action && action.save) {
       pitch = f11Unwrap(await api.pitch.update(action.save));
+    } else if (action && action.regenerate) {
+      pitch = f11Unwrap(await api.pitch.regenerate({ leadId, pitchId: action.regenerate }));
     }
     if (!f11PitchIsCurrent(seq, leadId)) return;
 

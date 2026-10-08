@@ -644,7 +644,7 @@ test('21. the IPC channel set and dependencies are unchanged', () => {
   // F21 declared lock update: 51 -> 52, the read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 59 total.
   // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 78 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 83 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 93 total; +2 check, checkReplies = 95 total; +1 trust reviewReply = 96 total.
-  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 107, '107 preload invocations'); // F28 declared lock update: + 8 sequence methods; F29: + 3 reply-route methods
+  assert.strictEqual(preloadSource.split('ipcRenderer.invoke').length - 1, 108, '108 preload invocations'); // F28 declared lock update: + 8 sequence methods; F29: + 3 reply-route methods; acceptance fix: + pitch.regenerate
   assert.ok(!/appAPI|ipcRenderer|fetch\(|XMLHttpRequest|WebSocket/.test(f5Code), 'the F5 block performs no I/O');
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);

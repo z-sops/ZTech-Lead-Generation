@@ -507,12 +507,13 @@ function makeIpcHarness(outreach, { trusted = true } = {}) {
       'lead-intel:outreach-sends',
       'lead-intel:pitch-generate',
       'lead-intel:pitch-get',
+      'lead-intel:pitch-regenerate', // acceptance-fix declared lock update: regenerate a draft (never sends)
       'lead-intel:pitch-update',
   ]);
   // F15/F16 declared lock update: + the read-only activity and ready channels. F18 declared
   // lock update: + the single read-only prepare channel. F19 declared lock update: + the
   // single send boundary.
-  assert.equal(handlers.size, 11);
+  assert.equal(handlers.size, 12); // acceptance-fix declared lock update: 11 -> 12, + pitch-regenerate
   assert.ok(handlers.has('lead-intel:outreach-send'), 'the one send channel is registered');
   assert.ok(handlers.has('lead-intel:outreach-sends'), 'the read-only send-ledger read is registered');
   assert.ok(!handlers.has('lead-intel:email-send'), 'the old email-send name is still not registered');
@@ -535,12 +536,13 @@ function makeIpcHarness(outreach, { trusted = true } = {}) {
     'lead-intel:outreach-sends',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
+    'lead-intel:pitch-regenerate', // acceptance-fix declared lock update
     'lead-intel:pitch-update',
   ]);
   // F15/F16 declared lock update: + activity and ready. F18 declared lock update: + prepare.
   // F19 declared lock update: 9 -> 10, + the single send boundary.
   // F21 declared lock update: 10 -> 11, + the single read-only send-ledger read.
-  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 11);
+  assert.equal(Object.keys(OUTREACH_CHANNELS).length, 12); // acceptance-fix declared lock update: + pitch-regenerate
   assert.ok(!Object.values(OUTREACH_CHANNELS).includes('lead-intel:email-send'), 'email-send is not even declared here');
   reg.dispose();
   assert.equal(handlers.size, 0, 'dispose removes every handler');
@@ -707,6 +709,7 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     'lead-intel:outreach-sends',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
+    'lead-intel:pitch-regenerate', // acceptance-fix declared lock update: regenerate a draft (never sends)
     'lead-intel:pitch-update',
     'lead-intel:timeline', // I6 declared lock update: the read-only lead timeline
     // F26.5 declared lock update: the five trust channels (none of them sends).
@@ -718,7 +721,7 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     // F29 declared lock update: the three reply-route channels (none of them sends).
     'lead-intel:reply-route-confirm', 'lead-intel:reply-route-lead', 'lead-intel:reply-routes',
     ].sort());
-    assert.equal(leadIntel.length, 49, 'exactly forty-nine Lead Intelligence methods (11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes + 1 F26.6 reply review + 8 F28 sequences + 3 F29 reply routes)');
+    assert.equal(leadIntel.length, 50, 'exactly fifty Lead Intelligence methods (1 acceptance-fix pitch regenerate + 11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes + 1 F26.6 reply review + 8 F28 sequences + 3 F29 reply routes)');
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 

@@ -752,8 +752,9 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
     // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 79 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 84 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 94 total; +2 check, replies = 96 total; +1 trust review = 97 total.
     // F28 declared lock update: +8 sequence channels (create, for-lead, list, activate, pause, resume, stop, pause-all; none sends) = 105 total.
     // F29 declared lock update: +3 reply-route channels (list, confirm, lead; none sends) = 108 total.
-    assert.strictEqual(channels.length, 108, 'exactly 108 channels');
-    assert.strictEqual(new Set(channels).size, 108, 'no duplicate channel names');
+    // Acceptance-fix declared lock update: + pitch-regenerate = 109 total.
+    assert.strictEqual(channels.length, 109, 'exactly 109 channels');
+    assert.strictEqual(new Set(channels).size, 109, 'no duplicate channel names');
     const occurrences = mainSource.split("ipcMain.handle('collector:update-lead'").length - 1;
     assert.strictEqual(occurrences, 1, 'collector:update-lead registered exactly once');
     assert.ok(channels.includes('collector:update-lead'), 'the B6 write channel is registered');
@@ -1460,7 +1461,7 @@ const P1C_COLUMNS = ['phoneStatus', 'emailStatus', 'websiteStatus', 'businessSta
   // F21 declared lock update: 52 -> 53, adding the single read-only send-ledger read.
   // Phase I2: +7 Opportunity Intelligence channels = 60 total.
   // I3/I4 declared lock update: +4 OI settings, +6 OI service, +7 F26 outreach settings methods +1 I6 timeline, +1 I7 pitch preview = 79 total. F26.5 declared lock update: +5 trust (forLead, suppress, lift, recordConsent, handoff) = 84 total. F26.6 declared lock update: +10 mailboxes (providers, list, connect, disconnect, setDefault, setLimits, setGoogleClient, marketRules, setMarketRule, removeMarketRule; none sends) = 94 total; +2 check, replies = 96 total; +1 trust review = 97 total.
-  assert.strictEqual(allChannels().length, 108, 'exactly 108 channels (F29 +3 reply-route channels, F28 +8 sequence channels, A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send, F21 send-ledger read, Phase I2 Opportunity Intelligence)');
+  assert.strictEqual(allChannels().length, 109, 'exactly 109 channels (acceptance fix +1 pitch-regenerate, F29 +3 reply-route channels, F28 +8 sequence channels, A4 + F7 research, F6 Lists, F8 ICP, A10 Lead Intelligence, F15 outreach activity read, F16 outreach ready read, F18 outreach prepare read, F19 outreach send, F21 send-ledger read, Phase I2 Opportunity Intelligence)');
     const getNumbersHandler = between(mainSource, "ipcMain.handle('collector:get-numbers'", '  });\n');
     assert.ok(getNumbersHandler.includes('accountStore.queryNumbers(validateNumbersQuery(query))'),
       'collector:get-numbers is still the qualification filter path');

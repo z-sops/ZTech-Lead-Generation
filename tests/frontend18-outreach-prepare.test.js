@@ -471,9 +471,10 @@ test('I1. the prepare channel and the single F19 send boundary are registered - 
     'lead-intel:outreach-sends',
     'lead-intel:pitch-generate',
     'lead-intel:pitch-get',
+    'lead-intel:pitch-regenerate', // acceptance-fix declared lock update: rebuild a draft, never sends
     'lead-intel:pitch-update',
   ]);
-  assert.strictEqual(handlers.size, 11, 'exactly eleven channels are registered');
+  assert.strictEqual(handlers.size, 12, 'exactly twelve channels are registered');
   // The one and only outbound channel, taking exactly { pitchId, channel } (F25).
   assert.ok(handlers.has('lead-intel:outreach-send'), 'the F19 send boundary exists');
   assert.ok(!handlers.has('lead-intel:email-send'), 'the old pre-F19 send channel name is still absent');
@@ -565,7 +566,7 @@ test('S2. the CHANNELS constant is an exact frozen allowlist of eleven - exactly
   // channels. The invariant this test protects is unchanged and is restated more precisely:
   // exactly ONE channel can CAUSE a send, and the F21 addition is a read whose name is the
   // singular send channel plus an "s".
-  assert.strictEqual(values.length, 11, 'exactly eleven channels are declared');
+  assert.strictEqual(values.length, 12, 'exactly twelve channels are declared'); // acceptance fix: + pitch-regenerate
   assert.ok(values.includes('lead-intel:outreach-prepare'), 'the prepare channel is declared');
   assert.strictEqual(values.filter((v) => /send/i.test(v)).length, 2, 'the send and the send-log channel exist');
   assert.deepStrictEqual(values.filter((v) => /send/i.test(v)),
@@ -604,7 +605,8 @@ test('S3. the preload bridge adds exactly one read-only prepare method plus the 
   // F26.6 follow-up declared lock update: + trust reviewReply = 33 (a human review, never a send).
   // F28 declared lock update: + sequence create, forLead, activate, pause, resume, stop, setPauseAll = 40 (none sends).
   // F29 declared lock update: + reply-route list, confirm, forLead = 43 (none sends).
-  assert.strictEqual(methods.length, 43, 'exactly forty-three Lead Intelligence methods: ' + methods.join(','));
+  // Acceptance-fix declared lock update: + pitch.regenerate = 44 (it never approves or sends).
+  assert.strictEqual(methods.length, 44, 'exactly forty-four Lead Intelligence methods: ' + methods.join(','));
   assert.strictEqual([...bridge.matchAll(/\bprepare\s*:/g)].length, 1, 'prepare is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\boutreachSend\s*:/g)].length, 1, 'outreachSend is declared exactly once');
   assert.strictEqual([...bridge.matchAll(/\bsends\s*:/g)].length, 1, 'the ledger read is declared exactly once');

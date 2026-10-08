@@ -1,7 +1,7 @@
 'use strict';
 
 const { assertValid, S } = require('./core/validate');
-const { publicError, ForbiddenError } = require('./core/errors');
+const { publicError, ForbiddenError, NotFoundError } = require('./core/errors');
 const { scrubSecrets } = require('./core/objects');
 const { PITCH_LIST_MAX_LIMIT, PITCH_LIST_MAX_OFFSET, ACTIVITY_MAX_LIMIT, ACTIVITY_MAX_OFFSET, READY_PAGE_MAX_LIMIT, READY_SCAN_MAX } = require('./persistence/contract');
 
@@ -27,6 +27,9 @@ const CHANNELS = Object.freeze({
   PITCH_GENERATE: 'lead-intel:pitch-generate',
   PITCH_GET: 'lead-intel:pitch-get',
   PITCH_UPDATE: 'lead-intel:pitch-update',
+  // Acceptance fix: rebuild an unapproved, unsent draft from the latest stored research, in
+  // place. It writes a draft only; it never approves and never sends.
+  PITCH_REGENERATE: 'lead-intel:pitch-regenerate',
   OUTREACH_APPROVE: 'lead-intel:outreach-approve',
   OUTREACH_GATE: 'lead-intel:outreach-gate',
   OUTREACH_LIST: 'lead-intel:outreach-list',
@@ -77,6 +80,7 @@ const pitchId = S.id;
 const INPUT_SCHEMAS = Object.freeze({
   [CHANNELS.PITCH_GENERATE]: obj({ leadId: S.leadId, targetId: S.leadId }, ['leadId']),
   [CHANNELS.PITCH_GET]: obj({ leadId: S.leadId, pitchId }, ['leadId']),
+  [CHANNELS.PITCH_REGENERATE]: obj({ leadId: S.leadId, pitchId }, ['leadId', 'pitchId']),
   [CHANNELS.PITCH_UPDATE]: obj({
     pitchId,
     subject: { type: 'string', maxLength: 150 },
@@ -237,6 +241,12 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
     pitchId: a.pitchId,
     edits: { subject: a.subject, opening: a.opening, valueProposition: a.valueProposition, callToAction: a.callToAction, removeObservations: a.removeObservations },
   }));
+  handle(CHANNELS.PITCH_REGENERATE, async (a) => {
+    // The pitch must belong to the lead the drawer shows (as for pitch-get).
+    const p = await outreach.get(a.pitchId);
+    if (!p || String(p.lead_id) !== String(a.leadId)) throw new NotFoundError('Pitch', a.pitchId);
+    return outreach.regenerate({ pitchId: a.pitchId });
+  });
   handle(CHANNELS.OUTREACH_APPROVE, (a) => outreach.approve({ pitchId: a.pitchId }));
   handle(CHANNELS.OUTREACH_GATE, (a) => outreach.gate({ pitchId: a.pitchId, channel: a.channel || 'email' }));
   // F12 Batch 2: read-only enumeration of persisted pitch drafts. Only the three
