@@ -338,9 +338,14 @@ test('4d. the renderer bridge and main.js keep secrets in main: sealed storage, 
   assert.ok(!methods.some((m) => /send|token|secret/i.test(m)), 'no send-to-lead, token or secret method');
   const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   const deps = main.slice(main.indexOf('function mailboxDepsFromStore()'), main.indexOf('/**', main.indexOf('function mailboxDepsFromStore()')));
-  assert.ok(/credentialVault\.seal\(String\(refreshToken\)\)/.test(deps), 'refresh tokens are sealed');
-  assert.ok(/clientSecret: credentialVault\.seal\(clientSecret\)/.test(deps), 'the client secret is sealed');
-  assert.ok(!/logger\./.test(deps), 'nothing in the token/secret path is logged');
+  // Acceptance-fix declared lock update: the token / secret persistence moved from main.js into
+  // mailboxPersistence.js (main.js passes credentialVault in); the same rules are asserted there.
+  assert.ok(/vault: credentialVault/.test(deps), 'main.js hands the credential vault to the persistence module');
+  const persist = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'mailbox', 'mailboxPersistence.js'), 'utf8');
+  assert.ok(/vault\.seal\(String\(refreshToken\)\)/.test(persist), 'refresh tokens are sealed');
+  assert.ok(/vault\.seal\(clientSecret\)/.test(persist), 'the client secret is sealed');
+  assert.ok(/clientSecret: sealed/.test(persist), 'only the sealed secret is written');
+  assert.ok(!/logger\./.test(deps) && !/logger|console\./.test(persist), 'nothing in the token/secret path is logged');
 });
 
 /* ======================= 5. market gate on every email path ======================= */

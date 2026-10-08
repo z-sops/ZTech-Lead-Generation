@@ -156,7 +156,18 @@ class MailboxService {
     const secret = typeof clientSecret === 'string' ? clientSecret.trim() : '';
     if (!GoogleOAuth.validClientId(id)) throw new ValidationError('Invalid Google client', [{ path: '$.clientId', message: 'must be a Google OAuth client ID ending in .apps.googleusercontent.com' }]);
     if (!secret || secret.length > 200 || /\s/.test(secret)) throw new ValidationError('Invalid Google client', [{ path: '$.clientSecret', message: 'must be the client secret of that Desktop-app client' }]);
-    await this.clientConfig.set({ clientId: id, clientSecret: secret });
+    try {
+      await this.clientConfig.set({ clientId: id, clientSecret: secret });
+    } catch (e) {
+      // Acceptance fix: the real reason reaches the person (a ZTech error, never the secret);
+      // anything unexpected becomes a plain "not saved", not "Internal error".
+      if (this.logger && this.logger.warn) this.logger.warn(`[mailbox] Google client not saved: ${(e && e.code) || (e && e.name) || 'ERROR'}`);
+      if (e instanceof LiError) throw e;
+      throw new LiError('MAILBOX_CLIENT_NOT_SAVED', 'The Google client could not be saved on this computer. Nothing was stored.');
+    }
+    // "Saved" is reported only when Connect would actually find it.
+    const back = this._client();
+    if (!back || back.clientId !== id) throw new LiError('MAILBOX_CLIENT_NOT_SAVED', 'The Google client could not be read back after saving, so it is not saved. Try again.');
     return { clientConfigured: true, clientId: id };
   }
 

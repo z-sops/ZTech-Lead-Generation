@@ -25,6 +25,7 @@ const { registerOutreachIpc, CHANNELS: LEAD_INTEL_CHANNELS } = require('./src/ma
 const { registerTimelineIpc } = require('./src/main/lead-intelligence/timeline/timeline-ipc');
 const { registerTrustIpc } = require('./src/main/lead-intelligence/trust/trust-ipc');
 const { registerMailboxIpc } = require('./src/main/lead-intelligence/mailbox/mailbox-ipc');
+const { createMailboxPersistence } = require('./src/main/lead-intelligence/mailbox/mailboxPersistence');
 const { registerSequenceIpc } = require('./src/main/lead-intelligence/sequences/sequence-ipc');
 const { registerReplyRouterIpc } = require('./src/main/lead-intelligence/replies/reply-router-ipc');
 
@@ -1612,41 +1613,21 @@ function registerLeadIntelIpcHandlers() {
  *   mailboxOAuth.google          { clientId, clientSecret (sealed) }   - D1, the customer's own client
  */
 function mailboxDepsFromStore() {
-  const tokens = () => new Store().get('mailboxTokens', {}) || {};
+  // Acceptance fix: the store comes from one factory (the instance initServices opened), never an
+  // undeclared `Store` - that ReferenceError surfaced as "Internal error" and nothing was saved.
+  const persistence = createMailboxPersistence({
+    storeFactory: () => {
+      if (electronStore) return electronStore;
+      const Store = require('electron-store');
+      electronStore = new Store();
+      return electronStore;
+    },
+    vault: credentialVault,
+    openExternal: () => { throw new Error('the mailbox opener below is the only one'); },
+  });
   return {
-    tokenStore: {
-      available: () => credentialVault.isAvailable(),
-      get: (id) => {
-        const sealed = tokens()[id];
-        return typeof sealed === 'string' && sealed ? credentialVault.reveal(sealed) : null;
-      },
-      set: (id, refreshToken) => {
-        const all = { ...tokens(), [id]: credentialVault.seal(String(refreshToken)) };
-        new Store().set('mailboxTokens', all);
-      },
-      remove: (id) => {
-        const all = { ...tokens() };
-        delete all[id];
-        new Store().set('mailboxTokens', all);
-      },
-    },
-    clientConfig: {
-      get: () => {
-        const g = (new Store().get('mailboxOAuth', {}) || {}).google;
-        if (!g || typeof g.clientId !== 'string' || typeof g.clientSecret !== 'string') return null;
-        try { return { clientId: g.clientId, clientSecret: credentialVault.reveal(g.clientSecret) }; } catch { return null; }
-      },
-      set: ({ clientId, clientSecret }) => {
-        const s = new Store();
-        s.set('mailboxOAuth', { ...(s.get('mailboxOAuth', {}) || {}), google: { clientId, clientSecret: credentialVault.seal(clientSecret) } });
-      },
-      clear: () => {
-        const s = new Store();
-        const next = { ...(s.get('mailboxOAuth', {}) || {}) };
-        delete next.google;
-        s.set('mailboxOAuth', next);
-      },
-    },
+    tokenStore: persistence.tokenStore,
+    clientConfig: persistence.clientConfig,
     openBrowser: (url) => {
       if (typeof url !== 'string' || !url.startsWith('https://accounts.google.com/o/oauth2/v2/auth?')) throw new Error('only the Google consent URL can be opened');
       return shell.openExternal(url);
