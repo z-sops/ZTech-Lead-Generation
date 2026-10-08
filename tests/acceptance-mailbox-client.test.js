@@ -241,6 +241,82 @@ test('F11. only known vault reasons are shown; any other vault text is not echoe
   assert.ok(!e.message.includes(SECRET) && /unexpected vault error/.test(e.message));
 });
 
+/* ===== acceptance run 2: "has an invalid format" with no field and no reason ===== */
+
+async function uiSave(m, id, secret) {
+  const v = ui(m.api);
+  await v.u.load();
+  await flush();
+  const before = m.results.length;
+  v.el('mailbox-google-client-id').value = id;
+  v.el('mailbox-google-client-secret').value = secret;
+  v.el('btn-mailbox-save-client').click();
+  await flush();
+  return { v, calls: m.results.slice(before).length, status: v.el('mailbox-status').textContent, state: v.el('mailbox-client-state').textContent };
+}
+
+test('P1. values pasted with quotes, line breaks or hidden characters are cleaned and saved', async () => {
+  for (const [id, secret] of [
+    [`"${CLIENT_ID}"`, `"${SECRET}"`], // copied from $env:GOOGLE_CLIENT_ID="..."
+    [` ${CLIENT_ID}\r\n`, `${SECRET}\n`],
+    [`﻿${CLIENT_ID}​`, `​${SECRET}`],
+    [`'${CLIENT_ID}'`, `'${SECRET}'`],
+  ]) {
+    const m = mainSide();
+    const r = await uiSave(m, id, secret);
+    assert.strictEqual(r.state, 'Saved', `saved for ${JSON.stringify(id)}: ${r.status}`);
+    assert.deepStrictEqual(m.deps.clientConfig.get(), { clientId: CLIENT_ID, clientSecret: SECRET });
+    assert.strictEqual(r.v.el('mailbox-google-client-id').value, CLIENT_ID);
+  }
+});
+
+test('P2. a value that cannot be a Google client is refused before saving, with a reason that names the field', async () => {
+  const cases = [
+    ['123456789012-abcdefghij', SECRET, /Client ID must be the whole ID ending in \.apps\.googleusercontent\.com/],
+    ['Client ID: 123456789012-abcdefghij.apps.googleusercontent.com', SECRET, /Client ID contains a character that is not allowed/],
+    [CLIENT_ID, 'GOCSPX-has a space', /Client secret contains a space or line break/],
+    [CLIENT_ID, 'short', /Client secret is not the right length/],
+    ['abcd.apps.googleusercontent.com', SECRET, /Client ID is not the right length/], // the service needs 8-200 before the ending
+    ['$env:GOOGLE_CLIENT_ID="123456789012-abcdefghij.apps.googleusercontent.com"', SECRET, /Paste only the Client ID itself/],
+    [CLIENT_ID, '$env:GOOGLE_CLIENT_SECRET="GOCSPX-x"', /Paste only the Client secret itself/],
+  ];
+  for (const [id, secret, re] of cases) {
+    const m = mainSide();
+    const r = await uiSave(m, id, secret);
+    assert.ok(re.test(r.status), `${JSON.stringify(id)}: ${r.status}`);
+    assert.ok(!/has an invalid format|Internal error/.test(r.status));
+    assert.strictEqual(r.calls, 0, 'nothing was sent to the main process');
+    assert.notStrictEqual(r.state, 'Saved');
+    assert.strictEqual(r.v.el('mailbox-google-client-secret').value, '', 'the secret field is still emptied');
+    assert.ok(!r.status.includes(SECRET) && !r.status.includes(secret), 'the secret is never echoed');
+  }
+});
+
+test('P3. a refusal from the main process names the field, never "has an invalid format" alone', async () => {
+  const m = mainSide();
+  const v = ui({ ...m.api, setGoogleClient: async () => ({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid payload', errors: [{ path: '$.clientId', message: 'has an invalid format' }] } }) });
+  await v.u.load();
+  await flush();
+  v.el('mailbox-google-client-id').value = CLIENT_ID;
+  v.el('mailbox-google-client-secret').value = SECRET;
+  v.el('btn-mailbox-save-client').click();
+  await flush();
+  assert.strictEqual(v.el('mailbox-status').textContent, 'Client ID has an invalid format.');
+});
+
+test('P3b. a refusal from the service itself (8-character minimum before the ending) is labelled too', async () => {
+  const m = mainSide();
+  const res = await m.api.setGoogleClient({ clientId: 'abcd.apps.googleusercontent.com', clientSecret: SECRET });
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error.errors[0].path, '$.clientId', 'the service refusal carries the field');
+});
+
+test('P4. the hint does not say a personal Gmail account needs an Internal Workspace app', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.ok(!html.includes('(an Internal app in your Google Workspace)'));
+  assert.ok(/Personal Gmail: an External app in Testing, with your own address added as a test user/.test(html));
+});
+
 test('S. main.js wires the tested module, and every `new Store()` left in main.js has its Store in scope', () => {
   const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
   assert.ok(/function mailboxDepsFromStore\(\) \{[\s\S]*?createMailboxPersistence\(\{/.test(main), 'mailbox persistence comes from the tested module');

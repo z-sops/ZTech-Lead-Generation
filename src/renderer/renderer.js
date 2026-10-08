@@ -11410,11 +11410,40 @@ function mailboxBridge() {
   return api && api.mailboxes && typeof api.mailboxes.list === 'function' ? api.mailboxes : null;
 }
 
+const F266_FIELD_LABELS = { '$.clientId': 'Client ID', '$.clientSecret': 'Client secret' };
+
+/**
+ * A pasted Google client value, cleaned the way people paste it: surrounding spaces / line breaks,
+ * hidden zero-width characters, and one pair of quotes copied from a `$env:X="..."` line or a JSON
+ * file. Nothing else is changed.
+ */
+function f266CleanPaste(raw) {
+  let v = String(raw || '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').trim();
+  if (v.length >= 2 && ((v[0] === '"' && v[v.length - 1] === '"') || (v[0] === "'" && v[v.length - 1] === "'"))) v = v.slice(1, -1).trim();
+  return v;
+}
+
+/** Why a client ID / secret will be refused, in words a person can act on; '' when it looks right. The value is never echoed. */
+function f266ClientProblem(clientId, clientSecret) {
+  if (/^\$env:|=/.test(clientId)) return 'Paste only the Client ID itself, not the whole $env:... line.';
+  if (!/\.apps\.googleusercontent\.com$/.test(clientId)) return 'The Client ID must be the whole ID ending in .apps.googleusercontent.com. Copy it again from Google Cloud > Clients > your Desktop client.';
+  if (!/^[A-Za-z0-9._-]+\.apps\.googleusercontent\.com$/.test(clientId)) return 'The Client ID contains a character that is not allowed (a space, quote or other copied character). Copy it again from Google Cloud.';
+  const head = clientId.length - '.apps.googleusercontent.com'.length;
+  if (head < 8 || head > 200) return 'The Client ID is not the right length. Copy the whole ID again from Google Cloud.';
+  if (/^\$env:/.test(clientSecret)) return 'Paste only the Client secret itself, not the whole $env:... line.';
+  if (/\s/.test(clientSecret)) return 'The Client secret contains a space or line break. Copy it again from Google Cloud.';
+  if (clientSecret.length < 8 || clientSecret.length > 200) return 'The Client secret is not the right length. Copy it again from Google Cloud.';
+  return '';
+}
+
 function f266Unwrap(res, fallback) {
   if (res && res.ok === true) return res.data;
   const err = res && res.error ? res.error : {};
   // A validation refusal carries its reason in errors[0] (written by ZTech, never remote text).
-  const detail = Array.isArray(err.errors) && err.errors[0] && typeof err.errors[0].message === 'string' ? err.errors[0].message : '';
+  const first = Array.isArray(err.errors) && err.errors[0] && typeof err.errors[0].message === 'string' ? err.errors[0] : null;
+  // Name the field ("Client ID has an invalid format"), never its value.
+  const field = first && F266_FIELD_LABELS[String(first.path)];
+  const detail = first ? (field ? `${field} ${first.message}.` : first.message) : '';
   const msg = detail || (typeof err.message === 'string' && err.message ? err.message : fallback);
   throw new Error(msg);
 }
@@ -11670,11 +11699,17 @@ function f266SaveLimits(mailboxId, limits) {
 function f266SaveClient() {
   const idEl = document.getElementById('mailbox-google-client-id');
   const secretEl = document.getElementById('mailbox-google-client-secret');
-  const clientId = idEl ? idEl.value.trim() : '';
-  const clientSecret = secretEl ? secretEl.value.trim() : '';
+  const clientId = idEl ? f266CleanPaste(idEl.value) : '';
+  const clientSecret = secretEl ? f266CleanPaste(secretEl.value) : '';
   if (secretEl) secretEl.value = ''; // emptied whatever happens; never shown again
   if (!clientId || !clientSecret) {
     f266Status('mailbox-status', 'Enter both the client ID and the client secret.');
+    return null;
+  }
+  if (idEl) idEl.value = clientId; // show the cleaned ID (it is not a secret)
+  const problem = f266ClientProblem(clientId, clientSecret);
+  if (problem) {
+    f266Status('mailbox-status', problem);
     return null;
   }
   return f266Act(() => mailboxBridge().setGoogleClient({ clientId, clientSecret }), 'The Google client could not be saved.');
