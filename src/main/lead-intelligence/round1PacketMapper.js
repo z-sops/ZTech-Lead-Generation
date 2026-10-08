@@ -238,7 +238,13 @@ function fromRound1Packet(packet, record) {
   // Review fix: the gateway marks a finding / strength usable only when its section is complete.
   // Anything else is never offered as citable evidence; it is named in the limitations instead.
   const skipped = [];
-  const usable = (item) => item.usableForClaims !== false;
+  const sectionState = (name) => {
+    const e = isObject(packet.sections) ? packet.sections[name] : null;
+    return isObject(e) ? text(e.state, 30).toLowerCase() : '';
+  };
+  // Both the gateway's own flag AND the section state must say usable (an item without the flag
+  // from a section that did not complete is not trusted either).
+  const usable = (item) => item.usableForClaims !== false && sectionState(text(item.section, 40)) === 'complete';
 
   const completeness = {};
   const sections = isObject(packet.sections) ? packet.sections : {};
@@ -310,7 +316,7 @@ function fromRound1Packet(packet, record) {
     return null;
   }).filter(Boolean);
   for (const section of [...new Set(skipped)]) {
-    limitations.push({ code: 'ROUND1_SECTION_NOT_USABLE', message: `Findings from the ${section} section were not used: that section did not complete.` });
+    limitations.push({ code: 'ROUND1_SECTION_NOT_USABLE', message: `Findings and strengths from the ${section} section were not used: that section did not complete.` });
   }
 
   const redirectedFrom = text(subject.redirectedFrom, 2048);

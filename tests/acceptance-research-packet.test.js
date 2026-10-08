@@ -231,6 +231,17 @@ test('Q1. a section that did not complete is never cited, and is named; a failed
   r.records.push(rec);
   const p = await r.li.outreach.generate({ leadId: 'L1' });
   assert.ok(p.observations.every((o) => !/meta description/i.test(o.text)), 'the pitch never cites it');
+  // An item WITHOUT the gateway flag from a section that did not complete is not trusted either.
+  const unflagged = JSON.parse(JSON.stringify(rec));
+  for (const g of unflagged.packet.issues) delete g.usableForClaims;
+  const r2 = round1PacketMapper(normalizeRound1Record(unflagged), { requestedDomain: `www.${DOMAIN}` });
+  assert.ok(!r2.findings.some((g) => /meta description/i.test(g.title)));
+  assert.ok(r2.findings.some((g) => /Slow server/.test(g.title)));
+  // And the gateway's own "not usable" flag is honoured even where the section state says complete.
+  const full = await realRound1Record('L1');
+  full.packet.issues.find((g) => /Slow server/.test(g.title)).usableForClaims = false;
+  const r3 = round1PacketMapper(normalizeRound1Record(full), { requestedDomain: `www.${DOMAIN}` });
+  assert.ok(!r3.findings.some((g) => /Slow server/.test(g.title)));
   // A run Zuni-SEO reported as failed is a failed outcome, not partial.
   const failedRec = await realRound1Record('L1', iso(NOW - 3600000), { runStatus: 'failed' });
   assert.strictEqual(failedRec.packet.availability, 'failed');
