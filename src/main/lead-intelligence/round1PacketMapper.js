@@ -232,7 +232,13 @@ function fromRound1Packet(packet, record) {
   const subject = isObject(packet.subject) ? packet.subject : {};
   const prov = isObject(packet.provenance) ? packet.provenance : {};
   const availability = text(packet.availability, 60) || null;
-  const outcome = outcomeFor(record, { availability });
+  // The gateway gives EVERY unfinished availability the phase "partial"; a run Zuni-SEO reported
+  // as failed must stay failed (review fix), whatever the phase says.
+  const outcome = availability && availability.toLowerCase() === 'failed' ? 'failed' : outcomeFor(record, { availability });
+  // Review fix: the gateway marks a finding / strength usable only when its section is complete.
+  // Anything else is never offered as citable evidence; it is named in the limitations instead.
+  const skipped = [];
+  const usable = (item) => item.usableForClaims !== false;
 
   const completeness = {};
   const sections = isObject(packet.sections) ? packet.sections : {};
@@ -265,6 +271,7 @@ function fromRound1Packet(packet, record) {
     if (!isObject(g)) return null;
     const title = text(g.title, 300);
     if (!title) return null;
+    if (!usable(g)) { skipped.push(text(g.section, 40) || 'unknown'); return null; }
     const findingId = text(g.ruleId, 200) || text(g.id, 200);
     return {
       id: findingId || `finding_${title}`,
@@ -283,6 +290,7 @@ function fromRound1Packet(packet, record) {
     if (!isObject(st)) return null;
     const statement = text(st.statement, 1000);
     if (!statement) return null;
+    if (!usable(st)) { skipped.push(text(st.section, 40) || 'unknown'); return null; }
     return {
       statement,
       area: text(st.section, 40),
@@ -301,6 +309,9 @@ function fromRound1Packet(packet, record) {
     if (isObject(l)) return { code: text(l.code, 100) || 'ROUND1_LIMIT', message: text(l.message, 1000) };
     return null;
   }).filter(Boolean);
+  for (const section of [...new Set(skipped)]) {
+    limitations.push({ code: 'ROUND1_SECTION_NOT_USABLE', message: `Findings from the ${section} section were not used: that section did not complete.` });
+  }
 
   const redirectedFrom = text(subject.redirectedFrom, 2048);
   return {

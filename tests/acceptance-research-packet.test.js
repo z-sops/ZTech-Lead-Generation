@@ -35,7 +35,7 @@ const iso = (ms) => new Date(ms).toISOString();
 const DOMAIN = 'acme.example.com';
 
 /** A valid Zuni-SEO Evidence Envelope v1, as Zuni-SEO returns it (the bundle validates it). */
-function envelope(capturedAt) {
+function envelope(capturedAt, { runStatus = 'done', content = 'complete', contentReason = null, basis = null } = {}) {
   const url = `https://www.${DOMAIN}/`;
   const hash = (n) => 'sha256:' + String(n).repeat(64);
   const fact = (id, statement, value) => ({ fact_id: id, statement, value, unit: null, basis: 'observed',
@@ -44,17 +44,17 @@ function envelope(capturedAt) {
     contract_version: '1.0',
     subject: { requested_url: url, audited_url: url, domain: `www.${DOMAIN}`, redirected_from: null,
       identity: { title: 'Acme home', site_name: 'Acme', org_name: null } },
-    run: { job_id: 'job_00000000000000a1', status: 'done', depth: 'standard', max_pages: 40, engine_version: '2.3.0',
+    run: { job_id: 'job_00000000000000a1', status: runStatus, depth: 'standard', max_pages: 40, engine_version: '2.3.0',
       requested_at: capturedAt, finished_at: capturedAt, captured_at: capturedAt,
       crawl: { pages_fetched: 14, html_pages: 14, discovered_urls: 20, coverage_limited: false, rendering_mode: 'raw' } },
     completeness: { technical: { status: 'complete', reason: null }, ai_access: { status: 'complete', reason: null },
-      content: { status: 'complete', reason: null } },
+      content: { status: content, reason: contentReason } },
     facts: [fact('f001', 'Homepage responded with HTTP 200', 200), fact('f002', 'Pages without a meta description', 4), fact('f003', 'Server response time (s)', 2.4)],
     findings: [
-      { finding_id: 'meta_description_missing', rule_version: '2.3.0', area: 'meta', section: 'content', severity: 'medium', basis: 'standard',
+      { finding_id: 'meta_description_missing', rule_version: '2.3.0', area: 'meta', section: 'content', severity: 'medium', basis: basis || 'standard',
         title: 'Pages without a meta description', observation: '4 of 14 pages have no meta description.', affected_urls: [url], affected_url_count: 4,
         fact_ids: ['f002'], recommendation: 'Write a unique meta description for each page.', what_it_means: 'Search results show less useful snippets.' },
-      { finding_id: 'slow_server_response', rule_version: '2.3.0', area: 'performance', section: 'technical', severity: 'high', basis: 'research',
+      { finding_id: 'slow_server_response', rule_version: '2.3.0', area: 'performance', section: 'technical', severity: 'high', basis: basis || 'research',
         title: 'Slow server response time', observation: 'The server took 2.4s to respond.', affected_urls: [url], affected_url_count: 1,
         fact_ids: ['f003'], recommendation: 'Investigate hosting response time.', what_it_means: null },
     ],
@@ -66,12 +66,12 @@ function envelope(capturedAt) {
 }
 
 /** The exact record the app stores in prospect_research.record_json, made by the real bundle. */
-async function realRound1Record(leadRef, capturedAt = iso(NOW - 3600000)) {
+async function realRound1Record(leadRef, capturedAt = iso(NOW - 3600000), opts = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ztech-acc-'));
   const store = new bundle.InMemoryResearchStateStore();
   const engine = bundle.createProspectResearch(mergeConfig({}), { store, quarantine: new bundle.InMemoryQuarantine(), credentials: { getApiKey: async () => null }, log: () => {} });
   const file = path.join(tmp, 'envelope.json');
-  fs.writeFileSync(file, JSON.stringify(envelope(capturedAt)));
+  fs.writeFileSync(file, JSON.stringify(envelope(capturedAt, opts)));
   await engine.gateway.importArtifact(leadRef, file);
   const rec = await store.latestForLead(leadRef);
   await engine.close();
@@ -218,6 +218,33 @@ test('9. the real Pitch tab: after Regenerate, the draft shows evidence and "App
   assert.strictEqual(button('Approve pitch').disabled, false, 'Approve pitch is enabled');
   assert.ok(/Human approval/.test(text) && !/Evidence link/.test(text), 'the gate asks only for approval');
   assert.strictEqual(await r.store.approvals.latestForPitch(stale.pitch_id), null, 'nothing was approved by Regenerate');
+});
+
+test('Q1. a section that did not complete is never cited, and is named; a failed run stays failed', async () => {
+  // Run done, content section partial: content findings are not usable for claims.
+  const rec = await realRound1Record('L1', iso(NOW - 3600000), { content: 'partial', contentReason: 'Page limit reached' });
+  const result = round1PacketMapper(normalizeRound1Record(rec), { requestedDomain: `www.${DOMAIN}` });
+  assert.ok(!result.findings.some((g) => /meta description/i.test(g.title)), 'the content finding is not offered');
+  assert.ok(result.findings.some((g) => /Slow server/.test(g.title)), 'the technical finding (complete section) still is');
+  assert.ok(result.limitations.some((l) => l.code === 'ROUND1_SECTION_NOT_USABLE' && /content/.test(l.message)));
+  const r = runtime();
+  r.records.push(rec);
+  const p = await r.li.outreach.generate({ leadId: 'L1' });
+  assert.ok(p.observations.every((o) => !/meta description/i.test(o.text)), 'the pitch never cites it');
+  // A run Zuni-SEO reported as failed is a failed outcome, not partial.
+  const failedRec = await realRound1Record('L1', iso(NOW - 3600000), { runStatus: 'failed' });
+  assert.strictEqual(failedRec.packet.availability, 'failed');
+  assert.strictEqual(round1PacketMapper(normalizeRound1Record(failedRec), { requestedDomain: `www.${DOMAIN}` }).outcome, 'failed');
+});
+
+test('Q2. findings whose basis is only "observed" map fine but give the pitch nothing to cite (existing eligibility rule, stated)', async () => {
+  const rec = await realRound1Record('L1', iso(NOW - 3600000), { basis: 'observed' });
+  const r = runtime();
+  r.records.push(rec);
+  const p = await r.li.outreach.generate({ leadId: 'L1' });
+  assert.ok(p.packet_id, 'the evidence packet IS stored');
+  assert.strictEqual(p.observations.length, 0, 'but the pitch only cites standard / research findings');
+  assert.strictEqual(p.status, 'insufficient_evidence');
 });
 
 test('B1. a record in a dialect nobody knows is still refused (never guessed), so a pitch stays honestly evidence-free', async () => {
