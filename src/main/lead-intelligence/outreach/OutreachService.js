@@ -263,44 +263,63 @@ class OutreachService {
   }
 
   /**
-   * Acceptance fix (8 Oct 2026): rebuild an UNAPPROVED, UNSENT draft from the lead's latest stored
-   * research, IN PLACE (same pitch_id). A draft written before research finished (no evidence) or
-   * before newer research arrived (EVIDENCE_OUTDATED) is otherwise stuck. In place on purpose:
-   * the stale text no longer exists anywhere, so it can never be approved or sent by mistake.
+   * Acceptance fix (8 Oct 2026): rebuild a pitch draft from the lead's latest stored research, IN
+   * PLACE (same pitch_id). A draft written before research finished (no evidence) or before newer
+   * research arrived (EVIDENCE_OUTDATED) is otherwise stuck. In place on purpose: the stale text no
+   * longer exists anywhere, so it can never be approved or sent by mistake.
    *
    * Refused - nothing changes - for:
    *   a follow-up step (F28 drafts belong to their sequence);
-   *   a pitch approved for its CURRENT content (an approved pitch is never rewritten silently;
-   *     editing it withdraws the approval, after which it may be regenerated);
-   *   a pitch any send was recorded for (attempted / accepted / failed: it is history).
-   * The result is a fresh draft with the same generator and the same inputs as Generate; it needs
-   * a new human approval like any other draft.
+   *   a pitch with any recorded send attempt (attempted / accepted / failed: it is history);
+   *   a pitch approved for its CURRENT content whose evidence is still the latest research (an
+   *     approved pitch is never rewritten without reason). When newer research exists the gate
+   *     already blocks it (EVIDENCE_OUTDATED), and an explicit Regenerate withdraws the approval.
+   * Every earlier approval of the pitch is withdrawn and recorded (APPROVAL_INVALIDATED): a
+   * regenerated draft ALWAYS needs a fresh human approval, even if its text equals content approved
+   * before. Approval and send state are checked again right before the write, so an approve or a
+   * send that lands while the draft is being rebuilt makes it refuse instead of overwriting.
    */
   async regenerate({ pitchId }) {
     const p = await this._pitchById(pitchId);
     if (!p) throw new NotFoundError('Pitch', pitchId);
     if (p.kind === 'followup') throw new LiError('PITCH_REGENERATE_FOLLOWUP', 'A follow-up is written from its first email and cannot be regenerated here.');
-    const approval = await this.store.approvals.latestForPitch(p.pitch_id);
-    if (approval && approval.content_hash === p.content_hash) {
-      throw new LiError('PITCH_APPROVED', 'This pitch is approved, so it is not rewritten. Edit it first (that withdraws the approval) if it must change.');
-    }
-    const sends = await this.store.sends.list({ pitchId: p.pitch_id, limit: 50 });
-    if ((sends.rows || []).some((r) => r.state !== 'blocked')) {
-      throw new LiError('PITCH_ALREADY_SENT', 'This pitch was already sent (or a send was attempted), so it is kept as it is.');
-    }
+    await this._regenerateAllowed(p, null);
     const ctx = await this.contexts.getContext(p.lead_id, { targetId: p.target_id ?? undefined });
     const fresh = generatePitch({ view: ctx.view, packet: ctx.packet, icpFit: ctx.icp_fit, offer: this.offer, now: this.clock(), targetId: p.target_id ?? null });
     const next = { ...fresh, pitch_id: p.pitch_id, created_at: p.created_at };
-    // A regenerated draft ALWAYS needs a fresh approval, even if its text happens to equal content
-    // approved earlier: earlier approvals of this pitch (none matches its current content, checked
-    // above) are withdrawn FIRST, and that is recorded. A crash in between leaves the old draft,
-    // still unapproved - never an approved new one.
-    if (approval) {
-      await this.store.approvals.deleteForPitches([p.pitch_id]);
-      await this._recordActivity(p, 'APPROVAL_INVALIDATED', { reason: 'The pitch was regenerated from the latest research.', contentHash: next.content_hash });
-    }
+    // Re-check against what is stored NOW (nothing awaits between this check and the writes that
+    // could let a human approval or a send of the current content slip through: a later approve
+    // approves the OLD hash, which the new content no longer matches).
+    const current = await this.store.pitches.get(p.pitch_id);
+    if (!current || current.content_hash !== p.content_hash) throw new LiError('PITCH_CHANGED', 'The pitch changed while it was being rebuilt. Look at it, then regenerate again.');
+    const approval = await this._regenerateAllowed(current, ctx.packet);
+    if (approval) await this.store.approvals.deleteForPitches([p.pitch_id]);
     await this.store.pitches.upsert(next);
+    if (approval) await this._recordActivity(next, 'APPROVAL_INVALIDATED', { reason: 'The pitch was regenerated from the latest research.', contentHash: next.content_hash });
     return next;
+  }
+
+  /** Throws when `p` may not be regenerated; returns its latest approval (or null). */
+  async _regenerateAllowed(p, latestPacket) {
+    for (let offset = 0; ; offset += 50) {
+      const page = await this.store.sends.list({ pitchId: p.pitch_id, limit: 50, offset });
+      const rows = page.rows || [];
+      if (rows.some((r) => r.state !== 'blocked')) {
+        throw new LiError('PITCH_ALREADY_SENT', 'This pitch was already sent (or a send was attempted), so it is kept as it is.');
+      }
+      if (rows.length < 50) break;
+    }
+    const approval = await this.store.approvals.latestForPitch(p.pitch_id);
+    if (approval && approval.content_hash === p.content_hash) {
+      // Approved for this exact content: only newer research (EVIDENCE_OUTDATED) is a reason to
+      // rebuild it. Before the research is read, `latestPacket` is null and the stored packet is
+      // looked up instead.
+      const latest = latestPacket || (await this.store.packets.latestForLead(p.lead_id));
+      if (!latest || latest.packet_id === p.packet_id) {
+        throw new LiError('PITCH_APPROVED', 'This pitch is approved and its research is current, so it is not rewritten.');
+      }
+    }
+    return approval;
   }
 
   async get(pitchId) {

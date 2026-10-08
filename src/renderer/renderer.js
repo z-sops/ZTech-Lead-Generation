@@ -8784,10 +8784,16 @@ function f11RenderPitch(lead, pitch, gate, seq) {
   // Acceptance fix: a draft that is NOT approved for its current content (the gate still asks
   // for Human approval) can be rebuilt from the latest stored research, in place. Two clicks;
   // it never approves and never sends. An approved or sent pitch is refused by the backend.
-  const needsApproval = Boolean(gate) && Array.isArray(gate.reasons) && gate.reasons.some((r) => r && r.code === 'HUMAN_APPROVAL');
-  if (needsApproval && pitch.pitch_id) {
+  const reasonCodes = gate && Array.isArray(gate.reasons) ? gate.reasons.map((r) => r && r.code) : [];
+  const needsApproval = reasonCodes.includes('HUMAN_APPROVAL');
+  // An APPROVED pitch is offered Regenerate only when newer research exists (EVIDENCE_OUTDATED),
+  // and the confirmation says plainly that the approval is withdrawn.
+  const approvedButOutdated = !needsApproval && reasonCodes.includes('EVIDENCE_OUTDATED');
+  if ((needsApproval || approvedButOutdated) && pitch.pitch_id) {
     let armed = false;
-    const note = f11El('p', 'lead-drawer-muted f11-regenerate-note', 'Regenerate rebuilds this draft from the latest stored research. Unsaved edits on screen are lost, and the new draft must be approved again.');
+    const note = f11El('p', 'lead-drawer-muted f11-regenerate-note', approvedButOutdated
+      ? 'Newer research exists. Regenerate rebuilds this pitch from it and WITHDRAWS your approval: the new draft must be approved again.'
+      : 'Regenerate rebuilds this draft from the latest stored research. Unsaved edits on screen are lost, and the new draft must be approved again.');
     const regenerate = f11ActionButton('Regenerate from latest research', 'btn btn-sm btn-secondary', () => {
       if (!armed) {
         armed = true;

@@ -23,8 +23,7 @@ const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 
 /** A runtime whose Round-1 research can be "finished" mid-test (records start empty). */
-function runtime() {
-  const store = new MemoryStore();
+function runtime(store = new MemoryStore()) {
   const leads = { L1: lead({}) };
   const records = [];
   const li = createLeadIntelligence({
@@ -47,9 +46,10 @@ function runtime() {
   });
   const finishResearch = (n = 1) => {
     const domain = 'acme.example.com';
+    const at = new Date(Date.parse(CAPTURED_AT) + (n - 1) * 3600000).toISOString(); // each run is newer
     records.push(round1Record({
       id: `rec_L1_${n}`, leadRef: 'L1', domain, providerJobId: `job_L1_${n}`,
-      packet: zuniV1Packet({ domain, capturedAt: CAPTURED_AT }), createdAt: CAPTURED_AT, updatedAt: new Date(Date.parse(CAPTURED_AT) + n * 1000).toISOString(),
+      packet: zuniV1Packet({ domain, capturedAt: at }), createdAt: at, updatedAt: at,
     }));
   };
   const handlers = {};
@@ -107,9 +107,8 @@ test('9. the old stale draft can never be sent: its text is gone, and an approve
   assert.notStrictEqual(fresh.content_hash, stale.content_hash);
   const all = [...r.store.pitches.rows.values()].filter((p) => p.lead_id === 'L1');
   assert.ok(all.every((p) => p.content_hash !== stale.content_hash), 'the stale content is stored nowhere');
-  // An approved pitch is not rewritten silently.
+  // An approved pitch whose research is current is not rewritten.
   await r.li.outreach.approve({ pitchId: fresh.pitch_id });
-  r.finishResearch(2); // newer research arrives
   await assert.rejects(r.li.outreach.regenerate({ pitchId: fresh.pitch_id }), (e) => e.code === 'PITCH_APPROVED');
   assert.strictEqual((await r.li.outreach.get(fresh.pitch_id)).content_hash, fresh.content_hash, 'unchanged');
   // Editing withdraws the approval; then it may be regenerated, and needs a NEW approval.
@@ -146,7 +145,7 @@ test('I1. the regenerate channel: closed schema, the pitch must belong to the le
   const res = await r.ipc(C, { leadId: 'L1', pitchId: stale.pitch_id });
   assert.strictEqual(res.ok, true);
   assert.ok(res.data.observations.length > 0);
-  assert.strictEqual(r.store.approvals.rows ? r.store.approvals.rows.size || [...r.store.approvals.rows].length : 0, 0, 'regenerate never approves');
+  assert.strictEqual(await r.store.approvals.latestForPitch(stale.pitch_id), null, 'regenerate never approves');
 });
 
 test('F1. a follow-up step (F28) is never regenerated here: it belongs to its sequence', async () => {
@@ -160,7 +159,80 @@ test('F1. a follow-up step (F28) is never regenerated here: it belongs to its se
   assert.strictEqual((await s.li.outreach.get(stepPitch)).content_hash, before.content_hash, 'unchanged');
   // The first email itself was sent, so it is history too.
   const first = await s.li.outreach.latestForLead('L1');
-  await assert.rejects(s.li.outreach.regenerate({ pitchId: first.pitch_id }), (e) => e.code === 'PITCH_APPROVED' || e.code === 'PITCH_ALREADY_SENT');
+  await assert.rejects(s.li.outreach.regenerate({ pitchId: first.pitch_id }), (e) => e.code === 'PITCH_ALREADY_SENT');
+});
+
+test('O1. an APPROVED pitch with newer research (EVIDENCE_OUTDATED) can be regenerated explicitly; the approval is withdrawn', async () => {
+  const r = runtime();
+  r.finishResearch();
+  const p = await r.li.outreach.generate({ leadId: 'L1' });
+  await r.li.outreach.approve({ pitchId: p.pitch_id });
+  r.finishResearch(2);
+  const g = await r.li.outreach.gate({ pitchId: p.pitch_id });
+  assert.ok(gateCodes(g).includes('EVIDENCE_OUTDATED') && !gateCodes(g).includes('HUMAN_APPROVAL'));
+  const t = tab(r);
+  await t.ui.loadLeadDrawerPitch({ id: 'L1', website: 'https://acme.example.com' });
+  t.button('Regenerate from latest research').fire('click');
+  assert.ok(/WITHDRAWS your approval/.test(t.box().textContent));
+  t.button('Yes, regenerate').fire('click');
+  await settle();
+  const after = await r.li.outreach.get(p.pitch_id);
+  assert.strictEqual(after.packet_id, (await r.store.packets.latestForLead('L1')).packet_id, 'rebuilt from the newest research');
+  assert.strictEqual(await r.store.approvals.latestForPitch(p.pitch_id), null, 'the approval was withdrawn');
+  assert.deepStrictEqual(gateCodes(await r.li.outreach.gate({ pitchId: p.pitch_id })), ['HUMAN_APPROVAL']);
+  assert.ok(await r.store.activity.latestForPitch(p.pitch_id, 'APPROVAL_INVALIDATED'));
+});
+
+test('R1. race: an approve or a send that lands while the draft is rebuilt makes Regenerate refuse - nothing sent is ever rewritten', async () => {
+  const r = runtime();
+  const stale = await r.li.outreach.generate({ leadId: 'L1' });
+  r.finishResearch();
+  const real = r.li.outreach.contexts.getContext.bind(r.li.outreach.contexts);
+  // A send attempt is recorded while regenerate is reading the research.
+  let once = true;
+  r.li.outreach.contexts.getContext = async (...a) => {
+    if (once) once = false; else return real(...a);
+    await r.store.sends.record({ send_id: 'send_r1', lead_id: 'L1', pitch_id: stale.pitch_id, channel: 'email', content_hash: stale.content_hash, idempotency_key: 'kr1', state: 'attempted', provider_id: 'gmail', provider_message_id: null, failure_code: null, failure_message: null, created_at: new Date(NOW).toISOString(), updated_at: new Date(NOW).toISOString() });
+    return real(...a);
+  };
+  await assert.rejects(r.li.outreach.regenerate({ pitchId: stale.pitch_id }), (e) => e.code === 'PITCH_ALREADY_SENT');
+  assert.strictEqual((await r.li.outreach.get(stale.pitch_id)).content_hash, stale.content_hash, 'unchanged');
+  // An edit that lands mid-rebuild is not overwritten either.
+  const r2 = runtime();
+  r2.finishResearch();
+  const p2 = await r2.li.outreach.generate({ leadId: 'L1' });
+  const real2 = r2.li.outreach.contexts.getContext.bind(r2.li.outreach.contexts);
+  let once2 = true;
+  r2.li.outreach.contexts.getContext = async (...a) => { if (!once2) return real2(...a); once2 = false; await r2.li.outreach.update({ pitchId: p2.pitch_id, edits: { callToAction: 'Edited meanwhile?' } }); return real2(...a); };
+  await assert.rejects(r2.li.outreach.regenerate({ pitchId: p2.pitch_id }), (e) => e.code === 'PITCH_CHANGED');
+  assert.strictEqual((await r2.li.outreach.get(p2.pitch_id)).callToAction, 'Edited meanwhile?');
+  // An approval of the current content that lands mid-rebuild: refused (research is current).
+  const r3 = runtime();
+  r3.finishResearch();
+  const p3 = await r3.li.outreach.generate({ leadId: 'L1' });
+  const real3 = r3.li.outreach.contexts.getContext.bind(r3.li.outreach.contexts);
+  let once3 = true;
+  r3.li.outreach.contexts.getContext = async (...a) => { if (!once3) return real3(...a); once3 = false; await r3.li.outreach.approve({ pitchId: p3.pitch_id }); return real3(...a); };
+  await assert.rejects(r3.li.outreach.regenerate({ pitchId: p3.pitch_id }), (e) => e.code === 'PITCH_APPROVED');
+  assert.strictEqual((await r3.li.outreach.gate({ pitchId: p3.pitch_id })).decision, 'allowed', 'the approval stands');
+});
+
+test('S2. the whole path on the SQL store: packet link and status are stored in the row too', async () => {
+  let initSqlJs;
+  try { initSqlJs = require('sql.js'); } catch { return; }
+  const { SqlJsStore } = require(path.join(LI, 'persistence', 'SqlJsStore.js'));
+  const SQL = await initSqlJs();
+  const db = new SQL.Database();
+  const store = new SqlJsStore({ db, logger: SILENT });
+  await store.migrate();
+  const r = runtime(store);
+  const stale = await r.li.outreach.generate({ leadId: 'L1' });
+  r.finishResearch();
+  const fresh = await r.li.outreach.regenerate({ pitchId: stale.pitch_id });
+  assert.ok(fresh.observations.length > 0);
+  const row = db.exec('SELECT packet_id, status, content_hash FROM li_pitch_drafts WHERE pitch_id = ?', [stale.pitch_id])[0].values[0];
+  assert.deepStrictEqual(row, [fresh.packet_id, 'draft', fresh.content_hash]);
+  assert.deepStrictEqual(gateCodes(await r.li.outreach.gate({ pitchId: fresh.pitch_id })), ['HUMAN_APPROVAL']);
 });
 
 test('S1. SQL store: withdrawing approvals of one pitch leaves every other pitch untouched (twin of Memory)', async () => {

@@ -438,7 +438,7 @@ class SqlPitches {
   async upsert(rec) {
     await this.s.tx(() => this.s.db.run(
       `INSERT INTO li_pitch_drafts (pitch_id, lead_id, packet_id, status, content_hash, draft_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)
-       ON CONFLICT(pitch_id) DO UPDATE SET status = excluded.status, content_hash = excluded.content_hash, draft_json = excluded.draft_json, updated_at = excluded.updated_at`,
+       ON CONFLICT(pitch_id) DO UPDATE SET packet_id = excluded.packet_id, status = excluded.status, content_hash = excluded.content_hash, draft_json = excluded.draft_json, updated_at = excluded.updated_at`,
       [rec.pitch_id, rec.lead_id, rec.packet_id ?? null, rec.status, rec.content_hash, JSON.stringify(rec), rec.created_at, rec.updated_at],
     ));
     return { ...rec };
