@@ -287,9 +287,10 @@ class OutreachService {
     const ctx = await this.contexts.getContext(p.lead_id, { targetId: p.target_id ?? undefined });
     const fresh = generatePitch({ view: ctx.view, packet: ctx.packet, icpFit: ctx.icp_fit, offer: this.offer, now: this.clock(), targetId: p.target_id ?? null });
     const next = { ...fresh, pitch_id: p.pitch_id, created_at: p.created_at };
-    // Re-check against what is stored NOW (nothing awaits between this check and the writes that
-    // could let a human approval or a send of the current content slip through: a later approve
-    // approves the OLD hash, which the new content no longer matches).
+    // Re-check against what is stored NOW. The awaits between this check and the writes are store
+    // calls only, and the production store persists synchronously (accountStore.saveDB), so no IPC
+    // handler runs in between. If persistence ever becomes truly async, this needs a per-pitch lock.
+    // An approve that still lands later approves the OLD hash, which the new content does not match.
     const current = await this.store.pitches.get(p.pitch_id);
     if (!current || current.content_hash !== p.content_hash) throw new LiError('PITCH_CHANGED', 'The pitch changed while it was being rebuilt. Look at it, then regenerate again.');
     const approval = await this._regenerateAllowed(current, ctx.packet);

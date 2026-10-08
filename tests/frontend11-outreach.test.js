@@ -441,7 +441,8 @@ test('13. only window.ztechLeadIntel is used, and only the five approved methods
   }
   const calls = [...new Set([...f11Code.matchAll(/api\.(pitch|outreach)\.(\w+)/g)].map((m) => m[1] + '.' + m[2]))].sort();
   // Acceptance-fix declared lock update: + pitch.regenerate (rebuilds an unapproved draft; never approves or sends).
-  assert.deepStrictEqual(calls, ['outreach.approve', 'outreach.gate', 'pitch.generate', 'pitch.get', 'pitch.regenerate', 'pitch.update']);
+  // + outreach.activity (read-only: hides Regenerate for a pitch that was sent).
+  assert.deepStrictEqual(calls, ['outreach.activity', 'outreach.approve', 'outreach.gate', 'pitch.generate', 'pitch.get', 'pitch.regenerate', 'pitch.update']);
 });
 
 test('14. the F11 block builds no HTML strings', () => {

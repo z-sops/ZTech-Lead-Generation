@@ -8696,7 +8696,7 @@ function f11RenderUnsupportedClaims(claims) {
 }
 
 /** The stored draft, its status, the editable text and the gate result. */
-function f11RenderPitch(lead, pitch, gate, seq) {
+function f11RenderPitch(lead, pitch, gate, seq, facts) {
   const box = document.getElementById('lead-drawer-pitch');
   if (!box) return;
   const status = f11Text(pitch.status);
@@ -8788,7 +8788,7 @@ function f11RenderPitch(lead, pitch, gate, seq) {
   const needsApproval = reasonCodes.includes('HUMAN_APPROVAL');
   // An APPROVED pitch is offered Regenerate only when newer research exists (EVIDENCE_OUTDATED),
   // and the confirmation says plainly that the approval is withdrawn.
-  const approvedButOutdated = !needsApproval && reasonCodes.includes('EVIDENCE_OUTDATED');
+  const approvedButOutdated = !needsApproval && reasonCodes.includes('EVIDENCE_OUTDATED') && Boolean(facts) && facts.sent === false;
   if ((needsApproval || approvedButOutdated) && pitch.pitch_id) {
     let armed = false;
     const note = f11El('p', 'lead-drawer-muted f11-regenerate-note', approvedButOutdated
@@ -8897,7 +8897,23 @@ async function f11Run(lead, action) {
 
     const gate = f11Unwrap(await api.outreach.gate({ pitchId: pitch.pitch_id, channel: 'email' }));
     if (!f11PitchIsCurrent(seq, leadId)) return;
-    f11RenderPitch(lead, pitch, gate, seq);
+    // Acceptance fix: an approved pitch with newer research may be regenerated only if it was
+    // never sent (a sent pitch is history). Read from the pitch's activity record, only in that
+    // case: an attempted, accepted or failed send means sent; anything unknown counts as sent.
+    let sent = true;
+    const codes = Array.isArray(gate && gate.reasons) ? gate.reasons.map((r) => r && r.code) : [];
+    if (codes.includes('EVIDENCE_OUTDATED') && !codes.includes('HUMAN_APPROVAL') && typeof api.outreach.activity === 'function') {
+      try {
+        const log = f11Unwrap(await api.outreach.activity({ pitchId: pitch.pitch_id, limit: 100 }));
+        const rows = log && Array.isArray(log.rows) ? log.rows : null;
+        const SENT_EVENTS = ['OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_FAILED'];
+        sent = !rows || (log.total || 0) > rows.length || rows.some((r) => r && SENT_EVENTS.includes(r.activity_type));
+      } catch {
+        sent = true;
+      }
+      if (!f11PitchIsCurrent(seq, leadId)) return;
+    }
+    f11RenderPitch(lead, pitch, gate, seq, { sent });
   } catch (err) {
     // A stale failure must not replace the current lead's panel either.
     if (!f11PitchIsCurrent(seq, leadId)) return;

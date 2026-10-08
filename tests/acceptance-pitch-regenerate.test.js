@@ -183,6 +183,26 @@ test('O1. an APPROVED pitch with newer research (EVIDENCE_OUTDATED) can be regen
   assert.ok(await r.store.activity.latestForPitch(p.pitch_id, 'APPROVAL_INVALIDATED'));
 });
 
+test('O2. a SENT pitch with newer research is history: no Regenerate control (and the backend refuses)', async () => {
+  const r = runtime();
+  r.finishResearch();
+  const p = await r.li.outreach.generate({ leadId: 'L1' });
+  await r.li.outreach.approve({ pitchId: p.pitch_id });
+  // A recorded send: the ledger row and the activity events the send boundary writes.
+  const t0 = new Date(NOW).toISOString();
+  await r.store.sends.record({ send_id: 'send_o2', lead_id: 'L1', pitch_id: p.pitch_id, channel: 'email', content_hash: p.content_hash, idempotency_key: 'ko2', state: 'attempted', provider_id: 'gmail', provider_message_id: null, failure_code: null, failure_message: null, created_at: t0, updated_at: t0 });
+  await r.store.sends.accept({ sendId: 'send_o2', providerId: 'gmail', providerMessageId: 'm1', at: t0 });
+  await r.store.activity.append({ activity_id: 'act_o2a', lead_id: 'L1', pitch_id: p.pitch_id, activity_type: 'OUTREACH_SEND_ATTEMPTED', metadata: { channel: 'email', contentHash: p.content_hash, providerId: 'gmail', idempotencyKey: 'ko2' }, created_at: t0 });
+  await r.store.activity.append({ activity_id: 'act_o2b', lead_id: 'L1', pitch_id: p.pitch_id, activity_type: 'OUTREACH_SEND_ACCEPTED', metadata: { channel: 'email', contentHash: p.content_hash, providerId: 'gmail', idempotencyKey: 'ko2', providerMessageId: 'm1' }, created_at: t0 });
+  r.finishResearch(2);
+  assert.deepStrictEqual(gateCodes(await r.li.outreach.gate({ pitchId: p.pitch_id })), ['EVIDENCE_OUTDATED']);
+  const t = tab(r);
+  await t.ui.loadLeadDrawerPitch({ id: 'L1', website: 'https://acme.example.com' });
+  assert.strictEqual(t.button('Regenerate from latest research'), null, 'a sent pitch offers no Regenerate');
+  assert.ok(t.calls.some((c) => c[0] === 'lead-intel:outreach-activity'), 'the activity record was read to decide');
+  await assert.rejects(r.li.outreach.regenerate({ pitchId: p.pitch_id }), (e) => e.code === 'PITCH_ALREADY_SENT');
+});
+
 test('R1. race: an approve or a send that lands while the draft is rebuilt makes Regenerate refuse - nothing sent is ever rewritten', async () => {
   const r = runtime();
   const stale = await r.li.outreach.generate({ leadId: 'L1' });
@@ -277,7 +297,7 @@ function tab(r) {
   const call = (c) => async (p) => { calls.push([c, p]); return r.ipc(c, p || {}); };
   const api = {
     pitch: { generate: call('lead-intel:pitch-generate'), get: call('lead-intel:pitch-get'), update: call('lead-intel:pitch-update'), regenerate: call('lead-intel:pitch-regenerate') },
-    outreach: { gate: call('lead-intel:outreach-gate'), approve: call('lead-intel:outreach-approve') },
+    outreach: { gate: call('lead-intel:outreach-gate'), approve: call('lead-intel:outreach-approve'), activity: call('lead-intel:outreach-activity') },
   };
   const ui = new Function('window', 'document', F11 + '\nreturn { loadLeadDrawerPitch };')({ ztechLeadIntel: api }, document);
   const box = () => els['lead-drawer-pitch'];
