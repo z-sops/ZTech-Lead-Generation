@@ -80,6 +80,10 @@ function asArray(v) {
  */
 function detectDialect(packet) {
   if (!isObject(packet)) return 'unknown';
+  // Acceptance fix (8 Oct 2026): the prospect-research gateway's OWN normalised packet (what a
+  // real Round-1 record stores today): packetVersion + provenance + issues[] + sections.
+  // Checked first: it also carries `coverage`, which used to send it down the flat path.
+  if (packet.packetVersion !== undefined && isObject(packet.provenance) && Array.isArray(packet.issues)) return 'round1-packet';
   if (isObject(packet.run) && (isObject(packet.subject) || packet.subject === undefined && isObject(packet.completeness))) return 'zuni-v1';
   if (isObject(packet.run)) return 'zuni-v1';
   if (isObject(packet.target) || isObject(packet.engine) || isObject(packet.coverage)) return 'flat';
@@ -213,6 +217,113 @@ function fromZuniV1(packet, record) {
 }
 
 /**
+ * Acceptance fix (8 Oct 2026): rewrite the prospect-research gateway's normalised packet
+ * (packetVersion 1, built by its mapEnvelope from a Zuni-SEO v1 envelope) into the same flat
+ * dialect fromZuniV1 produces. Field for field it is the v1 envelope renamed:
+ *   provenance.contractVersion / engineVersion / capturedAt  <- contract_version / run.*
+ *   subject.requestedUrl / auditedUrl / redirectedFrom        <- subject.*_url
+ *   sections.<name>.state                                    <- completeness.<name>.status
+ *   facts[].id / statement / value / source.url              <- facts[].fact_id / ...
+ *   issues[].ruleId / title / observation / factIds / ...     <- findings[].finding_id / ...
+ *   notMeasured[] / limitations[]                             <- not_measured[] / limits[]
+ * Nothing is guessed: an absent field stays absent and the shared mapper refuses what it needs.
+ */
+function fromRound1Packet(packet, record) {
+  const subject = isObject(packet.subject) ? packet.subject : {};
+  const prov = isObject(packet.provenance) ? packet.provenance : {};
+  const availability = text(packet.availability, 60) || null;
+  const outcome = outcomeFor(record, { availability });
+
+  const completeness = {};
+  const sections = isObject(packet.sections) ? packet.sections : {};
+  for (const [section, entry] of Object.entries(sections)) {
+    const area = ZUNI_V1_AREAS[section] || DEFAULTS.area;
+    if (area === DEFAULTS.area) continue;
+    // The raw section state ("complete" / "partial" / "failed") goes to the shared mapper, which
+    // owns the translation to an area status (complete -> measured).
+    const status = isObject(entry) ? text(entry.state, 30).toLowerCase() : text(entry, 30).toLowerCase();
+    if (status) completeness[area] = status;
+  }
+
+  const facts = asArray(packet.facts).map((f) => {
+    if (!isObject(f)) return null;
+    const factId = text(f.id, 200);
+    if (!factId) return null;
+    const source = isObject(f.source) ? f.source : {};
+    return {
+      key: factId,
+      label: text(f.statement, 300) || factId,
+      value: f.value === undefined ? null : f.value,
+      area: '',
+      untrusted: true,
+      source_url: text(source.url, 2048) || null,
+    };
+  }).filter(Boolean);
+  const factsById = new Set(facts.map((f) => f.key));
+
+  const findings = asArray(packet.issues).map((g) => {
+    if (!isObject(g)) return null;
+    const title = text(g.title, 300);
+    if (!title) return null;
+    const findingId = text(g.ruleId, 200) || text(g.id, 200);
+    return {
+      id: findingId || `finding_${title}`,
+      title,
+      severity: text(g.severity, 30).toLowerCase(),
+      basis: text(g.basis, 30).toLowerCase() || DEFAULTS.observedBasis,
+      area: text(g.section, 40),
+      observed: text(g.observation, 4000),
+      recommendation: text(g.recommendation, 4000),
+      urls: asArray(g.affectedUrls).filter((u) => typeof u === 'string').slice(0, 50).map((u) => text(u, 2048)),
+      fact_keys: asArray(g.factIds).filter((x) => typeof x === 'string' && factsById.has(x)).slice(0, 50),
+    };
+  }).filter(Boolean);
+
+  const strengths = asArray(packet.strengths).map((st) => {
+    if (!isObject(st)) return null;
+    const statement = text(st.statement, 1000);
+    if (!statement) return null;
+    return {
+      statement,
+      area: text(st.section, 40),
+      fact_keys: asArray(st.factIds).filter((x) => typeof x === 'string' && factsById.has(x)).slice(0, 50),
+    };
+  }).filter(Boolean);
+
+  const notMeasured = asArray(packet.notMeasured).map((n) => {
+    if (typeof n === 'string') return { area: text(n, 40), reason: 'Not measured by Round-1 research.' };
+    if (!isObject(n)) return null;
+    return { area: DEFAULTS.area, reason: `${text(n.item, 200)}: ${text(n.reason, 800)}`.slice(0, 1000) };
+  }).filter(Boolean);
+
+  const limitations = asArray(packet.limitations).map((l) => {
+    if (typeof l === 'string') return { code: 'ROUND1_LIMIT', message: text(l, 1000) };
+    if (isObject(l)) return { code: text(l.code, 100) || 'ROUND1_LIMIT', message: text(l.message, 1000) };
+    return null;
+  }).filter(Boolean);
+
+  const redirectedFrom = text(subject.redirectedFrom, 2048);
+  return {
+    contract_version: text(prov.contractVersion, 100) || 'round1.packet/1',
+    engine: { version: text(prov.engineVersion, 100) },
+    status: ['complete', 'partial', 'failed'].includes(outcome) ? outcome : DEFAULTS.outcome,
+    captured_at: text(prov.capturedAt || prov.finishedAt || prov.importedAt, 100) || text(record && (record.updatedAt || record.createdAt), 100),
+    target: {
+      requested_url: text(subject.requestedUrl || (record && record.website), 2048),
+      final_url: text(subject.auditedUrl, 2048) || null,
+      redirect_chain: redirectedFrom ? [{ url: redirectedFrom, status: null }] : [],
+    },
+    coverage: completeness,
+    facts,
+    findings,
+    strengths,
+    not_measured: notMeasured,
+    limitations,
+    sources: [],
+  };
+}
+
+/**
  * Round-1's v1 contract gives a fact no canonical ZTech key, so the shared
  * envelope mapper namespaces it as "zseo.<id>". The A10 default is explicit:
  * the FACT ID is the fact key. This restores that, and rewrites the references
@@ -246,15 +357,17 @@ function round1PacketMapper(record, ctx = {}) {
   const dialect = detectDialect(envelope);
   if (dialect === 'unknown') throw new Error('Round-1 packet matches no known envelope dialect');
 
-  const view = dialect === 'zuni-v1' ? fromZuniV1(envelope, record) : envelope;
+  const view = dialect === 'zuni-v1' ? fromZuniV1(envelope, record)
+    : dialect === 'round1-packet' ? fromRound1Packet(envelope, record)
+      : envelope;
   const requestedDomain = ctx.requestedDomain
     || text(record.domain, 2048)
-    || text(envelope.subject && envelope.subject.requested_url, 2048)
+    || text(envelope.subject && (envelope.subject.requested_url || envelope.subject.requestedUrl), 2048)
     || text(record.website, 2048);
   const providerJobId = ctx.providerJobId || record.providerJobId || record.recordId;
 
   const result = mapZuniSeoEnvelope(view, { requestedDomain, providerJobId });
-  if (dialect === 'zuni-v1') restoreFactIdKeys(result, view);
+  if (dialect === 'zuni-v1' || dialect === 'round1-packet') restoreFactIdKeys(result, view);
 
   // A10 explicit defaults that survive mapping: an availability the mapper cannot
   // express, and the areas Round-1 does not measure.
@@ -265,4 +378,4 @@ function round1PacketMapper(record, ctx = {}) {
   return result;
 }
 
-module.exports = { round1PacketMapper, detectDialect, fromZuniV1, outcomeFor, restoreFactIdKeys, DEFAULTS, ZUNI_V1_AREAS };
+module.exports = { round1PacketMapper, detectDialect, fromZuniV1, fromRound1Packet, outcomeFor, restoreFactIdKeys, DEFAULTS, ZUNI_V1_AREAS };
