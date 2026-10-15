@@ -827,7 +827,7 @@ async function loadHistory(page = 1) {
     const tbody = document.getElementById('history-table-body');
 
     tbody.innerHTML = list.map(item => {
-      const startTime = item.started_at ? new Date(item.started_at * 1000).toLocaleString('en-GB') : '-';
+      const startTime = item.started_at ? new Date(item.started_at * 1000).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '-';
       const statusClass = item.status === 'succeeded' ? 'color:var(--accent)' : item.status === 'failed' ? 'color:var(--danger)' : 'color:var(--warning)';
       const statusText = item.status === 'succeeded' ? 'Succeeded' : item.status === 'failed' ? 'Failed' : item.status === 'running' ? 'Running' : item.status;
       return `<tr>
@@ -1280,7 +1280,7 @@ function outreachRead(section) {
 function outreachCheckedText(checkedAt) {
   if (typeof checkedAt !== 'string' || checkedAt === '') return 'Never checked.';
   const d = new Date(checkedAt);
-  return Number.isNaN(d.getTime()) ? 'Never checked.' : `Last checked ${d.toLocaleString()}.`;
+  return Number.isNaN(d.getTime()) ? 'Never checked.' : `Last checked ${d.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}.`;
 }
 
 function renderOutreachChannel(section, c) {
@@ -2358,7 +2358,7 @@ function leadsRow(lead) {
   const collectedCell = document.createElement('td');
   collectedCell.className = 'col-collected';
   collectedCell.dataset.column = 'collected';
-  collectedCell.textContent = lead.collectedAt ? new Date(lead.collectedAt).toLocaleString('en-GB') : LEADS_DASH;
+  collectedCell.textContent = lead.collectedAt ? new Date(lead.collectedAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : LEADS_DASH;
   if (collectedCell.textContent === LEADS_DASH) collectedCell.classList.add('cell-muted');
   tr.appendChild(collectedCell);
 
@@ -2578,7 +2578,7 @@ function leadDetailTemplate(lead) {
   let collectedAt = '—';
   if (lead.collectedAt) {
     const collected = new Date(lead.collectedAt);
-    if (!isNaN(collected.getTime())) collectedAt = escapeHtml(collected.toLocaleString('en-GB'));
+    if (!isNaN(collected.getTime())) collectedAt = escapeHtml(collected.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }));
   }
   return [
     row('ID', id),
@@ -3352,7 +3352,7 @@ function leadDrawerFormatTime(value) {
   const raw = leadDrawerText(value);
   if (!raw) return '';
   const date = new Date(raw);
-  return isNaN(date.getTime()) ? raw : date.toLocaleString('en-GB');
+  return isNaN(date.getTime()) ? raw : date.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 function leadDrawerValueText(value) {
@@ -5544,7 +5544,7 @@ function targetMatchesSearch(target, query) {
 function targetUpdatedText(value) {
   if (typeof value !== 'string' || !value) return '\u2014';
   const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 // One table row. Every stored value passes through escapeHtml.
@@ -5911,7 +5911,7 @@ let dashboardCounts = { running: 0, succeeded: 0, failed: 0, windowed: false };
 function formatJobTime(value) {
   if (typeof value !== 'string' || !value) return '-';
   const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('en-GB');
+  return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 // --- F9 Home helpers ---------------------------------------------------------
@@ -7103,7 +7103,7 @@ function listsButton(label, className, onClick, ariaLabel) {
 function formatListTime(value) {
   if (typeof value !== 'string' || !value) return '—';
   const date = new Date(value);
-  return isNaN(date.getTime()) ? '—' : date.toLocaleString('en-GB');
+  return isNaN(date.getTime()) ? '—' : date.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 // The live Leads query state, in the stored definition shape. Filters come from
@@ -7890,7 +7890,7 @@ function f28Unwrap(res, fallback) {
 
 function f28When(iso) {
   const t = Date.parse(iso);
-  return Number.isFinite(t) ? new Date(t).toLocaleString() : '—';
+  return Number.isFinite(t) ? new Date(t).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 }
 
 function f28Button(label, onClick, kind, disabled) {
@@ -8187,7 +8187,7 @@ function f29Unwrap(res, fallback) {
 
 function f29When(iso) {
   const t = Date.parse(iso);
-  return Number.isFinite(t) ? new Date(t).toLocaleString() : '—';
+  return Number.isFinite(t) ? new Date(t).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 }
 
 function f29SourceNote(v) {
@@ -8525,7 +8525,7 @@ function f11Date(iso) {
   if (typeof iso !== 'string' || !iso) return '';
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return '';
-  return new Date(ms).toISOString().slice(0, 10);
+  return new Date(ms).toLocaleDateString('en-GB');
 }
 
 function f11Text(value) {
@@ -9162,9 +9162,8 @@ function f16ReadyDate(iso) {
   if (typeof iso !== 'string' || !iso) return '';
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return '';
-  const d = new Date(ms);
-  const pad = (n) => String(n).padStart(2, '0');
-  return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getUTCFullYear();
+  // DD/MM/YYYY in local time; one format app-wide.
+  return new Date(ms).toLocaleDateString('en-GB');
 }
 
 /** A plain cell, or the honest dash when there is no such value. */
@@ -10038,10 +10037,8 @@ function f15ActivityWhen(iso) {
   if (typeof iso !== 'string' || !iso) return '';
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return '';
-  const d = new Date(ms);
-  const pad = (n) => String(n).padStart(2, '0');
-  return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getUTCFullYear()
-    + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+  // Local time (Asia/Karachi on the operator's computer), never UTC; one format app-wide.
+  return new Date(ms).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 /** A plain cell, or the honest dash when the ledger row has no such value. */
@@ -10504,9 +10501,8 @@ function f12OutreachDate(iso) {
   if (typeof iso !== 'string' || !iso) return '';
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return '';
-  const d = new Date(ms);
-  const pad = (n) => String(n).padStart(2, '0');
-  return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getUTCFullYear();
+  // DD/MM/YYYY in local time; one format app-wide.
+  return new Date(ms).toLocaleDateString('en-GB');
 }
 
 /** A plain cell value, or the honest unavailable dash when the pitch has no such field. */
@@ -11210,7 +11206,7 @@ function trustEl(tag, className, text) {
 
 function trustDate(iso) {
   const t = Date.parse(iso);
-  return Number.isFinite(t) ? new Date(t).toLocaleDateString() : '\u2014';
+  return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-GB') : '\u2014';
 }
 
 function trustButton(label, onClick, kind) {
@@ -11331,7 +11327,7 @@ function trustChannelBlock(channel, c) {
   block.appendChild(trustEl('div', 'lead-trust-status', trustStatusLine(channel, c)));
   if (c && c.consent && !c.suppression) block.appendChild(trustEl('div', 'lead-trust-note', `Evidence: ${c.consent.evidenceNote}`));
   if (channel === 'whatsapp' && c && c.sessionOpenUntil && Date.parse(c.sessionOpenUntil) > Date.now()) {
-    block.appendChild(trustEl('div', 'lead-trust-note', `Chat window open until ${new Date(Date.parse(c.sessionOpenUntil)).toLocaleString()}`));
+    block.appendChild(trustEl('div', 'lead-trust-note', `Chat window open until ${new Date(Date.parse(c.sessionOpenUntil)).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}`));
   }
   if (!c || !c.available) return block;
   const actions = trustEl('div', 'lead-trust-actions');
@@ -11569,7 +11565,7 @@ function f266PacingLine(m) {
   if (!p) return '';
   const counts = `Sent in the last 24 hours: ${p.sentToday} of ${m.limits.dailyCap}. Last hour: ${p.sentThisHour} of ${m.limits.hourlyCap}.`;
   if (p.allowed) return counts;
-  return `${counts} Next allowed: ${p.nextAllowedAt ? new Date(p.nextAllowedAt).toLocaleString() : 'not within the next week (check the sending window)'}.`;
+  return `${counts} Next allowed: ${p.nextAllowedAt ? new Date(p.nextAllowedAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : 'not within the next week (check the sending window)'}.`;
 }
 
 function f266LimitInput(label, value, attrs) {

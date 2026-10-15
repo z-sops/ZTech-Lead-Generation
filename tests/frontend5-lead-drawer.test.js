@@ -336,7 +336,7 @@ test('8. Overview shows the real contact and business fields', () => {
   for (const value of ['NameThai <Cafe> & Co', 'SourceGoogle Maps', 'Keywordcafe bangkok', 'Address12 Sukhumvit Rd, Bangkok']) {
     assert.ok(business.includes(value), 'business field: ' + value);
   }
-  assert.ok(business.includes('Collected' + new Date(FULL.collectedAt).toLocaleString('en-GB')), 'collectedAt, en-GB');
+  assert.ok(business.includes('Collected' + new Date(FULL.collectedAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })), 'collectedAt, en-GB');
   // Data quality is the existing P1-A section, not a second system.
   assert.ok(f5.includes('leadQualitySignals(lead)'), 'the drawer reuses the existing derived signals');
   assert.ok(!/function\s+\w*[Cc]ompleteness/.test(f5), 'no second completeness calculation');
@@ -515,7 +515,7 @@ test('14. every existing research state is handled with its existing semantics',
   assert.ok(full.includes('Website statusReached by research'));
   assert.ok(full.includes('Pages fetched7'), 'a real coverage count from the packet');
   assert.ok(full.includes('AI access sectionfailed - robots fetch timed out'), 'section states from the packet object');
-  assert.ok(full.includes('Last updated' + new Date('2026-03-02T08:00:00.000Z').toLocaleString('en-GB')));
+  assert.ok(full.includes('Last updated' + new Date('2026-03-02T08:00:00.000Z').toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })));
   env.api.renderLeadDrawerResearch(null, 'Untrusted sender.');
   assert.ok(allText(env, 'lead-drawer-research-summary').includes('Research status could not be loaded: Untrusted sender.'));
   // A late response for another lead never lands on this one.

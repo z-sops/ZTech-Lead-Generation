@@ -371,7 +371,9 @@ test('9. the workspace renders the persisted ledger accurately', async () => {
   const rows = trs(ws);
   assert.strictEqual(rows.length, 2, 'both persisted events render');
   const first = rows[0];
-  assert.strictEqual(cellText(ws, first, 0), '03/09/2026 10:31', 'the time comes from created_at');
+  // 15 Oct 2026 date/time consistency: local time (Asia/Karachi on the operator's machine), not UTC,
+  // in the one app-wide format DD/MM/YYYY, HH:mm.
+  assert.strictEqual(cellText(ws, first, 0), new Date('2026-09-03T10:31:00.000Z').toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }), 'the time comes from created_at, in local time');
   assert.strictEqual(cellText(ws, first, 1), 'L1', 'the lead comes from the row');
   assert.ok(/Ready for outreach/.test(cellText(ws, first, 2)), 'the event label is the backend type: ' + cellText(ws, first, 2));
   assert.strictEqual(cellText(ws, first, 3), 'pitch_1', 'the related pitch is shown');

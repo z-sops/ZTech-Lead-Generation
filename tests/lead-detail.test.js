@@ -288,7 +288,7 @@ function test(name, fn) {
     assert.ok(templateRegion.includes('new Date(lead.collectedAt)'), 'collectedAt read from the lead');
     // Frontend 2.0 locked decision 2: locale-independent English formatting.
     // The escaping requirement is unchanged - only the locale argument moved.
-    assert.ok(templateRegion.includes("escapeHtml(collected.toLocaleString('en-GB'))"), 'collectedAt escaped after formatting');
+    assert.ok(templateRegion.includes("escapeHtml(collected.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }))"), 'collectedAt escaped after formatting');
     assert.ok(templateRegion.includes('renderWebsite(websiteRaw)'), 'website routed through the secure helper');
     assert.ok(!templateRegion.includes('<a href='), 'template builds no raw hrefs itself');
     for (const label of ['ID', 'Phone', 'Source', 'Keywords', 'Status', 'Collected', 'Title', 'Website', 'Email', 'Address', 'Run Slug']) {
