@@ -240,25 +240,40 @@ class MailboxService {
     if (typeof this.tokenStore.available === 'function' && this.tokenStore.available() !== true) {
       throw new LiError('MAILBOX_VAULT_UNAVAILABLE', 'Secure storage is not available on this computer, so no mailbox can be connected.');
     }
+    // GOOGLE REVOCATION IS GRANT-WIDE. Revoking ANY token of this Google account + OAuth client
+    // "removes all OAuth 2.0 scopes previously granted ... invalidating any issued access or refresh
+    // tokens" (Google, OAuth for desktop apps). So a reconnect must NEVER revoke the superseded
+    // refresh token: that also kills the token Google has just issued. (Windows acceptance,
+    // 15 Oct 2026: Reconnect -> Needs check -> Check mailbox -> invalid_grant -> Reconnect needed.)
+    // Every revoke below is a deliberate "end this account's grant" and is followed by making the
+    // local state say so - never by keeping or restoring a token Google has just invalidated.
     let tokens;
     try {
       tokens = await this.googleOAuth.authorize(client);
-    } catch (e) { throw mailboxError(e); }
+    } catch (e) {
+      // authorize() itself revokes a partial / non-lasting grant; any cached access token of an
+      // existing mailbox on the same Google account may now be dead, so none is reused.
+      this._accessCache.clear();
+      throw mailboxError(e);
+    }
     let profile;
     try {
       profile = await gmailProfile(this.fetch, tokens.accessToken);
     } catch (e) {
       await this.googleOAuth.revoke(tokens.refreshToken);
+      this._accessCache.clear(); // the account is unknown here; the next use re-checks every mailbox
       throw mailboxError(e);
     }
     const nowIso = this._now().toISOString();
     const existing = (await this.store.mailboxes.list()).find((m) => m.provider === 'gmail' && m.email_address === profile.emailAddress.trim().toLowerCase());
     const mailboxId = existing ? existing.mailbox_id : this.newId();
-    const previous = existing ? await this._tokenOf(mailboxId) : null;
     let row;
     try {
       // Token first: a row never exists without the credential it needs.
       await this.tokenStore.set(mailboxId, tokens.refreshToken);
+      // Read it back exactly the way Check / send will: a token that cannot be revealed on this
+      // computer is not "saved", and must not leave the mailbox looking connected.
+      if ((await this.tokenStore.get(mailboxId)) !== tokens.refreshToken) throw new Error('token read-back mismatch');
       row = await this.store.mailboxes.upsert({
         mailbox_id: mailboxId, provider: 'gmail', email_address: profile.emailAddress, display_name: null,
         status: 'needs_check', status_code: 'MAILBOX_CHECK_REQUIRED', paused_until: null,
@@ -266,16 +281,22 @@ class MailboxService {
         connected_at: nowIso, updated_at: nowIso,
       });
     } catch {
-      // Never leave a live grant (or an orphaned sealed token) behind a failed connect.
+      // Never leave a live grant (or an orphaned sealed token) behind a failed connect. Revoking
+      // the new token ends this account's whole grant, so an earlier token of the same mailbox is
+      // dead too: it is forgotten (not restored) and the mailbox is marked Reconnect needed.
       await this.googleOAuth.revoke(tokens.refreshToken);
-      try {
-        if (previous) await this.tokenStore.set(mailboxId, previous);
-        else await this.tokenStore.remove(mailboxId);
-      } catch { /* the grant is already revoked */ }
-      throw new LiError('MAILBOX_CONNECT_FAILED', 'The mailbox could not be saved on this computer. Nothing was connected.');
+      try { await this.tokenStore.remove(mailboxId); } catch { /* the grant is already revoked */ }
+      this._accessCache.delete(mailboxId);
+      if (existing) await this._mark(existing, 'reconnect_needed', 'MAILBOX_RECONNECT_NEEDED');
+      throw new LiError('MAILBOX_CONNECT_FAILED', existing
+        ? 'The new sign-in could not be saved on this computer, so it was cancelled at Google. This mailbox now needs to be connected again.'
+        : 'The mailbox could not be saved on this computer. Nothing was connected.');
     }
-    // A reconnect replaces the grant: the superseded refresh token is revoked (best effort).
-    if (previous && previous !== tokens.refreshToken) await this.googleOAuth.revoke(previous);
+    // A reconnect REPLACES the local token (above) and the superseded token is deliberately NOT
+    // revoked (see the top of this method). Nothing cached from the old grant is reused, and a
+    // fresh Check mailbox is allowed straight away.
+    this._accessCache.delete(mailboxId);
+    this._lastCheck.delete(mailboxId);
     // Reply sync starts from "now": nothing that arrived before the connect is read.
     if (!row.sync_cursor && profile.historyId) {
       await this.store.mailboxes.setSyncCursor(mailboxId, profile.historyId, nowIso);
@@ -328,10 +349,19 @@ class MailboxService {
   async _accessToken(row) {
     const client = this._client();
     if (!client || !this.googleOAuth) throw new LiError('MAILBOX_CLIENT_NOT_CONFIGURED', 'Add your Google OAuth client ID and secret in Settings > Mailboxes first.');
-    const refreshToken = await this._tokenOf(row.mailbox_id);
+    // A token that is missing and a token that could not be READ (vault / decryption failure) both
+    // need a reconnect, but they are different problems: the second is recorded with its own status
+    // code (and a log line without any secret) instead of looking like an expired Google sign-in.
+    let refreshToken = null;
+    let unreadable = false;
+    try { refreshToken = (await this.tokenStore.get(row.mailbox_id)) || null; } catch { unreadable = true; }
     if (!refreshToken) {
-      await this._mark(row, 'reconnect_needed', 'MAILBOX_RECONNECT_NEEDED');
-      throw new LiError('MAILBOX_RECONNECT_NEEDED', 'This mailbox needs to be reconnected.');
+      const code = unreadable ? 'MAILBOX_TOKEN_UNREADABLE' : 'MAILBOX_RECONNECT_NEEDED';
+      if (unreadable && this.logger && this.logger.warn) this.logger.warn('[mailbox] stored sign-in could not be read on this computer (secure storage); reconnect required');
+      await this._mark(row, 'reconnect_needed', code);
+      throw new LiError('MAILBOX_RECONNECT_NEEDED', unreadable
+        ? 'The saved sign-in for this mailbox could not be read on this computer (secure storage). Reconnect it.'
+        : 'This mailbox needs to be reconnected.');
     }
     const cached = this._accessCache.get(row.mailbox_id);
     const nowMs = this._now().getTime();

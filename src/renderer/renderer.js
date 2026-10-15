@@ -11399,6 +11399,7 @@ const MAILBOX_CODE_TEXT = {
   MAILBOX_HEADER_STRIPPED: 'Gmail did not keep the unsubscribe header on a message from this mailbox, so it is not Ready. Run "Check mailbox" again.',
   MAILBOX_MESSAGE_ID_UNREADABLE: 'Gmail did not show a readable Message-ID for the check message, so replies could not be matched. Run "Check mailbox" again.',
   MAILBOX_RECONNECT_NEEDED: 'This mailbox needs to be reconnected (its Google sign-in was revoked or expired).',
+  MAILBOX_TOKEN_UNREADABLE: 'This mailbox needs to be reconnected: its saved sign-in could not be read on this computer (Windows secure storage), so Google was not asked.',
   MAILBOX_PROVIDER_UNVERIFIED: 'Microsoft 365 — verification required before activation',
 };
 const MARKET_RULE_LABEL = { consent_required: 'Consent required', opt_out_allowed: 'Opt-out allowed' };

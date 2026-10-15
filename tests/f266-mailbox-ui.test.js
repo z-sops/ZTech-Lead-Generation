@@ -72,7 +72,8 @@ function mainSide() {
   const google = fakeGoogle();
   const svc = new MailboxService({
     store, clock: () => new Date('2026-10-07T06:00:00.000Z'), fetch: google.fetch,
-    tokenStore: { get: () => null, set: () => {}, remove: () => {} },
+    // A token store that keeps what it is given: connect now reads the token back before it records a mailbox.
+    tokenStore: (() => { const m = new Map(); return { get: (id) => m.get(id) || null, set: (id, t) => { m.set(id, t); }, remove: (id) => { m.delete(id); } }; })(),
     clientConfig: { get: () => client, set: (c) => { client = c; }, clear: () => { client = null; } },
     googleOAuth: new GoogleOAuth({ fetch: google.fetch, openExternal: browser, timeoutMs: 3000 }),
     operator: 'Zee', defaultTimeZone: 'Asia/Karachi',

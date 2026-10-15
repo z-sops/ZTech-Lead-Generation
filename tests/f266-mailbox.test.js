@@ -224,7 +224,10 @@ test('1g. secure storage: no vault = refused before any consent; a failed save r
   assert.deepStrictEqual(await c.svc.list(), []);
 });
 
-test('1h. a reconnect that issues a new refresh token revokes the superseded one', async () => {
+test('1h. a reconnect REPLACES the stored refresh token and revokes NOTHING (Google revocation is grant-wide)', async () => {
+  // Acceptance 15 Oct 2026: revoking the superseded token after a reconnect also killed the token
+  // Google had just issued (Reconnect -> Needs check -> Check -> invalid_grant). See
+  // f266-mailbox-reconnect.test.js for the grant-accurate end-to-end regression.
   const store = new MemoryStore();
   const tokens = memTokens();
   const first = service({ store, tokens, google: fakeGoogle({ refresh: '1//first-grant' }) });
@@ -232,7 +235,7 @@ test('1h. a reconnect that issues a new refresh token revokes the superseded one
   const second = service({ store, tokens, google: fakeGoogle({ refresh: '1//second-grant' }) });
   await second.svc.connect({ provider: 'gmail' });
   assert.strictEqual(tokens.m.get(m.mailboxId), '1//second-grant');
-  assert.ok(second.google.calls.some((c) => c.url.startsWith(GOOGLE.REVOKE_URL) && new URLSearchParams(c.init.body).get('token') === '1//first-grant'));
+  assert.ok(!second.google.calls.some((c) => c.url.startsWith(GOOGLE.REVOKE_URL)), 'a successful reconnect revokes nothing at Google');
 });
 
 /* ======================== 2-3. capability, readiness, pacing ======================== */
