@@ -9079,6 +9079,52 @@ function f14DeliveryNote(delivery) {
   return 'A delivery provider is configured. Nothing is sent by this workspace.';
 }
 
+// --- Outreach transport note (shared by the F12 table and the F16 Ready page) ---
+// Outreach read-model fix (Windows acceptance, 15 Oct 2026). Cold email leaves from the user's
+// own connected mailbox (F26.6), so the delivery sentence for an allowed pitch comes from the
+// mailbox's CURRENT state (`transport`, sanitized by main) instead of the transactional-provider
+// flags in `delivery`. Returns null when main reported no mailbox fact at all, so callers keep
+// their earlier provider sentence unchanged. Text only: it never enables or hides a control.
+const OUTREACH_MAILBOX_STATUS_TEXT = Object.freeze({
+  needs_check: 'needs a check - run "Check mailbox" in Settings > Mailboxes before it can send',
+  reconnect_needed: 'needs to be reconnected in Settings > Mailboxes before it can send',
+  paused: 'is paused, so nothing is sent from it',
+});
+function outreachTransportNote(transport, delivery) {
+  if (!transport || typeof transport !== 'object' || transport.kind !== 'mailbox') return null;
+  if (transport.unknown === true) return 'Sending mailbox state could not be read. Nothing is sent.';
+  const label = typeof transport.providerLabel === 'string' && transport.providerLabel ? transport.providerLabel : 'mailbox';
+  if (transport.connected !== true) {
+    // No mailbox: a configured transactional provider is still described by its own sentence.
+    if (delivery && typeof delivery === 'object' && delivery.canSend === true) return null;
+    return 'No sending mailbox connected - connect one in Settings > Mailboxes. Nothing is sent.';
+  }
+  if (transport.ready === true) return 'Sends from your ' + label + ' mailbox (Ready), one message per click or by its activated follow-ups.';
+  const why = Object.prototype.hasOwnProperty.call(OUTREACH_MAILBOX_STATUS_TEXT, transport.status)
+    ? OUTREACH_MAILBOX_STATUS_TEXT[transport.status]
+    : 'is not ready (' + String(transport.status || 'unknown') + ')';
+  return 'Your ' + label + ' mailbox ' + why + '.';
+}
+
+/**
+ * The approval/send facts beside the stored pitch status. `status` is the CONTENT lifecycle
+ * (draft / insufficient_evidence / needs_revision) and stays as stored; approval lives in its
+ * own table and sends in the ledger. Without this line an approved, sent pitch read as a bare
+ * "Draft". Only facts main reported are stated; nothing is inferred from the badge.
+ */
+function outreachPitchFactsNote(gateEntry) {
+  if (!gateEntry || !gateEntry.ok || !gateEntry.gate) return null;
+  const gate = gateEntry.gate;
+  const sent = gate.sent && typeof gate.sent === 'object' ? gate.sent : null;
+  if (sent && Number(sent.accepted) > 0) {
+    const by = sent.providerId === 'gmail' ? 'Gmail' : (sent.viaMailbox ? 'your mailbox' : 'the email provider');
+    const when = f12OutreachDate(sent.firstAcceptedAt);
+    return 'Approved content sent - accepted by ' + by + (when ? ' on ' + when : '') + (Number(sent.accepted) > 1 ? ' (' + Number(sent.accepted) + ' accepted sends)' : '') + '.';
+  }
+  if (gate.decision === 'allowed') return 'Approved - not sent yet.';
+  return null;
+}
+
 // === F16 Outreach: the derived Ready queue ===
 //
 // Which prospects the EXISTING OutreachGate currently ALLOWS. That is the whole definition.
@@ -9198,7 +9244,7 @@ function f16ReadyRow(item) {
   tr.appendChild(f16ReadyCell(pitch.research_status));
   tr.appendChild(f16ReadyCell(pitch.icp_fit_status));
   const delivery = f16ReadyEl('td', 'col-delivery');
-  delivery.appendChild(f16ReadyEl('div', 'lead-drawer-muted ready-delivery-note', f16ReadyDeliveryNote(gate.delivery)));
+  delivery.appendChild(f16ReadyEl('div', 'lead-drawer-muted ready-delivery-note', outreachTransportNote(item && item.transport, gate.delivery) || f16ReadyDeliveryNote(gate.delivery)));
   tr.appendChild(delivery);
   tr.appendChild(f16ReadyCell(f16ReadyDate(pitch.updated_at)));
 
@@ -10560,6 +10606,8 @@ function f12OutreachRow(pitch, gateEntry) {
   // Pitch status: the real F11 badge for the real stored status.
   const statusTd = f12OutreachEl('td', 'col-status');
   statusTd.appendChild(f11PitchStatusBadge(pitch && pitch.status));
+  const pitchFacts = outreachPitchFactsNote(gateEntry);
+  if (pitchFacts) statusTd.appendChild(f11El('div', 'lead-drawer-muted outreach-pitch-facts', pitchFacts));
   tr.appendChild(statusTd);
 
   tr.appendChild(f12OutreachGateCell(gateEntry));
@@ -10573,7 +10621,8 @@ function f12OutreachRow(pitch, gateEntry) {
   badge.setAttribute('data-readiness', readiness.state);
   readinessTd.appendChild(badge);
   if (readiness.state === 'ready') {
-    readinessTd.appendChild(f11El('div', 'lead-drawer-muted outreach-ready-note', 'Ready for outreach — ' + f14DeliveryNote(gateEntry.gate && gateEntry.gate.delivery)));
+    const g = gateEntry.gate || {};
+    readinessTd.appendChild(f11El('div', 'lead-drawer-muted outreach-ready-note', 'Ready for outreach — ' + (outreachTransportNote(g.transport, g.delivery) || f14DeliveryNote(g.delivery))));
   } else if (readiness.detail) {
     readinessTd.appendChild(f11El('div', 'lead-drawer-muted outreach-ready-note', readiness.detail));
   }

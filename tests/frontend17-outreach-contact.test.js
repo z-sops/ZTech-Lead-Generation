@@ -429,7 +429,10 @@ function loadWorkspace(api, opts) {
   sandbox.isMobileNumber = options.isMobileNumber || (() => true);
   const F16 = rendererSource.slice(rendererSource.indexOf('// === F16 Outreach: the derived Ready queue ==='), f17From);
   const names = Object.keys(sandbox);
-  const fn = new Function(...names, F16 + '\n' + F17 + '\nreturn { f16ReadyLoad, f16ReadyState, f17EmailLine, f17WhatsappLine };');
+  // Declared lock update (15 Oct 2026): the Ready row's delivery sentence now comes from the
+  // shared Outreach transport note, which lives at the end of the F14 block; evaluate it too.
+  const SHARED = rendererSource.slice(rendererSource.indexOf('// --- Outreach transport note'), rendererSource.indexOf('// === F16 Outreach: the derived Ready queue ==='));
+  const fn = new Function(...names, SHARED + '\n' + F16 + '\n' + F17 + '\nreturn { f16ReadyLoad, f16ReadyState, f17EmailLine, f17WhatsappLine };');
   const loaded = fn.apply(null, names.map((n) => sandbox[n]));
   return Object.assign(loaded, { doc, opened });
 }

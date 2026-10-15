@@ -248,7 +248,11 @@ function registerOutreachIpc({ ipcMain, outreach, isTrustedSender, logger = cons
     return outreach.regenerate({ pitchId: a.pitchId });
   });
   handle(CHANNELS.OUTREACH_APPROVE, (a) => outreach.approve({ pitchId: a.pitchId }));
-  handle(CHANNELS.OUTREACH_GATE, (a) => outreach.gate({ pitchId: a.pitchId, channel: a.channel || 'email' }));
+  // The renderer's gate read: the unchanged verdict plus the read-only transport/sent facts
+  // (OutreachService.gateView). A service without gateView answers with the bare verdict.
+  handle(CHANNELS.OUTREACH_GATE, (a) => (typeof outreach.gateView === 'function'
+    ? outreach.gateView({ pitchId: a.pitchId, channel: a.channel || 'email' })
+    : outreach.gate({ pitchId: a.pitchId, channel: a.channel || 'email' })));
   // F12 Batch 2: read-only enumeration of persisted pitch drafts. Only the three
   // reviewed paging/filter fields cross this boundary - no sort, no field selection and
   // no ordering choice is accepted from the renderer, so the store's fixed

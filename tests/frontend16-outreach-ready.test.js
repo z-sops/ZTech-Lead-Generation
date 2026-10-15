@@ -417,7 +417,10 @@ function loadWorkspace(api) {
   // F17 present. The F16-only slices above still stop at the F17 marker, so the
   // channel-neutrality assertions inspect F16's own code and nothing else.
   const F17 = rendererSource.slice(f15From, rendererSource.indexOf('// === F15 Outreach: activity history ==='));
-  const fn = new Function(...names, F16 + '\n' + F17 + '\nreturn { f16ReadyLoad, f16ReadyState, f16ReadyInit, f16ReadyDeliveryNote };');
+  // Declared lock update (15 Oct 2026): the Ready row's delivery sentence now comes from the
+  // shared Outreach transport note, which lives at the end of the F14 block; evaluate it too.
+  const SHARED = rendererSource.slice(rendererSource.indexOf('// --- Outreach transport note'), rendererSource.indexOf('// === F16 Outreach: the derived Ready queue ==='));
+  const fn = new Function(...names, SHARED + '\n' + F16 + '\n' + F17 + '\nreturn { f16ReadyLoad, f16ReadyState, f16ReadyInit, f16ReadyDeliveryNote };');
   const loaded = fn.apply(null, names.map((n) => sandbox[n]));
   // Wire the controls exactly as the module does at startup, so the pager buttons in this
   // harness carry the same listeners the real workspace gives them.

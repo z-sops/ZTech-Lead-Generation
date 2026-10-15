@@ -832,6 +832,13 @@ class OutreachService {
       }
       rows.push(contact ? { pitch: candidate, gate: verdict, lead, ...contact } : { pitch: candidate, gate: verdict, lead });
     }
+    // The sending mailbox's state, read once per page AFTER every row was selected (read-only;
+    // see gateView). It only feeds the Ready page's delivery sentence and cannot change which
+    // rows are Ready.
+    if (rows.length) {
+      const transport = await this._emailTransportView();
+      if (transport) for (const r of rows) r.transport = transport;
+    }
 
     const nextCursor = cursor + scanned;
     const hasMore = nextCursor < persistedTotal;
@@ -887,6 +894,75 @@ class OutreachService {
       ...gate,
       delivery: this._deliveryBlock(channel)
     };
+  }
+
+  /**
+   * Outreach UI read model (Windows acceptance, 15 Oct 2026).
+   *
+   * The Outreach table used to explain an allowed pitch ONLY through `delivery`, which describes
+   * the transactional-provider (Resend) configuration. Since F26.6 the cold-email transport is the
+   * user's own connected mailbox, so a Ready Gmail mailbox that had already sent the pitch was
+   * shown as "delivery provider not configured", and a sent pitch looked unapproved and unsent.
+   *
+   * This is the renderer's gate read: the gate verdict UNCHANGED (same object gate() returns,
+   * decision, reasons and `delivery` included) plus two read-only facts beside it:
+   *   - `transport`: the default sending mailbox's current state (sanitized: provider and status
+   *     only - no address, no token), or null when this process has no mailbox service;
+   *   - `sent`: what the send ledger already records for THIS pitch (accepted sends only).
+   * Neither fact can change the decision. Send paths keep calling gate() directly, so nothing
+   * here sits on a send path, and a failure to read either fact degrades to "unknown"/null
+   * instead of failing the gate read.
+   */
+  async gateView({ pitchId, channel = 'email' } = {}) {
+    const verdict = await this.gate({ pitchId, channel });
+    const id = String(pitchId);
+    const [transport, sent] = await Promise.all([
+      channel === 'email' ? this._emailTransportView() : Promise.resolve(null),
+      this._pitchSendFacts(id),
+    ]);
+    return { ...verdict, transport, sent };
+  }
+
+  /** The default sending mailbox, as the Outreach views describe it. Read-only, sanitized. */
+  async _emailTransportView() {
+    if (!this.mailboxes) return null;
+    try {
+      const row = await this.mailboxes.store.mailboxes.getDefault();
+      if (!row) return { kind: 'mailbox', connected: false, provider: null, providerLabel: null, status: null, statusCode: null, ready: false };
+      const m = await this.mailboxes.get(row.mailbox_id);
+      return {
+        kind: 'mailbox', connected: true, provider: m.provider, providerLabel: m.providerLabel,
+        status: m.status, statusCode: m.statusCode || null, ready: m.status === 'ready',
+      };
+    } catch {
+      return { kind: 'mailbox', connected: null, provider: null, providerLabel: null, status: null, statusCode: null, ready: false, unknown: true };
+    }
+  }
+
+  /** Accepted sends of ONE pitch from the ledger. Read-only; null when the ledger cannot be read. */
+  async _pitchSendFacts(pitchId) {
+    try {
+      const accepted = [];
+      for (let offset = 0; offset < 500; offset += 50) {
+        const page = await this.store.sends.list({ pitchId, limit: 50, offset });
+        const rows = (page && page.rows) || [];
+        for (const r of rows) if (r.state === 'accepted') accepted.push(r);
+        if (rows.length < 50) break;
+      }
+      if (!accepted.length) return { accepted: 0, firstAcceptedAt: null, lastAcceptedAt: null, providerId: null, viaMailbox: false };
+      const at = (r) => r.updated_at || r.created_at;
+      accepted.sort((a, b) => String(at(a)).localeCompare(String(at(b))));
+      const last = accepted[accepted.length - 1];
+      return {
+        accepted: accepted.length,
+        firstAcceptedAt: at(accepted[0]),
+        lastAcceptedAt: at(last),
+        providerId: last.provider_id || null,
+        viaMailbox: Boolean(last.mailbox_id),
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**
