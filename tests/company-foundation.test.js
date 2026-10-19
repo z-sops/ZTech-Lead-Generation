@@ -495,8 +495,8 @@ function test(name, fn) {
       ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
       'production dependencies are exactly the two originals plus the three prospect-research ones');
     assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
-      ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'],
-      'no dev dependency added');
+      ['concurrently', 'cross-env', 'electron', 'electron-builder', 'eslint', 'globals', 'vite', 'wait-on'],
+      'dev dependencies are the originals plus the approved lint toolchain');
   });
 
   test('20. the Lead Library table, filters and the Lead Profile surface are unchanged', () => {

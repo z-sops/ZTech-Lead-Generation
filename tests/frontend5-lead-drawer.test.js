@@ -649,7 +649,7 @@ test('21. the IPC channel set and dependencies are unchanged', () => {
   assert.deepStrictEqual(Object.keys(pkg.dependencies).sort(),
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js']);
   assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
-    ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on']);
+    ['concurrently', 'cross-env', 'electron', 'electron-builder', 'eslint', 'globals', 'vite', 'wait-on']);
 });
 
 test('22. the lead-query contract is untouched: navigation reuses the rendered page', () => {

@@ -607,8 +607,8 @@ function test(name, fn) {
       ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
       'production dependencies are exactly the two originals plus the three prospect-research ones');
     assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
-      ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'],
-      'no dev dependency added');
+      ['concurrently', 'cross-env', 'electron', 'electron-builder', 'eslint', 'globals', 'vite', 'wait-on'],
+      'dev dependencies are the originals plus the approved lint toolchain');
     // The only log line records the job id and the run identifier.
     const logLines = P1G_STORE_REGION.split('\n').filter(l => l.includes('logger.'));
     for (const line of logLines) {

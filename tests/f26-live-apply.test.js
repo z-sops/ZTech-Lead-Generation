@@ -79,7 +79,6 @@ function loadMainApply(electronStore, leadIntelRuntime) {
   const src = ['emailConfigFromSettings', 'whatsappConfigFromSettings', 'businessProfileFromSettings', 'applyOutreachSettings']
     .map(sliceFn).join('\n');
   const localRequire = (p) => require(p.startsWith('./') ? path.join(root, p) : p);
-  // eslint-disable-next-line no-new-func
   return new Function('electronStore', 'leadIntelRuntime', 'require', src + '\nreturn applyOutreachSettings;')(
     electronStore, leadIntelRuntime, localRequire);
 }

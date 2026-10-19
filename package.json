@@ -11,19 +11,24 @@
     "build:win": "electron-builder --dir --config.win.signAndEditExecutable=false",
     "test": "node tests/run-all.js",
     "test:list": "node tests/run-all.js --list",
+    "lint": "eslint . --max-warnings 100000",
+    "lint:strict": "eslint . --max-warnings 0",
+    "lint:report": "eslint . --format json",
     "check:repo": "node scripts/check-repo.js",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "audit:all": "npm audit --audit-level=moderate",
-    "verify": "npm run check:repo && npm test && npm run audit:prod"
+    "verify": "npm run check:repo && npm run lint && npm test && npm run audit:prod"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "33.4.11",
     "electron-builder": "^26.15.3",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
     "vite": "^5.4.0",
     "wait-on": "^7.2.0"
   },

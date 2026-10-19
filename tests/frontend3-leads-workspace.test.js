@@ -743,8 +743,8 @@ test('28. no new IPC channel, no dependency change, no network call', () => {
     ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
     'production dependencies unchanged');
   assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
-    ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'],
-    'dev dependencies unchanged');
+    ['concurrently', 'cross-env', 'electron', 'electron-builder', 'eslint', 'globals', 'vite', 'wait-on'],
+    'dev dependencies are the originals plus the approved lint toolchain');
   const f3 = between(rendererSource, '// === Leads workspace (Frontend 2.0 F3) ===', 'function loadNumbers()');
   assert.ok(!/fetch\(|XMLHttpRequest|WebSocket|EventSource|https?:\/\//.test(f3), 'F3 makes no network call');
   assert.ok(!/\brequire\s*\(/.test(f3), 'F3 requires nothing');

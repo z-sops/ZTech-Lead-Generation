@@ -718,8 +718,8 @@ function test(name, fn) {
       ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'],
       'production dependencies are exactly the two originals plus the three prospect-research ones');
     assert.deepStrictEqual(Object.keys(pkg.devDependencies).sort(),
-      ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'],
-      'no dev dependency added');
+      ['concurrently', 'cross-env', 'electron', 'electron-builder', 'eslint', 'globals', 'vite', 'wait-on'],
+      'dev dependencies are the originals plus the approved lint toolchain');
     assert.strictEqual(pkg.scripts.test, 'node tests/run-all.js', 'test wiring unchanged');
     assert.ok(mainSource.includes("contextIsolation: true"), 'contextIsolation unchanged');
     // The CSP meta line is untouched: locked byte-for-byte, including the

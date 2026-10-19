@@ -163,12 +163,14 @@ test('12. package.json wires a dependency-free npm test script', () => {
   assert.ok(!pkg.scripts.test.includes('for f in'), 'no Unix-only shell loop');
   const devDeps = Object.keys(pkg.devDependencies || {});
   const deps = Object.keys(pkg.dependencies || {});
-  const before = ['concurrently', 'cross-env', 'electron', 'electron-builder', 'vite', 'wait-on'];
   // The one deliberate production addition: the Zuni-SEO MCP client plus the
-  // ajv pair used to validate its contract. No dev dependency was introduced.
+  // ajv pair used to validate its contract. No dev dependency was introduced
+  // until F0, which added the approved lint toolchain (eslint + globals).
   const prodBefore = ['@modelcontextprotocol/client', 'ajv', 'ajv-formats', 'electron-store', 'sql.js'];
-  assert.deepStrictEqual(devDeps.slice().sort(), before.slice().sort(), 'no dev dependencies added');
-  assert.deepStrictEqual(deps.slice().sort(), prodBefore.slice().sort(), 'dependencies are the two originals plus the prospect-research trio');
+  assert.deepStrictEqual(deps.slice().sort(), prodBefore.slice().sort(), 'production dependencies are unchanged');
+  const approvedDevDeps = ['concurrently', 'cross-env', 'electron', 'electron-builder', 'eslint', 'globals', 'vite', 'wait-on'];
+  assert.deepStrictEqual(devDeps.slice().sort(), approvedDevDeps.slice().sort(),
+    'dev dependencies are the originals plus the approved lint toolchain (eslint, globals)');
 });
 
 test('13. test runner covers every *.test.js recursively and fails non-zero', () => {
