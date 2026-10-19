@@ -71,7 +71,46 @@ The audit's most consequential findings:
 | Encoding | The stray NUL byte in `persistence/contract.js` is now `\u0000`; the idempotency key bytes are unchanged. |
 | Docs | `CHANGELOG.md`, `docs/RELEASE.md`, `docs/DEPENDENCIES.md`, this log. |
 
+### F0 — ZTech Opportunity Intelligence (done)
+
+Branch `feat/cloud-saas-f0-foundation` off `main` @ `03e8de8`.
+
+| Item | Result |
+|---|---|
+| CI | `.github/workflows/ci.yml` — Ubuntu + Windows, Python 3.11 + 3.13: install → pytest → ruff → mypy → JSON-schema drift check. Plus a **Node MCP contract job** (the ZTech ↔ OI integration proof) and a **container job** that builds the image and asserts `/v1/health` answers. |
+| Container image | `Dockerfile` + `.dockerignore` — python:3.12-slim, non-root uid 10001, a `/data` volume, a `HEALTHCHECK`, the service on `0.0.0.0:8099`. The Host-header DNS-rebinding check and the bearer token remain the protections. |
+| Lint | `ruff` was configured but never run. 4 findings → 3 auto-fixed, 1 false positive on the `AUTH_TOKEN_ENV` *name* given an explicit `# noqa` with a reason. `ruff check` now passes. |
+| Types | `mypy` was configured but never run. 1 error (`ErrorCode(err.get("error"))` could receive `None`) fixed. `mypy src` now passes on all 48 source files. |
+| REST contract | G-49: the `research_id` path parameter was unvalidated on the REST routes while the MCP adapter already enforced `^[a-z]+_[A-Za-z0-9_]+$`. Both report routes now use the same pattern — a malformed id is a **422**, a well-formed but unknown id is a **404 NOT_FOUND**, never a 500. 5 new tests. |
+
+Evidence: `252 passed, 1 skipped` · `ruff: All checks passed!` ·
+`mypy: no issues found in 48 source files` · the container command path was
+verified outside a container (`/v1/health` → 200; a non-loopback `Host` header
+→ 421), because Docker's daemon was not running in this environment — the
+image build itself is verified by the CI `image` job.
+
+### F0 — ZTech Legal (done)
+
+Branch `feat/cloud-saas-f0-foundation` off `main` @ `4d738d6`.
+
+| Item | Result |
+|---|---|
+| CI | `.github/workflows/ci.yml` — a dependency-free document validation, a UTF-8 / control-character check and a structural completeness check. |
+| Validation | `scripts/check-legal.js` separates **regressions** (fail CI: broken links, missing effective date, missing scope disclosure, legacy product names) from **known gaps** (reported and tracked). |
+| Gap register | `docs/LEGAL-GAPS.md` — 18 tracked gaps with an id, severity, owner and the wording that would close each one. |
+| README | What the repository is, how to validate it, and the document-control rules. |
+
+Evidence: `0 regressions, 13 known gaps`. **No legal wording was changed** —
+rewriting a privacy policy is a legal decision, and the rewrite needs the
+registered entity name, the governing law, the subprocessor list and the
+retention periods. The documents still describe a local-only, Gmail-only
+desktop app while the product also collects from a third-party provider, sends
+WhatsApp, drafts with an LLM and calls ZuniSEO. That is G-58, rated Critical,
+and it is a commercial blocker.
+
 ### Test evidence
+
+ZTech Lead Generation:
 
 ```
 npm ci
@@ -92,9 +131,29 @@ npx electron-builder --dir --config.win.signAndEditExecutable=false
   artifact: dist\win-unpacked\... (180MB)
 ```
 
+Opportunity Intelligence:
+
+```
+python -m venv .venv && pip install -e ".[rest,dev]" ruff mypy
+python -m pytest -q                    -> 252 passed, 1 skipped
+python -m ruff check src tests scripts -> All checks passed!
+python -m mypy src                     -> Success: no issues found in 48 source files
+```
+
+ZTech Legal:
+
+```
+node scripts/check-legal.js
+  regressions: 0
+  known gaps: 13 (tracked in docs/LEGAL-GAPS.md)
+  No regressions.
+```
+
 Baseline for comparison, before F0: 89 test files executed, 2,312 assertions
 counted by scraping console output, 0 failing, up to 37 assertions silently
-skipped, and `npm ci` failing outright.
+skipped, `npm ci` failing outright, **no CI in any of the three
+repositories**, ruff reporting 4 errors and mypy 1 error, and the legal
+documents with no validation of any kind.
 
 **No live paid API was called and no outreach was triggered.** The provider
 integrations are exercised against fakes only.
@@ -136,5 +195,17 @@ integrations are exercised against fakes only.
 
 ### Next
 
-F0 completion for the remaining two repositories (Opportunity Intelligence and
-Legal), then F1.
+F0 is complete for all three ZTech repositories. The next phase is **F1 —
+branding and identity** (audit gaps G-50, G-51, G-52), which must also ship
+the **data-directory compatibility layer** so that existing users' data is not
+orphaned when the legacy `phone-global-leads` / `phone全球获客` /
+`com.whatsapp.automation` identifiers are replaced.
+
+Decisions needed before F1 can complete:
+1. The registered legal entity name, jurisdiction and contact address (they
+   decide BRAND-1 and ENTITY-1/2 in `ztech-legal/docs/LEGAL-GAPS.md`).
+2. Whether Electron 33 is upgraded as part of the F1 release (see
+   `docs/DEPENDENCIES.md` §3 A-1) — the rebrand has to rebuild the installer
+   anyway, so it is the cheapest moment to do it.
+3. Whether a linter is added. F0 deliberately kept the toolchain
+   dependency-free; this is a reversible decision.
