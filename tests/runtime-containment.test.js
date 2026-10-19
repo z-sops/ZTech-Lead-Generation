@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
+const { discoverTestFiles } = require('./lib/discover.js');
+
 const root = path.join(__dirname, '..');
 const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
@@ -169,13 +171,21 @@ test('12. package.json wires a dependency-free npm test script', () => {
   assert.deepStrictEqual(deps.slice().sort(), prodBefore.slice().sort(), 'dependencies are the two originals plus the prospect-research trio');
 });
 
-test('13. test runner covers every *.test.js and fails non-zero', () => {
+test('13. test runner covers every *.test.js recursively and fails non-zero', () => {
   const runner = fs.readFileSync(path.join(root, 'tests', 'run-all.js'), 'utf8');
-  assert.ok(runner.includes(".endsWith('.test.js')"), 'discovers test files dynamically');
-  assert.ok(runner.includes('run-all.js') && runner.includes("f !== 'run-all.js'"), 'excludes itself');
-  assert.ok(runner.includes('process.exit(totalFailed > 0 ? 1 : 0)'), 'non-zero exit on failure');
-  const files = fs.readdirSync(path.join(root, 'tests')).filter(f => f.endsWith('.test.js') && f !== 'run-all.js');
-  assert.ok(files.length >= 13, 'runner will execute the full suite (' + files.length + ' files)');
+  assert.ok(runner.includes("require('./lib/discover.js')"), 'uses the shared recursive discovery module');
+  assert.ok(runner.includes('discoverTestFiles('), 'discovers test files dynamically');
+  assert.ok(runner.includes('failures.length > 0 ? 1 : 0'), 'non-zero exit on failure');
+  assert.ok(runner.includes('DEFAULT_TIMEOUT_MS'), 'per-file timeout is defined');
+  assert.ok(runner.includes("require.resolve('sql.js')"), 'sql.js is a hard requirement');
+  const discover = fs.readFileSync(path.join(root, 'tests', 'lib', 'discover.js'), 'utf8');
+  assert.ok(discover.includes("TEST_SUFFIX = '.test.js'"), 'discovery matches *.test.js');
+  assert.ok(discover.includes('walk('), 'discovery recurses into subdirectories');
+  const files = discoverTestFiles(path.join(root, 'tests'));
+  assert.ok(files.length >= 100, 'runner will execute the full suite (' + files.length + ' files)');
+  assert.ok(files.length > fs.readdirSync(path.join(root, 'tests')).filter(f => f.endsWith('.test.js')).length,
+    'nested test files are included, not only the top level');
+  assert.ok(!files.includes(path.join(root, 'tests', 'run-all.js')), 'the runner does not execute itself');
 });
 
 console.log('RUNTIME-REQUIRED (not unit-testable without launching Electron):');

@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # The shipped runtime. Electron 33 is past end-of-life and carries a high
+  # severity advisory (see docs/DEPENDENCIES.md). Dependabot will propose the
+  # upgrade; the change is applied manually because a major Electron bump
+  # needs a desktop smoke test.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      electron:
+        patterns: ['electron']
+        update-types: ['minor', 'patch']
+      electron-builder:
+        patterns: ['electron-builder']
+        update-types: ['minor', 'patch']
+      vite:
+        patterns: ['vite']
+        update-types: ['minor', 'patch']
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies

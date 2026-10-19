@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const { randomUUID } = require('crypto');
 const { logger } = require('./logger');
+const { writeFileAtomic } = require('./lead-intelligence/persistence/atomicFile');
 
 const DATA_DIR = path.join(require('electron').app.getPath('userData'), 'data');
 
@@ -1435,6 +1436,14 @@ class AccountStore {
     }
 
     const hasExisting = !!(buffer && buffer.length);
+    if (hasExisting) {
+      // F0 (audit gap G-10): if the primary database file cannot be opened,
+      // try the rolling `.bak` that saveDB() keeps before falling back to an
+      // empty JSON store. The unreadable primary is preserved for diagnosis.
+      if (!this._canOpenDatabase(SQL, buffer) && this._restoreFromBackup(SQL)) {
+        buffer = fs.readFileSync(this.dbPath);
+      }
+    }
     try {
       this.db = buffer ? new SQL.Database(buffer) : new SQL.Database();
 
@@ -1583,6 +1592,51 @@ class AccountStore {
     } catch (renameErr) {
       this._sessionQuarantine = null;
       logger.error('accountStore', 'failed to preserve unreadable database', { error: renameErr.message, dbPath: this.dbPath });
+    }
+  }
+
+  /**
+   * Can this exact byte buffer be opened as a sql.js database?
+   * @returns {boolean} true when the buffer parses as a database
+   */
+  _canOpenDatabase(SQL, buffer) {
+    if (!buffer || !buffer.length) return true;
+    let probe = null;
+    try {
+      probe = new SQL.Database(buffer);
+      probe.run('SELECT 1');
+      return true;
+    } catch (err) {
+      return false;
+    } finally {
+      if (probe) {
+        try { probe.close(); } catch (closeErr) { /* nothing to close */ }
+      }
+    }
+  }
+
+  /**
+   * Restore the primary database from the rolling `.bak` written by saveDB().
+   * The unreadable primary file is preserved (never deleted) so it can still
+   * be inspected, and the restore is reported so the UI can tell the user.
+   * @returns {boolean} true when a backup was restored
+   */
+  _restoreFromBackup(SQL) {
+    const backupPath = this.dbPath + '.bak';
+    if (!fs.existsSync(backupPath)) return false;
+    try {
+      const backup = fs.readFileSync(backupPath);
+      if (!this._canOpenDatabase(SQL, backup)) {
+        logger.error('accountStore', 'database backup is also unreadable', { backupPath });
+        return false;
+      }
+      this._quarantineCorrupt(new Error('primary database unreadable; restoring from backup'));
+      fs.copyFileSync(backupPath, this.dbPath);
+      logger.warn('accountStore', 'database restored from backup', { dbPath: this.dbPath, backupPath });
+      return true;
+    } catch (err) {
+      logger.error('accountStore', 'database backup restore failed', { error: err.message, backupPath });
+      return false;
     }
   }
 
@@ -1764,13 +1818,17 @@ class AccountStore {
 
   saveDB() {
     if (!this.db) return;
-    const tmpPath = this.dbPath + '.tmp';
+    // F0 (audit gap G-10): the primary store is rewritten wholesale on every
+    // save, so a crash mid-write could destroy the only copy of every lead,
+    // suppression and consent record. writeFileAtomic() writes to a temp file
+    // in the same folder, fsyncs it, keeps one rolling `.bak` of the previous
+    // file, and only then renames. A failed save leaves the previous file
+    // untouched, and initDB() can restore from the `.bak` if the primary file
+    // is ever unreadable.
     try {
       const data = this.db.export();
-      fs.writeFileSync(tmpPath, Buffer.from(data));
-      fs.renameSync(tmpPath, this.dbPath);
+      writeFileAtomic(this.dbPath, Buffer.from(data));
     } catch (err) {
-      try { fs.unlinkSync(tmpPath); } catch (cleanupErr) {}
       logger.error('accountStore', 'failed to persist database', { error: err.message });
       throw err;
     }

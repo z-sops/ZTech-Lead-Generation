@@ -1,107 +1,95 @@
 'use strict';
 
-// ZTech-authored bridge. Batch 1 only.
+// Coverage guard for the Lead Intelligence test suite.
 //
-// Why this exists: the module's tests use node:test, which prints "ℹ pass N".
-// ZTech's tests/run-all.js:37-45 counts a file only when its output contains a
-// line matching /^\d+ passed, \d+ failed$/; otherwise, with exit code 0, it adds
-// nothing at all. A passing node:test file would therefore be silently uncounted
-// and the suite would look green while running nothing.
+// HISTORY: this file used to be a *bridge* that re-executed every test under
+// tests/lead-intelligence/ with spawnSync and scraped the node:test counters,
+// because the original runner (tests/run-all.js) used a flat readdirSync and
+// could not see nested files. The runner is now recursive (gap G-01 in
+// docs/AUDIT-BASELINE-2026-10-20.md) and runs these suites directly, so the
+// bridge is no longer needed - and keeping it would have double-executed and
+// double-counted every nested suite.
 //
-// This bridge spawns each copied module test, converts the node:test counters into
-// ZTech's summary line, and prints it as the last line so run-all.js can parse it.
-// The module tests themselves are NOT modified beyond their require paths.
-//
-// FAIL LOUD: if a child produces no readable pass/fail count, this file throws
-// instead of reporting zero. A silent zero would hide a whole batch of tests.
+// This file therefore became what it should always have been: a GUARD proving
+// that the nested suites exist, are discoverable, and cannot be silently
+// dropped again.
 
-const { spawnSync } = require('child_process');
+const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-// A2: the vendored module's test files are discovered from disk rather than listed
-// by hand, so a newly vendored batch cannot be silently left out of the count.
-const TEST_DIR = path.join(__dirname, 'lead-intelligence');
+const { discoverTestFiles, countTestFilesByDirectory } = require('./lib/discover.js');
 
-function discoverModuleTests() {
-  if (!fs.existsSync(TEST_DIR)) {
-    throw new Error(`lead-intelligence: test directory is missing: ${TEST_DIR}`);
-  }
-  const files = fs.readdirSync(TEST_DIR)
-    .filter((n) => n.endsWith('.test.js'))
-    .sort();
-  if (files.length === 0) {
-    throw new Error(`lead-intelligence: no *.test.js files found in ${TEST_DIR}`);
-  }
-  return files;
+const TESTS_DIR = __dirname;
+const NESTED_DIR = path.join(TESTS_DIR, 'lead-intelligence');
+
+let passed = 0;
+let failed = 0;
+const tests = [];
+function test(name, fn) {
+  tests.push([name, fn]);
 }
 
-const MODULE_TESTS = discoverModuleTests();
+test('1. the nested Lead Intelligence test directory exists and is not empty', () => {
+  assert.ok(fs.existsSync(NESTED_DIR), 'tests/lead-intelligence/ exists');
+  const files = fs.readdirSync(NESTED_DIR).filter((f) => f.endsWith('.test.js'));
+  assert.ok(files.length >= 27, 'nested suite still holds at least 27 files (found ' + files.length + ')');
+});
 
-/**
- * Parse node:test's summary counters. Returns null when they cannot be found.
- * Accepts the default spec reporter ("ℹ pass 7"), the tap reporter ("# pass 7")
- * and a bare "pass 7", so a reporter change cannot silently zero the batch.
- */
-function parseNodeTestSummary(stdout) {
-  const line = /^[^\S\r\n]*(?:#|ℹ|info)?[^\S\r\n]*(pass|fail)[^\S\r\n]+(\d+)[^\S\r\n]*$/gim;
-  let passed = null;
-  let failed = null;
-  let m;
-  while ((m = line.exec(stdout)) !== null) {
-    if (m[1].toLowerCase() === 'pass') passed = Number(m[2]);
-    else failed = Number(m[2]);
+test('2. the shared discovery finds every nested Lead Intelligence test file', () => {
+  const onDisk = fs.readdirSync(NESTED_DIR)
+    .filter((f) => f.endsWith('.test.js'))
+    .map((f) => path.join(NESTED_DIR, f));
+  const discovered = new Set(discoverTestFiles(TESTS_DIR));
+  for (const file of onDisk) {
+    assert.ok(discovered.has(file), 'discovered by the shared discovery: ' + path.basename(file));
   }
-  if (passed === null || failed === null) return null;
-  return { passed, failed };
-}
+});
 
-let totalPassed = 0;
-let totalFailed = 0;
-const problems = [];
+test('3. discovery is recursive, not flat', () => {
+  const counts = countTestFilesByDirectory(TESTS_DIR);
+  assert.ok(Object.keys(counts).length > 1, 'more than one test directory is scanned (found: ' + Object.keys(counts).join(', ') + ')');
+  assert.ok((counts['lead-intelligence'] || 0) >= 27, 'nested directory contributes its own count');
+});
 
-for (const file of MODULE_TESTS) {
-  const full = path.join(TEST_DIR, file);
-  if (!fs.existsSync(full)) {
-    problems.push(`missing module test file: ${full}`);
-    continue;
-  }
-  const result = spawnSync(process.execPath, [full], { encoding: 'utf8' });
-  const stdout = String(result.stdout || '');
-  const stderr = String(result.stderr || '');
+test('4. the runner uses the shared recursive discovery', () => {
+  const runner = fs.readFileSync(path.join(TESTS_DIR, 'run-all.js'), 'utf8');
+  assert.ok(runner.includes("require('./lib/discover.js')"), 'runner uses the shared discovery module');
+  assert.ok(runner.includes('discoverTestFiles('), 'runner calls discoverTestFiles');
+  assert.ok(!runner.includes('readdirSync'), 'runner no longer relies on a flat readdirSync');
+});
 
-  if (result.error) {
-    problems.push(`could not run ${file}: ${result.error.message}`);
-    continue;
-  }
+test('5. the runner no longer re-executes nested suites from a bridge', () => {
+  const runner = fs.readFileSync(path.join(TESTS_DIR, 'run-all.js'), 'utf8');
+  assert.ok(runner.includes("require('node:child_process')"), 'the runner spawns each test file itself');
+  assert.ok(runner.includes('spawn(process.execPath'), 'the runner spawns node with the test file');
+  assert.ok(!runner.includes('spawnSync'), 'the runner does not scrape a synchronously spawned child summary');
+  // The needle is assembled at runtime so this guard file does not contain it
+  // literally - otherwise the guard would match its own source.
+  const needle = 'require(' + "'child_process')";
+  const bridge = fs.readFileSync(__filename, 'utf8');
+  assert.ok(!bridge.includes(needle), 'this guard does not re-execute the nested suites');
+});
 
-  const summary = parseNodeTestSummary(stdout);
-  if (!summary) {
-    // Never fall through to a zero here.
-    problems.push(
-      `no node:test pass/fail counters in ${file} (exit ${result.status}).\n` +
-      `--- stdout ---\n${stdout.trim()}\n--- stderr ---\n${stderr.trim()}`
-    );
-    continue;
-  }
+test('6. the runner keeps the safety properties the suite depends on', () => {
+  const runner = fs.readFileSync(path.join(TESTS_DIR, 'run-all.js'), 'utf8');
+  assert.ok(runner.includes('process.exit'), 'runner exits explicitly');
+  assert.ok(runner.includes('failures.length > 0 ? 1 : 0'), 'non-zero exit on failure');
+  assert.ok(runner.includes('DEFAULT_TIMEOUT_MS'), 'per-file timeout exists');
+  assert.ok(runner.includes("require.resolve('sql.js')"), 'sql.js is a hard requirement');
+});
 
-  totalPassed += summary.passed;
-  totalFailed += summary.failed;
-  if (result.status !== 0 || summary.failed > 0) {
-    problems.push(
-      `${file} failed (${summary.failed} failed, exit ${result.status}).\n` +
-      stdout.split('\n').filter((l) => /^(not ok|✖|✗)/.test(l.trim())).join('\n')
-    );
+for (const [name, fn] of tests) {
+  try {
+    fn();
+    passed++;
+    console.log('ok - ' + name);
+  } catch (err) {
+    failed++;
+    console.log('FAIL - ' + name);
+    console.log(String((err && err.stack) || err));
   }
 }
 
-if (problems.length > 0) {
-  // Loud, and never counted as a pass.
-  console.log('lead-intelligence bridge ERRORS:');
-  for (const p of problems) console.log(p);
-  console.log(`${totalPassed} passed, ${totalFailed + problems.length} failed`);
-  process.exit(1);
-}
-
-console.log(`${totalPassed} passed, ${totalFailed} failed`);
-process.exit(totalFailed > 0 ? 1 : 0);
+console.log(`${passed} passed, ${failed} failed`);
+process.exit(failed ? 1 : 0);

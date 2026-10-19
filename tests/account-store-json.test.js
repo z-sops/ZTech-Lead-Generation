@@ -197,9 +197,18 @@ function test(name, fn) {
     assert.strictEqual(direct, 0, 'no direct fs.writeFileSync of numbers.json may remain');
   });
 
-  test('9. scope guards: canonicalPhone and SQL persistence untouched', () => {
+  test('9. scope guards: canonicalPhone untouched and the SQL save path keeps its atomic backup contract', () => {
     assert.ok(source.includes("return phone.replace(/[\\s\\-.()]/g, '');"), 'canonicalPhone must be byte-identical');
-    assert.ok(source.includes('fs.renameSync(tmpPath, this.dbPath)'), 'SQL saveDB path must remain as before');
+    // F0 (audit gap G-10): the SQL save path now goes through writeFileAtomic,
+    // which writes to a temp file, fsyncs it, keeps one rolling `.bak` of the
+    // previous file and then renames. The previous behaviour (write straight to
+    // a temp file and rename) left no backup, so a crash mid-write could
+    // destroy the only copy of every lead. The contract is asserted here so a
+    // future change cannot silently drop the backup again.
+    assert.ok(source.includes("writeFileAtomic(this.dbPath, Buffer.from(data))"), 'SQL saveDB must write through writeFileAtomic');
+    assert.ok(source.includes("require('./lead-intelligence/persistence/atomicFile')"), 'writeFileAtomic must be the shared helper');
+    assert.ok(source.includes('this.db.export()'), 'the database is still exported in memory before it is written');
+    assert.ok(source.includes('throw err'), 'a failed save must still rethrow so the caller can roll back');
     assert.ok(source.includes("this.db.run('DELETE FROM numbers WHERE id = ?', [id])"), 'SQL delete must remain');
     assert.ok(source.includes('INSERT INTO numbers (id, phone, source, keyword, status, collectedAt, title, website, email, address, runSlug, qualification, tags, notes, phoneStatus, emailStatus, websiteStatus, businessStatus, companyId) VALUES'), 'SQL rollback insert must remain');
   });

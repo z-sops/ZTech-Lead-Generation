@@ -6,11 +6,12 @@ const path = require('node:path');
 /**
  * Atomic file helpers.
  *
- * Use-case 1: if ZTech's existing saveDB() writes the sql.js export straight over the
- * DB file, a crash mid-write can corrupt it. `writeFileAtomic` writes to a temp file in
- * the same folder, fsyncs, keeps one `.bak` of the previous file, then renames.
- * QwenCoder: report how saveDB() writes today; only switch it to writeFileAtomic with
- * the user's approval.
+ * Use-case 1: ZTech's primary store (the sql.js database export) is rewritten
+ * wholesale on every save. Writing it straight over the target can leave a
+ * truncated file if the process dies mid-write. `writeFileAtomic` writes to a
+ * temp file in the same folder, fsyncs, keeps one `.bak` of the previous file,
+ * then renames. On failure the temp file is removed and the previous file is
+ * left untouched, so a failed save can never destroy the last good copy.
  *
  * Use-case 2: legacy JSON settings files (if ZTech keeps any, e.g. saved filters in a
  * JSON file). `readJsonWithRecovery` reads the file; on corrupt JSON it falls back to
@@ -24,8 +25,13 @@ function writeFileAtomic(filePath, data, { keepBackup = true, fsImpl = fs } = {}
   try {
     fsImpl.writeSync(fd, typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data));
     fsImpl.fsyncSync(fd);
+  } catch (err) {
+    // Never leave a partial temp file behind, and never touch the target.
+    try { fsImpl.closeSync(fd); } catch (closeErr) { /* already closed */ }
+    try { fsImpl.unlinkSync(tmp); } catch (unlinkErr) { /* nothing to clean */ }
+    throw err;
   } finally {
-    fsImpl.closeSync(fd);
+    try { fsImpl.closeSync(fd); } catch (closeErr) { /* already closed */ }
   }
   if (keepBackup && fsImpl.existsSync(filePath)) {
     fsImpl.copyFileSync(filePath, `${filePath}.bak`);

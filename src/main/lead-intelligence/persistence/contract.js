@@ -238,7 +238,7 @@ const SEND_FAILURE_MESSAGE_MAX_LENGTH = 200;
 function sendIdempotencyKey({ channel, pitchId, contentHash }) {
   return require('crypto')
     .createHash('sha256')
-    .update(`ztech-outreach-send ${String(channel)} ${String(pitchId)} ${String(contentHash)}`)
+    .update(`ztech-outreach-send\u0000${String(channel)}\u0000${String(pitchId)}\u0000${String(contentHash)}`)
     .digest('hex');
 }
 
