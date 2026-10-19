@@ -149,11 +149,17 @@ node scripts/check-legal.js
   No regressions.
 ```
 
-Baseline for comparison, before F0: 89 test files executed, 2,312 assertions
+Baseline for comparison, before F0: 89 test files executed, **1,921** assertions
 counted by scraping console output, 0 failing, up to 37 assertions silently
 skipped, `npm ci` failing outright, **no CI in any of the three
 repositories**, ruff reporting 4 errors and mypy 1 error, and the legal
 documents with no validation of any kind.
+
+The assertion count reconciles exactly: `1,921 − 385 (the rewritten bridge)
++ 391 (the nested suites, now counted directly) + 4 (new migration tests)
++ 6 (new backup/recovery tests) = 1,937`. No assertion was lost. The
+reconciliation is reproduced by `scripts/reconcile-test-counts.js` against the
+captured output of the old runner at the base commit.
 
 **No live paid API was called and no outreach was triggered.** The provider
 integrations are exercised against fakes only.
@@ -193,19 +199,44 @@ integrations are exercised against fakes only.
 - The F1 data-directory compatibility layer, which must ship in the same
   release as the rebrand or every existing user's data is orphaned.
 
+### F0 review — submitted 2026-10-20, awaiting approval
+
+The full review package is `docs/F0-REVIEW.md`. Summary of what it contains:
+branch tracking verified against the correct remote bases; the actual
+changed-file diff (the **entire** production change is 3 files and 4 functional
+edits); the complete test reconciliation; the restore-test evidence; the CI
+and test evidence; the known failures; and the rollback instructions.
+
+**Correction to the earlier status message.** The figure "2,312 assertions"
+was wrong — it double-counted the bridge. The old runner's own summary line
+was `Total: 1921 tests (1921 passed, 0 failed) / Files: 88`, and 1,921
+already included the bridge's 391. The baseline was re-established by running
+the original runner at the base commit in a detached worktree, and the
+reconciliation is reproduced by `scripts/reconcile-test-counts.js`:
+
+```
+1921 (all 88 original files, unchanged except the bridge)
+- 385 (the rewritten bridge: 391 aggregate -> 6 guard assertions)
++ 391 (the 27 nested suites, now counted directly)
++ 4 (new migration tests)
++ 6 (new backup/recovery tests)
+= 1937    RECONCILED: every old assertion is accounted for.
+```
+
+87 of 88 files are identical in count, 0 files were removed, and no assertion
+was lost.
+
+### Decisions recorded for F1 (taken at the F0 review)
+
+| Topic | Decision |
+|---|---|
+| **Branding** | Product name **ZTech Lead Generation**, brand **ZuniTech**. The registered legal entity name is **not** to be invented or assumed — the documents use a **clearly flagged placeholder** until the business confirms it (e.g. `[LEGAL ENTITY NAME — TO BE CONFIRMED]`, never a plausible-looking name). The legal documents' "Zunitech" is corrected to "ZuniTech" (BRAND-1). **The data-directory compatibility layer must ship in the same release as the rebrand**, because the legacy `phone-global-leads` / `phone全球获客` / `com.whatsapp.automation` identifiers determine the `userData` directory — renaming without the migration orphans every existing user's data (G-50). |
+| **Electron** | The major Electron upgrade is **deferred**; cloud-first SaaS is the target. Desktop compatibility is **preserved during core extraction**, and desktop-specific architecture is **not expanded** — new work goes behind injectable seams rather than adding Electron coupling. `docs/DEPENDENCIES.md` A-1 stays an accepted, dated risk. |
+| **Linting** | **Approved and implemented in F0**: incremental ESLint (error tier enforced at 0, warning tier reported at 287), CI-integrated, **no mass formatting**. The promotion path is to move a rule from the warning tier to the error tier as the debt is paid off. |
+| **Next work package** | **G-39 / G-40** (ZuniSEO evidence mapping) and **G-44** (OI timeout and job lifecycle) are prioritised before F1 completes. The ZuniSEO fix is entirely on the ZTech side — **ZuniSEO itself must not be modified**. |
+
 ### Next
 
-F0 is complete for all three ZTech repositories. The next phase is **F1 —
-branding and identity** (audit gaps G-50, G-51, G-52), which must also ship
-the **data-directory compatibility layer** so that existing users' data is not
-orphaned when the legacy `phone-global-leads` / `phone全球获客` /
-`com.whatsapp.automation` identifiers are replaced.
-
-Decisions needed before F1 can complete:
-1. The registered legal entity name, jurisdiction and contact address (they
-   decide BRAND-1 and ENTITY-1/2 in `ztech-legal/docs/LEGAL-GAPS.md`).
-2. Whether Electron 33 is upgraded as part of the F1 release (see
-   `docs/DEPENDENCIES.md` §3 A-1) — the rebrand has to rebuild the installer
-   anyway, so it is the cheapest moment to do it.
-3. Whether a linter is added. F0 deliberately kept the toolchain
-   dependency-free; this is a reversible decision.
+F0 review package submitted. **Nothing pushed, merged, force-pushed or
+deleted; awaiting approval.** On approval: the G-39/G-40 and G-44 work
+package, then F1.

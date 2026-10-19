@@ -94,9 +94,15 @@ for the licence terms.
 
 ### Test baseline
 
-| | Before | After |
+| | Before F0 | After F0 |
 |---|---|---|
 | Test files executed | 89 (88 + 1 bridge) | **117** (all discovered, recursively) |
-| Assertions | 2,312 (counted via console scraping) | **1,937** (counted from real exit codes) |
+| Assertions | 1,921 | **1,937** (+16) |
 | Failing | 0 | **0** |
 | Skipped silently | up to 37 | **0** |
+
+The +16 is exactly: the rewritten bridge contributes 6 guard assertions instead
+of the 391 it used to report, the 27 nested suites now contribute their 391
+directly, plus 4 new migration assertions and 6 new backup/recovery
+assertions. `1,921 − 385 + 391 + 4 + 6 = 1,937`. The reconciliation is
+reproduced by `scripts/reconcile-test-counts.js`.
