@@ -423,6 +423,23 @@ work, and they stay open until it is done: no tenant isolation, no cloud
 authentication, no browser-independent durable job recovery, and an OI service
 that still has one shared bearer token.
 
+### F2 architecture review decisions (2026-10-20) — revision 2
+
+| # | Decision | Effect on the plan |
+|---|---|---|
+| **Q5 — Billing** | **Approved.** Plans + seats + entitlements + credits. Credits are an **auditable transaction ledger** with reservations, settlement, refunds, spending limits and reconciliation. No real billing, no prices fixed. | Section 9.3 — the ledger gained the five operations, and the cost caps gained a monthly level. |
+| **Q6 — Platform super admin** | **Approved.** Time-limited, audited break-glass only. No permanent unrestricted access. | Section 5.7 — reinforced: break-glass is a temporary workspace **membership**, so every query still passes the normal RLS policy and is captured by the audit triggers. |
+| **Q7 — OI isolation** | **Approved.** Per-tenant OI instances first, with isolated storage, credentials and execution. Shared processing must not be activated until the cross-tenant isolation and security tests pass. | **Section 8.8 is new** — the concrete isolation layers, the provisioning flow, the operational cost model, the lifecycle table, and the **five-part activation gate** for the shared instance. |
+| **Q8 — CRM identity resolution** | **Modified.** No automatic merge on a single phone or domain. Parent companies, branches, persons and contact points are separate. Automatic merges need **corroborated** evidence; ambiguous matches go to human review; the audit trail and merge reversal are kept. | **Section 6.3 is rewritten** — the four records are separated, the signals have **independence groups**, and an automatic merge now needs two independent signals from different groups, no conflict and no prior manual decision. |
+
+The seven critical requirements are traced to their sections in the plan's
+**section 1.4**, so a reviewer can verify coverage without reading the whole
+document: RLS enforcement and the runtime role assertions (5.2, 5.3.1, 5.3.2),
+isolation across caches, object storage, search and logs (**5.8**), the
+preserved Lead Intelligence invariants (2.4), the uncertain-outcome model
+(8.4, 8.6), the first-class CRM and dashboards (6, 7), the tested migrations
+(10), and ZuniSEO's independence (2.3, 3.1).
+
 ### Next
 
 The F2 plan is submitted for review. On approval the work starts at **M0**

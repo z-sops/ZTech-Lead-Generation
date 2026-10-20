@@ -1,9 +1,15 @@
 # F2 — ZTech Cloud SaaS architecture and implementation plan
 
-**Date:** 2026-10-20
+**Date:** 2026-10-20 · **Revision 2** (after the architecture review decisions)
 **Branch:** `feat/f2-cloud-saas-architecture` (based on the F0/F1 heads)
 **Status:** **DESIGN FOR REVIEW — no implementation has started.**
 **Author:** ZuniTech engineering
+
+**Revision 2** incorporates the review decisions of 2026-10-20: Q5 (billing)
+and Q6 (platform super admin) approved as modelled; Q7 (OI isolation)
+approved as per-tenant, with §8.8 added; **Q8 (CRM identity resolution)
+modified** — no automatic merge on a single signal — with §6.3 rewritten. The
+seven critical requirements are traced in §1.4.
 
 ---
 
@@ -78,6 +84,27 @@ site, self-service signup flow) is a later phase that consumes it. The
 difference matters architecturally: F2 builds the entitlements, credits,
 metering and invoicing primitives **so that** billing can be switched on without
 a schema change, not to switch it on.
+
+### 1.4 The critical requirements, and where each is answered
+
+| # | Requirement | Where | How it is proved |
+|---|---|---|---|
+| **R1** | Tenant isolation is enforced **at the PostgreSQL level** with carefully tested RLS. Application roles must not bypass RLS or accept untrusted workspace context. | §5.2, §5.3, §5.3.1, §5.3.2 | The startup role assertions (§5.3.1) fail the service if the app role is superuser, has `BYPASSRLS` or owns a tenant table. The denial suite (§5.6) asserts isolation **at the database level**. A request carrying a workspace identifier is **rejected**, not ignored. |
+| **R2** | Isolation must hold across **APIs, background jobs, caches, file storage, search results and logs**. | §5.6, §5.8, §8.7 | §5.8 gives each surface its own rule and its own test: workspace-prefixed cache keys, workspace-prefixed object paths, a partitioned search index, and a closed allow-list of log fields. |
+| **R3** | The existing Lead Intelligence security and outreach invariants must be preserved. | §2.4 | The 15 invariants are listed explicitly and are the **acceptance criteria** of the extraction (M0). The existing 1,990 assertions must pass unchanged. |
+| **R4** | A local idempotency ledger alone cannot guarantee exactly-once execution by external providers. Uncertain outcomes must be modelled, and provider-side reconciliation must happen **before** a chargeable or message-sending operation is retried. | §8.4, §8.6 | The ledger models `reserved / attempted / accepted / failed / blocked / outcome_unknown`. A retry of an `attempted` invocation **does not call the provider** — it queues for reconciliation. The reconciliation probes are provider-side and bounded. |
+| **R5** | The native CRM and the per-customer dashboards are **mandatory first-class parts** of the product. | §6, §7 | §6 defines the CRM entities, workflows and contracts; §7 defines 18 workspace screens and the platform console, each with its role visibility. |
+| **R6** | All existing advanced features and historical records must be preserved through **tested** migrations. | §10 | §10.3 maps every legacy table; §10.4 states the conversion rules, including that the user's data is never deleted; M7's acceptance includes a round-trip test and an idempotency test. |
+| **R7** | ZuniSEO remains an **independent** service. | §2.3, §3.1 | ZuniSEO appears only as an external dependency in the topology, is read-only, and its vendored contract is drift-checked in CI. Nothing in F2 modifies the ZuniSEO repository. |
+
+### 1.5 The decisions taken at the architecture review (2026-10-20)
+
+| # | Decision | Effect on this document |
+|---|---|---|
+| **Q5 — Billing** | **Approved.** A configurable model combining subscription plans, team seats, feature entitlements and usage credits. Credits are tracked in an auditable transaction ledger with reservations, settlement, refunds, spending limits and reconciliation. No real billing is activated and no prices are fixed. | §9.3 — the credit ledger is now a transaction ledger with the five operations, and the cost caps have four levels. |
+| **Q6 — Platform super admin** | **Approved.** Controlled, time-limited, audited break-glass access only. No permanent unrestricted access to customer CRM records, messages, credentials or prospect information. | §5.7 — unchanged in intent, reinforced: the break-glass path is a temporary workspace membership, so every query still goes through the normal RLS policy and is captured by the audit triggers. |
+| **Q7 — OI isolation** | **Approved.** Per-tenant OI isolation initially, with isolated storage, credentials and execution. Provisioning, operational costs, lifecycle management and a future migration path to a shared service must be documented. **Shared OI processing must not be activated until the cross-tenant isolation and security tests pass.** | §8.8 is new: the concrete isolation layers, the provisioning flow, the cost model, the lifecycle table, and the five-part activation gate for the shared instance. |
+| **Q8 — CRM identity resolution** | **Modified.** No automatic merge on a single phone number or domain. Parent companies, branches, persons and contact points are separate. An automatic merge requires high-confidence, **corroborated** identity evidence; ambiguous matches go to human review. An audit trail and merge reversal are kept. | §6.3 is rewritten: the four records are separated, the signals have independence groups, and an automatic merge requires **two independent signals from different groups, no conflict, and no prior manual decision**. A single domain or a single phone number now only ever raises a **candidate**. |
 
 ---
 
@@ -411,8 +438,9 @@ desktop adapter and the browser client speak the same language.
 |---|---|
 | **Every tenant-owned table has `workspace_id uuid not null`** and a leading index on it | RLS needs a single, uniform scoping column |
 | **RLS is enabled and forced on every tenant table** | `FORCE ROW LEVEL SECURITY` applies the policy even to the table owner |
-| **The application role is not the table owner** | An owner bypasses RLS unless it is forced; the migration role owns, the app role does not |
-| **The API resolves `workspace_id` from the session, never from the request body** | A client-supplied tenant is the classic isolation bug |
+| **The application role is not the table owner and has no `BYPASSRLS`** | An owner bypasses RLS unless it is forced; the migration role owns, the app role does not. **The app role is additionally asserted to have neither `SUPERUSER` nor `BYPASSRLS` at startup** (§5.3) |
+| **The workspace context is never accepted from the request** | A client-supplied tenant is the classic isolation bug. The context is set by the server, transaction-locally, from the authenticated session only |
+| **No `SECURITY DEFINER` function may read a tenant table without a policy** | A definer function runs with the owner's rights and can silently bypass RLS; they are reviewed and, where unavoidable, carry their own `workspace_id` guard |
 | **`created_at`/`updated_at` are `timestamptz`** | The legacy schema used `TEXT` ISO strings; a migration must convert them (§11) |
 | **JSONB for the contract documents, columns for the queryable facts** | The evidence packet stays a document; the fields you filter on become columns |
 | **Foreign keys are added, but `NOT VALID` then validated** | The legacy data has dangling ids; the migration must not fail on day one |
@@ -484,9 +512,10 @@ desktop adapter and the browser client speak the same language.
    │ category    text     │         │ city/region/postal/country│
    │ size_band   text     │         │ country_code char(2)    │
    │ lifecycle   text     │         │ lat/lng    numeric      │
-   │ merged_into uuid FK  │         │ is_primary boolean      │
-   │ created_at  timestamptz│        │ created_at  timestamptz│
-   └──────┬───────────────┘         └──────────────────────────┘
+   │ parent_company_id uuid FK NULL  │ is_primary boolean      │
+   │ merged_into uuid FK  │         │ created_at  timestamptz│
+   │ created_at  timestamptz│        └──────────────────────────┘
+   └──────┬───────────────┘
           │ 1
           │ N
    ┌──────▼────────────────────────────────────────────────────┐
@@ -723,7 +752,49 @@ is not available on every driver path.
 
 `ztech_app` is granted table privileges but **not** ownership, and RLS is
 `FORCE`d, so a bug in the application code cannot read another tenant's rows.
-This is the property that makes the isolation claim true rather than aspirational.
+This is the property that makes the isolation claim true rather than
+aspirational.
+
+#### 5.3.1 The role properties are asserted at runtime, not assumed
+
+A migration that accidentally granted the wrong privileges would defeat every
+policy. The service therefore **asserts its own role properties at startup**
+and refuses to serve traffic if any of them is false:
+
+```ts
+// Run once, at boot, by the API and by every worker.
+const r = await db.query(`
+  SELECT rolsuper, rolbypassrls, (rolname = ANY (SELECT array_agg(rolname) FROM pg_roles
+                                    WHERE pg_has_role(current_user, oid, 'USAGE')))
+         AS is_owner_of_tenant_tables
+  FROM pg_roles WHERE rolname = current_user`);
+assert(!r.rolsuper,      'the application role must not be superuser');
+assert(!r.rolbypassrls,  'the application role must not bypass RLS');
+assert(!r.is_owner_of_tenant_tables, 'the application role must not own tenant tables');
+```
+
+**A failed assertion stops the service**, rather than starting it with a
+weakened boundary. The same assertion runs in CI against a real PostgreSQL,
+so a migration that grants the wrong privilege fails the build.
+
+#### 5.3.2 The workspace context is server-derived, and it is not trusted
+
+Three rules, enforced together:
+
+1. The **only** source of `workspace_id` is the authenticated session
+   (`session.workspace_id`), resolved by the edge from the membership table.
+2. A request body, query string or header that contains a workspace
+   identifier is **rejected** (`TENANT_CONTEXT_UNACCEPTED`) rather than
+   ignored — silently ignoring it hides a client bug and makes an
+   authorisation check ambiguous.
+3. The context is set **transaction-locally** (`set_config(..., true)`), so a
+   pooled connection cannot carry one tenant's context into another request.
+   A transaction that forgets to set it sees **no rows** (the policy's
+   `current_setting` is empty → the comparison is false), not all rows.
+
+A worker is no different: it reads `workspace_id` from the **job row**, and
+the job row was written by a request that had already passed authorisation.
+A worker never accepts a workspace from a message payload.
 
 ### 5.4 Authentication
 
@@ -842,6 +913,28 @@ audit triggers. There is no `superuser` path into tenant data.
 `contact_points`, `sends`, `credentials`, `audit_log` itself) so that a change
 made outside the application is still recorded.
 
+### 5.8 Isolation beyond the database
+
+RLS protects the rows. It does not protect the **cache**, the **object
+store**, the **search index** or the **logs** — and a leak in any of those is
+just as serious. Each of the four is designed with the tenant in the key, not
+around it.
+
+| Surface | The rule | The test |
+|---|---|---|
+| **Cache (Redis)** | Every key is **prefixed with the workspace**: `z:{workspace_id}:…`. A cache read is built from the server-derived context, never from a request parameter. A cache entry is **not** shared between workspaces, even for a reference dataset that is identical. | A test writes a cached value for workspace A under A's prefix, then asks for the same key as workspace B and asserts a **miss**, not A's value. |
+| **Object storage (S3)** | Every object lives under a **workspace-prefixed path**: `w/{workspace_id}/…`. The bucket policy grants `s3:PutObject` only for `w/${workspace_id}/*` for the workspace's own role. Object URLs are **short-lived and signed per workspace**; a URL issued for A cannot read B's object. | A test signs a URL for workspace A and fetches an object belonging to B; the fetch is denied by the bucket policy. |
+| **Search** | The search index is **partitioned by workspace** (`index-{workspace_id}` or a mandatory `workspace_id` filter with a test that asserts the filter is present in every query). The platform's global search covers the **platform** tables only, never a tenant's rows. | A test issues a search as workspace B for a term that exists only in A, and asserts zero results — and asserts the query builder **refuses** to run without a workspace filter. |
+| **Logs and traces** | **No tenant data is logged.** The log schema has a **closed allow-list of fields**; a field not on the list is not written. Workspace identifiers are logged as an **opaque hash**, not the raw id. A trace carries the workspace hash, never a contact point, a message body or a research document. | A test logs a full request context and asserts that no email address, phone number, domain, message body or research document appears in the output. |
+| **Error messages** | A `404` is returned where a row exists in another workspace — the API never distinguishes "not yours" from "does not exist", so an error cannot be used to probe another tenant's ids. | A test asserts the status and the body are identical for "missing" and "belongs to another workspace". |
+| **Background jobs** | A worker reads `workspace_id` from the job row; a job payload never carries a tenant. The worker's database session sets the context from the job row before every statement. | A test enqueues a job for A and asserts that a worker processing it cannot read B's rows, and that a tampered payload cannot redirect the job to another workspace. |
+| **Backups and exports** | A backup is encrypted and held by the platform; a **customer export** is produced by a job that reads through the tenant's own context, so the export cannot contain another workspace's rows. | A test exports a workspace and asserts every row in the archive carries that workspace id. |
+
+**The rule underneath all seven:** the tenant is part of every **key**, every
+**path**, every **query** and every **log field** — not only of the table
+predicate. A system that scopes the database but shares the cache has no
+isolation at all.
+
 ---
 
 ## 6. Deliverable 5 — Native CRM workflows and data contracts
@@ -921,35 +1014,94 @@ do_not_contact    boolean
 The existing desktop dedup rules (`DUPLICATE_REVIEW_RULES` with the precedence
 `all → canonicalPhone → website-host → email → title+address`) are the
 **starting point** and are preserved exactly. F2 adds a scale-appropriate
-layer.
+layer — and it **narrows** the automatic behaviour, per the approved
+decision on identity resolution (Q8, modified).
 
-**Stage 1 — candidate generation (cheap, deterministic).** For each new
-company/contact, generate candidates by normalised domain, normalised phone
-(E.164), normalised email, and (name + locality). This is the same
-deterministic logic, run inside a transaction with a `dedupe_key` index.
+#### 6.3.1 The four records are not the same thing
 
-**Stage 2 — scoring.** A deterministic score from the number of matching
-signals, with the existing precedence used to break ties. A pair above the
-threshold becomes a `duplicate_candidates` row in state `open`.
+The CRM separates four things the legacy flat row conflated:
 
-**Stage 3 — resolution.** Three outcomes:
-- **auto-merge** (score ≥ the auto-merge threshold *and* the signals are
-  domain or phone): the lower-id record is merged into the higher-id one; the
-  survivor keeps every field, the loser's fields fill only the gaps, and the
-  merge is recorded in `entity_identities` and the audit log.
-- **needs review** (a partial match): a `duplicate_candidates` row that a
-  manager resolves in the UI.
-- **not a duplicate**: recorded with the reason, so the decision is not
-  re-proposed.
+| Record | What it is | Never merged on |
+|---|---|---|
+| **Company** | A legal or trading entity. `parent_company_id` models a holding group. | — |
+| **Location** | A place a company operates: an office, a factory, a shop, a remote site. | **A branch is never a duplicate of its parent.** Two locations of one company are two locations, not two companies. |
+| **Person** | A human. One person may work for several companies. | — |
+| **Contact point** | A channel address for a person or a company. | — |
 
-**The merge is reversible.** `entity_identities` keeps the alias graph, so an
-un-merge is a data operation, not a re-import.
+A same-name company with a different domain is **not** a duplicate — it is a
+different company. A company that appears at two addresses is **one company
+with two locations**. A person who changed jobs is **one person with two
+roles**. The legacy flat row cannot express any of this, which is exactly why
+the promotion step (§10.3) groups rows rather than copying them.
 
-**Identity resolution across the lead and the CRM.** A collected lead is
-promoted into a company/contact by the same engine, and the provenance of every
-field is preserved: a `contact_points.source_observation_id` points at the
-`li_enrichment_observations` row that produced it, so a human can always see
-*where* a phone number came from and *when*.
+#### 6.3.2 Candidate generation
+
+Deterministic signals, generated inside the same transaction as the insert:
+
+| Signal | Strength | Independence group |
+|---|---|---|
+| Normalised domain | strong | `domain` |
+| Normalised phone (E.164) | medium | `phone` |
+| Normalised email | strong | `email` |
+| Name + locality | weak | `name` |
+| Trading name / registration number | strong | `registration` |
+
+#### 6.3.3 Resolution — no automatic merge on a single signal
+
+**A single signal never merges anything.** A matching phone number alone does
+not merge two companies, and a matching domain alone does not either: a shared
+domain may be a franchise, a group company, a shared mailbox, or a
+re-registration. Phone numbers are reassigned.
+
+An **automatic merge** requires **corroborated, high-confidence evidence**:
+
+1. **At least two independent signals** from **different independence
+   groups** (for example: domain **and** phone; domain **and** a verified
+   email; registration number **and** domain).
+2. **No conflicting signal** — the records must not disagree on a
+   discriminating field (a different registered address, a different trading
+   name, a different company type).
+3. **No manual-merge history** against either record (a human decision is
+   never overridden by a later automatic one).
+4. **Neither record is a parent of the other** — a branch is never merged into
+   its parent.
+
+Everything else is routed to **human review**.
+
+| Evidence | Outcome |
+|---|---|
+| Two independent strong signals, no conflict | **auto-merge** (still audited and reversible) |
+| One strong signal + one weak, no conflict | **review** |
+| One signal only (domain, or phone) | **review** — never an automatic merge |
+| Conflicting signals | **review**, flagged as a likely conflict |
+| Different domains, same name | **not a duplicate** — recorded, so it is not re-proposed |
+| Same domain, different address | **not a duplicate** — one company, two locations |
+
+#### 6.3.4 The merge itself
+
+- The **canonical** record is chosen deterministically (the oldest surviving
+  id, so a merge is stable), and the other is merged into it.
+- The loser's fields fill **only the gaps**; nothing is overwritten.
+- The loser is **not deleted**. It is marked `merged_into_id`, kept for the
+  audit trail, and hidden from the default list.
+- `entity_identities` records every alias, so an **un-merge is a data
+  operation, not a re-import**.
+- Every merge writes an `audit_log` entry with the score, the signals, the
+  decision and the actor.
+- A merge **never touches** a suppression, a consent record or a sent
+  message: those are address-keyed and historical, and they stay where they
+  are.
+
+#### 6.3.5 Identity resolution across the lead and the CRM
+
+A collected lead is promoted into a company/contact by the same engine, and
+the provenance of every field is preserved: a `contact_points.source_observation_id`
+points at the `li_enrichment_observations` row that produced it, so a human
+can always see *where* a phone number came from and *when*.
+
+**A contact point is never created without a source.** Either an observation
+exists, or a human entered it. The system does not fabricate a contact point,
+and it does not fabricate the *evidence* for one.
 
 ### 6.4 Lead lifecycle and qualification
 
@@ -1301,19 +1453,58 @@ provider_invocations
 
 **Why this prevents double billing and double sending:**
 
-- A **retry** re-enters at step 1. The unique index makes the second attempt a
-  no-op, and the worker reads the *existing* row's state. If the row is
-  `attempted` (the provider was called but the outcome is unknown), the worker
-  **does not call the provider again** — it raises an `outcome_unknown` and a
-  reconciliation step (§8.6) resolves it. This is the same rule the desktop
-  already applies to email sends through `li_sends_one_accepted` and
-  `sendIdempotencyKey`; it is now applied to **every** paid provider.
-- A **duplicate request** (the user clicks twice, or the browser retries) hits
-  the unique index and replays the stored outcome.
-- A **worker crash** between steps 3 and 5 leaves the row in `attempted`.
-  The lease expires, the job is retried, and step 1 finds the existing row and
-  refuses to re-call the provider. The job moves to `dead_letter` with
-  `outcome_unknown` and a human (or a reconciliation probe) resolves it.
+A local ledger can prove that *we* called the provider once. It **cannot**
+prove what the provider did with that call. The network can fail between the
+provider accepting a request and the response arriving, and the provider may
+have charged, or sent, while we never learn the outcome. A ledger that treats
+that as "not called" and retries produces **exactly the double charge and the
+duplicate message the ledger was meant to prevent**.
+
+So the ledger does not model success and failure. It models **uncertainty**:
+
+| State | Meaning | May the worker retry the provider call? |
+|---|---|---|
+| `reserved` | We intend to call. Nothing has been sent. | **yes** — the call was not made |
+| `attempted` | The request was written and the provider was called. **The outcome is unknown.** | **NO** |
+| `accepted` | The provider confirmed. | no — and a repeat replays this outcome |
+| `failed` | The provider refused, and we know it. | **yes**, with backoff, and the refusal is recorded |
+| `blocked` | A policy or a budget stopped us before the call. | **yes**, once the blocker is cleared |
+| `outcome_unknown` | We called and we do not know what happened. | **NO — reconcile first** |
+
+**The rule, stated once:** *a chargeable or message-sending operation whose
+outcome is unknown is never retried on a guess. It is reconciled against the
+provider first, and only then resolved to `accepted` or `failed`.*
+
+That is why `attempted` and `outcome_unknown` are different states, and why
+the worker's retry path is:
+
+```
+re-entry at step 1
+  |- the row is 'reserved'    -> the call was not made; proceed to call
+  |- the row is 'accepted'    -> replay the stored outcome; do not call
+  |- the row is 'failed'      -> the provider refused; a retry is allowed
+  |- the row is 'blocked'     -> a policy or a budget stopped us; a retry is allowed
+  `- the row is 'attempted'   -> UNCERTAIN. Do not call. Queue for reconciliation.
+```
+
+**Reconciliation is provider-side, not guesswork** (§8.6). Until it resolves,
+the invocation stays `attempted` and the job stays in a `reconciling` state —
+visible to the customer as "we are checking whether this went through", which
+is the truth.
+
+The same discipline applies to **every** chargeable or message-sending
+operation: collection runs (CoreClaw), research runs (ZuniSEO, OI), enrichment
+provider calls, **email sends** and **WhatsApp messages**. The existing
+desktop rule — a replay of the same `(channel, pitch_id, content_hash)`
+contacts nobody — is the same rule, generalised.
+
+A **duplicate request** (the user clicks twice, or the browser retries) hits
+the unique index and replays the stored outcome.
+
+A **worker crash** between steps 3 and 5 leaves the row in `attempted`. The
+lease expires, the job is retried, and step 1 finds the existing row and
+**refuses to re-call the provider**. The job moves to `reconciling`, and the
+reconciliation probe resolves it.
 
 ### 8.5 Cancellation, cost limits and status reporting
 
@@ -1327,18 +1518,25 @@ provider_invocations
 
 ### 8.6 Reconciliation
 
-A scheduled job resolves `outcome_unknown` invocations:
+A scheduled job resolves `attempted` / `outcome_unknown` invocations **against
+the provider**, never by retrying the call.
 
-- **Collection (CoreClaw)** — the provider's own run history is queryable
-  (`getJobHistory`), so the run slug is looked up and the result adopted.
-- **Research (ZuniSEO)** — the research id is looked up; the envelope is
-  re-fetched if it exists.
-- **Opportunity (OI)** — the research id is looked up through the OI report
-  route.
-- **Email (Gmail)** — the sent-message lookup finds the provider message id, or
-  the send is confirmed lost and the mail is **not** retried. The prospect
-  never receives a duplicate.
-- **WhatsApp** — the message id is looked up; the same rule applies.
+| Provider | The probe | How the outcome is resolved |
+|---|---|---|
+| **Collection (CoreClaw)** | The provider's own run history is queryable (`getJobHistory`). | The run slug is looked up. A run that exists → `accepted`, with its result adopted. A run that does not exist → `failed`, and a **new** invocation with a new key may be created. |
+| **Research (ZuniSEO)** | The research id is known from the request. | The job status is polled. A finished job → the envelope is re-fetched and `accepted`. A job that never existed → `failed`. |
+| **Opportunity (OI)** | The research id is known from the request. | The report route is queried. A report → `accepted`. No report and the job is gone → `failed`. |
+| **Enrichment** | The provider's own field lookup is not re-readable. | The **observation** is not created, the invocation is `outcome_unknown`, and a human is notified. The field is simply not enriched — nothing is fabricated. |
+| **Email (Gmail)** | The sent-message lookup finds the provider's message id for the thread. | Found → `accepted`. Not found and the message is past the provider's retention → the send is confirmed lost, `failed`, and **the mail is not retried**. The prospect never receives a duplicate. |
+| **WhatsApp** | The message id is looked up through the Meta API. | Same rule. A `failed` WhatsApp send is never retried automatically, because a duplicate conversation message is worse than a missed one. |
+
+**The probe is bounded and audited.** Each probe is itself recorded as an
+attempt against the invocation, so a probe loop cannot become a retry loop.
+After `MAX_PROBES` (default 5, over 24 hours) an unresolved invocation is
+marked `outcome_unknown` permanently, the workspace is notified, and the
+platform console shows it. **An unresolved outcome is never "assumed failed"
+and never "assumed succeeded"** — it stays uncertain, which is the truth, and
+the credit is not refunded or charged until it is resolved.
 
 ### 8.7 The desktop app's behaviour in the cloud
 
@@ -1347,6 +1545,97 @@ mode the desktop becomes a **client**: it submits a job, polls
 `GET /v1/jobs/{id}`, and the cloud worker executes it. The desktop's
 `research-status` and `enrichment-status` channels already have the right
 shape; only the transport changes.
+
+### 8.8 The Opportunity Intelligence isolation model (per tenant)
+
+Approved: OI runs **per tenant** initially, with isolated storage, isolated
+credentials and isolated execution. Shared OI processing is **not** activated
+until the cross-tenant isolation and security tests pass.
+
+#### 8.8.1 What "per tenant" means concretely
+
+| Layer | Isolation |
+|---|---|
+| **Process** | One OI service instance (and its own worker pool) per tenant. A separate service account, a separate memory and a separate port. |
+| **Storage** | A **dedicated database** (or a dedicated schema with a dedicated role) per tenant. The OI instance's role is not the owner of any other tenant's data, and the platform's OI instances are provisioned from a template that cannot see sideways. |
+| **Credentials** | Each OI instance holds **its own** provider credentials (Brave, Serper, the LLM, Meta). No credential is shared between tenants, so a cross-tenant request cannot even be *authorised* by a leaked token. |
+| **Execution** | A job is routed to the OI instance of the workspace that owns it. There is no shared queue, no shared worker and no shared cache between tenants. |
+| **Network** | Each instance is reachable only by the platform worker that belongs to that tenant. The instances are not addressable from the public internet. |
+
+#### 8.8.2 Provisioning
+
+```
+workspace created
+  -> provision OI instance
+       - a dedicated role and database (or schema) in the OI PostgreSQL
+       - a dedicated service account and credentials in the secret store
+       - a dedicated queue namespace and cache prefix
+       - a dedicated network policy and a private endpoint
+       - a per-tenant ZTECH_OI_AUTH_TOKEN, generated at provisioning time
+  -> the OI instance is registered in the tenant's configuration
+  -> the tenant's research jobs are routed to it
+```
+
+Provisioning is **asynchronous and idempotent**: it is a platform job with its
+own state, so a partially-provisioned tenant is visible and recoverable
+rather than silently broken. Until provisioning completes, the workspace's
+opportunity research is **blocked with `OI_NOT_PROVISIONED`**, and the
+workspace sees that reason in its dashboard. It never silently shares
+another tenant's instance.
+
+#### 8.8.3 Operational cost
+
+This is the price of the safer model, and it must be measured before it is
+accepted:
+
+| Cost | Effect |
+|---|---|
+| **Memory and CPU per instance** | An OI instance has a baseline footprint (the engine, the provider clients, the connection pools). At N tenants this is N times the baseline. |
+| **Connection pools** | Each instance holds its own PostgreSQL pool and its own HTTP pools. A large tenant count exhausts the database's connection budget. |
+| **Cold start** | A new instance must boot, migrate and warm its caches before the first research. Provisioning is therefore a background job with a readiness probe, not a synchronous step. |
+| **Operational surface** | N instances means N things to patch, restart, monitor and upgrade. The upgrade must be a rolling, per-tenant procedure with a per-tenant health gate. |
+| **Licence and quota** | Each instance may consume provider quotas independently, so the aggregate provider spend must still be capped centrally (§9.3). |
+
+The plan therefore records the **cost per tenant** as a platform metric
+(instance count × baseline cost) and sets a **tenant-count ceiling** at which
+the migration to a shared instance (§8.8.5) is triggered. The decision is
+made on evidence, not on optimism.
+
+#### 8.8.4 Lifecycle management
+
+| Event | Action |
+|---|---|
+| **Workspace created** | Provision (asynchronous, idempotent, with a readiness probe). |
+| **Workspace suspended** | Stop the OI instance; keep its data; do not delete it. |
+| **Workspace closed** | Export the workspace's OI data (the customer owns it), then decommission the instance after the retention period. The deletion is a separate, explicit, audited operation. |
+| **Engine upgrade** | A rolling upgrade: one instance at a time, with a health gate and an automatic rollback. A tenant on an older engine version is fine for the duration of the roll. |
+| **Instance failure** | The instance is restarted with a backoff; a workspace with more than `MAX_INSTANCE_FAILURES` is moved to `OI_DEGRADED`, its research jobs are retried, and the customer is told. Its data is untouched. |
+| **Cost anomaly** | An instance whose spend exceeds the workspace's budget is **paused**, not killed. The workspace's research returns `BUDGET_EXCEEDED`. |
+
+#### 8.8.5 The path to a shared instance (not yet)
+
+A shared OI instance is the right end state, but it is **not** activated by
+optimism. The gate is explicit:
+
+1. The OI service gains **tenant scoping** in its storage layer, with the
+   same RLS discipline as the main database (§5.2) and the same startup
+   role assertions (§5.3.1).
+2. The **cross-tenant denial suite** (§5.6) is extended to the OI service:
+   the OI reports, entities, evidence, snapshots and jobs are all
+   workspace-scoped, and a request from workspace B cannot read A's report.
+3. The **credential separation** test passes: a shared instance holds
+   per-workspace credentials and never sends one workspace's request with
+   another workspace's credential.
+4. The **job routing** test passes: a job is executed under the workspace that
+   owns it, and a tampered payload cannot redirect it.
+5. The **data migration** from per-tenant instances to the shared one is
+   tested, with the same round-trip and idempotency guarantees as the
+   desktop migration (§10.3).
+
+**Until all five pass, the platform runs per-tenant instances.** The shared
+instance is a change that requires the same review as any other isolation
+change, and the plan treats it as a separate milestone with its own
+acceptance criteria — not as an optimisation that can be slipped in.
 
 ---
 
@@ -1437,25 +1726,51 @@ operation costs credits:
 | One WhatsApp message | 0 | the Meta conversation caps apply instead |
 | One export | 0 | metered as a page, not a credit |
 
-**The enforcement point is the provider-invocation ledger (§8.4), step 2.**
-A job with an insufficient balance is `blocked` with `BUDGET_EXCEEDED` and
-**never reaches the provider**. A new workspace's default balance is **zero**,
-so nothing is billable until an operator grants credits. This is the switch the
-handover asks for.
+**The credit ledger is a transaction ledger, not a counter.** The balance is
+`SUM(delta)` over the entries, and it is **auditable**: every entry names the
+usage event or the invocation that caused it.
 
-**Cost caps at three levels:**
+| Operation | Ledger entry | Effect on the balance |
+|---|---|---|
+| **Grant** | `delta = +N`, `reason = 'grant'` | the balance rises |
+| **Reservation** | `delta = -N`, `reason = 'reservation'`, `invocation_id` set | the credits are **held** so a concurrent job cannot spend them |
+| **Settlement** | the reservation is closed and a `delta = 0` `settlement` entry records the **actual** cost | the difference is released (`delta = +unused`) |
+| **Refund** | `delta = +N`, `reason = 'refund'`, linked to the invocation | the credits come back — after a provider failure, or after an **unresolved** outcome is resolved as `failed` |
+| **Adjustment** | `delta = ±N`, `reason = 'adjustment'`, `actor_id` set | an operator correction, always with an actor and a reason |
+
+**Reservations are what make the limit meaningful.** Without a reservation,
+two jobs can both pass the balance check and jointly overspend. The
+reservation is taken **before** the provider call, inside the same transaction
+as the `provider_invocations` row, so a balance check and a reservation are
+atomic. A crashed worker's reservation expires with its lease and is
+released; the invocation then reconciles (§8.6) and settles or refunds.
+
+**The enforcement point is the provider-invocation ledger (§8.4), step 2.**
+A job whose reservation cannot be taken is `blocked` with
+`BUDGET_EXCEEDED` and **never reaches the provider**. A new workspace's
+default balance is **zero**, so nothing is billable until an operator grants
+credits. This is the switch the handover asks for.
+
+**Cost caps at four levels:**
 
 | Level | Where | Default |
 |---|---|---|
 | Per invocation | the job's `cost_estimate_cents` | estimated before the call |
 | Per workspace, per day | `subscriptions.provider_budget_cents` | 0 until granted |
+| Per workspace, per month | `subscriptions.monthly_budget_cents` | 0 until granted |
 | Per platform, per day | a platform-level budget | an operator setting |
 
 **Reconciliation.** The daily job compares the provider's own invoice
 (where the provider exposes one) with the metered `usage_events`, and raises
 a platform alert when they diverge by more than a configured threshold. This
 is the mechanism that would have caught the F0 finding that a timed-out
-collection submit can be billed twice.
+collection submit can be billed twice. It also reconciles the **credit
+ledger** against the invocation ledger: every accepted invocation must have
+exactly one settlement, and every reservation must be closed or expired.
+
+**Prices are not fixed and no real billing is integrated.** The plan, the
+entitlement set and the credit rates are all **configuration**; the price
+table is a platform setting that is not populated in F2.
 
 ### 9.4 What the platform admin can and cannot do
 
@@ -1615,7 +1930,7 @@ Each milestone is independently shippable and independently verifiable. The
 | | |
 |---|---|
 | **Scope** | The CRM tables, the services, the workflows: companies, locations, contacts, decision-makers, leads, pipelines, stages, deals, tasks, notes, reminders, activities, assignment, campaigns, interaction history, duplicate detection, identity resolution, the audit trail. |
-| **Acceptance** | ① A company with two locations and two contact points is representable. ② A person may hold several roles. ③ Duplicate detection uses the **existing** rules and the merge is reversible. ④ **No contact point is ever created without a source observation or a human entry** — a test asserts it. ⑤ A campaign excludes a suppressed address. ⑥ A user record never becomes a contact point. ⑦ Every CRM change is in the audit log. |
+| **Acceptance** | ① A company with two locations and two contact points is representable, and a branch is never merged into its parent. ② A person may hold several roles. ③ Duplicate detection uses the **existing** rules, and **an automatic merge requires two independent signals from different groups with no conflict** — a single domain or a single phone number only ever raises a candidate, and an ambiguous match is routed to human review. ④ The merge is reversible and audited. ⑤ **No contact point is ever created without a source observation or a human entry** — a test asserts it. ⑥ A campaign excludes a suppressed address. ⑦ A user record never becomes a contact point. ⑧ Every CRM change is in the audit log. |
 | **Tests** | `crm-companies.test.ts`, `crm-contacts.test.ts`, `crm-pipeline.test.ts`, `crm-campaigns.test.ts`, `duplicate-resolution.test.ts`, `identity-resolution.test.ts`, `crm-trust.test.ts` |
 | **Risk** | Medium |
 | **Size** | ~6 weeks |
@@ -1704,10 +2019,12 @@ not negotiable.
 | Q2 | **Who may be a `manager`?** Is a "team lead" a distinct role from a "manager"? | No — keep the five roles. Add a *team* concept as a `groups` table and a permission filter, not a sixth role. | M3, M5 |
 | Q3 | **Do we keep the desktop product, or retire it after the cloud is mature?** | Keep it. The desktop is the offline and local-first mode, and it is the migration source. | M7 |
 | Q4 | **Is a prospect's email a "contact point" or a "lead"?** | Both: a `lead` is a *commercial* record (a company being worked); a `contact point` is a *channel address*. A lead points at a contact point. | M5 |
-| Q5 | **Do we bill per credit, per seat, or per usage?** | Credits for the metered work, a seat count for the collaboration features, and a platform plan. All three are modelled; only credits gate the providers. | M8 |
-| Q6 | **Should the platform admin be able to see a customer's data at all?** | Only through a time-boxed, audited break-glass grant. The alternative — a permanent read path — is the single most dangerous thing we could build. | M2, M6 |
-| Q7 | **Which OI isolation model: shared instance with tenant scoping, or one instance per tenant?** | One instance per tenant first (safer, slower to scale), shared instance with RLS-equivalent scoping later, once the tests exist. | M4, M5 |
-| Q8 | **Is the CRM's duplicate merge allowed to be automatic?** | Auto-merge only on a domain or phone match, everything else is reviewed. The threshold is a setting, and every merge is reversible. | M5 |
+| Q5 | ~~**Do we bill per credit, per seat, or per usage?**~~ | **DECIDED (2026-10-20):** plans + seats + entitlements + credits, with an auditable credit ledger carrying reservations, settlement, refunds, spending limits and reconciliation. No real billing is activated; no prices are fixed. See §9.3. | — |
+| Q6 | ~~**Should the platform admin be able to see a customer's data at all?**~~ | **DECIDED (2026-10-20):** time-limited, audited break-glass only; no permanent unrestricted access. See §5.7. | — |
+| Q7 | ~~**Which OI isolation model: shared instance with tenant scoping, or one instance per tenant?**~~ | **DECIDED (2026-10-20):** per-tenant instances first; shared processing is gated on the five-part test suite in §8.8.5. | — |
+| Q8 | ~~**Is the CRM's duplicate merge allowed to be automatic?**~~ | **DECIDED, MODIFIED (2026-10-20):** no automatic merge on a single signal; corroborated evidence required; ambiguous matches go to human review; the merge is audited and reversible. See §6.3. | — |
+| **Q9** | **Should an automatic merge be possible at all, or should every candidate go to a human?** | Automatic is permitted, but only on corroborated evidence (§6.3.3). If the review prefers zero automatic merges, the auto-merge branch is deleted and every candidate is routed to a human — a one-line change with no schema impact. | M5 |
+| **Q10** | **Who may approve a break-glass request — the platform admin, or the customer?** | Both may *request*; only the customer, or a second platform admin, may *approve*. A single admin can never grant themselves access. | M2, M6 |
 
 ### 12.3 What is explicitly *not* in F2
 
