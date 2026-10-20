@@ -269,6 +269,8 @@ test('M0 introduced NO database schema change', () => {
 test('the desktop package includes the shared package', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.ok(pkg.workspaces && pkg.workspaces.includes('packages/*'), 'the repository is a workspace root');
-  assert.ok(pkg.build.files.includes('packages/lead-intelligence/**/*'),
-    'the shared package is in the electron-builder file list');
+  assert.ok(
+    pkg.build.files.some((f) => f === 'packages/**' || f === 'packages/lead-intelligence/**/*' || f === 'packages/lead-intelligence/**'),
+    'the shared package is in the electron-builder file list',
+  );
 });
