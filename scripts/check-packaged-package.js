@@ -38,6 +38,16 @@ function main() {
 
   console.log('packaged application: the shared package loads, and the shim is the same instance');
   console.log(`  package root : ${resolver.root}`);
+
+  // The packaged executable is a GUI-subsystem application, so a shell that
+  // invokes it directly may never see its exit code. The result is therefore
+  // also written to a file, which the CI step reads.
+  if (process.env.PACKAGED_PACKAGE_CHECK_OUT) {
+    require('node:fs').writeFileSync(
+      process.env.PACKAGED_PACKAGE_CHECK_OUT,
+      JSON.stringify({ ok: true, packageRoot: resolver.root }, null, 2) + '\n',
+    );
+  }
 }
 
 try {

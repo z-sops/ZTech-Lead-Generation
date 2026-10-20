@@ -141,10 +141,20 @@ jobs:
       # application. The check runs the packaged Electron itself, so the asar is
       # mounted exactly as it is at runtime, and it asserts that a compatibility
       # shim and the package are the same module instance.
+      #
+      # The packaged executable is a GUI-subsystem application: a shell that
+      # invokes it directly does not get its exit code, so the process is
+      # started and waited for explicitly, and the check also writes a result
+      # file that is read back.
       - name: The packaged application can load the shared package
         shell: pwsh
         run: |
           $env:ELECTRON_RUN_AS_NODE = '1'
+          $env:PACKAGED_PACKAGE_CHECK_OUT = "$PWD\packaged-package-check.json"
+          if (Test-Path $env:PACKAGED_PACKAGE_CHECK_OUT) { Remove-Item $env:PACKAGED_PACKAGE_CHECK_OUT }
           $exe = (Get-ChildItem 'dist\win-unpacked' -Filter *.exe | Select-Object -First 1).FullName
-          & $exe 'scripts\check-packaged-package.js'
-          if ($LASTEXITCODE -ne 0) { throw 'the packaged application could not load the shared package' }
+          $p = Start-Process -FilePath $exe -ArgumentList 'scripts\check-packaged-package.js' -WorkingDirectory $PWD -Wait -PassThru
+          if (-not (Test-Path $env:PACKAGED_PACKAGE_CHECK_OUT)) { throw "the packaged application did not run the check (exit $($p.ExitCode))" }
+          $result = Get-Content $env:PACKAGED_PACKAGE_CHECK_OUT -Raw | ConvertFrom-Json
+          if (-not $result.ok) { throw 'the packaged application could not load the shared package' }
+          Write-Host "packaged application: the shared package loads from $($result.packageRoot)"
