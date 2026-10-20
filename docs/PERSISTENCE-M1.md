@@ -16,6 +16,110 @@ implementations of ONE repository seam. The seam is
 
 ---
 
+## The workspace identifier
+
+**`workspace_id` is a UUID**, as the F2 architecture requires (§4.1: *"Every
+tenant-owned table has `workspace_id uuid not null` and a leading index on
+it"*).
+
+| | |
+|---|---|
+| **The cloud (PostgreSQL)** | `workspace_id UUID NOT NULL`, and it is the **leading column of every primary key** and of every index. The store refuses to be constructed with a workspace that is not a UUID. |
+| **The desktop (sql.js)** | unchanged. Its database is a single local install, its column stays `TEXT`, its value stays `local`, and **its data and its schema are untouched** — the thirteen desktop migrations are still byte-identical to the F0/F1 baseline. |
+| **The reserved platform** | `00000000-0000-0000-0000-000000000000` is the platform's workspace. A global suppression belongs to it, so a global row is never NULL-scoped. Only the `platform` role may use it. |
+
+The business identifiers keep their existing formats (`pkt_`, `mbx_`, `seq_`,
+`li_`…), as F2 §4.1 requires. Only the *scoping* column changed its type.
+
+## The tenant-safe keys
+
+A key that is not scoped by the workspace lets one customer's row block
+another customer's row, and lets a lookup cross the boundary. So:
+
+| | The desktop | PostgreSQL |
+|---|---|---|
+| **The primary key** | the id alone | `(workspace_id, id)` |
+| **One active research job per request key** | `(request_key)` | `(workspace_id, request_key)` |
+| **One active enrichment job per lead** | `(lead_id)` | `(workspace_id, lead_id)` |
+| **One pending OI refresh intent per lead** | `(lead_id)` | `(workspace_id, lead_id)` |
+| **One accepted send per (channel, idempotency key)** | `(channel, idempotency_key)` | `(workspace_id, channel, idempotency_key)` |
+| **One trust event per event id** | `(event_id)` | `(workspace_id, event_id)` |
+| **One reply review per event** | `(event_id)` | `(workspace_id, event_id)` |
+| **One open sequence per lead** | `(lead_id)` | `(workspace_id, lead_id)` |
+| **One sequence per first email** | `(first_send_id)` | `(workspace_id, first_send_id)` |
+| **One pitch per step** | `(pitch_id)` | `(workspace_id, pitch_id)` |
+| **One mailbox per address** | `(provider, email_address)` | `(workspace_id, provider, email_address)` |
+| **One stored message id per mailbox** | `(mailbox_id, stored_message_id)` | `(workspace_id, mailbox_id, stored_message_id)` |
+
+Every index **leads with the workspace**, as F2 §4.1 requires. The mapping
+test proves it, from the migration files, on every run.
+
+**Foreign keys:** the legacy schema has none — deliberately, because the
+existing ZTech tables' keys are not known to this module. M1 adds none
+either. The workspace-aware composite foreign keys the F2 plan calls for
+(§4.8) belong to M2, with the tenancy proof.
+
+## The global tables, and who may write them
+
+| Table | Scope | Who may write it |
+|---|---|---|
+| `li_schema_migrations` | global | the migration role |
+| `li_market_rules` | global — a market rule is the same in every workspace | **the platform only.** A tenant store's `marketRules.set` throws `FORBIDDEN`; a tenant may READ the rules, because they decide what is permitted. |
+| `li_sequence_control` | **workspace-scoped** | the tenant, for its own workspace. One customer's "pause all follow-ups" must not pause another customer's sequences, so the switch is keyed `(workspace_id, id)`. |
+| `li_suppressions` | the tenant's own rows, plus the platform's global rows | the tenant for its own rows; the platform for the global ones. |
+
+### The global suppression, and the contact information it holds
+
+A global suppression is a record of a contact. A tenant may be **blocked** by
+it — that is its whole purpose — but it must never be **shown** one:
+
+- `suppressions.find` returns the tenant's own row in full, and a global row
+  **redacted**: the address is removed, the reason is kept, because the
+  caller needs to know *why* the address is blocked;
+- `suppressions.list` and `listForAddress` return the tenant's own rows only
+  — a global row is never listed;
+- `suppressions.isSuppressed` answers the yes-or-no question without
+  returning any row at all.
+
+The desktop is a single install, so a "global" row there belongs to the same
+operator and is returned in full. That is not a difference in the rule, it is
+a difference in what "global" can mean when there is only one workspace.
+
+## The transactions
+
+The transaction's client used to be a field on the store. That is shared
+state: two transactions running at the same time could pick up each other's
+client. It is now held in an **AsyncLocalStorage** context, so it belongs to
+the operation that opened the transaction and to nothing else.
+
+- **A nested transaction joins the outer one** through a `SAVEPOINT`.
+  PostgreSQL has no nested transactions, and a nested one that opened its own
+  connection would deadlock against the outer transaction's locks. A failure
+  inside the nested transaction rolls back to its savepoint only; the outer
+  transaction decides what happens next.
+- **An operation outside a transaction** uses the pool, never a
+  transaction's client.
+
+The concurrency tests prove all of it against a real PostgreSQL 16:
+simultaneous transactions on different connections, isolation between them,
+rollback isolation, the pool, savepoints, and that the pool is still usable
+after a failed transaction.
+
+## What the multi-workspace tests prove
+
+`tests/persistence-contract/multi-workspace.test.js` runs two workspaces
+against one PostgreSQL 16 and proves that they can hold the **same** request
+key, lead id, job id, packet id, idempotency key, sequence, trust event,
+reply review, stored message id and mailbox address **without blocking each
+other**, and that neither can read or write the other's rows.
+
+**These are structural proofs, not security proofs.** They show that the
+schema and the store's scoping are tenant-safe. They do NOT show that a
+customer cannot reach another customer's data by any other route: row-level
+security, the role ladder, the `SECURITY DEFINER` grants, the startup role
+assertion and the cross-tenant denial suite are **M2**, and nothing in this
+branch may be read as a claim that they exist.
+
 ## The type mapping
 
 | The desktop (SQLite) | The PostgreSQL counterpart | Why |
@@ -32,16 +136,13 @@ implementations of ONE repository seam. The seam is
 
 | The column | Why |
 |---|---|
-| `workspace_id` | the tenant column. Every tenant-owned table carries it, so the structure is ready for the row-level security of M2. **M1 proves no isolation**: the filter is application-level, and M2 is what makes it a boundary. |
+| `workspace_id` | the tenant column: a **UUID**, and the leading column of every key and index. See *The workspace identifier* above. |
 | `seq` | the insertion order, on the seven tables the desktop orders by `rowid`. |
 
-Three tables are **global** and carry no workspace: `li_schema_migrations`
-(the ledger), `li_market_rules` (a market rule is the same in every
-workspace) and `li_sequence_control` (the one "Pause all follow-ups" switch).
-
-`li_suppressions` keeps its own `workspace_id`: a suppression with scope
-`global` has none and is visible to every workspace, exactly as on the
-desktop.
+Two tables are **global** and carry no workspace: `li_schema_migrations`
+(the ledger) and `li_market_rules` (a market rule is the same in every
+workspace, and only the platform may write it). `li_sequence_control` is
+**workspace-scoped**. See *The global tables* above.
 
 ## The table mapping
 

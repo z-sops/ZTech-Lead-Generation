@@ -402,6 +402,71 @@ force-pushed, deployed or deleted; the base branch is untouched.** On
 approval: M2 — tenancy, row-level security and the cross-tenant denial
 suite.
 
+### The M1 review corrections (2026-10-20)
+
+The M1 review accepted the shared repository approach and asked for five
+corrections before M2. All five are done, on the same branch, in the same
+draft pull request.
+
+**1. The transaction's client is no longer shared state.** It used to be a
+field on the store, so two transactions running at the same time could pick
+up each other's client. It is now held in an **AsyncLocalStorage** context,
+so it belongs to the operation that opened the transaction and to nothing
+else. A **nested transaction joins the outer one** through a `SAVEPOINT` —
+PostgreSQL has no nested transactions, and a nested one that opened its own
+connection would deadlock against the outer transaction's locks. The
+concurrency tests prove it against a real PostgreSQL 16: simultaneous
+transactions on different connections, isolation between them, rollback
+isolation, the pool, savepoints, and that the pool survives a failed
+transaction.
+
+**2. The workspace identifier is a UUID**, as F2 §4.1 requires
+(`workspace_id uuid not null`, with a leading index). Every primary key and
+every index now leads with it, and the store refuses to be constructed with
+a workspace that is not a UUID. **The desktop's own data and schema are
+untouched**: its column stays `TEXT`, its value stays `local`, and its
+thirteen migration files are still byte-identical to the F0/F1 baseline.
+
+**3. Every key and unique index is tenant-safe.** The active-research index
+on `request_key` was the example the review named; it now carries the
+workspace, and so do all of them: the enrichment job's lead, the OI refresh
+intent's lead, the accepted send's (channel, idempotency key), the trust
+event's id, the reply review's event, the sequence's lead and first email,
+the step's pitch, the mailbox's address and the stored message id. The
+mapping test proves it from the migration files on every run. Two workspaces
+can now hold the **same** business key without blocking each other, and
+neither can read or write the other's rows.
+
+**4. The global tables are reviewed.**
+`li_sequence_control` is **workspace-scoped** — one customer's pause-all no
+longer pauses another customer's sequences. The market rules stay global, and
+only the **platform** may write them: a tenant store's write throws
+`FORBIDDEN`, and a tenant may still read them. A **global suppression**
+blocks every workspace, but it never exposes the contact information it
+holds: the address is redacted, the reason is kept, and the global row is
+never listed to a tenant.
+
+**5. The tests.** The SQLite/PostgreSQL equivalence suite is retained, and
+two new suites run against a real PostgreSQL 16: the concurrency suite
+(8 assertions) and the multi-workspace suite (7). The mapping test gained
+the tenant-safety gate.
+
+**Tenant security is NOT implemented.** These are structural proofs: the
+schema and the store's scoping are tenant-safe. Row-level security, the
+role ladder, the `SECURITY DEFINER` grants, the startup role assertion and
+the cross-tenant denial suite remain **M2**, and nothing in this branch may
+be read as a claim that they exist.
+
+**Tests:** 130 files, **2,097 assertions**, 0 failed, 0 skipped (with a
+real PostgreSQL 16); 2,068 with 22 skipped without one.
+
+### Next
+
+M1 is submitted as a **draft pull request** for review. **Nothing merged,
+force-pushed, deployed or deleted; the base branch is untouched.** M2 —
+row-level security, tenant isolation, role boundaries and the cross-tenant
+denial suite — is **awaiting authorization**.
+
 ---
 
 ## 2026-10-20 — Critical integration fixes and F1 branding (same branch)
