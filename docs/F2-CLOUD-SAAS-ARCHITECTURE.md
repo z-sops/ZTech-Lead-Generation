@@ -1,15 +1,27 @@
 # F2 — ZTech Cloud SaaS architecture and implementation plan
 
-**Date:** 2026-10-20 · **Revision 2** (after the architecture review decisions)
+**Date:** 2026-10-20 · **Revision 3** (after the architecture review corrections)
 **Branch:** `feat/f2-cloud-saas-architecture` (based on the F0/F1 heads)
 **Status:** **DESIGN FOR REVIEW — no implementation has started.**
 **Author:** ZuniTech engineering
 
-**Revision 2** incorporates the review decisions of 2026-10-20: Q5 (billing)
-and Q6 (platform super admin) approved as modelled; Q7 (OI isolation)
-approved as per-tenant, with §8.8 added; **Q8 (CRM identity resolution)
-modified** — no automatic merge on a single signal — with §6.3 rewritten. The
-seven critical requirements are traced in §1.4.
+**Revision 2** incorporated the first review decisions (Q5 billing, Q6 platform
+admin, Q7 OI isolation, Q8 identity resolution — modified).
+
+**Revision 3** incorporates the second review: **Q9 decided** (no automatic CRM
+merging initially) and **Q10 decided** (routine break-glass needs customer
+authorisation; emergencies need two independent administrators), plus seven
+**required architecture corrections**:
+
+| # | Correction | Where |
+|---|---|---|
+| C1 | Tenant permissions resolve **strictly inside the active authenticated workspace** | §5.3.3 |
+| C2 | A **corrected** startup role-ownership assertion, the **absent-context** behaviour, and tests with **real PostgreSQL roles** | §5.2.1, §5.3.1 |
+| C3 | Job leasing: due-time eligibility, **lease heartbeat and fencing**, safe recovery, a **tenant-safe claim**, and no concurrent provider calls from an expired lease | §8.2.1 |
+| C4 | Reconciliation may only conclude "failed" when the provider's API is **conclusive**; credit reservations are **preserved** while an outcome is uncertain; invocation and job enums aligned | §8.4.1, §8.6 |
+| C5 | A person working at **several companies over time**; **shared corporate contact points**; **workspace-aware composite foreign keys** | §4.3, §4.8, §6.2 |
+| C6 | Migration: **no automatic merging** on a domain or email; the round trip is **semantically equivalent** with exact source preservation, count reconciliation and field-level loss reporting | §10.3, §10.4 |
+| C7 | Break-glass **read** auditing: DML triggers do not audit `SELECT` | §5.7.2 |
 
 ---
 
@@ -89,12 +101,12 @@ a schema change, not to switch it on.
 
 | # | Requirement | Where | How it is proved |
 |---|---|---|---|
-| **R1** | Tenant isolation is enforced **at the PostgreSQL level** with carefully tested RLS. Application roles must not bypass RLS or accept untrusted workspace context. | §5.2, §5.3, §5.3.1, §5.3.2 | The startup role assertions (§5.3.1) fail the service if the app role is superuser, has `BYPASSRLS` or owns a tenant table. The denial suite (§5.6) asserts isolation **at the database level**. A request carrying a workspace identifier is **rejected**, not ignored. |
-| **R2** | Isolation must hold across **APIs, background jobs, caches, file storage, search results and logs**. | §5.6, §5.8, §8.7 | §5.8 gives each surface its own rule and its own test: workspace-prefixed cache keys, workspace-prefixed object paths, a partitioned search index, and a closed allow-list of log fields. |
+| **R1** | Tenant isolation is enforced **at the PostgreSQL level** with carefully tested RLS. Application roles must not bypass RLS or accept untrusted workspace context. | 5.2, 5.2.1, 5.3.1, 5.3.1.1, 5.3.2, 5.3.3 | | The startup role assertions (§5.3.1) fail the service if the app role is superuser, has `BYPASSRLS` or owns a tenant table. The denial suite (§5.6) asserts isolation **at the database level**. A request carrying a workspace identifier is **rejected**, not ignored. |
+| **R2** | Isolation must hold across **APIs, background jobs, caches, file storage, search results and logs**. | 5.6, 5.6.1, 5.8, 8.2.1, 8.7 | | §5.8 gives each surface its own rule and its own test: workspace-prefixed cache keys, workspace-prefixed object paths, a partitioned search index, and a closed allow-list of log fields. |
 | **R3** | The existing Lead Intelligence security and outreach invariants must be preserved. | §2.4 | The 15 invariants are listed explicitly and are the **acceptance criteria** of the extraction (M0). The existing 1,990 assertions must pass unchanged. |
-| **R4** | A local idempotency ledger alone cannot guarantee exactly-once execution by external providers. Uncertain outcomes must be modelled, and provider-side reconciliation must happen **before** a chargeable or message-sending operation is retried. | §8.4, §8.6 | The ledger models `reserved / attempted / accepted / failed / blocked / outcome_unknown`. A retry of an `attempted` invocation **does not call the provider** — it queues for reconciliation. The reconciliation probes are provider-side and bounded. |
-| **R5** | The native CRM and the per-customer dashboards are **mandatory first-class parts** of the product. | §6, §7 | §6 defines the CRM entities, workflows and contracts; §7 defines 18 workspace screens and the platform console, each with its role visibility. |
-| **R6** | All existing advanced features and historical records must be preserved through **tested** migrations. | §10 | §10.3 maps every legacy table; §10.4 states the conversion rules, including that the user's data is never deleted; M7's acceptance includes a round-trip test and an idempotency test. |
+| **R4** | A local idempotency ledger alone cannot guarantee exactly-once execution by external providers. Uncertain outcomes must be modelled, and provider-side reconciliation must happen **before** a chargeable or message-sending operation is retried. | 8.4, 8.4.1, 8.4.2, 8.6, 8.6.1 | | The ledger models `reserved / attempted / accepted / failed / blocked / outcome_unknown`. A retry of an `attempted` invocation **does not call the provider** — it queues for reconciliation. The reconciliation probes are provider-side and bounded. |
+| **R5** | The native CRM and the per-customer dashboards are **mandatory first-class parts** of the product. | 6, 6.2, 6.3, 7 | | §6 defines the CRM entities, workflows and contracts; §7 defines 18 workspace screens and the platform console, each with its role visibility. |
+| **R6** | All existing advanced features and historical records must be preserved through **tested** migrations. | 10, 10.3, 10.3.1, 10.4, 10.4.1 | | §10.3 maps every legacy table; §10.4 states the conversion rules, including that the user's data is never deleted; M7's acceptance includes a round-trip test and an idempotency test. |
 | **R7** | ZuniSEO remains an **independent** service. | §2.3, §3.1 | ZuniSEO appears only as an external dependency in the topology, is read-only, and its vendored contract is drift-checked in CI. Nothing in F2 modifies the ZuniSEO repository. |
 
 ### 1.5 The decisions taken at the architecture review (2026-10-20)
@@ -105,6 +117,17 @@ a schema change, not to switch it on.
 | **Q6 — Platform super admin** | **Approved.** Controlled, time-limited, audited break-glass access only. No permanent unrestricted access to customer CRM records, messages, credentials or prospect information. | §5.7 — unchanged in intent, reinforced: the break-glass path is a temporary workspace membership, so every query still goes through the normal RLS policy and is captured by the audit triggers. |
 | **Q7 — OI isolation** | **Approved.** Per-tenant OI isolation initially, with isolated storage, credentials and execution. Provisioning, operational costs, lifecycle management and a future migration path to a shared service must be documented. **Shared OI processing must not be activated until the cross-tenant isolation and security tests pass.** | §8.8 is new: the concrete isolation layers, the provisioning flow, the cost model, the lifecycle table, and the five-part activation gate for the shared instance. |
 | **Q8 — CRM identity resolution** | **Modified.** No automatic merge on a single phone number or domain. Parent companies, branches, persons and contact points are separate. An automatic merge requires high-confidence, **corroborated** identity evidence; ambiguous matches go to human review. An audit trail and merge reversal are kept. | §6.3 is rewritten: the four records are separated, the signals have independence groups, and an automatic merge requires **two independent signals from different groups, no conflict, and no prior manual decision**. A single domain or a single phone number now only ever raises a **candidate**. |
+| **Q9 — Automatic merging** | **DECIDED (2026-10-20): automatic CRM record merging is DISABLED initially.** The system generates **ranked duplicate candidates** for authorised human review. Reversible, audited **manual** merges are preserved. Automatic merging may be reconsidered only after **measured accuracy and false-positive testing**. | §6.3 is rewritten again: there is **no automatic merge path at all**. Every candidate is ranked and queued for a human. The corroboration rules remain — as the *evidence standard a reviewer is shown*, and as the future gate for reconsidering automation. |
+| **Q10 — Break-glass authorisation** | **DECIDED (2026-10-20):** **routine** break-glass requests require **customer authorisation**. **Genuine emergencies** require approval by **two independent authorised platform administrators**, **immediate customer notification**, **minimum necessary scope**, a **short expiry**, and **full auditing**. **Self-approval is prohibited.** | §5.7.1 defines the two authorisation paths; §5.7.3 adds the read-auditing mechanism that DML triggers cannot provide. |
+
+### 1.6 The remaining scope decisions, recorded
+
+| Topic | Decision | Where it lands |
+|---|---|---|
+| **Cloud region** | **One region initially**, with the data directory, the secret store and the OI instances co-located, and the design leaving room for a second region. | §3.1 (one region, three processes), §8.8.1 (the OI instances sit in that region), and the region list is published to customers (§9, and the Legal PR). |
+| **Team roles** | **Five roles retained** (owner, admin, manager, member, viewer). A **team / group** organisation is added as a `groups` table and a permission filter — **not** a sixth role. | §5.5.1 |
+| **Desktop** | **Compatibility preserved, but the browser SaaS is the priority.** No major F2 development effort is spent on desktop synchronisation **unless it is separately approved**. The desktop keeps its local mode and remains the migration source. | §10.5 — the sync mode is described as an **optional, separately-approved** item, and the milestone table marks it as out of the F2 critical path. |
+| **Lead versus contact** | **Settled:** a **lead is a commercial record** (a company being worked, with a qualification status); a **contact point is a channel address**. A lead points at a contact point; the two are not the same thing. | §6.1, §6.2, §6.4 |
 
 ---
 
@@ -535,19 +558,34 @@ desktop adapter and the browser client speak the same language.
    │                    contact_points                          │
    │ contact_point_id uuid PK                                  │
    │ workspace_id uuid                                          │
-   │ person_id   uuid FK  NULL                                  │
-   │ company_id  uuid FK  NULL                                  │
+   │ company_id  uuid FK  NULL   (NULL = a person-only point)  │
    │ channel     text  (email|phone|whatsapp|linkedin|other)    │
    │ value       text     (normalised)                         │
    │ e164        text     (phones only)                        │
-   │ label       text     (work|mobile|direct)                 │
+   │ label       text     (work|mobile|direct|main|switchboard)│
    │ verification text    (verified|unverified|invalid|unknown) │
    │ verified_at timestamptz NULL                              │
    │ source_observation_id uuid FK NULL                         │
-   │ is_primary  boolean                                     │
+   │ is_corporate boolean  (a shared switchboard or desk)       │
    │ do_not_contact boolean                                    │
    │ UNIQUE (workspace_id, channel, value)                     │
+   │ FK (workspace_id, company_id) -> companies                │
    └─────────────────────────────────────────────────────────────┘
+          ▲                       ▲
+          │ N                     │ N
+   ┌──────┴─────────────┐  ┌──────┴──────────────────────────┐
+   │ person_contact_pts │  │        person_employments        │
+   │ link_id uuid PK    │  │ employment_id uuid PK            │
+   │ workspace_id uuid  │  │ workspace_id uuid                │
+   │ person_id  uuid FK │  │ person_id  uuid FK               │
+   │ contact_point_id   │  │ company_id uuid FK               │
+   │   uuid FK          │  │ title        text                │
+   │ is_primary boolean │  │ is_decision_maker boolean       │
+   │ role      text     │  │ from_at  timestamptz NOT NULL   │
+   │ FK (workspace_id, person_id)   -> people                 │  (the SAME person may
+   │ FK (workspace_id, contact_point_id) -> contact_points     │   work for several
+   └────────────────────┘  │ FK (workspace_id, company_id) -> companies │  companies over
+                             └──────────────────────────────────┘  time, and leave)
 ```
 
 ### 4.4 The ERD — pipeline, deals and activities
@@ -690,6 +728,67 @@ synchronous call sites in `OutreachService` and `SequenceService` will need
 `await`. This is a **source-level change to the callers**, which is why the
 extraction is staged (§11).
 
+### 4.8 Workspace-aware composite foreign keys
+
+RLS decides which rows a statement may *see*. A **composite foreign key**
+decides which rows a row may *point at* — and it does so **in the database**,
+without relying on any application check.
+
+Every tenant-owned child table carries `workspace_id`, and every reference to
+another tenant-owned record is expressed as a **composite** foreign key that
+includes it:
+
+```sql
+-- The parent carries a unique key that includes the workspace.
+ALTER TABLE companies ADD CONSTRAINT companies_workspace_company_key
+  UNIQUE (workspace_id, company_id);
+
+-- The child references (workspace_id, company_id) - not company_id alone.
+ALTER TABLE leads ADD CONSTRAINT leads_company_fk
+  FOREIGN KEY (workspace_id, company_id)
+  REFERENCES companies (workspace_id, company_id);
+```
+
+**What this makes impossible.** A row in `leads` cannot point at a company in
+another workspace, because the pair `(workspace_id, company_id)` must exist in
+`companies`. The reference is rejected by PostgreSQL at insert time, **even if
+the application is buggy, even if the RLS context is wrong, and even if a
+future code path forgets the check**. RLS and the composite key are two
+independent mechanisms that must both be satisfied.
+
+| Child | Composite reference to |
+|---|---|
+| `leads` | `(workspace_id, company_id)` → `companies`, `(workspace_id, contact_point_id)` → `contact_points` |
+| `contact_points` | `(workspace_id, company_id)` → `companies` |
+| `person_contact_points` | `(workspace_id, person_id)` → `people`, `(workspace_id, contact_point_id)` → `contact_points` |
+| `person_employments` | `(workspace_id, person_id)` → `people`, `(workspace_id, company_id)` → `companies` |
+| `deals` | `(workspace_id, pipeline_id)` → `pipelines`, `(workspace_id, stage_id)` → `stages`, `(workspace_id, company_id)` → `companies` |
+| `tasks`, `notes`, `activities` | `(workspace_id, …)` → the entity they act on |
+| `campaign_interactions` | `(workspace_id, campaign_id)` → `campaigns` |
+| `sends`, `pitches`, `approvals` | `(workspace_id, …)` → their lead, pitch and mailbox |
+
+**Two rules follow from this, and they are schema rules, not conventions:**
+
+1. **A nullable reference is a nullable composite.** A `contact_points` row
+   with `company_id IS NULL` is a person-only point; the composite key
+   tolerates it because a composite foreign key is satisfied when **any** of
+   its columns is null — and the plan makes that explicit with a `CHECK`
+   rather than relying on the SQL rule.
+2. **Every parent table needs the composite unique constraint.** The migration
+   adds it to every tenant parent, and the isolation suite asserts that a
+   cross-tenant reference is **rejected by the database**.
+
+```ts
+// The test proves the constraint, not the application.
+await expect(asWorkspace('A').leads.insert({ company_id: companyInB }))
+  .rejects.toMatchObject({ code: 'FOREIGN_KEY_VIOLATION' });
+```
+
+This is the second of the two independent isolation mechanisms, and it is the
+one that catches a **logic** error rather than a **query** error: RLS stops a
+query that reads the wrong rows; the composite key stops a write that points
+at the wrong rows.
+
 ---
 
 ## 5. Deliverable 4 — Tenant isolation and access-control model
@@ -714,8 +813,8 @@ ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leads FORCE  ROW LEVEL SECURITY;   -- applies even to the owner
 
 CREATE POLICY leads_tenant_isolation ON leads
-  USING      (workspace_id = current_setting('app.workspace_id')::uuid)
-  WITH CHECK (workspace_id = current_setting('app.workspace_id')::uuid);
+  USING      (workspace_id = current_setting('app.workspace_id', true)::uuid)
+  WITH CHECK (workspace_id = current_setting('app.workspace_id', true)::uuid);
 ```
 
 The API sets the tenant **per transaction**, never per session:
@@ -728,8 +827,58 @@ await tx(async (t) => {
 ```
 
 `set_config(..., true)` is transaction-local, so a pooled connection cannot leak
-one tenant's setting into another request. A `SET LOCAL` is not used because it
-is not available on every driver path.
+one tenant's setting into another request.
+
+#### 5.2.1 The absent-context behaviour, stated exactly
+
+`current_setting('app.workspace_id', true)` returns **NULL** when the setting
+has never been set in this session (the `true` argument is what makes it
+return NULL instead of raising). A `NULL` compared to a `uuid` yields
+`NULL`, and a `NULL` predicate is **not true** — so a statement that runs
+without a context sees **no rows** and inserts **no rows**.
+
+That is the safe default, but it is subtle, and a subtle default is a
+liability. The plan therefore makes it **explicit and enforced**:
+
+```sql
+-- The context is read through a helper that can never match a real workspace.
+CREATE FUNCTION app_workspace_id() RETURNS uuid
+  LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT COALESCE(
+      NULLIF(current_setting('app.workspace_id', true), ''),
+      '00000000-0000-0000-0000-000000000000'::uuid   -- the reserved "no context" value
+    )::uuid
+  $$;
+
+CREATE POLICY leads_tenant_isolation ON leads
+  USING      (workspace_id = app_workspace_id())
+  WITH CHECK (workspace_id = app_workspace_id());
+```
+
+`00000000-0000-0000-0000-000000000000` is **reserved and never issued** to a
+workspace (the generator starts at `00000000-0000-0000-0000-000000000001`).
+The behaviour is therefore:
+
+| Situation | Result |
+|---|---|
+| The context is set to a real workspace | that workspace's rows and only those |
+| The context is **absent** | **no rows** are visible; `INSERT`/`UPDATE` affect **no rows**; a write is rejected by the `WITH CHECK` clause |
+| The context is set to the reserved zero-uuid | identical to "absent" |
+| The context is set to a **malformed** value | `current_setting` returns it and the cast fails → the statement **errors** rather than silently matching nothing |
+
+**This is asserted at startup**, not merely relied upon:
+
+```ts
+// A transaction with no context must see nothing and write nothing.
+const seen = await db.transaction(async (t) => {
+  await t.set_config('app.workspace_id', '', true);   // deliberately empty
+  const rows = await t.query('SELECT id FROM leads LIMIT 1');
+  return rows;
+});
+assert(seen.length === 0, 'without a workspace context, a tenant table must be empty');
+```
+
+The test runs against **real PostgreSQL roles** — see §5.6.1.
 
 **Two policy classes exist:**
 
@@ -759,23 +908,97 @@ aspirational.
 
 A migration that accidentally granted the wrong privileges would defeat every
 policy. The service therefore **asserts its own role properties at startup**
-and refuses to serve traffic if any of them is false:
+and refuses to serve traffic if any of them is false.
+
+The assertion inspects the **actual ownership and effective privileges** of
+every tenant table — it does not rely on a role-name convention:
 
 ```ts
-// Run once, at boot, by the API and by every worker.
-const r = await db.query(`
-  SELECT rolsuper, rolbypassrls, (rolname = ANY (SELECT array_agg(rolname) FROM pg_roles
-                                    WHERE pg_has_role(current_user, oid, 'USAGE')))
-         AS is_owner_of_tenant_tables
-  FROM pg_roles WHERE rolname = current_user`);
-assert(!r.rolsuper,      'the application role must not be superuser');
-assert(!r.rolbypassrls,  'the application role must not bypass RLS');
-assert(!r.is_owner_of_tenant_tables, 'the application role must not own tenant tables');
+async function assertRoleSafety(db: Pool, tenantTables: string[]) {
+  // 1. The role itself must not be superuser and must not bypass RLS.
+  const r = await db.query(
+    `SELECT rolsuper, rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = current_user`);
+  const role = r.rows[0];
+  assert(!role.rolsuper,     'the application role must not be superuser');
+  assert(!role.rolbypassrls, 'the application role must not bypass RLS');
+
+  // 2. For EVERY tenant table: the role must not own it, and it must not
+  //    hold the privileges that only an owner needs.
+  const t = await db.query(`
+    SELECT c.relname                              AS table_name,
+           pg_get_userbyid(c.relowner)            AS owner,
+           c.relrowsecurity                       AS row_security,
+           c.relforcerowsecurity                  AS force_rls,
+           has_table_privilege(current_user, c.oid, 'SELECT')          AS can_select,
+           has_table_privilege(current_user, c.oid, 'INSERT,UPDATE,DELETE') AS can_write
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind = 'r'
+      AND c.relname = ANY($1::text[])`, [tenantTables]);
+
+  assert(t.rows.length === tenantTables.length,
+    'every tenant table must exist and be visible to the assertion');
+  for (const row of t.rows) {
+    assert(row.owner !== currentUser, `the application role must not own ${row.table_name}`);
+    assert(row.row_security, `${row.table_name} must have RLS enabled`);
+    assert(row.force_rls, `${row.table_name} must FORCE row level security`);
+    assert(row.can_select && row.can_write,
+      `${row.table_name} must be readable and writable by the application role`);
+  }
+}
 ```
 
+Three things this catches that a role-name check would not:
+
+1. A table that was **created by the application role** (a migration run with
+   the wrong role) — the role would silently own it and bypass RLS.
+2. A table whose RLS was **enabled but not forced** — the owner would still
+   bypass it.
+3. A table that is **missing** from the tenant-table list entirely, and would
+   therefore have no policy at all.
+
 **A failed assertion stops the service**, rather than starting it with a
-weakened boundary. The same assertion runs in CI against a real PostgreSQL,
-so a migration that grants the wrong privilege fails the build.
+weakened boundary.
+
+#### 5.3.1.1 The tests use real PostgreSQL roles
+
+The assertion is only meaningful against a real server, so the isolation suite
+creates the roles the production deployment uses and exercises them:
+
+```sql
+-- The CI fixture creates exactly these roles.
+CREATE ROLE ztech_migrator NOLOGIN;            -- owns the schema
+CREATE ROLE ztech_app      LOGIN  PASSWORD 'x'; -- the application role
+CREATE ROLE ztech_worker   LOGIN  PASSWORD 'x';
+
+-- Tables are created and owned by the migrator, then granted to the app role.
+CREATE TABLE leads (..., workspace_id uuid NOT NULL) ;   -- owner ztech_migrator
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leads FORCE  ROW LEVEL SECURITY;
+CREATE POLICY leads_tenant_isolation ON leads
+  USING (workspace_id = app_workspace_id()) WITH CHECK (workspace_id = app_workspace_id());
+GRANT SELECT, INSERT, UPDATE, DELETE ON leads TO ztech_app;
+```
+
+The suite then asserts, **as `ztech_app`**, that:
+
+- the role is not superuser and does not bypass RLS;
+- it does not own `leads`;
+- it **can** read and write it (so the test is not passing because of a
+  missing grant);
+- **without** a workspace context it sees **zero rows** and **cannot write**;
+- with workspace A's context it sees only A's rows;
+- with workspace B's context it sees only B's rows;
+- an `UPDATE` by A against B's row affects **zero rows**;
+- an `INSERT` by A with `workspace_id = B` is **rejected** by the `WITH CHECK`;
+- a **table owner** (`ztech_migrator`) still sees only its own context's rows,
+  because the policies are `FORCE`d.
+
+**No tenant-isolation test may use a mocked database.** The whole point of
+RLS is what the *server* does, so the suite runs against a real PostgreSQL
+instance in CI (a service container), with the real roles, and the same
+migration that production uses.
 
 #### 5.3.2 The workspace context is server-derived, and it is not trusted
 
@@ -795,6 +1018,54 @@ Three rules, enforced together:
 A worker is no different: it reads `workspace_id` from the **job row**, and
 the job row was written by a request that had already passed authorisation.
 A worker never accepts a workspace from a message payload.
+
+### 5.3.3 Permissions resolve strictly inside the active workspace
+
+A user may hold **different roles in different workspaces**. An owner in
+workspace A and a viewer in workspace B must remain a **viewer in B** — the
+union of the roles across every workspace the user belongs to would grant
+them owner-level rights in B, which is the most likely privilege-escalation
+bug in a multi-tenant product.
+
+**The rule: the effective permission set is derived from the active
+workspace's memberships only.**
+
+```ts
+// The session names the ACTIVE workspace. Nothing else contributes.
+async function effectivePermissions(db, userId: string, activeWorkspaceId: string) {
+  // 1. The membership rows are read INSIDE the workspace's own context, so a
+  //    membership row belonging to another workspace is not even visible.
+  const rows = await db.transaction(async (t) => {
+    await t.set_config('app.workspace_id', activeWorkspaceId, true);
+    return t.query(`
+      SELECT m.role, r.permissions
+      FROM   org_memberships m
+      JOIN   roles r ON r.role_key = m.role
+      WHERE  m.user_id = $1
+        AND  m.org_id = $2
+        AND  m.status = 'active'`, [userId, activeWorkspaceId]);
+  });
+  // 2. Only the ACTIVE workspace's roles are unioned. There is no code path
+  //    that unions a user's roles across workspaces.
+  const permissions = new Set<string>();
+  for (const row of rows) for (const p of row.permissions) permissions.add(p);
+  return { workspaceId: activeWorkspaceId, roles: rows.map((r) => r.role), permissions };
+}
+```
+
+**Enforced properties:**
+
+| Property | How it is enforced | How it is tested |
+|---|---|---|
+| The union is scoped to the active workspace | The membership query filters `org_id = activeWorkspaceId` **and** runs inside that workspace's context | A test creates a user who is owner in A and viewer in B, and asserts the permission set for B contains no write permission |
+| A role in one workspace never leaks into another | There is no "all my roles" query in the codebase; the resolver takes a workspace id and returns only that workspace's roles | A static test asserts the resolver's SQL contains `org_id = $2` |
+| The active workspace is server-derived | It comes from the session, which the edge issued after checking the membership | A test asserts a request whose path names another workspace is refused |
+| Switching workspaces re-derives everything | A workspace switch issues a **new session** and the permissions are recomputed from the membership rows at that moment; a stale session carries the old workspace and is rejected | A test switches workspaces and asserts the new permissions apply immediately, and that the old session no longer works |
+
+**The dangerous case is a "highest role wins" shortcut** — computing one role
+for the whole user and applying it everywhere. The plan forbids it
+structurally: the resolver's signature requires a workspace, and there is no
+variant of it that does not.
 
 ### 5.4 Authentication
 
@@ -855,6 +1126,26 @@ audit.read  usage.read
 Every permission is checked **at the data-access boundary**, not only in the
 handler, so a new endpoint that forgets a check fails its own tests.
 
+#### 5.5.1 Teams and groups — an organisation, not a sixth role
+
+**Scope decision (2026-10-20): the five roles are retained.** A team (a
+group of people) is added as an **organisation** with a permission filter, not
+as a sixth role.
+
+| Concept | Model |
+|---|---|
+| `groups` | `group_id`, `workspace_id`, `name`, `description` |
+| `group_memberships` | `group_id`, `user_id`, `added_at`, `added_by` |
+| A group-scoped resource | `group_id` on the rows a team owns (a pipeline, a segment, a campaign) |
+| A group-scoped view | a **filter**, not a permission: the query adds `group_id IN (the user's groups)` |
+
+**The distinction that matters.** A **role** is what a person *may do*
+(everywhere in the workspace); a **group** is *which rows* they *see* in a
+shared area. A team lead is therefore **a manager with a group filter** — the
+same five roles, with a narrower default view. The permission set is still
+derived from the **active workspace** (5.3.3), so a group never becomes a
+channel for privilege escalation.
+
 ### 5.6 Automated cross-tenant access-denial tests
 
 This is the suite that makes the isolation claim testable. It is a mandatory
@@ -901,15 +1192,164 @@ endpoints are on a separate listener).
 | Manage organizations, plans, subscriptions | none |
 | Service health, provider spend, queue depth | aggregate metrics only, never a customer row |
 | Support request | a customer opens a support ticket; the admin sees **what the customer shares**, not the CRM |
-| Break-glass | **explicit, time-boxed, logged**: the admin requests access, states a reason, a second admin (or the customer) approves, a 4-hour grant is created, every read is written to `audit_log` with the reason, and the grant expires automatically. The customer sees a banner in their dashboard. |
+| Break-glass | **explicit, time-limited, audited** — see §5.7.1 |
 
-**Break-glass implementation**: a row in `admin_grants` `(grant_id, workspace_id,
-admin_user_id, reason, granted_by, expires_at, revoked_at)`. The admin's
-Postgres role gets a temporary membership row in the target workspace, so
+#### 5.7.1 Two authorisation paths, and no self-approval
+
+**Q10, decided (2026-10-20).** There are exactly two ways in, and neither
+lets one person help themselves.
+
+**Path A — routine access: the customer authorises it.**
+
+```
+1. The support case is open, and a platform administrator identifies what
+   they need and why.
+2. The request names: the workspace, the SPECIFIC records or record types,
+   the purpose, and the requested duration.
+3. The CUSTOMER sees the request in their own dashboard and approves it
+   (or declines it). Silence is not consent - a request that is not answered
+   within the window expires.
+4. The approval creates a grant scoped to exactly what was requested.
+5. Every read is audited (5.7.2). The grant expires automatically.
+6. The customer can revoke it at any moment, and revocation takes effect
+   within one request cycle.
+```
+
+**Path B — genuine emergency: two independent administrators.**
+
+```
+1. A platform administrator declares an emergency: the request states the
+   incident, the customer impact, and the minimum scope needed.
+2. A SECOND, independent authorised platform administrator approves it.
+   The approver must not be the requester. Two administrators in the same
+   person is impossible; one administrator approving their own request is
+   refused by the database, not by a UI check.
+3. The customer is notified IMMEDIATELY - at the moment of approval, not
+   afterwards - in their dashboard, by email, and by an entry in their audit
+   log. The notification names the administrator, the scope and the expiry.
+4. The scope is the MINIMUM NECESSARY: specific record types, a specific
+   record set, and a SHORT expiry (30 minutes by default, 4 hours maximum).
+5. The window is open to the customer throughout, and the customer may revoke
+   it at any moment.
+6. Every read is audited (5.7.2), and the emergency is reviewed afterwards.
+```
+
+**Self-approval is prohibited** and is enforced below the application layer:
+
+```sql
+-- The grant cannot be created by its own requester.
+CREATE TABLE admin_grants (
+  grant_id     uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL,
+  requested_by uuid NOT NULL,
+  approved_by  uuid,
+  path         text NOT NULL,          -- 'routine' | 'emergency'
+  reason       text NOT NULL,
+  scope        jsonb NOT NULL,         -- the minimum necessary scope
+  expires_at   timestamptz NOT NULL,
+  revoked_at   timestamptz,
+  created_at   timestamptz NOT NULL
+);
+
+ALTER TABLE admin_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_grants FORCE  ROW LEVEL SECURITY;
+
+-- A grant must be approved by someone other than the requester, and the
+-- approver must hold the platform role that authorises the path.
+CREATE FUNCTION admin_grants_are_valid() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.approved_by IS NOT NULL AND NEW.approved_by = NEW.requested_by THEN
+    RAISE EXCEPTION 'a break-glass grant cannot be self-approved';
+  END IF;
+  IF NEW.path = 'emergency' AND NEW.approved_by IS NULL THEN
+    RAISE EXCEPTION 'an emergency grant requires a second approver';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER admin_grants_valid BEFORE INSERT OR UPDATE ON admin_grants
+  FOR EACH ROW EXECUTE FUNCTION admin_grants_are_valid();
+```
+
+**The access itself is a membership, not a privilege**: an approved grant
+creates a temporary `org_memberships` row for the administrator in that
+workspace, with a role whose permissions are exactly the granted scope. So
 **every query still goes through the normal RLS policy** and is captured by the
 audit triggers. There is no `superuser` path into tenant data.
 
-**Audit triggers** are installed on the sensitive tables (`leads`, `people`,
+**The minimum-necessary scope** is expressed as a role whose permission set is
+the intersection of the granted scope and the platform role's ceiling. An
+administrator can never read more than the grant names, and a grant can never
+exceed the platform role's own ceiling.
+
+#### 5.7.2 Read auditing — a mechanism, not a hope
+
+**A DML trigger does not fire on `SELECT`.** A trigger on `leads` records
+inserts, updates and deletes, and is **completely silent** when an
+administrator reads a customer's contact list. So the ordinary audit
+mechanism cannot satisfy the requirement, and the plan does not pretend it
+does.
+
+The read path is therefore **audited by construction**: the break-glass
+administrator has **no table-level `SELECT` privilege** on the tenant tables.
+Their only route to customer data is through an audited `SECURITY DEFINER`
+function, which writes the read to the audit log **in the same transaction**
+before it returns anything.
+
+```sql
+-- The break-glass role holds EXECUTE, and nothing else.
+GRANT EXECUTE ON FUNCTION admin_read_leads(uuid, jsonb) TO ztech_breakglass;
+-- and explicitly NOT:
+--   GRANT SELECT ON leads TO ztech_breakglass;   <-- never
+
+CREATE FUNCTION admin_read_leads(p_workspace uuid, p_scope jsonb)
+RETURNS TABLE (company_id uuid, name text, ...)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp AS $$
+DECLARE
+  -- 1. The read is recorded FIRST, in the same transaction. If the function
+  --    returns rows, an audit row exists. There is no window in which a read
+  --    is unlogged.
+  v_grant uuid;
+BEGIN
+  SELECT grant_id INTO v_grant FROM admin_grants
+   WHERE workspace_id = p_workspace
+     AND revoked_at IS NULL
+     AND expires_at > now()
+     AND scope @> p_scope          -- the requested scope is inside the grant
+   LIMIT 1;
+  IF v_grant IS NULL THEN
+    RAISE EXCEPTION 'no valid break-glass grant for workspace %', p_workspace;
+  END IF;
+
+  INSERT INTO audit_log (audit_id, workspace_id, actor_type, actor_id, action,
+                         resource_type, before, after, created_at)
+  VALUES (gen_random_uuid(), p_workspace, 'admin', current_setting('app.admin_id', true),
+          'admin.read', 'leads', p_scope, NULL, now());
+
+  -- 2. The read itself, under the grant's own context.
+  PERFORM set_config('app.workspace_id', p_workspace::text, true);
+  RETURN QUERY SELECT ... FROM leads WHERE workspace_id = p_workspace ...;
+END $$;
+```
+
+**Why this is enforceable, and not merely a convention:**
+
+| Property | How it is enforced | How it is tested |
+|---|---|---|
+| The administrator **cannot** read the table directly | The break-glass role holds **no** `SELECT` on the tenant tables; it holds only `EXECUTE` on the audited functions | A test runs `SET ROLE ztech_breakglass; SELECT * FROM leads;` and asserts it is **permission denied** |
+| Every privileged read is logged | The function inserts the audit row in the **same transaction** as the read, before returning it | A test reads through the function and asserts an `admin.read` row exists, with the scope and the administrator |
+| A read without a valid grant is impossible | The function raises unless it finds an unexpired, unrevoked grant whose scope **contains** the request | A test with no grant, an expired grant, a revoked grant and an over-broad scope all assert a refusal |
+| A read cannot be logged after the fact | The audit insert is in the same transaction; if it fails, the whole read fails | A test revokes the audit table's insert privilege for the function's owner and asserts the read **fails** rather than returning unlogged rows |
+| Ordinary application reads are not spammed into the audit log | The application path is not a break-glass read; it is authorised by the tenant's own membership and is recorded by the ordinary activity ledger | The audit volume assertion in §5.8 keeps tenant noise out of the privileged log |
+
+**A second line of defence** is `pgaudit` (or an equivalent statement
+logger) in production, which records every statement executed by the
+break-glass role as an independent witness. It is a defence in depth, not the
+mechanism: the mechanism is the privilege removal plus the audited function,
+because both are **tested**, while a statement logger is best-effort.
+
+**Audit triggers** remain on the sensitive tables (`leads`, `people`,
 `contact_points`, `sends`, `credentials`, `audit_log` itself) so that a change
 made outside the application is still recorded.
 
@@ -1014,8 +1454,7 @@ do_not_contact    boolean
 The existing desktop dedup rules (`DUPLICATE_REVIEW_RULES` with the precedence
 `all → canonicalPhone → website-host → email → title+address`) are the
 **starting point** and are preserved exactly. F2 adds a scale-appropriate
-layer — and it **narrows** the automatic behaviour, per the approved
-decision on identity resolution (Q8, modified).
+layer — and it **does not merge anything by itself** (Q9, decided 2026-10-20).
 
 #### 6.3.1 The four records are not the same thing
 
@@ -1025,14 +1464,14 @@ The CRM separates four things the legacy flat row conflated:
 |---|---|---|
 | **Company** | A legal or trading entity. `parent_company_id` models a holding group. | — |
 | **Location** | A place a company operates: an office, a factory, a shop, a remote site. | **A branch is never a duplicate of its parent.** Two locations of one company are two locations, not two companies. |
-| **Person** | A human. One person may work for several companies. | — |
-| **Contact point** | A channel address for a person or a company. | — |
+| **Person** | A human. One person may work for several companies **over time** (`person_employments`, §4.3). | — |
+| **Contact point** | A channel address. A corporate switchboard is **one** contact point shared by several people (`person_contact_points`, §4.3), so the uniqueness rule is not violated. | — |
 
 A same-name company with a different domain is **not** a duplicate — it is a
 different company. A company that appears at two addresses is **one company
 with two locations**. A person who changed jobs is **one person with two
-roles**. The legacy flat row cannot express any of this, which is exactly why
-the promotion step (§10.3) groups rows rather than copying them.
+employment records**. The legacy flat row cannot express any of this, which is
+exactly why the promotion step (§10.3) groups rows rather than copying them.
 
 #### 6.3.2 Candidate generation
 
@@ -1046,51 +1485,59 @@ Deterministic signals, generated inside the same transaction as the insert:
 | Name + locality | weak | `name` |
 | Trading name / registration number | strong | `registration` |
 
-#### 6.3.3 Resolution — no automatic merge on a single signal
+#### 6.3.3 Resolution — no automatic merging (Q9)
 
-**A single signal never merges anything.** A matching phone number alone does
-not merge two companies, and a matching domain alone does not either: a shared
-domain may be a franchise, a group company, a shared mailbox, or a
-re-registration. Phone numbers are reassigned.
-
-An **automatic merge** requires **corroborated, high-confidence evidence**:
-
-1. **At least two independent signals** from **different independence
-   groups** (for example: domain **and** phone; domain **and** a verified
-   email; registration number **and** domain).
-2. **No conflicting signal** — the records must not disagree on a
-   discriminating field (a different registered address, a different trading
-   name, a different company type).
-3. **No manual-merge history** against either record (a human decision is
-   never overridden by a later automatic one).
-4. **Neither record is a parent of the other** — a branch is never merged into
-   its parent.
-
-Everything else is routed to **human review**.
+**Q9, decided (2026-10-20): automatic CRM record merging is DISABLED
+initially.** The system produces **ranked duplicate candidates** for authorised
+human review. It never merges a record on its own.
 
 | Evidence | Outcome |
 |---|---|
-| Two independent strong signals, no conflict | **auto-merge** (still audited and reversible) |
-| One strong signal + one weak, no conflict | **review** |
-| One signal only (domain, or phone) | **review** — never an automatic merge |
-| Conflicting signals | **review**, flagged as a likely conflict |
-| Different domains, same name | **not a duplicate** — recorded, so it is not re-proposed |
-| Same domain, different address | **not a duplicate** — one company, two locations |
+| Two independent strong signals, no conflict | **ranked candidate, reviewed by a human** |
+| One strong signal + one weak, no conflict | **ranked candidate** |
+| One signal only (domain, or phone) | **ranked candidate** |
+| Conflicting signals | **ranked candidate**, flagged as a likely conflict |
+| Different domains, same name | **not a candidate** — recorded, so it is not re-proposed |
+| Same domain, different address | **not a candidate** — one company, two locations |
 
-#### 6.3.4 The merge itself
+**The ranking** is a deterministic score over the signals, and it is shown to
+the reviewer with the evidence: the signals that matched, the signals that
+conflicted, and the confidence of each. The reviewer sees *why* two records may
+be the same, not just a number.
 
-- The **canonical** record is chosen deterministically (the oldest surviving
-  id, so a merge is stable), and the other is merged into it.
+**The corroboration rules remain**, but their role changes: they are the
+**evidence standard the reviewer is shown**, and the **future gate** for
+reconsidering automation. A candidate whose evidence is two independent
+signals from different groups, with no conflict, is ranked first and is
+labelled "strong evidence"; one whose evidence is a single signal is ranked
+last and is labelled "weak evidence — a phone number or a domain alone is not
+enough".
+
+#### 6.3.4 The manual merge
+
+A human performs the merge from the review queue. The merge is
+**reversible and audited**.
+
+- The **canonical** record is chosen by the reviewer (not by a rule), and the
+  other is merged into it.
 - The loser's fields fill **only the gaps**; nothing is overwritten.
 - The loser is **not deleted**. It is marked `merged_into_id`, kept for the
   audit trail, and hidden from the default list.
 - `entity_identities` records every alias, so an **un-merge is a data
-  operation, not a re-import**.
-- Every merge writes an `audit_log` entry with the score, the signals, the
-  decision and the actor.
+  operation**, not a re-import.
+- Every merge writes an `audit_log` entry with the reviewer, the evidence, the
+  decision, and the records involved. An un-merge writes its own entry.
 - A merge **never touches** a suppression, a consent record or a sent
   message: those are address-keyed and historical, and they stay where they
   are.
+
+**Reconsidering automation.** The plan keeps the door open, but sets the
+conditions: automatic merging may only be reconsidered **after measured
+accuracy and false-positive testing** on real data — a measured precision
+threshold, a measured false-positive rate, and a shadow-mode run in which the
+system proposes merges that a human then accepts or rejects. The precision
+figure, not the convenience, is what decides it. Until then the code path
+does not exist.
 
 #### 6.3.5 Identity resolution across the lead and the CRM
 
@@ -1102,6 +1549,10 @@ can always see *where* a phone number came from and *when*.
 **A contact point is never created without a source.** Either an observation
 exists, or a human entered it. The system does not fabricate a contact point,
 and it does not fabricate the *evidence* for one.
+
+**The promotion never merges two legacy records either.** Two legacy rows that
+look like the same company become **one company with two candidate records
+flagged for review** — never a silent merge (§10.3).
 
 ### 6.4 Lead lifecycle and qualification
 
@@ -1334,15 +1785,16 @@ job_queue
   workspace_id       uuid          -- RLS
   kind               text          enum(research|collection|enrichment|opportunity|
                                      sequence_step|reply_sync|qualification|export|billing)
-  state              text          enum(queued|leased|running|succeeded|failed|
-                                     cancelled|dead_letter|blocked)
+  state              text          enum(queued|leased|running|reconciling|succeeded|
+                                     failed|cancelled|dead_letter|blocked)
   payload            jsonb         -- the kind-specific request
   idempotency_key    text          -- UNIQUE (workspace_id, idempotency_key)
   attempts           int
   max_attempts       int
   lease_owner        text          -- the worker instance
+  lease_epoch        bigint        -- the fencing token (see 8.2.1)
   lease_expires_at   timestamptz
-  next_attempt_at    timestamptz
+  next_attempt_at    timestamptz   -- the due time
   cost_estimate_cents bigint
   cost_actual_cents  bigint
   cancel_requested_at timestamptz
@@ -1352,39 +1804,158 @@ job_queue
   completed_at       timestamptz
 ```
 
-**The lease protocol** (the standard, and the reason a worker crash is
-recoverable):
+#### 8.2.1 Leasing: due time, heartbeat, fencing, and tenant-safe claiming
+
+**The problem with a naive lease.** A worker takes a job, the lease expires
+because the worker was paused, and a second worker picks the job up. Now two
+workers hold the same job — and if the job calls a **paid provider**, the
+provider is called twice. A lease alone does not prevent that; the lease
+must be **fenced**.
+
+##### (a) Due-time eligibility
+
+A job is claimable only when it is **due** and not already owned:
 
 ```sql
--- Claim up to N jobs, atomically, skipping any whose lease is still live.
-UPDATE job_queue SET
-  state = 'leased',
-  lease_owner = $worker,
-  lease_expires_at = now() + interval '60 seconds',
-  attempts = attempts + 1,
-  updated_at = now()
-WHERE job_id IN (
-  SELECT job_id FROM job_queue
-  WHERE state IN ('queued')
-     OR (state IN ('leased','running') AND lease_expires_at < now())
-  ORDER BY next_attempt_at
-  FOR UPDATE SKIP LOCKED
-  LIMIT $n
-)
-RETURNING *;
+WHERE state = 'queued'
+  AND next_attempt_at <= now()          -- the due time
+  AND cancel_requested_at IS NULL
 ```
 
-`FOR UPDATE SKIP LOCKED` means N workers never contend for the same row, and
-a worker that dies has its lease expire, after which the job is claimable
-again. **A job is never lost and never runs twice concurrently.**
+A job whose `next_attempt_at` is in the future is **not** claimable, so a
+backoff is honoured and a job does not spin.
 
-**Recovery** on worker start and on a periodic sweep:
-1. `leased`/`running` with an expired lease → back to `queued` (if attempts
-   remain) or `dead_letter`.
-2. `queued` past `next_attempt_at` → claimable (that is the normal path).
-3. `running` with no lease owner (a process died before leasing) → reclaimable.
+##### (b) Tenant-safe claiming — without bypassing isolation
 
-**Retries** are exponential with jitter, capped, and **bounded by attempts**:
+The claim must not be able to take another tenant's job, and it must not
+require the worker to *disable* RLS to do it. The mechanism is **two
+steps**: the platform decides *which workspace* the worker serves, and the
+claim itself runs **inside that workspace's context**.
+
+```ts
+// 1. The platform picks a workspace that has due work. This reads an
+//    aggregate over the queue, not tenant rows.
+const workspaces = await scheduler.selectWorkspacesWithDueWork(limit);
+
+// 2. The worker claims within ONE workspace, inside that workspace's context.
+await db.transaction(async (t) => {
+  await t.set_config('app.workspace_id', workspaceId, true);   // transaction-local
+  const claimed = await t.query(`
+    UPDATE job_queue SET
+      state           = 'leased',
+      lease_owner     = $2,
+      lease_epoch     = lease_epoch + 1,          -- the fencing token
+      lease_expires_at = now() + interval '60 seconds',
+      attempts        = attempts + 1,
+      updated_at      = now()
+    WHERE job_id IN (
+      SELECT job_id FROM job_queue
+      WHERE workspace_id = $1                     -- the RLS policy also enforces this
+        AND state = 'queued'
+        AND next_attempt_at <= now()
+        AND cancel_requested_at IS NULL
+      ORDER BY next_attempt_at
+      FOR UPDATE SKIP LOCKED
+      LIMIT $3
+    )
+    RETURNING *`, [workspaceId, workerId, limit]);
+});
+```
+
+**Why this does not bypass isolation:**
+
+- The `UPDATE` runs as the application role, so the **RLS policy applies**:
+  the statement can only see and touch rows of the workspace whose context it
+  is running in. A worker whose context is workspace A **cannot** claim
+  workspace B's job — the policy hides it.
+- The explicit `workspace_id = $1` is belt **and** braces: the policy is the
+  boundary, and the predicate documents the intent.
+- `FOR UPDATE SKIP LOCKED` means two workers claiming at the same time never
+  contend for the same row.
+- The **platform** scheduler reads an *aggregate* ("which workspaces have due
+  work") from a **non-tenant** view, so it never needs to read a tenant's job
+  rows to route work.
+
+##### (c) The heartbeat and the fencing token
+
+A worker that is doing a slow provider call must keep its lease alive, and a
+worker whose lease expired must be able to tell that it has.
+
+```sql
+-- The heartbeat extends the lease ONLY if this worker still holds it.
+UPDATE job_queue
+   SET lease_expires_at = now() + interval '60 seconds',
+       updated_at = now()
+ WHERE job_id = $1
+   AND lease_owner = $2
+   AND lease_epoch = $3          -- the token the worker was given at claim time
+   AND state IN ('leased','running');
+```
+
+**`lease_epoch` is the fencing token.** It is incremented on every claim, and
+the worker is handed the value it received. Two cases:
+
+| Situation | What the worker does |
+|---|---|
+| The heartbeat updates **1 row** | The worker still holds the lease. Continue. |
+| The heartbeat updates **0 rows** | The lease was taken over. The worker has **lost the lease** and must **abort immediately** — it does not call the provider, does not commit, and reports the loss. |
+
+##### (d) Every state change is fenced
+
+A worker may only write the outcome of a job it still holds:
+
+```sql
+UPDATE job_queue
+   SET state = 'succeeded', completed_at = now(), updated_at = now()
+ WHERE job_id = $1 AND lease_owner = $2 AND lease_epoch = $3;
+```
+
+Zero rows updated means the worker's result is **discarded** — the job belongs
+to somebody else now.
+
+##### (e) An expired lease must not produce concurrent provider calls
+
+The lease stops two workers from *processing* the same job. It does **not**
+stop a worker whose lease expired mid-call from having already called the
+provider. That case is closed by the **invocation ledger** (§8.4), not by the
+lease:
+
+```
+Worker 1 claims the job (epoch 7) and calls the provider.
+        -> the invocation row is written as 'attempted' BEFORE the call.
+Worker 1 stalls; its lease expires.
+Worker 2 claims the job (epoch 8) and reaches the provider step.
+        -> it enters the invocation ledger at step 1.
+        -> the unique key finds the EXISTING row, in state 'attempted'.
+        -> Worker 2 does NOT call the provider. It moves the job to
+           'reconciling' and waits for the provider-side probe (8.6).
+Worker 1 wakes up and tries to commit its result (epoch 7).
+        -> 0 rows updated: it has lost the lease. Its result is discarded.
+        -> and if the provider had accepted the call, the invocation is
+           already 'attempted' and reconciliation resolves it once.
+```
+
+**So the guarantee is two-layered and neither layer is optional:**
+
+| Layer | Prevents |
+|---|---|
+| The **lease + epoch fencing** | two workers *processing* the same job, and a stale worker committing |
+| The **invocation ledger's unique key** | two workers *calling the provider* for the same intent |
+
+And the credit reservation is **not** released when a lease expires (§8.4.1) —
+otherwise the second worker would find the credit free and try again.
+
+##### (f) Safe recovery
+
+| Situation | Recovery |
+|---|---|
+| The worker died, the lease expired | The job is claimable again (`state='queued'`, `next_attempt_at <= now()`). A new epoch is issued. The invocation ledger prevents a duplicate provider call. |
+| The worker died **after** the provider call | The invocation is `attempted`; the job is re-claimed; the ledger makes the retry a no-op; the job moves to `reconciling`. |
+| The worker died **before** the provider call | The invocation is `reserved`; the retry may call the provider. |
+| The job exceeded `max_attempts` | `dead_letter`, visible to the customer and the platform console, with a manual retry that creates a **new** job with a **new** idempotency key. |
+| The job was cancelled | `cancel_requested_at` is set; a worker checks it before each step and stops. A provider call already in flight settles as `outcome_unknown` (§8.6). |
+
+**Backoff** is exponential with jitter, capped, and bounded by attempts:
 
 ```
 delay = min(base * 2^(attempts-1), max) + random(0, jitter)
@@ -1442,14 +2013,60 @@ provider_invocations
 ```
 1. Reserve.  INSERT INTO provider_invocations (state='reserved', idempotency_key=...)
               ON CONFLICT (workspace_id, kind, idempotency_key) DO NOTHING
-              → 0 rows inserted means this exact intent already exists.
-2. Re-check the workspace's entitlement and the credit balance.
-   → if the balance is insufficient, mark 'blocked' and stop. NO provider call.
+              -> 0 rows inserted means this exact intent already exists.
+2. Take the credit reservation and check the entitlement.
+   -> if the balance is insufficient, mark 'blocked' and stop. NO provider call.
 3. Mark 'attempted' and COMMIT.            -- before the provider is contacted
 4. Call the provider.
 5. Settle: 'accepted' | 'failed' | 'outcome_unknown'.
-6. Record the cost and debit the credit ledger.
+6. Settle the credit reservation with the ACTUAL cost (release the unused part).
 ```
+
+#### 8.4.1 The state enums, aligned
+
+The invocation and job vocabularies are **one** vocabulary, so a state can
+never mean two things. The job carries the invocation's state when it is
+waiting on a provider.
+
+| `provider_invocations.state` | `job_queue.state` when the job is waiting on it | Meaning | The provider may be called again? |
+|---|---|---|---|
+| `reserved` | `queued` | We intend to call. Nothing has been sent. | **yes** |
+| `attempted` | `running` | The request was written and the provider was called. **The outcome is unknown.** | **NO** |
+| `outcome_unknown` | `reconciling` | We called and we do not know what happened. | **NO — reconcile first** |
+| `accepted` | `succeeded` | The provider confirmed. | no — a repeat replays this outcome |
+| `failed` | `failed` | The provider refused, and we know it. | **yes**, with backoff |
+| `blocked` | `blocked` | A policy or a budget stopped us before the call. | **yes**, once the blocker is cleared |
+
+**The job's own terminal states** — `cancelled`, `dead_letter` — belong to the
+job and never to an invocation, because a cancellation is not a provider
+outcome.
+
+#### 8.4.2 Credits are reserved, and a reservation survives a lost lease
+
+A reservation is a **hold**, not a consumption. It is taken before the call
+and settled after it.
+
+| Event | The credit ledger |
+|---|---|
+| The job is claimed | a **reservation** of the estimated cost is taken, in the same transaction as the `provider_invocations` row |
+| The provider accepts | the reservation is **settled** at the actual cost; the difference is released |
+| The provider refuses | the reservation is **refunded** in full |
+| The outcome is **unknown** | the reservation is **held**. It is neither settled nor released. |
+| **The worker's lease expires** | the reservation is **held**. A lost lease is not evidence that the provider was not called. |
+| The job is cancelled before the call | the reservation is **refunded** |
+| The job is cancelled **during** the call | the reservation is **held** until reconciliation resolves it |
+| The job dies permanently (`dead_letter`) | the reservation is **held** and escalated to the platform console, where a human releases or settles it |
+
+**The rule: a reservation is released only when the outcome is known.** A
+lease expiring, a worker dying, a job being cancelled mid-call, or a lookup
+returning nothing are **not** evidence that the provider was not called, and
+none of them releases the hold. Releasing on a guess is how a workspace
+over-spends and how a duplicate message is sent.
+
+**The reservation also makes the limit meaningful.** Without a hold, two
+concurrent jobs can both pass the balance check and jointly overspend. The
+hold is taken in the same transaction as the invocation row, so the check and
+the hold are atomic.
 
 **Why this prevents double billing and double sending:**
 
@@ -1521,22 +2138,47 @@ reconciliation probe resolves it.
 A scheduled job resolves `attempted` / `outcome_unknown` invocations **against
 the provider**, never by retrying the call.
 
-| Provider | The probe | How the outcome is resolved |
-|---|---|---|
-| **Collection (CoreClaw)** | The provider's own run history is queryable (`getJobHistory`). | The run slug is looked up. A run that exists → `accepted`, with its result adopted. A run that does not exist → `failed`, and a **new** invocation with a new key may be created. |
-| **Research (ZuniSEO)** | The research id is known from the request. | The job status is polled. A finished job → the envelope is re-fetched and `accepted`. A job that never existed → `failed`. |
-| **Opportunity (OI)** | The research id is known from the request. | The report route is queried. A report → `accepted`. No report and the job is gone → `failed`. |
-| **Enrichment** | The provider's own field lookup is not re-readable. | The **observation** is not created, the invocation is `outcome_unknown`, and a human is notified. The field is simply not enriched — nothing is fabricated. |
-| **Email (Gmail)** | The sent-message lookup finds the provider's message id for the thread. | Found → `accepted`. Not found and the message is past the provider's retention → the send is confirmed lost, `failed`, and **the mail is not retried**. The prospect never receives a duplicate. |
-| **WhatsApp** | The message id is looked up through the Meta API. | Same rule. A `failed` WhatsApp send is never retried automatically, because a duplicate conversation message is worse than a missed one. |
+#### 8.6.1 A lookup that returns nothing is not, by itself, a failure
 
-**The probe is bounded and audited.** Each probe is itself recorded as an
-attempt against the invocation, so a probe loop cannot become a retry loop.
-After `MAX_PROBES` (default 5, over 24 hours) an unresolved invocation is
-marked `outcome_unknown` permanently, the workspace is notified, and the
-platform console shows it. **An unresolved outcome is never "assumed failed"
-and never "assumed succeeded"** — it stays uncertain, which is the truth, and
-the credit is not refunded or charged until it is resolved.
+**The rule: a provider operation may only be concluded as `failed` when that
+provider's documented API makes the absence conclusive.** A lookup that
+returns an empty result is conclusive only if the provider's documentation
+says the result would be there if the operation had happened. Otherwise the
+outcome is **still unknown**, and it stays `outcome_unknown`.
+
+This distinction is per provider, per operation, and it is **recorded in the
+platform's provider registry** — it is configuration, not a guess in the code:
+
+| Provider / operation | Is an empty lookup conclusive? | Why |
+|---|---|---|
+| **CoreClaw — collection run** | **Yes**, within the run-history retention window | The provider exposes the run by slug; the run either exists or it does not, and the window is documented. |
+| **CoreClaw — collection run, outside the window** | **No** | The run may simply have aged out. The outcome stays **unknown**. |
+| **ZuniSEO — research** | **Yes** | The research job is addressable by its id, and the service answers for a job it does not know. |
+| **Opportunity Intelligence — research** | **Yes** | The report route distinguishes "no report" from "unknown report"; a job that never existed is conclusive. |
+| **Gmail — sent message** | **No** | A message that is not in the sent-mail listing may be outside the retention window, or in another folder, or simply not indexed yet. The outcome stays **unknown** and the **send is never retried**. |
+| **Meta — WhatsApp message** | **No**, within the lookback window | The message id lookup is conclusive only inside the documented window. Outside it, the outcome stays **unknown**. |
+| **Enrichment providers — a field lookup** | **No** | The provider does not expose a "was it asked" record. The field is simply not enriched, and the invocation stays **unknown** — and nothing is fabricated. |
+
+**The consequence for each provider is spelled out, not left to the
+implementer:**
+
+| Provider | If the lookup is inconclusive | The rule |
+|---|---|---|
+| **Collection** | The invocation stays `outcome_unknown`; the credit reservation is **held**; the workspace is told the run's status is unknown and is **not** charged nor refunded until it resolves. A **new** run requires a **new** idempotency key and a **new** reservation. | never auto-retry |
+| **Research (ZuniSEO, OI)** | Not applicable — the lookup is conclusive. | — |
+| **Email** | The send is **never** retried. The outcome stays `outcome_unknown`, the credit is **held**, and the workspace is told. The prospect receives **at most one** message. | never auto-retry |
+| **WhatsApp** | The same. A duplicate conversation message is worse than a missed one. | never auto-retry |
+| **Enrichment** | The field is not enriched. Nothing is fabricated, and no retry is attempted. | never auto-retry |
+
+#### 8.6.2 The probe is bounded and audited
+
+Each probe is itself recorded as an attempt against the invocation, so a probe
+loop cannot become a retry loop. After `MAX_PROBES` (default 5, over 24
+hours) an unresolved invocation is marked `outcome_unknown` **permanently**,
+the workspace is notified, and the platform console shows it. **An unresolved
+outcome is never "assumed failed" and never "assumed succeeded"** — it stays
+uncertain, which is the truth, and the credit is neither refunded nor charged
+until a human resolves it.
 
 ### 8.7 The desktop app's behaviour in the cloud
 
@@ -1820,7 +2462,8 @@ mechanical because the legacy schema is flat and the CRM is new.
 
 | Legacy | Becomes | Notes |
 |---|---|---|
-| `numbers` (one row per phone number) | **one `company` + one `person` + one `contact_point`**, and a `lead` row that references them | **The single most important transformation.** A row with a `title` becomes a company; a row with an `email` becomes a contact point on a person; the row itself becomes the lead. The **phone is not the identity** — the F4 requirement — so the migration must group rows. Rows sharing a normalised domain or a normalised email become one company. |
+| `numbers` (one row per phone number) | **one `company` + one `person` + one `contact_point`**, and a `lead` row that references them | **The single most important transformation.** A row with a `title` becomes a company; a row with an `email` becomes a contact point on a person; the row itself becomes the lead. The **phone is not the identity** — the F4 requirement — so the migration must group rows. **But it does not merge them automatically: see below.** |
+| **Grouping is not merging** | Rows that look alike become **one company with several candidate records flagged for review**, or **separate companies with a ranked duplicate candidate** between them | **The migration never merges two legacy records on a domain or an email match alone.** It creates the candidate and a human decides. A shared domain may be a franchise, a group company or a shared mailbox; an email may be a role address. |
 | `numbers.qualification`, `tags`, `notes`, `*Status` | `leads.qualification`, `leads.tags jsonb`, `leads.notes`, `leads.*_status` | The user-owned fields are preserved **verbatim**, including the values the desktop's UI produces. |
 | `numbers.companyId` | `entity_identities` (an alias) | The desktop's company pointer becomes an identity-resolution edge, not a foreign key. |
 | `jobs` | `collection_jobs` + a `job_queue` row per run | |
@@ -1832,6 +2475,32 @@ mechanical because the legacy schema is flat and the CRM is new.
 | `electron-store` `config.json` | the workspace settings + the secret store references | The **sealed** credentials are re-sealed server-side: the desktop's DPAPI ciphertext cannot be decrypted on a server, so a credential must be **re-entered** by the user on the cloud. This is stated in the migration UI; it is not silently lost. |
 | `logs/*.log` | **not migrated** | They are diagnostic. The audit log is the record that matters. |
 
+#### 10.3.1 The grouping the migration performs, and what it refuses to do
+
+The legacy `numbers` table is phone-centric, so the migration must decide what
+a row *is*. The decisions are fixed and auditable:
+
+| Legacy row | Becomes | Grouping rule |
+|---|---|---|
+| Has a `title` | a **company** candidate | Rows with the same normalised **domain** are *proposed* as one company — **as a candidate, not as a merge** |
+| Has an `email` | a **person** candidate and a **contact point** | Rows with the same normalised **email** are *proposed* as one person — **as a candidate** |
+| Always | a **lead** row | One legacy row becomes one lead. A lead is never silently dropped. |
+| `companyId` set | an identity **alias** | The desktop's own pointer is preserved as an edge. |
+
+**What the migration never does:**
+
+- It **never merges** two legacy rows because their domains match.
+- It **never merges** two legacy rows because their emails match.
+- It **never merges** two legacy rows because their phone numbers match.
+- It **never discards** a legacy row. Every row becomes a lead, and the
+  records that *might* belong together become **ranked duplicate candidates**
+  in the review queue (§6.3).
+
+**What the customer sees afterwards** is a set of companies and people that
+*may* need tidying, with the system having told it exactly which ones and
+why — instead of a set of companies the system quietly fused, where a wrong
+fusion destroys the link between a lead and the person who owns it.
+
 ### 10.4 The data conversion rules
 
 | Rule | Detail |
@@ -1841,19 +2510,65 @@ mechanical because the legacy schema is flat and the CRM is new.
 | **Booleans** | `INTEGER 0/1` → `boolean`. |
 | **Orphaned references** | A `lead_id` that points at a deleted lead is **kept** with the id preserved and `orphaned = true`, not deleted. A `NOT VALID` foreign key is added and a separate validation report is produced. |
 | **Duplicate ids** | The legacy ids are **not** reused as PostgreSQL primary keys (the CRM uses uuids). Every migrated row keeps its legacy id in a `legacy_id` column, and the **stable id** helpers (`stableId('fact', …)`) that generate the Lead Intelligence ids stay byte-identical, so the provenance chain inside a packet does not break. |
-| **Deduplication** | The migration runs the **existing** dedup rules to group the legacy rows. It does not invent a new merge policy, and every merge it performs is recorded. |
+| **Deduplication** | The migration produces **ranked duplicate candidates**; it does not merge (§10.3.1). It does not invent a new merge policy. |
 | **The migration is idempotent** | Re-running it produces the same result. It is keyed by `(workspace_id, legacy_id)`. |
-| **It is verifiable** | After the import, a report states: rows imported per table, rows grouped, merges performed, values that could not be parsed, and a total that matches the source. |
+| **It is verifiable** | After the import, a report states the verification in §10.4.1. |
+
+#### 10.4.1 The verification is *semantic*, not byte-identical
+
+An earlier draft of this plan promised a **byte-identical** round trip. That
+promise is wrong and is withdrawn: the migration is a **transformation**, not a
+copy. It changes the shape of a record (one phone-centric row becomes a
+company, a person, a contact point and a lead), it normalises values, and it
+re-types the timestamps. A byte comparison would fail on the transformation
+itself and would prove nothing useful.
+
+**Four guarantees replace it, and each is testable:**
+
+| # | Guarantee | What it means | How it is proved |
+|---|---|---|---|
+| **V1 — Exact source preservation** | **Every** byte of the source is recoverable. The original row is stored verbatim in `legacy_row jsonb` (or `legacy_source text` for a non-JSON row), and the original file is retained. | "Nothing was thrown away" | A test walks every source row and asserts its `legacy_row` is present and equal to the source. A byte-level assertion of the *source*, not of the target. |
+| **V2 — Count reconciliation** | The counts add up, per table and in total. | "Nothing vanished in the transformation" | The report states: source rows read, target rows written, rows that became candidates rather than records, rows skipped with a reason. A test asserts `written + candidates + skipped == source` for every table, and that the totals match the source database's own counts. |
+| **V3 — Field-level loss reporting** | Every field that could not be carried across is **named**. | "We know exactly what was degraded" | The report lists, per field: carried, normalised, unparseable (with the value preserved in `legacy_row`), or not applicable. A field that is neither carried nor preserved is a **test failure**. |
+| **V4 — Semantic equivalence** | The migrated data means the same thing. | "The customer's library is intact" | A test builds the same leads, companies, contacts, evidence packets, suppressions and consents through the **cloud** model and through the **desktop** model, from the same source, and asserts the **same** answers for every business question: the lead list, the qualification counts, the ICP fit, the evidence packet's facts and findings, the suppression list, the credit balance. Byte equality is neither required nor claimed. |
+
+**The report the customer receives** is therefore:
+
+```
+ZTech migration report — Acme Ltd
+  source      : C:\...\data\whatsapp.db   (2,481 leads, 37 jobs, 26 li_* tables)
+  imported    : 2,481 leads, 37 collection jobs, 26 li_* tables
+  grouped     : 0 records merged automatically
+  candidates  : 318 duplicate candidates awaiting your review
+                211 share a domain   74 share an email   33 share a phone
+  fields      : carried 100%  |  normalised 0.2%  |  unparseable 3 values (preserved)
+  credentials : 2 need to be re-entered (they were sealed with your device's key store)
+  nothing was deleted. The original file is still on your computer.
+```
+
+**The explicit statement "grouped: 0 records merged automatically" is the
+point.** A migration that quietly fuses records is unrecoverable in practice:
+the two original records' histories are interleaved and nobody can tell them
+apart again. A migration that produces a review queue is recoverable, because
+the human merges inside the system, where the merge is reversible and
+audited.
 
 ### 10.5 The desktop in the cloud era
 
-| Mode | Where the data lives | Who runs the jobs |
-|---|---|---|
-| **Local** (existing) | The desktop's SQLite file | The desktop's in-process schedulers |
-| **Synced** | The workspace in PostgreSQL | The cloud workers; the desktop is a client |
-| **Cloud-only** | The workspace in PostgreSQL | The cloud workers |
+**Scope decision (2026-10-20): desktop compatibility is preserved, but the
+browser-based SaaS is the priority. No major F2 development effort is spent
+on desktop synchronisation unless it is separately approved.**
 
-A user may move from local to synced and back. The sync is a **replication of the same domain records**, not a re-import: the desktop keeps its local store as a cache and reconciles by `(entity, legacy_id)`.
+| Mode | Where the data lives | Who runs the jobs | F2 effort |
+|---|---|---|---|
+| **Local** (existing, unchanged) | The desktop's SQLite file | The desktop's in-process schedulers | **preserved** — no change |
+| **Synced** | The workspace in PostgreSQL | The cloud workers; the desktop is a client | **out of the F2 critical path** — separately approved |
+| **Cloud-only** | The workspace in PostgreSQL | The cloud workers | the F2 product |
+
+The desktop therefore keeps working exactly as it does, on exactly the data it
+has, and the cloud is the product that F2 builds. The **one-way import**
+(local → workspace) is in the F2 critical path, because it is how a customer
+brings their history in; the **two-way sync** is not.
 
 ### 10.6 The cut-over plan
 
@@ -1900,8 +2615,8 @@ Each milestone is independently shippable and independently verifiable. The
 | | |
 |---|---|
 | **Scope** | The role ladder, the RLS policies, the workspace context, the cross-tenant denial suite. |
-| **Acceptance** | ① Every tenant table has an enabled, forced RLS policy. ② The application role is not the owner and has no `BYPASSRLS`. ③ The denial suite proves isolation **at the database level**, not only in the application. ④ A read of another workspace's row by primary key returns nothing and an update returns `FORBIDDEN`. |
-| **Tests** | `tests/tenancy/*` (§5.6) — a required CI gate |
+| **Acceptance** | ① Every tenant table has an enabled, forced RLS policy. ② The startup assertion inspects the **actual ownership and effective privileges** of every tenant table, and **stops the service** if the application role is superuser, has `BYPASSRLS`, or owns a tenant table. ③ **Without a workspace context, a tenant table is empty and unwritable** (§5.2.1). ④ The denial suite proves isolation **at the database level**, not only in the application, and **runs against real PostgreSQL roles** created by the production migration. ⑤ A read of another workspace's row by primary key returns nothing and an update returns `FORBIDDEN`. ⑥ The **effective permissions are resolved inside the active workspace only**: a user who is owner in A and viewer in B is a **viewer in B** (§5.3.3). ⑦ A **cross-tenant reference is rejected by the database** through a workspace-aware composite foreign key (§4.8). |
+| **Tests** | `tests/tenancy/*` (§5.6) against a **real PostgreSQL** with the real roles — a required CI gate |
 | **Risk** | High if done late, low if done early. **This is the milestone that must not be deferred.** |
 | **Size** | ~3 weeks |
 
@@ -1920,7 +2635,7 @@ Each milestone is independently shippable and independently verifiable. The
 | | |
 |---|---|
 | **Scope** | `job_queue`, the leasing worker, `provider_invocations`, the credit checks, the reconciliation. |
-| **Acceptance** | ① A worker killed mid-job does not lose the job (the lease expires and it is reclaimed). ② **A retried job never calls a paid provider twice** — proven by a test that counts the provider calls. ③ A job with an insufficient balance is `blocked` and the provider is never contacted. ④ A cancelled job stops before the provider call. ⑤ A duplicate request replays the stored outcome. ⑥ `outcome_unknown` is reconciled, not retried. |
+| **Acceptance** | ① A worker killed mid-job does not lose the job (the lease expires and it is reclaimed). ② **A retried job never calls a paid provider twice** — proven by a test that counts the provider calls, including the case where the first worker stalled **after** the provider was called. ③ A job is claimed only when it is **due**; a job whose `next_attempt_at` is in the future is not claimable. ④ The claim runs **inside the workspace's context**, so a worker physically cannot claim another tenant's job. ⑤ The **lease heartbeat is fenced** by `lease_epoch`: a worker whose lease was taken over aborts and commits nothing. ⑥ An **expired lease never produces concurrent provider calls** (§8.2.1e). ⑦ A job with an insufficient balance is `blocked` and the provider is never contacted; the **credit reservation is held** while an outcome is uncertain and is **not** released when a lease expires. ⑧ A cancelled job stops before the provider call. ⑨ A duplicate request replays the stored outcome. ⑩ An operation is concluded **failed** only when the provider's API makes the absence conclusive; otherwise it stays `outcome_unknown` and is reconciled, never retried (§8.6). |
 | **Tests** | `job-lease.test.ts`, `no-double-billing.test.ts`, `credit-exhaustion.test.ts`, `cancellation.test.ts`, `reconciliation.test.ts` |
 | **Risk** | High — this is where money and messages are at stake. |
 | **Size** | ~4 weeks |
@@ -1930,7 +2645,7 @@ Each milestone is independently shippable and independently verifiable. The
 | | |
 |---|---|
 | **Scope** | The CRM tables, the services, the workflows: companies, locations, contacts, decision-makers, leads, pipelines, stages, deals, tasks, notes, reminders, activities, assignment, campaigns, interaction history, duplicate detection, identity resolution, the audit trail. |
-| **Acceptance** | ① A company with two locations and two contact points is representable, and a branch is never merged into its parent. ② A person may hold several roles. ③ Duplicate detection uses the **existing** rules, and **an automatic merge requires two independent signals from different groups with no conflict** — a single domain or a single phone number only ever raises a candidate, and an ambiguous match is routed to human review. ④ The merge is reversible and audited. ⑤ **No contact point is ever created without a source observation or a human entry** — a test asserts it. ⑥ A campaign excludes a suppressed address. ⑦ A user record never becomes a contact point. ⑧ Every CRM change is in the audit log. |
+| **Acceptance** | ① A company with two locations and two contact points is representable, and a branch is never merged into its parent. ② A person may work for **several companies over time** (`person_employments`), and a **shared corporate contact point** may serve several people without violating the uniqueness rule (`person_contact_points`). ③ **Automatic merging does not exist** (Q9): the system produces **ranked duplicate candidates** for authorised human review, and there is no code path that merges a record on its own. ④ The **manual** merge is reversible and audited. ⑤ **No contact point is ever created without a source observation or a human entry** — a test asserts it. ⑥ A campaign excludes a suppressed address. ⑦ A user record never becomes a contact point. ⑧ Every CRM change is in the audit log. |
 | **Tests** | `crm-companies.test.ts`, `crm-contacts.test.ts`, `crm-pipeline.test.ts`, `crm-campaigns.test.ts`, `duplicate-resolution.test.ts`, `identity-resolution.test.ts`, `crm-trust.test.ts` |
 | **Risk** | Medium |
 | **Size** | ~6 weeks |
@@ -1940,17 +2655,17 @@ Each milestone is independently shippable and independently verifiable. The
 | | |
 |---|---|
 | **Scope** | The dashboard API, the aggregates, the SPA, the platform console. |
-| **Acceptance** | ① Every screen in §7.3 exists and is role-filtered **at the query**. ② A member who requests a forbidden lead receives `403`, not an empty row. ③ The console never renders a customer's CRM row. ④ A break-glass access shows a banner in the customer's dashboard and an audit entry. |
+| **Acceptance** | ① Every screen in §7.3 exists and is role-filtered **at the query**. ② A member who requests a forbidden lead receives `403`, not an empty row. ③ The console never renders a customer's CRM row. ④ A break-glass access shows a banner in the customer's dashboard and an audit entry, and **every privileged read is audited by construction** — the break-glass role has no `SELECT` on the tenant tables, and a direct read is permission-denied (§5.7.2). ⑤ A **routine** break-glass requires the customer's authorisation; an **emergency** requires **two independent** administrators, notifies the customer immediately, and cannot be self-approved (§5.7.1). |
 | **Tests** | `dashboard-api.test.ts`, `role-visibility.test.ts`, `console-isolation.test.ts`, the SPA component tests |
 | **Risk** | Medium |
 | **Size** | ~8 weeks |
 
-### M7 — The data migration and the desktop sync (F2.8)
+### M7 — The data migration (the one-way import) (F2.8)
 
 | | |
 |---|---|
-| **Scope** | The import of an existing desktop installation; the sync mode; the cut-over. |
-| **Acceptance** | ① The import is idempotent. ② A round trip (import → export → compare) is byte-identical for a synthetic dataset. ③ The migration report states every row imported, every group formed, every merge, and every unparseable value. ④ **The user's data is never deleted** — the local file is retained. ⑤ The credential re-entry is stated, not silent. |
+| **Scope** | The import of an existing desktop installation; the cut-over. The **two-way desktop sync is out of the F2 scope** and needs separate approval. |
+| **Acceptance** | ① The import is idempotent. ② **The source is preserved exactly** (V1): every source byte is recoverable from `legacy_row`. ③ The **counts reconcile** (V2): written + candidates + skipped equals the source, per table and in total. ④ Every field that could not be carried across is **named** (V3), and a field that is neither carried nor preserved is a test failure. ⑤ The result is **semantically equivalent** (V4): the same business questions produce the same answers as the desktop model. Byte equality is not claimed. ⑥ **The migration merges nothing automatically** — domain, email and phone matches become ranked candidates for review. ⑦ **The user's data is never deleted** — the local file is retained. ⑧ The credential re-entry is stated, not silent. |
 | **Tests** | `migration-round-trip.test.ts`, `migration-dirty-data.test.ts`, `migration-idempotency.test.ts` |
 | **Risk** | High — this is where customer data is at risk. |
 | **Size** | ~4 weeks |
@@ -2023,8 +2738,8 @@ not negotiable.
 | Q6 | ~~**Should the platform admin be able to see a customer's data at all?**~~ | **DECIDED (2026-10-20):** time-limited, audited break-glass only; no permanent unrestricted access. See §5.7. | — |
 | Q7 | ~~**Which OI isolation model: shared instance with tenant scoping, or one instance per tenant?**~~ | **DECIDED (2026-10-20):** per-tenant instances first; shared processing is gated on the five-part test suite in §8.8.5. | — |
 | Q8 | ~~**Is the CRM's duplicate merge allowed to be automatic?**~~ | **DECIDED, MODIFIED (2026-10-20):** no automatic merge on a single signal; corroborated evidence required; ambiguous matches go to human review; the merge is audited and reversible. See §6.3. | — |
-| **Q9** | **Should an automatic merge be possible at all, or should every candidate go to a human?** | Automatic is permitted, but only on corroborated evidence (§6.3.3). If the review prefers zero automatic merges, the auto-merge branch is deleted and every candidate is routed to a human — a one-line change with no schema impact. | M5 |
-| **Q10** | **Who may approve a break-glass request — the platform admin, or the customer?** | Both may *request*; only the customer, or a second platform admin, may *approve*. A single admin can never grant themselves access. | M2, M6 |
+| ~~**Q9**~~ | ~~Should an automatic merge be possible at all?~~ | **DECIDED (2026-10-20): automatic merging is DISABLED initially.** Ranked candidates go to authorised human review; reversible, audited manual merges are preserved. Automation may be reconsidered only after **measured accuracy and false-positive testing**. See §6.3. | — |
+| ~~**Q10**~~ | ~~Who may approve a break-glass request?~~ | **DECIDED (2026-10-20):** routine requests need **customer authorisation**; genuine emergencies need **two independent** platform administrators, **immediate customer notification**, **minimum necessary scope**, a **short expiry** and **full auditing**. **Self-approval is prohibited.** See §5.7.1. | — |
 
 ### 12.3 What is explicitly *not* in F2
 

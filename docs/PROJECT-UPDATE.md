@@ -440,6 +440,38 @@ preserved Lead Intelligence invariants (2.4), the uncertain-outcome model
 (8.4, 8.6), the first-class CRM and dashboards (6, 7), the tested migrations
 (10), and ZuniSEO's independence (2.3, 3.1).
 
+### F2 architecture review, revision 3 (2026-10-20)
+
+**The architecture is approved in principle.** Seven specific design issues were
+raised, and the plan is corrected. The document is now **2,790 lines**.
+
+| # | Correction | Where |
+|---|---|---|
+| **C1** | Tenant permissions resolve **strictly inside the active authenticated workspace**. A user who is owner in A and viewer in B stays a **viewer in B**. | §5.3.3 — the resolver's signature requires a workspace, there is no “all my roles” query, and a static test asserts the SQL filters `org_id = $2`. |
+| **C2** | The startup role assertion now inspects the **actual ownership and effective privileges** of every tenant table, and the behaviour **without a workspace context** is defined and asserted. | §5.3.1, §5.3.1.1, §5.2.1 — the assertion catches a table created by the app role, a table whose RLS is enabled but not forced, and a table missing from the tenant list. The isolation suite runs against **real PostgreSQL roles** created by the production migration. |
+| **C3** | Job leasing gains **due-time eligibility**, a **fenced heartbeat**, safe recovery, and a **tenant-safe claim**. | §8.2.1 — the claim runs inside the workspace's context (RLS applies), `lease_epoch` fences every heartbeat and every commit, and an expired lease cannot produce concurrent provider calls. |
+| **C4** | A lookup that returns nothing is **not** a failure unless that provider's API is conclusive; credit **reservations are held** while an outcome is uncertain; the invocation and job enums are aligned. | §8.6.1, §8.4.1, §8.4.2 — a per-provider conclusiveness table, one shared state vocabulary, and a reservation that only settles on a known outcome. |
+| **C5** | A person may work for **several companies over time**; a **shared corporate contact point** no longer violates uniqueness; **workspace-aware composite foreign keys** stop a cross-tenant reference in the database. | §4.3, §4.8, §6.2 — `person_employments` and `person_contact_points`, plus composite foreign keys that make a cross-tenant reference impossible even if the application is wrong. |
+| **C6** | The migration **merges nothing automatically**; the round trip is **semantically equivalent**, with exact source preservation, count reconciliation and field-level loss reporting. | §10.3.1, §10.4.1 — the byte-identical claim is withdrawn and replaced by V1-V4, each testable. |
+| **C7** | Break-glass **read** auditing, because DML triggers do not audit `SELECT`. | §5.7.2 — the break-glass role has **no** `SELECT` on the tenant tables; its only route is a `SECURITY DEFINER` function that writes the audit row in the same transaction before returning anything. A direct read is permission-denied. |
+
+**Q9 decided:** automatic CRM merging is **disabled**. The system produces
+**ranked duplicate candidates** for authorised human review; manual merges stay
+reversible and audited. Automation may be reconsidered only after **measured
+accuracy and false-positive testing**.
+
+**Q10 decided:** **routine** break-glass requires **customer authorisation**;
+**genuine emergencies** require **two independent** platform administrators,
+**immediate customer notification**, **minimum necessary scope**, a **short
+expiry** and **full auditing**. **Self-approval is prohibited** — enforced by
+a database trigger, not a UI check.
+
+**Scope decisions recorded** (§1.6): one region initially; five roles with a
+team/group organisation; the desktop is preserved but the **browser SaaS is the
+priority**, and desktop synchronisation is **out of the F2 critical path** unless
+separately approved; a lead is a commercial record and a contact point is a
+channel address.
+
 ### Next
 
 The F2 plan is submitted for review. On approval the work starts at **M0**
