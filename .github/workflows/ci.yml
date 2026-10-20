@@ -1,0 +1,124 @@
+name: CI
+
+# ZTech Lead Generation - continuous integration.
+#
+# Added in F0 (audit gap G-06). Before this workflow existed there was NO CI in
+# any ZTech repository: the 115+ test files, the dependency posture, the
+# migration behaviour and the Windows packaging were all verified by hand.
+#
+# The suite is dependency-free by design, so CI adds no toolchain: it installs
+# from the lockfile, runs the same runner a developer runs, and gates on the
+# same checks.
+#
+# No step in this workflow contacts a paid provider, sends mail, or triggers
+# outreach. The provider integrations are exercised against fakes.
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `npm ci` installs exactly what the lockfile pins. Before F0 the committed
+      # lockfile was out of sync with package.json and `npm ci` FAILED with 32
+      # missing entries - see audit gap G-08. This step is the canary.
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Repository hygiene check
+        run: npm run check:repo
+
+      # Incremental ESLint (audit gap G-07). The error tier is what the
+      # codebase already satisfies, so it must stay at zero. The warning tier
+      # is visible debt; it is reported and its count is printed, but it does
+      # not fail the build.
+      - name: Lint
+        run: |
+          npm run lint
+          npm run lint:report > lint-report.json || true
+          node -e "
+          const r = require('./lint-report.json');
+          const warnings = r.reduce((n, f) => n + f.warningCount, 0);
+          const errors = r.reduce((n, f) => n + f.errorCount, 0);
+          console.log('lint: ' + errors + ' error(s), ' + warnings + ' warning(s) across ' + r.length + ' file(s)');
+          if (errors > 0) { console.error('lint errors must be zero'); process.exit(1); }
+          "
+
+      - name: Test suite
+        run: npm test
+
+      - name: Production dependency audit
+        run: npm run audit:prod
+
+  contract:
+    name: zuni-seo contract drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The research contract is owned by the separate zuni-seo product. ZTech
+      # vendors it so it can validate a real envelope offline; this job proves
+      # the vendored copy is still identical to the source. The zuni-seo
+      # repository is READ ONLY here - it is never modified.
+      - uses: actions/checkout@v4
+        with:
+          repository: z-sops/zuni-seo
+          ref: feature/geo-growth-intelligence
+          path: zuni-seo
+
+      - name: The vendored contract is identical to zuni-seo
+        run: node scripts/sync-zuniseo-contract.js --from zuni-seo --check
+
+  package:
+    name: windows package smoke test
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      # The directory package is used because the default target needs Windows
+      # symlink privileges that a CI runner does not have; see README.md and
+      # audit gap G-15.
+      - name: Build (directory package)
+        run: npm run build:win
+      - name: The artifact exists and contains the renderer
+        shell: pwsh
+        run: |
+          $unpacked = 'dist\win-unpacked'
+          if (-not (Test-Path $unpacked)) { throw "no build output in $unpacked" }
+          $exe = Get-ChildItem $unpacked -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw 'no executable was produced' }
+          Write-Host "artifact: $($exe.Name) $([math]::Round($exe.Length/1MB,1))MB"
