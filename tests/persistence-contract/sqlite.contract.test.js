@@ -41,4 +41,6 @@ describePersistenceContract({
   create,
   corrupt,
   insertSearch,
+  // The desktop's single local workspace. Its data and its schema are unchanged.
+  workspaceId: 'local',
 });
