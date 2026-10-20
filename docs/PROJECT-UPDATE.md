@@ -235,6 +235,54 @@ was lost.
 | **Linting** | **Approved and implemented in F0**: incremental ESLint (error tier enforced at 0, warning tier reported at 287), CI-integrated, **no mass formatting**. The promotion path is to move a rule from the warning tier to the error tier as the debt is paid off. |
 | **Next work package** | **G-39 / G-40** (ZuniSEO evidence mapping) and **G-44** (OI timeout and job lifecycle) are prioritised before F1 completes. The ZuniSEO fix is entirely on the ZTech side — **ZuniSEO itself must not be modified**. |
 
+### M0 — the shared Lead Intelligence package (2026-10-20)
+
+**Branch:** `feat/m0-shared-lead-intelligence` (from the approved F2 revision 3
+head `f8d9490c`). **Status: implementation complete, awaiting review.**
+
+The Lead Intelligence domain and application logic now live in
+`packages/lead-intelligence` — the package `@zunitech/lead-intelligence`.
+
+**The move set was computed, not hand-written.** It is closed over the relative
+requires and excludes everything that transitively depends on `electron`, the
+file system, a child process, the OS credential store, or the local OAuth
+callback server. **96 modules moved; 20 stayed behind** for exactly those
+reasons, and 9 more stayed by policy (the composition roots, the SQLite
+persistence adapter that M1 replaces, and a persistence adapter).
+
+**There is no second implementation.** Every original path keeps a
+compatibility shim that RE-EXPORTS the package:
+
+```js
+module.exports = require('../../leadIntPackage').load('core/ids');
+```
+
+so the desktop application, the tests and every existing require path keep
+working unchanged, and the new boundary test asserts that the shim and the
+package resolve to the **same module instance** for all 96 modules.
+
+**The shared core has no forbidden dependency** — no Electron, no file system,
+no child process, no credential store — and never reaches outside itself. The
+boundary test proves it by reading every file in the package.
+
+**No database schema change.** Every migration file and the embedded copies are
+byte-identical to the F0/F1 baseline, and the boundary test asserts it.
+
+**The packaged desktop application still works.** The shared package is inside
+the asar (99 files), the workspace link is not, and the resolver falls back to
+the in-repo source path — so the packaged app loads the package. This is
+verified by running the PACKAGED Electron, and it is now a permanent CI step
+(`scripts/check-packaged-package.js`).
+
+**Tests:** 123 files, 2,000 assertions, 0 failed, 0 skipped. The **1,990
+pre-existing assertions are unchanged**; the 10 new ones are the boundary
+suite.
+
+**The source-text assertions were pointed at the implementation.** A number of
+tests assert on the SOURCE of a module ("the outreach gate must mention the
+approval check"). Those assertions are about the implementation, so they now
+follow it through `tests/lead-intelligence/impl.js`. Their intent is unchanged.
+
 ### Next
 
 F0 review package submitted. **Nothing pushed, merged, force-pushed or

@@ -55,7 +55,7 @@
       "preload.js",
       "package.json",
       "src/**/*",
-      "packages/lead-intelligence/**/*"
+      "packages/**"
     ],
     "win": {
       "target": [

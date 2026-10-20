@@ -136,3 +136,15 @@ jobs:
           $exe = Get-ChildItem $unpacked -Filter *.exe | Select-Object -First 1
           if (-not $exe) { throw 'no executable was produced' }
           Write-Host "artifact: $($exe.Name) $([math]::Round($exe.Length/1MB,1))MB"
+
+      # The shared Lead Intelligence package must be reachable from the PACKAGED
+      # application. The check runs the packaged Electron itself, so the asar is
+      # mounted exactly as it is at runtime, and it asserts that a compatibility
+      # shim and the package are the same module instance.
+      - name: The packaged application can load the shared package
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $exe = (Get-ChildItem 'dist\win-unpacked' -Filter *.exe | Select-Object -First 1).FullName
+          & $exe 'scripts\check-packaged-package.js'
+          if ($LASTEXITCODE -ne 0) { throw 'the packaged application could not load the shared package' }
