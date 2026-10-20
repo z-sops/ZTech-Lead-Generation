@@ -306,6 +306,21 @@ ZTech Legal
 | G-11 | Medium | The database `.bak` is still one generation behind. |
 | G-10 residual | Low | The `saveDB()` rewrite is the only production change in the persistence layer. |
 
+### What is NOT complete (read this before calling anything production-ready)
+
+| # | Limitation | Where it is tracked |
+|---|---|---|
+| 1 | **The visual F1 branding is incomplete.** The token layer, the mark, the app icon and the chrome are done; the screens themselves are not restyled onto the new palette, because the handover forbids a frontend rewrite in this phase. The legacy tokens still drive most selectors. | `docs/BRAND.md` §7 |
+| 2 | **The packaged Electron application has not been smoke-tested.** The branding and the data migration are proven by unit tests, not by launching the packaged build against a real existing installation. This test is required before the rebrand ships. | `docs/F0-REVIEW.md` §6.2 |
+| 3 | **The Opportunity Intelligence service has one skipped test**: `tests/test_spec_gaps.py:364`, the Node MCP contract test, which needs `clients/node/node_modules`. The CI `contract` job installs it and runs it. | `ztech-opportunity-intelligence` `docs/PROJECT-UPDATE.md` |
+| 4 | **The legal documents have 11 known gaps**, including the whole SaaS rewrite: the privacy policy and the terms still describe a local-only, Gmail-only desktop app. | `ztech-legal/docs/LEGAL-GAPS.md` |
+| 5 | **Tenant isolation and cloud authentication are not implemented.** There is no workspace, no user, no session, no API key management and no per-workspace scoping anywhere. The new OI job routes inherit the same single shared bearer token. | audit gaps G-38, G-46 |
+| 6 | **Browser-independent, durable cloud job recovery is still pending.** The OI job lifecycle survives a service restart (an interrupted run is closed at startup and reported as failed), and the run itself completes even when the caller goes away — but the ZTech client still collects the result inside one call, so a client that closes before the collection loses the *collection*, not the run. A durable, browser-independent job API with a resumable result store is F2/F4 work. | audit gap G-44 residual |
+
+Nothing in this programme is production-complete. The work so far is a
+**reviewable engineering milestone** with its tests, its limitations and its
+rollback path documented.
+
 ### Next
 
 The remaining F1 work: the ZuniTech visual identity (logo, design tokens, a

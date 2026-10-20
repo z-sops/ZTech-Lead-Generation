@@ -14,6 +14,7 @@
  */
 
 const { resolveUserDataPath, PRODUCT_FOLDER } = require('./paths');
+const { verifyUserData } = require('./dataIntegrity');
 
 let cached = null;
 
@@ -43,20 +44,38 @@ function getAppPaths() {
   // resolution.
   cached = resolveUserDataPath({ appData, userDataPath, defaultUserDataPath });
 
+  // A copied directory that verifies byte-for-byte can still be unusable: a
+  // truncated database, or a settings file that was written at the wrong
+  // moment. If the copy cannot be USED, the product falls back to the
+  // original directory, which was never deleted.
+  if (cached.reason === 'migrated' && cached.migratedFrom) {
+    const integrity = verifyUserData(cached.userDataPath);
+    if (!integrity.ok) {
+      const original = cached.migratedFrom;
+      cached.userDataPath = original;
+      cached.dataPath = require('node:path').join(original, 'data');
+      cached.logPath = require('node:path').join(original, 'logs');
+      cached.reason = 'legacy-fallback';
+      cached.error = `the copied data could not be used: ${integrity.error}`;
+      cached.integrity = integrity;
+    }
+  }
+
   // The logger is required lazily - it needs the log path, so requiring it
   // before the paths are known would be circular.
   try {
     const { logger } = require('./logger');
     if (cached.reason === 'migrated') {
-      logger.info('paths', 'the product data directory was migrated', {
+      logger.info('paths', 'the product data directory was copied and verified; the original is preserved', {
         from: cached.migratedFrom,
         to: cached.userDataPath,
-        mode: cached.migrationMode,
+        files: cached.integrity && cached.integrity.files,
       });
     } else if (cached.reason === 'legacy-fallback') {
       logger.warn('paths', 'the product data directory could not be migrated; the previous location is used', {
         from: cached.migratedFrom,
         to: cached.userDataPath,
+        error: cached.error || null,
       });
     }
   } catch {

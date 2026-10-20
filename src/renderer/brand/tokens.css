@@ -1,0 +1,133 @@
+/* ==========================================================================
+   ZuniTech brand tokens - F1 visual identity.
+
+   The identity hierarchy is:
+       Zuni Enterprise        the parent company
+       ZuniTech               the technology brand
+       ZTech Lead Generation  the product
+
+   This file is the SINGLE source of the brand palette, the type scale and the
+   spacing. The legacy tokens in styles.css are PRESERVED and are derived from
+   these, so the whole application takes the brand without any screen being
+   redesigned.
+
+   Nothing here changes behaviour. Every value below is a colour, a length or
+   a font stack.
+   ========================================================================== */
+
+:root {
+  /* --- Brand palette ---------------------------------------------------- */
+  --zuni-primary: #1f4fd8;
+  --zuni-primary-hover: #1a42b8;
+  --zuni-primary-active: #1639a6;
+  --zuni-primary-soft: #e8eefc;
+  --zuni-primary-ring: rgba(31, 79, 216, 0.28);
+
+  --zuni-ink: #10182b;
+  --zuni-ink-soft: #5a6478;
+  --zuni-ink-faint: #8b93a7;
+
+  --zuni-surface: #ffffff;
+  --zuni-surface-raised: #ffffff;
+  --zuni-canvas: #f4f6fa;
+  --zuni-canvas-sunken: #eceff6;
+  --zuni-line: #dde3ee;
+  --zuni-line-strong: #c3ccdd;
+
+  --zuni-success: #0e9f6e;
+  --zuni-success-soft: #e3f5ee;
+  --zuni-warning: #c97f1a;
+  --zuni-warning-soft: #fdf1e0;
+  --zuni-danger: #d23b57;
+  --zuni-danger-soft: #fdeaee;
+  --zuni-info: #1f4fd8;
+  --zuni-info-soft: #e8eefc;
+
+  /* --- Typography -------------------------------------------------------- */
+  --zuni-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+    "Helvetica Neue", Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei",
+    "Noto Sans CJK SC", sans-serif;
+  --zuni-font-mono: "SFMono-Regular", "JetBrains Mono", Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
+  /* --- Elevation: exactly two, as the product has always had ------------- */
+  --zuni-shadow-raised: 0 1px 2px rgba(16, 24, 43, 0.06),
+    0 4px 12px rgba(16, 24, 43, 0.06);
+  --zuni-shadow-overlay: 0 8px 28px rgba(16, 24, 43, 0.16);
+
+  /* --- Focus ------------------------------------------------------------- */
+  --zuni-focus-ring: 0 0 0 2px var(--zuni-surface), 0 0 0 4px var(--zuni-primary);
+
+  /* --- Legacy tokens, now derived from the brand ------------------------
+     These are the twelve tokens the existing selectors already use. Their
+     VALUES are the brand; their NAMES and their meaning are unchanged, so no
+     selector and no test had to change. */
+  --bg-primary: var(--zuni-canvas);
+  --bg-secondary: var(--zuni-canvas-sunken);
+  --bg-card: var(--zuni-surface);
+  --bg-input: var(--zuni-surface);
+  --border: var(--zuni-line);
+  --text-primary: var(--zuni-ink);
+  --text-secondary: var(--zuni-ink-soft);
+  --accent: var(--zuni-primary);
+  --accent-hover: var(--zuni-primary-hover);
+  --danger: var(--zuni-danger);
+  --warning: var(--zuni-warning);
+  --success: var(--zuni-success);
+}
+
+/* --- The brand in the chrome -------------------------------------------- */
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3, 8px);
+  color: var(--zuni-ink);
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: block;
+}
+
+.brand-name {
+  font-size: var(--font-13, 13px);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.brand-product {
+  font-size: var(--font-11, 11px);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--zuni-ink-faint);
+  white-space: nowrap;
+}
+
+.sidebar-header .brand {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.sidebar-header .brand-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3, 8px);
+}
+
+/* A visible focus ring everywhere, for keyboard users. */
+.brand-mark:focus-visible,
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--zuni-focus-ring);
+  border-radius: var(--radius-sm, 3px);
+}

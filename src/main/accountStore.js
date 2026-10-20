@@ -3,6 +3,7 @@ const fs = require('fs');
 const { randomUUID } = require('crypto');
 const { logger } = require('./logger');
 const { writeFileAtomic } = require('./lead-intelligence/persistence/atomicFile');
+const { MIGRATION_MARKER } = require('./paths');
 
 // F1: the data directory follows the resolved product data directory, so the
 // lead library, the job ledger and the Lead Intelligence tables move with the
@@ -1447,6 +1448,22 @@ class AccountStore {
       if (!this._canOpenDatabase(SQL, buffer) && this._restoreFromBackup(SQL)) {
         buffer = fs.readFileSync(this.dbPath);
       }
+      // F1: the data directory may be a COPY of a previous installation. If
+      // the copy's database cannot be read at all, fall back to the preserved
+      // ORIGINAL directory, which the migration never deleted. The user must
+      // never start with an empty library because a copy went wrong.
+      if (!this._canOpenDatabase(SQL, buffer)) {
+        const original = this._preservedOriginalDataDir();
+        if (original && original !== DATA_DIR) {
+          logger.error('accountStore', 'the copied database cannot be read; the preserved original is used', {
+            copied: this.dbPath,
+            original,
+          });
+          if (this._adoptDataDirectory(original)) {
+            buffer = fs.existsSync(this.dbPath) ? fs.readFileSync(this.dbPath) : null;
+          }
+        }
+      }
     }
     try {
       this.db = buffer ? new SQL.Database(buffer) : new SQL.Database();
@@ -1596,6 +1613,38 @@ class AccountStore {
     } catch (renameErr) {
       this._sessionQuarantine = null;
       logger.error('accountStore', 'failed to preserve unreadable database', { error: renameErr.message, dbPath: this.dbPath });
+    }
+  }
+
+  /**
+   * The data directory of the installation this one was copied from, when
+   * there is one. The migration records it and never deletes it.
+   * @returns {string|null}
+   */
+  _preservedOriginalDataDir() {
+    try {
+      const marker = path.join(path.dirname(DATA_DIR), MIGRATION_MARKER);
+      const record = JSON.parse(fs.readFileSync(marker, 'utf8'));
+      if (!record || typeof record.migratedFrom !== 'string') return null;
+      const original = path.join(record.migratedFrom, 'data');
+      return fs.existsSync(original) ? original : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Point the store at another data directory.
+   * @returns {boolean} true when the store now uses the new directory
+   */
+  _adoptDataDirectory(dataDir) {
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+      this.dbPath = path.join(dataDir, 'whatsapp.db');
+      return true;
+    } catch (err) {
+      logger.error('accountStore', 'the preserved data directory could not be adopted', { error: err.message });
+      return false;
     }
   }
 

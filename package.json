@@ -9,6 +9,7 @@
     "start": "electron .",
     "build": "electron-builder",
     "build:win": "electron-builder --dir --config.win.signAndEditExecutable=false",
+    "build:brand": "node scripts/build-brand-assets.js",
     "test": "node tests/run-all.js",
     "test:list": "node tests/run-all.js --list",
     "lint": "eslint . --max-warnings 100000",

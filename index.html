@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'">
   <title>ZTech Lead Generation</title>
+  <link rel="icon" type="image/png" href="./src/renderer/brand/icon-64.png">
+  <!-- F1: the ZuniTech brand tokens. They are loaded FIRST so the existing
+       stylesheet can still override anything it needs to. -->
+  <link rel="stylesheet" href="./src/renderer/brand/tokens.css">
   <link rel="stylesheet" href="./src/renderer/styles.css">
 </head>
 <body>
@@ -16,7 +20,13 @@
          marker. They are not links, carry no data-view, and invent no data. -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <span class="brand">ZTECH</span>
+        <span class="brand">
+          <span class="brand-row">
+            <img class="brand-mark" src="./src/renderer/brand/zunitech-mark.svg" width="22" height="22" alt="" aria-hidden="true">
+            <span class="brand-name">ZuniTech</span>
+          </span>
+          <span class="brand-product">ZTech Lead Generation</span>
+        </span>
         <span class="version">v1.0.0</span>
         <button class="btn btn-icon btn-ghost sidebar-toggle" id="btn-collapse-sidebar"
                 type="button" aria-expanded="true" aria-controls="sidebar" title="Collapse sidebar">
