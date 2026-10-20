@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.js",
     "./package.json": "./package.json",
+    "./*.js": "./src/*.js",
     "./*": "./src/*.js"
   },
   "files": [

@@ -287,6 +287,47 @@ tests assert on the SOURCE of a module ("the outreach gate must mention the
 approval check"). Those assertions are about the implementation, so they now
 follow it through `tests/lead-intelligence/impl.js`. Their intent is unchanged.
 
+### The M0 review follow-ups (2026-10-20)
+
+The M0 review accepted the extraction and asked for four things before M1.
+All four are done, on the same branch, in the same draft pull request.
+
+**1. The package boundary is now the ABSOLUTE package boundary.** The guard
+resolved a relative import against the **repository root**, so an import that
+left the package but stayed inside the repository was not reported. It now
+resolves against the absolute `packages/lead-intelligence/src` boundary, and a
+sibling directory that merely shares the name prefix is not inside it either.
+
+**2. The guard is exercised by a regression test.** The check is now a
+function, and a test feeds it three synthetic files: one that imports outside
+the package, one that imports outside the repository, and one that stays
+inside. The first two must be reported, the third must not.
+
+**3. The package loads through its public name.** `require('@zunitech/lead-intelligence')`
+and the subpath exports work, and they are the **same module instances** as the
+in-repo paths. The exports map had a real defect: a subpath **with** the
+`.js` extension resolved to `ids.js.js`. The map now publishes both
+spellings, and a path the map does not publish is proven to be unreachable.
+
+**4. The ZuniSEO distinction is documented — and it matters.**
+`docs/ZUNISEO-CONTRACT-DRIFT.md` separates the two checks:
+
+| Check | Status | Proves |
+|---|---|---|
+| The **local** SHA-256 manifest gate (`tests/lead-intelligence/zuniseo-envelope.test.js`) | **always on**, green | the vendored contract in this repository is unmodified |
+| The **external** cross-repository comparison (`scripts/sync-zuniseo-contract.js --from zuni-seo --check`) | **SKIPPED** — zuni-seo is private and the job has no token for it | the vendored copy still matches zuni-seo |
+
+**The cross-repository comparison has not run, so external parity is NOT
+verified.** The green *zuni-seo contract drift* job does not mean otherwise,
+and the job now says so in a notice. Turning it on needs the
+`ZUNI_SEO_READ_TOKEN` secret, which the repository owner configures in the
+repository settings — it is not requested or handled in chat, and zuni-seo
+itself is never modified.
+
+**Tests:** 123 files, **2,002 assertions**, 0 failed, 0 skipped. The 1,990
+pre-existing assertions are unchanged; the boundary suite is now 12
+assertions.
+
 ### Next
 
 M0 is submitted as a **draft pull request** for review. **Nothing merged,

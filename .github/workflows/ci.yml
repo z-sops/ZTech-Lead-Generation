@@ -109,8 +109,10 @@ jobs:
         if: steps.zuniseo.outcome != 'success'
         run: |
           echo "::notice::zuni-seo could not be checked out: the repository is private and this job has no token for it."
+          echo "::notice::THE CROSS-REPOSITORY COMPARISON DID NOT RUN. This job proves that the vendored contract in THIS repository is unmodified; it does NOT prove that the vendored copy still matches zuni-seo. External parity is NOT verified."
           echo "::notice::Add the ZUNI_SEO_READ_TOKEN secret to turn the cross-repository comparison on."
           echo "::notice::The always-on gate is tests/lead-intelligence/zuniseo-envelope.test.js, which verifies the vendored contract and fixtures against their recorded SHA-256 manifest."
+          echo "::notice::See docs/ZUNISEO-CONTRACT-DRIFT.md for the difference between the two checks."
 
   package:
     name: windows package smoke test

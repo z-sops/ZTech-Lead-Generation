@@ -23,6 +23,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
@@ -52,25 +53,47 @@ function rel(p) {
   return path.relative(root, p).split(path.sep).join('/');
 }
 
-test('the shared package exists, is named correctly, and declares no dependencies', () => {
-  const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
-  assert.equal(pkg.name, '@zunitech/lead-intelligence');
-  assert.equal(pkg.main, 'src/index.js');
-  assert.deepEqual(pkg.dependencies || {}, {}, 'the shared core has no runtime dependencies');
-  assert.ok(fs.existsSync(path.join(packageSrc, 'index.js')), 'the public entry point exists');
-});
+/**
+ * Is `child` inside `boundary`? Both are absolute paths.
+ *
+ * The comparison is on the resolved path, with a trailing separator added to
+ * the boundary, so a sibling directory that merely shares a prefix
+ * (`packages/lead-intelligence-evil`) is NOT inside
+ * `packages/lead-intelligence`.
+ */
+function isInside(boundary, child) {
+  const b = boundary.endsWith(path.sep) ? boundary : boundary + path.sep;
+  return child === boundary || child.startsWith(b);
+}
 
-test('the shared core has NO forbidden dependency and never reaches outside itself', () => {
+/**
+ * The boundary guard itself, as a function, so that it can be exercised
+ * against a deliberately escaping import (the regression test below) and not
+ * only against the package as it is today.
+ *
+ * @param {string[]} files the files to check
+ * @param {string} boundary the absolute directory the files may not leave
+ * @param {string} label how the violations are described
+ * @returns {string[]} the violations, empty when the files are clean
+ */
+function findBoundaryViolations(files, boundary, label) {
   const violations = [];
-  for (const file of walk(packageSrc)) {
+  for (const file of files) {
     const text = fs.readFileSync(file, 'utf8');
     for (const m of text.matchAll(/require\((['"])([^'"]+)\1\)/g)) {
       const target = m[2];
       if (target.startsWith('.')) {
-        // A relative require must stay inside the package.
-        const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(rel(file)), target));
-        if (resolved.startsWith('..')) {
-          violations.push(`${rel(file)} reaches outside the package: ${target}`);
+        // A relative require must stay inside the boundary. The resolution is
+        // done against the ABSOLUTE path of the requiring file, so an import
+        // that leaves the package but stays inside the repository is a
+        // violation too - which a check against the repository root alone
+        // would not catch.
+        const resolved = path.resolve(path.dirname(file), target);
+        const asFile = fs.existsSync(resolved) && fs.statSync(resolved).isFile()
+          ? resolved
+          : (fs.existsSync(`${resolved}.js`) ? `${resolved}.js` : resolved);
+        if (!isInside(boundary, asFile)) {
+          violations.push(`${rel(file)} reaches outside ${label}: ${target}`);
         }
         continue;
       }
@@ -85,7 +108,52 @@ test('the shared core has NO forbidden dependency and never reaches outside itse
       }
     }
   }
+  return violations;
+}
+
+test('the shared package exists, is named correctly, and declares no dependencies', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+  assert.equal(pkg.name, '@zunitech/lead-intelligence');
+  assert.equal(pkg.main, 'src/index.js');
+  assert.deepEqual(pkg.dependencies || {}, {}, 'the shared core has no runtime dependencies');
+  assert.ok(fs.existsSync(path.join(packageSrc, 'index.js')), 'the public entry point exists');
+});
+
+test('the shared core has NO forbidden dependency and never reaches outside itself', () => {
+  const violations = findBoundaryViolations(walk(packageSrc), packageSrc, 'the shared package');
   assert.deepEqual(violations, [], 'the shared core is free of Electron, file-system, process and external dependencies');
+});
+
+test('the boundary guard REJECTS a relative import that leaves the package', () => {
+  // A regression test for the guard itself. A file inside the package that
+  // requires something outside it must be reported - including when the
+  // target is still inside the repository, which a check against the
+  // repository root alone would not catch.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'm0-boundary-'));
+  const inside = path.join(scratch, 'src', 'core');
+  fs.mkdirSync(inside, { recursive: true });
+  fs.mkdirSync(path.join(scratch, 'src', 'secret'), { recursive: true });
+  fs.writeFileSync(path.join(scratch, 'src', 'secret', 'credentials.js'), 'module.exports = {};\n');
+  fs.writeFileSync(path.join(scratch, 'outside.js'), 'module.exports = {};\n');
+
+  const escaping = path.join(inside, 'leaker.js');
+  fs.writeFileSync(escaping, "module.exports = require('../../secret/credentials');\n");
+  const outOfRepo = path.join(inside, 'outOfRepo.js');
+  fs.writeFileSync(outOfRepo, "module.exports = require('../../../outside');\n");
+  const clean = path.join(inside, 'clean.js');
+  fs.writeFileSync(clean, "const { x } = require('../shared/ids');\nmodule.exports = x;\n");
+
+  const boundary = path.join(scratch, 'src');
+  const violations = findBoundaryViolations([escaping, outOfRepo, clean], boundary, 'the package');
+
+  assert.ok(violations.some((v) => v.includes('leaker.js') && v.includes('../../secret/credentials')),
+    'an import that leaves the package is reported');
+  assert.ok(violations.some((v) => v.includes('outOfRepo.js')),
+    'an import that leaves the package and the repository is reported');
+  assert.ok(!violations.some((v) => v.includes('clean.js')),
+    'an import that stays inside the package is not reported');
+
+  fs.rmSync(scratch, { recursive: true, force: true });
 });
 
 test('every moved module has a compatibility shim, and the shim re-exports the SAME instance', () => {
@@ -110,7 +178,7 @@ test('every moved module has a compatibility shim, and the shim re-exports the S
       problems.push(`${m}: the shim appears to contain logic of its own`);
     }
     // The same instance: identity is what proves there is one implementation.
-    // eslint-disable-next-line global-require
+     
     if (require(shim) !== require(impl)) {
       problems.push(`${m}: the shim and the package resolve to different instances`);
     }
@@ -128,7 +196,7 @@ test('the compatibility shim is a re-export and nothing more', () => {
 });
 
 test('the package public surface is the expected one', () => {
-  // eslint-disable-next-line global-require
+   
   const pkg = require(path.join(packageSrc, 'index.js'));
   const expected = [
     'core', 'contracts', 'icp', 'agent', 'outreach', 'research', 'trust', 'mailbox', 'sequences',
@@ -144,8 +212,40 @@ test('the package public surface is the expected one', () => {
   assert.equal(typeof pkg.evaluateIcpFit, 'function');
 });
 
+test('the package loads through its PUBLIC NAME and its declared exports', () => {
+  // The package is consumed by the cloud service through its published name,
+  // so the name and the exports map are part of its contract - not just its
+  // layout on disk.
+  const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+  assert.equal(pkg.name, '@zunitech/lead-intelligence');
+  assert.equal(pkg.exports['.'], './src/index.js');
+
+  // The root export.
+   
+  const byName = require('@zunitech/lead-intelligence');
+  assert.equal(typeof byName.buildEvidencePacket, 'function', 'the root export is the public surface');
+  assert.equal(byName, require(path.join(packageSrc, 'index.js')), 'the name and the path give the same module');
+
+  // A subpath export, with and without the file extension: both must work,
+  // because the resolver and the cloud service may use either spelling.
+   
+  const withoutExtension = require('@zunitech/lead-intelligence/core/ids');
+   
+  const withExtension = require('@zunitech/lead-intelligence/core/ids.js');
+  assert.equal(withoutExtension, withExtension, 'both spellings resolve to the same module');
+  assert.equal(withoutExtension, require(path.join(packageSrc, 'core', 'ids.js')));
+  assert.equal(typeof withoutExtension.stableId, 'function');
+
+  // A path that the exports map does not publish is NOT reachable.
+  assert.throws(
+    () => require('@zunitech/lead-intelligence/../../src/main/leadIntPackage'),
+    /ERR_PACKAGE_PATH_NOT_EXPORTED|ERR_INVALID_MODULE_SPECIFIER|not exported|MODULE_NOT_FOUND/,
+    'the exports map is a boundary, not a suggestion',
+  );
+});
+
 test('the desktop application still resolves the package through one resolver', () => {
-  // eslint-disable-next-line global-require
+   
   const resolver = require(path.join(root, 'src', 'main', 'leadIntPackage.js'));
   assert.equal(resolver.PACKAGE_NAME, '@zunitech/lead-intelligence');
   assert.ok(fs.existsSync(resolver.root), 'the package root resolves');
@@ -153,7 +253,7 @@ test('the desktop application still resolves the package through one resolver', 
 });
 
 test('the extracted rules behave exactly as before', () => {
-  // eslint-disable-next-line global-require
+   
   const li = require(path.join(packageSrc, 'index.js'));
 
   // The outreach gate: a pitch with no approval is blocked, and the reason is
@@ -240,7 +340,7 @@ test('the extracted rules behave exactly as before', () => {
 });
 
 test('the ZuniSEO envelope mapper still maps a real contract envelope', () => {
-  // eslint-disable-next-line global-require
+   
   const { mapZuniSeoEnvelope } = require(path.join(packageSrc, 'providers', 'envelopeMapper.js'));
   const fixture = JSON.parse(fs.readFileSync(
     path.join(root, 'tests', 'fixtures', 'zuni-seo', 'v1', 'research_result.bakery.json'), 'utf8'));
