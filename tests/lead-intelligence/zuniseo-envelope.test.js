@@ -57,7 +57,13 @@ test('the vendored contract and fixtures match their recorded hashes (G-41)', ()
   for (const [rel, expected] of Object.entries(manifest.files)) {
     const file = path.join(__dirname, '..', '..', rel);
     assert.ok(fs.existsSync(file), 'the vendored file exists: ' + rel);
-    const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    // The hash is of the COMMITTED bytes: the repository normalises text files
+    // to LF, so the hash must be computed the same way the sync script
+    // computes it, or the check fails on a fresh checkout and passes in the
+    // working tree.
+    const actual = crypto.createHash('sha256')
+      .update(Buffer.from(fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n'), 'utf8'))
+      .digest('hex');
     assert.equal(actual, expected, 'the vendored file is unmodified: ' + rel);
   }
 });

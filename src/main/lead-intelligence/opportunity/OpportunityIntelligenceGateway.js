@@ -676,7 +676,15 @@ function truncate(s, n = 200) {
   return t.length > n ? `${t.slice(0, n)}...` : t;
 }
 
-/** An abortable sleep. It rejects as soon as the caller's signal aborts. */
+/**
+ * An abortable sleep. It rejects as soon as the caller's signal aborts.
+ *
+ * The timer is deliberately NOT unref'd. A poll that is in flight is work in
+ * progress, and it must keep the event loop alive until it finishes: an
+ * unref'd timer lets the loop drain while the caller is still waiting, which
+ * is exactly what the CI on Linux reported ("Promise resolution is still
+ * pending but the event loop has already resolved").
+ */
 function sleep(ms, signal) {
   if (!(ms > 0)) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -684,7 +692,6 @@ function sleep(ms, signal) {
       if (signal) signal.removeEventListener('abort', onAbort);
       resolve();
     }, ms);
-    if (typeof timer.unref === 'function') timer.unref();
     function onAbort() {
       clearTimeout(timer);
       reject(new Error('aborted'));

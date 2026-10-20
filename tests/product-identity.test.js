@@ -46,6 +46,22 @@ function tempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ztech-identity-'));
 }
 
+/**
+ * Remove a directory tree, tolerating a Windows file lock.
+ *
+ * The first CI run crashed one Windows job with STATUS_STACK_BUFFER_OVERRUN
+ * while this file was creating and deleting a dozen temporary trees in a row.
+ * The crash is in the file system, not in the assertions, so the cleanup is
+ * made patient and a cleanup failure never fails a test.
+ */
+function cleanup(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch {
+    // A locked file must never fail a test that already passed.
+  }
+}
+
 /** A realistic installation: a database, a settings file and a log. */
 function seedInstall(root, folder, files = ['data/whatsapp.db', 'config.json', 'logs/app-2026-10-20.log']) {
   for (const f of files) {
@@ -78,7 +94,7 @@ test('a fresh installation uses the product folder', () => {
   assert.equal(r.logPath, path.join(root, PRODUCT_FOLDER, 'logs'));
   assert.equal(r.reason, 'fresh');
   assert.equal(r.migratedFrom, null);
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('an installation under the previous product name is COPIED, and the original is KEPT', () => {
@@ -108,7 +124,7 @@ test('an installation under the previous product name is COPIED, and the origina
   assert.equal(marker.migratedFrom, path.join(root, 'phone全球获客'));
   assert.equal(marker.sourcePreserved, true);
   assert.equal(marker.verified, true);
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('every previous directory name is copied across', () => {
@@ -119,7 +135,7 @@ test('every previous directory name is copied across', () => {
     assert.equal(r.migratedFrom, path.join(root, folder), folder + ' is copied');
     assert.equal(r.integrity.ok, true);
     assert.ok(fs.existsSync(path.join(root, folder, 'data', 'whatsapp.db')), folder + ': the original is preserved');
-    fs.rmSync(root, { recursive: true, force: true });
+    cleanup(root);
   }
 });
 
@@ -134,7 +150,7 @@ test('an installation that already has the new folder is NOT overwritten', () =>
   assert.equal(r.migratedFrom, null, 'nothing was copied');
   assert.ok(fs.existsSync(path.join(r.dataPath, 'current-only.txt')), 'the current data is untouched');
   assert.ok(fs.existsSync(path.join(root, 'phone全球获客', 'data', 'whatsapp.db')), 'the old directory is left alone');
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('an empty old directory is not treated as an installation', () => {
@@ -143,7 +159,7 @@ test('an empty old directory is not treated as an installation', () => {
   const r = resolveUserDataPath({ appData: root });
   assert.equal(r.migratedFrom, null);
   assert.equal(r.reason, 'fresh');
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('a caller that has chosen its own directory keeps it', () => {
@@ -152,7 +168,7 @@ test('a caller that has chosen its own directory keeps it', () => {
   fs.mkdirSync(chosen, { recursive: true });
   const r = resolveUserDataPath({ appData: root, userDataPath: chosen, defaultUserDataPath: path.join(root, PRODUCT_FOLDER) });
   assert.equal(r.userDataPath, chosen);
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test("Electron's own default directory is not treated as a chosen one", () => {
@@ -163,7 +179,7 @@ test("Electron's own default directory is not treated as a chosen one", () => {
     defaultUserDataPath: path.join(root, PRODUCT_FOLDER),
   });
   assert.equal(r.userDataPath, path.join(root, PRODUCT_FOLDER));
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 /* ----------------------------------------------------------- failure modes -- */
@@ -183,7 +199,7 @@ test('a copy that does not verify leaves the product on the ORIGINAL directory',
   assert.equal(r.reason, 'legacy-fallback');
   assert.ok(r.error, 'the reason is reported');
   assert.ok(fs.existsSync(path.join(legacy, 'data', 'whatsapp.db')), 'the data is still there');
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('a disk failure during the copy leaves the original intact', () => {
@@ -211,7 +227,7 @@ test('a disk failure during the copy leaves the original intact', () => {
   assert.equal(r.reason, 'legacy-fallback');
   assert.ok(r.error, 'the disk failure is reported');
   assert.ok(fs.existsSync(path.join(legacy, 'data', 'whatsapp.db')), 'the data is still there');
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('an INTERRUPTED migration leaves no half-copied directory in place', () => {
@@ -247,7 +263,7 @@ test('an INTERRUPTED migration leaves no half-copied directory in place', () => 
   // And no staging directory was left behind.
   const leftovers = fs.readdirSync(root).filter((n) => n.includes('.migrating-'));
   assert.deepEqual(leftovers, [], 'the staging directory was cleaned up');
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 /* --------------------------------------------------------------- integrity -- */
@@ -274,7 +290,7 @@ test('a truncated or foreign database is rejected', () => {
   const good = verifyDatabase(path.join(dir, 'whatsapp.db'));
   assert.equal(good.ok, true);
   assert.equal(good.pages, 1);
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('an unparseable settings file is rejected, and a missing one is fine', () => {
@@ -285,7 +301,7 @@ test('an unparseable settings file is rejected, and a missing one is fine', () =
 
   const missing = verifySettings(path.join(root, 'absent.json'));
   assert.equal(missing.ok, true, 'a fresh install has no settings file');
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('the whole user-data directory is checked at once', () => {
@@ -297,7 +313,7 @@ test('the whole user-data directory is checked at once', () => {
   fs.writeFileSync(path.join(root, PRODUCT_FOLDER, 'data', 'whatsapp.db'), 'broken');
   const bad = verifyUserData(path.join(root, PRODUCT_FOLDER));
   assert.equal(bad.ok, false);
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('a copy whose database is corrupt is not adopted, and the original keeps the data', () => {
@@ -315,7 +331,7 @@ test('a copy whose database is corrupt is not adopted, and the original keeps th
 
   // The original still has the user's data, and the product can go back to it.
   assert.ok(fs.existsSync(path.join(legacy, 'data', 'whatsapp.db')));
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 /* ---------------------------------------------------------------- rollback -- */
@@ -338,7 +354,7 @@ test('the preserved original can be rolled back over a damaged new directory', (
     'content of data/whatsapp.db',
     'the original data is back',
   );
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 test('a rollback with nothing preserved reports it instead of pretending', () => {
@@ -346,7 +362,7 @@ test('a rollback with nothing preserved reports it instead of pretending', () =>
   const r = rollbackUserData(path.join(root, PRODUCT_FOLDER));
   assert.equal(r.ok, false);
   assert.ok(r.error);
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
 
 /* ----------------------------------------------------------------- helpers -- */
@@ -371,5 +387,5 @@ test('the helpers behave', () => {
   const different = verifyDirectoryIntegrity(path.join(root, 'empty'), path.join(root, 'copy'));
   assert.equal(different.ok, false);
   assert.equal(different.mismatches.length, 1);
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup(root);
 });
