@@ -6,8 +6,9 @@
 -- the same technique as migrations 001, 002 and 004.
 
 CREATE TABLE IF NOT EXISTS li_oi_refresh_requests (
-  workspace_id TEXT NOT NULL,
-  request_id  TEXT PRIMARY KEY,
+  workspace_id UUID NOT NULL,
+  request_id  TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, request_id),
   lead_id     TEXT NOT NULL,
   state       TEXT NOT NULL CHECK (state IN ('pending', 'succeeded', 'failed')),
   research_id TEXT,
@@ -17,6 +18,6 @@ CREATE TABLE IF NOT EXISTS li_oi_refresh_requests (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS li_oi_refresh_one_pending
-  ON li_oi_refresh_requests (lead_id) WHERE state = 'pending';
+  ON li_oi_refresh_requests (workspace_id, lead_id) WHERE state = 'pending';
 
 CREATE INDEX IF NOT EXISTS li_oi_refresh_lead ON li_oi_refresh_requests (workspace_id, lead_id, created_at DESC);

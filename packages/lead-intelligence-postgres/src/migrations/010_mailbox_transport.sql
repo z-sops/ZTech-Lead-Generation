@@ -12,11 +12,12 @@
 --    'mailbox'. The constraint is dropped and re-added; no row is touched.
 
 ALTER TABLE li_outreach_sends ADD COLUMN IF NOT EXISTS mailbox_id TEXT;
-CREATE INDEX IF NOT EXISTS li_sends_by_mailbox ON li_outreach_sends (mailbox_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS li_sends_by_mailbox ON li_outreach_sends (workspace_id, mailbox_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS li_mailboxes (
-  workspace_id    TEXT NOT NULL,
-  mailbox_id      TEXT PRIMARY KEY,
+  workspace_id    UUID NOT NULL,
+  mailbox_id      TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, mailbox_id),
   provider        TEXT NOT NULL CHECK (provider IN ('gmail', 'microsoft365')),
   email_address   TEXT NOT NULL,
   display_name    TEXT,
@@ -35,11 +36,12 @@ CREATE TABLE IF NOT EXISTS li_mailboxes (
   connected_at    TIMESTAMPTZ NOT NULL,
   updated_at      TIMESTAMPTZ NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS li_mailboxes_one_address ON li_mailboxes (provider, email_address);
+CREATE UNIQUE INDEX IF NOT EXISTS li_mailboxes_one_address ON li_mailboxes (workspace_id, provider, email_address);
 
 CREATE TABLE IF NOT EXISTS li_mailbox_sent (
-  workspace_id        TEXT NOT NULL,
-  send_id             TEXT PRIMARY KEY,
+  workspace_id        UUID NOT NULL,
+  send_id             TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, send_id),
   mailbox_id          TEXT NOT NULL,
   provider_message_id TEXT,
   stored_message_id   TEXT,
@@ -48,7 +50,7 @@ CREATE TABLE IF NOT EXISTS li_mailbox_sent (
   recorded_at         TIMESTAMPTZ NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS li_mailbox_sent_stored_id
-  ON li_mailbox_sent (mailbox_id, stored_message_id) WHERE stored_message_id IS NOT NULL;
+  ON li_mailbox_sent (workspace_id, mailbox_id, stored_message_id) WHERE stored_message_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS li_market_rules (
   country_code TEXT PRIMARY KEY CHECK (length(country_code) = 2),

@@ -8,24 +8,32 @@
 -- visible to every workspace.
 
 CREATE TABLE IF NOT EXISTS li_suppressions (
-  suppression_id     TEXT PRIMARY KEY,
+  suppression_id     TEXT NOT NULL,
   scope              TEXT NOT NULL CHECK (scope IN ('workspace', 'global')),
-  workspace_id       TEXT,
+  workspace_id       UUID NOT NULL,
   channel            TEXT NOT NULL CHECK (channel IN ('email', 'whatsapp')),
   normalized_address TEXT NOT NULL,
   reason             TEXT NOT NULL CHECK (reason IN ('unsubscribe', 'bounce', 'complaint', 'manual')),
   source             TEXT NOT NULL CHECK (source IN ('user', 'relay', 'import')),
   created_at         TIMESTAMPTZ NOT NULL,
-  CHECK ((scope = 'global' AND workspace_id IS NULL) OR (scope = 'workspace' AND workspace_id IS NOT NULL))
+  PRIMARY KEY (workspace_id, suppression_id),
+  -- A GLOBAL suppression belongs to the PLATFORM workspace - the reserved
+  -- all-zero uuid - and a workspace suppression belongs to a tenant. So a
+  -- global row is never NULL-scoped, and the key is tenant-safe like every
+  -- other one. A tenant may be BLOCKED by a global row, but that row's
+  -- address is never shown to it: the tenant store redacts it.
+  CHECK ((scope = 'global' AND workspace_id = '00000000-0000-0000-0000-000000000000'::uuid)
+      OR (scope = 'workspace' AND workspace_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 -- One row per (scope, workspace, channel, address): suppressing twice is a no-op, never a duplicate.
 CREATE UNIQUE INDEX IF NOT EXISTS li_suppressions_one
-  ON li_suppressions (scope, COALESCE(workspace_id, ''), channel, normalized_address);
-CREATE INDEX IF NOT EXISTS li_suppressions_by_address ON li_suppressions (channel, normalized_address);
+  ON li_suppressions (workspace_id, scope, channel, normalized_address);
+CREATE INDEX IF NOT EXISTS li_suppressions_by_address ON li_suppressions (workspace_id, channel, normalized_address);
 
 CREATE TABLE IF NOT EXISTS li_contact_consents (
-  workspace_id       TEXT NOT NULL,
-  consent_id         TEXT PRIMARY KEY,
+  workspace_id       UUID NOT NULL,
+  consent_id         TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, consent_id),
   lead_id            TEXT NOT NULL,
   channel            TEXT NOT NULL CHECK (channel IN ('email', 'whatsapp')),
   normalized_address TEXT NOT NULL,
@@ -37,11 +45,11 @@ CREATE TABLE IF NOT EXISTS li_contact_consents (
   source             TEXT NOT NULL CHECK (source IN ('user', 'relay')),
   event_id           TEXT
 );
-CREATE INDEX IF NOT EXISTS li_consents_by_address ON li_contact_consents (channel, normalized_address, consented_at DESC);
+CREATE INDEX IF NOT EXISTS li_consents_by_address ON li_contact_consents (workspace_id, channel, normalized_address, consented_at DESC);
 CREATE INDEX IF NOT EXISTS li_consents_by_lead ON li_contact_consents (workspace_id, lead_id, recorded_at DESC);
 
 CREATE TABLE IF NOT EXISTS li_contact_provenance (
-  workspace_id TEXT NOT NULL,
+  workspace_id UUID NOT NULL,
   lead_id      TEXT NOT NULL,
   field        TEXT NOT NULL CHECK (field IN ('email', 'phone', 'website')),
   source_kind  TEXT NOT NULL CHECK (source_kind IN ('collection_run', 'import', 'manual', 'enrichment', 'unknown')),
@@ -49,12 +57,13 @@ CREATE TABLE IF NOT EXISTS li_contact_provenance (
   collected_at TIMESTAMPTZ,
   backfilled   BOOLEAN NOT NULL DEFAULT false,
   recorded_at  TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (lead_id, field)
+  PRIMARY KEY (workspace_id, lead_id, field)
 );
 
 CREATE TABLE IF NOT EXISTS li_trust_events (
-  workspace_id       TEXT NOT NULL,
-  row_id             TEXT PRIMARY KEY,
+  workspace_id       UUID NOT NULL,
+  row_id             TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, row_id),
   event_id           TEXT NOT NULL,
   kind               TEXT NOT NULL CHECK (kind IN ('unsubscribe', 'bounce', 'complaint', 'reply', 'whatsapp_inbound')),
   channel            TEXT NOT NULL CHECK (channel IN ('email', 'whatsapp')),
@@ -69,14 +78,15 @@ CREATE TABLE IF NOT EXISTS li_trust_events (
 -- Idempotency by event_id for every ACCEPTED event. A rejected row is kept for the
 -- record but stays outside the index, so a forged copy can never block the genuine event.
 CREATE UNIQUE INDEX IF NOT EXISTS li_trust_events_once
-  ON li_trust_events (event_id) WHERE state != 'rejected';
-CREATE INDEX IF NOT EXISTS li_trust_events_by_address ON li_trust_events (channel, normalized_address, received_at DESC);
+  ON li_trust_events (workspace_id, event_id) WHERE state != 'rejected';
+CREATE INDEX IF NOT EXISTS li_trust_events_by_address ON li_trust_events (workspace_id, channel, normalized_address, received_at DESC);
 
 CREATE TABLE IF NOT EXISTS li_recipient_refs (
-  workspace_id       TEXT NOT NULL,
-  recipient_ref      TEXT PRIMARY KEY,
+  workspace_id       UUID NOT NULL,
+  recipient_ref      TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, recipient_ref),
   channel            TEXT NOT NULL CHECK (channel IN ('email', 'whatsapp')),
   normalized_address TEXT NOT NULL,
   created_at         TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS li_recipient_refs_by_address ON li_recipient_refs (channel, normalized_address, created_at DESC);
+CREATE INDEX IF NOT EXISTS li_recipient_refs_by_address ON li_recipient_refs (workspace_id, channel, normalized_address, created_at DESC);

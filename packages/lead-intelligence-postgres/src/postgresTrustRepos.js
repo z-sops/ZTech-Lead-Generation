@@ -11,6 +11,7 @@
  * from the store's.
  */
 
+const { PLATFORM_WORKSPACE_ID } = require('./dialect');
 const SUPPRESSION_COLS = ['suppression_id', 'scope', 'workspace_id', 'channel', 'normalized_address', 'reason', 'source', 'created_at'];
 const CONSENT_COLS = ['consent_id', 'lead_id', 'channel', 'normalized_address', 'method', 'evidence_note', 'recorded_by', 'consented_at', 'recorded_at', 'source', 'event_id'];
 const PROVENANCE_COLS = ['lead_id', 'field', 'source_kind', 'source_ref', 'collected_at', 'backfilled', 'recorded_at'];
@@ -33,33 +34,76 @@ function clampOffset(offset) {
 
 const freeze = (r) => (r ? Object.freeze({ ...r }) : null);
 
+/**
+ * The suppressions of this workspace, and the GLOBAL ones.
+ *
+ * A global suppression lives in the platform workspace. It can BLOCK this
+ * workspace - that is its whole point - but its address is another
+ * platform's record of a contact, and a tenant must never see it. So a global
+ * row is returned REDACTED: the caller learns that the address is suppressed
+ * and why, and nothing else. The tenant's OWN rows are returned in full.
+ */
 class PgSuppressions {
   constructor(store) { this.s = store; }
 
+  /** The row for a scope/workspace/channel/address, as the platform wrote it. */
+  async _raw(scope, workspaceId, channel, address) {
+    return this.s.one('li_suppressions', `SELECT ${SUPPRESSION_COLS.join(', ')} FROM li_suppressions WHERE scope = ? AND workspace_id = ? AND channel = ? AND normalized_address = ?`, [scope, workspaceId, channel, address]);
+  }
+
+  /** A global row, with the contact information removed. */
+  _redacted(row) {
+    if (!row) return null;
+    return { ...row, normalized_address: null, redacted: true };
+  }
+
   async add(rec) {
     const v = { ...rec };
-    if (!v.workspace_id && v.scope === 'workspace') v.workspace_id = this.s.workspaceId;
+    const global = v.scope === 'global';
+    v.workspace_id = global ? PLATFORM_WORKSPACE_ID : (v.workspace_id || this.s.workspaceId);
     await this.s.insert('li_suppressions', SUPPRESSION_COLS, SUPPRESSION_COLS.map((c) => (v[c] === undefined ? null : v[c])), { onConflict: '*', returning: false });
-    return this.s.one('li_suppressions', `SELECT ${SUPPRESSION_COLS.join(', ')} FROM li_suppressions WHERE scope = ? AND COALESCE(workspace_id, '') = ? AND channel = ? AND normalized_address = ?`, [v.scope, v.workspace_id || '', v.channel, v.normalized_address]);
+    return this._raw(v.scope, v.workspace_id, v.channel, v.normalized_address);
   }
 
+  /**
+   * The suppression for an address, in this workspace or globally. A global
+   * hit comes back redacted.
+   */
   async find({ channel, address, workspaceId }) {
     const ws = workspaceId || this.s.workspaceId;
-    return freeze(await this.s.one('li_suppressions', `SELECT ${SUPPRESSION_COLS.join(', ')} FROM li_suppressions WHERE channel = ? AND normalized_address = ? AND (scope = 'global' OR workspace_id = ?) ORDER BY created_at DESC, suppression_id DESC LIMIT 1`, [channel, address, ws]));
+    const own = await this._raw('workspace', ws, channel, address);
+    if (own) return freeze(own);
+    const global = await this._raw('global', PLATFORM_WORKSPACE_ID, channel, address);
+    return freeze(this._redacted(global));
   }
 
+  /**
+   * Is this address suppressed here or globally? The answer is a yes or a no:
+   * a global row's address is never returned here either.
+   */
+  async isSuppressed({ channel, address, workspaceId }) {
+    const ws = workspaceId || this.s.workspaceId;
+    const own = await this._raw('workspace', ws, channel, address);
+    if (own) return true;
+    const global = await this._raw('global', PLATFORM_WORKSPACE_ID, channel, address);
+    return Boolean(global);
+  }
+
+  /** The suppressions of THIS workspace. A global row is never listed. */
   async listForAddress({ channel, address }) {
-    return (await this.s.q('li_suppressions', `SELECT ${SUPPRESSION_COLS.join(', ')} FROM li_suppressions WHERE channel = ? AND normalized_address = ? AND (scope = 'global' OR workspace_id = ?) ORDER BY created_at ASC, suppression_id ASC`, [channel, address, this.s.workspaceId])).map(freeze);
+    const list = await this.s.q('li_suppressions', `SELECT ${SUPPRESSION_COLS.join(', ')} FROM li_suppressions WHERE channel = ? AND normalized_address = ? AND workspace_id = ? ORDER BY created_at ASC, suppression_id ASC`, [channel, address, this.s.workspaceId]);
+    return list.map(freeze);
   }
 
+  /** The suppressions of THIS workspace. A global row is never listed. */
   async list({ limit, offset } = {}) {
-    const total = await this.s.one('li_suppressions', 'SELECT COUNT(*) AS n FROM li_suppressions WHERE scope = ? OR workspace_id = ?', ['workspace', this.s.workspaceId]);
-    const rows = await this.s.q('li_suppressions', `SELECT ${SUPPRESSION_COLS.join(', ')} FROM li_suppressions WHERE scope = ? OR workspace_id = ? ORDER BY created_at DESC, suppression_id DESC LIMIT ? OFFSET ?`, ['workspace', this.s.workspaceId, clampLimit(limit), clampOffset(offset)]);
+    const total = await this.s.one('li_suppressions', 'SELECT COUNT(*) AS n FROM li_suppressions WHERE workspace_id = ?', [this.s.workspaceId]);
+    const rows = await this.s.q('li_suppressions', `SELECT ${SUPPRESSION_COLS.join(', ')} FROM li_suppressions WHERE workspace_id = ? ORDER BY created_at DESC, suppression_id DESC LIMIT ? OFFSET ?`, [this.s.workspaceId, clampLimit(limit), clampOffset(offset)]);
     return { rows: rows.map(freeze), total: total ? Number(total.n) : 0, limit: clampLimit(limit), offset: clampOffset(offset) };
   }
 
   async removeManual(suppressionId) {
-    const n = await this.s.run("DELETE FROM li_suppressions WHERE suppression_id = ? AND reason = 'manual' AND source = 'user'", [String(suppressionId)]);
+    const n = await this.s.run("DELETE FROM li_suppressions WHERE suppression_id = ? AND workspace_id = ? AND reason = 'manual' AND source = 'user'", [String(suppressionId), this.s.workspaceId]);
     return n > 0;
   }
 }
@@ -93,9 +137,9 @@ class PgProvenance {
   async put(rec, { ifAbsent = false } = {}) {
     const v = { ...rec };
     if (ifAbsent) {
-      await this.s.insert('li_contact_provenance', PROVENANCE_COLS, PROVENANCE_COLS.map((c) => (v[c] === undefined ? null : v[c])), { onConflict: 'lead_id,field', update: false, returning: false });
+      await this.s.insert('li_contact_provenance', PROVENANCE_COLS, PROVENANCE_COLS.map((c) => (v[c] === undefined ? null : v[c])), { onConflict: 'workspace_id,lead_id,field', update: false, returning: false });
     } else {
-      await this.s.insert('li_contact_provenance', PROVENANCE_COLS, PROVENANCE_COLS.map((c) => (v[c] === undefined ? null : v[c])), { onConflict: 'lead_id,field', update: PROVENANCE_COLS.filter((c) => c !== 'lead_id' && c !== 'field') });
+      await this.s.insert('li_contact_provenance', PROVENANCE_COLS, PROVENANCE_COLS.map((c) => (v[c] === undefined ? null : v[c])), { onConflict: 'workspace_id,lead_id,field', update: PROVENANCE_COLS.filter((c) => c !== 'lead_id' && c !== 'field') });
     }
     return this.s.one('li_contact_provenance', `SELECT ${PROVENANCE_COLS.join(', ')} FROM li_contact_provenance WHERE lead_id = ? AND field = ? AND workspace_id = ?`, [v.lead_id, v.field, this.s.workspaceId]);
   }

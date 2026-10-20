@@ -64,7 +64,10 @@ function pitch(over = {}) {
  * @param {{label: string, create: () => Promise<object>, corrupt: (store: object) => Promise<void>}} backend
  */
 function describePersistenceContract(backend) {
-  const { label, create, corrupt, insertSearch } = backend;
+  const { label, create, corrupt, insertSearch, workspaceId } = backend;
+  // The workspace identifier the fixtures use: the desktop's local one, or the
+  // uuid the PostgreSQL schema requires.
+  const BACKEND = { workspaceId };
 
   test(`[${label}] the store satisfies the repository seam`, async () => {
     const store = await create();
@@ -297,7 +300,7 @@ function describePersistenceContract(backend) {
 
   test(`[${label}] the trust tables round-trip`, async () => {
     const store = await create();
-    await store.suppressions.add({ suppression_id: 'sup1', scope: 'workspace', workspace_id: 'local', channel: 'email', normalized_address: 'a@b.test', reason: 'unsubscribe', source: 'relay', created_at: T1 });
+    await store.suppressions.add({ suppression_id: 'sup1', scope: 'workspace', workspace_id: BACKEND.workspaceId, channel: 'email', normalized_address: 'a@b.test', reason: 'unsubscribe', source: 'relay', created_at: T1 });
     const found = await store.suppressions.find({ channel: 'email', address: 'a@b.test' });
     assert.equal(found.suppression_id, 'sup1');
 
@@ -341,11 +344,14 @@ function describePersistenceContract(backend) {
     assert.equal((await store.mailboxSent.findByStoredIds('mbx_aaaaaaaa', ['sm1'])).stored_message_id, 'sm1');
   });
 
-  test(`[${label}] the market rules and the reply reviews round-trip`, async () => {
+  test(`[${label}] the market rules are readable, and the reply reviews round-trip`, async () => {
     const store = await create();
-    await store.marketRules.set({ country_code: 'PK', rule: 'consent_required', note: 'note', reviewed_by: 'Zee', reviewed_at: T1 });
-    assert.equal((await store.marketRules.get('pk')).rule, 'consent_required');
-    assert.equal((await store.marketRules.list()).length, 1);
+    // The market rules are PLATFORM data: a tenant may read them, but only
+    // the platform may write them. The write path is therefore not part of
+    // this shared suite - it is proved by the multi-workspace suite, which
+    // runs against the cloud backend.
+    assert.ok(Array.isArray(await store.marketRules.list()), 'the rules are readable');
+    assert.equal(await store.marketRules.get('pk'), null, 'a rule that was never set is absent');
 
     await store.replyReviews.put({ review_id: 'rv1', event_id: 'ev1', channel: 'email', normalized_address: 'a@b.test', outcome: 'interested', reviewed_by: 'Zee', reviewed_at: T1 });
     assert.equal((await store.replyReviews.forEvent('ev1')).outcome, 'interested');
@@ -399,7 +405,7 @@ function describePersistenceContract(backend) {
     await store.packets.insert(packet());
     await store.pitches.upsert(pitch());
     await store.approvals.insert({ approval_id: 'ap1', pitch_id: 'p1', content_hash: 'h1', approved_by: 'Zee', approved_at: T1 });
-    await store.suppressions.add({ suppression_id: 'sup1', scope: 'workspace', workspace_id: 'local', channel: 'email', normalized_address: 'a@b.test', reason: 'unsubscribe', source: 'relay', created_at: T1 });
+    await store.suppressions.add({ suppression_id: 'sup1', scope: 'workspace', workspace_id: BACKEND.workspaceId, channel: 'email', normalized_address: 'a@b.test', reason: 'unsubscribe', source: 'relay', created_at: T1 });
     await store.trustEvents.append({ row_id: 'te1', event_id: 'ev1', kind: 'unsubscribe', channel: 'email', normalized_address: 'a@b.test', source: 'relay', state: 'applied', received_at: T1, recorded_at: T1 });
 
     await store.purgeLead('L1');

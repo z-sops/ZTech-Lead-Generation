@@ -5,9 +5,10 @@
 -- lead - is kept exactly as it is on the desktop.
 
 CREATE TABLE IF NOT EXISTS li_enrichment_jobs (
-  workspace_id     TEXT NOT NULL,
+  workspace_id     UUID NOT NULL,
   seq              BIGSERIAL,
-  job_id           TEXT PRIMARY KEY,
+  job_id           TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, job_id),
   lead_id          TEXT NOT NULL,
   state            TEXT NOT NULL CHECK (state IN ('requested','running','pending','complete','partial','no_result','failed','blocked','stale')),
   fields_json      JSONB NOT NULL,
@@ -20,14 +21,15 @@ CREATE TABLE IF NOT EXISTS li_enrichment_jobs (
   version          INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS li_ejobs_by_lead ON li_enrichment_jobs (workspace_id, lead_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS li_ejobs_due ON li_enrichment_jobs (state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS li_ejobs_due ON li_enrichment_jobs (workspace_id, state, next_attempt_at);
 -- Duplicate prevention: at most one active enrichment job per lead.
-CREATE UNIQUE INDEX IF NOT EXISTS li_ejobs_one_active ON li_enrichment_jobs (lead_id)
+CREATE UNIQUE INDEX IF NOT EXISTS li_ejobs_one_active ON li_enrichment_jobs (workspace_id, lead_id)
   WHERE state IN ('requested','running','pending');
 
 CREATE TABLE IF NOT EXISTS li_enrichment_observations (
-  workspace_id             TEXT NOT NULL,
-  observation_id           TEXT PRIMARY KEY,
+  workspace_id             UUID NOT NULL,
+  observation_id           TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, observation_id),
   lead_id                  TEXT NOT NULL,
   job_id                   TEXT NOT NULL,
   field                    TEXT NOT NULL,

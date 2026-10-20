@@ -5,8 +5,9 @@
 -- table has to be rebuilt and no row is copied.
 
 CREATE TABLE IF NOT EXISTS li_outreach_activity (
-  workspace_id   TEXT NOT NULL,
-  activity_id    TEXT PRIMARY KEY,
+  workspace_id   UUID NOT NULL,
+  activity_id    TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, activity_id),
   lead_id        TEXT NOT NULL,
   pitch_id       TEXT,
   activity_type  TEXT NOT NULL CHECK (activity_type IN ('PITCH_APPROVED','OUTREACH_READY','APPROVAL_INVALIDATED')),
@@ -14,4 +15,4 @@ CREATE TABLE IF NOT EXISTS li_outreach_activity (
   created_at     TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS li_activity_by_lead ON li_outreach_activity (workspace_id, lead_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS li_activity_by_pitch ON li_outreach_activity (pitch_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS li_activity_by_pitch ON li_outreach_activity (workspace_id, pitch_id, created_at DESC);

@@ -93,7 +93,7 @@ class PgSequences {
   async claimStep(sequenceId, stepNo, updatedAt) {
     return this.s.tx(async () => {
       const seq = await this._seq(sequenceId);
-      const ctl = await this.s.one('li_sequence_control', 'SELECT paused FROM li_sequence_control WHERE id = 1');
+      const ctl = await this.s.one('li_sequence_control', 'SELECT paused FROM li_sequence_control WHERE workspace_id = ? AND id = 1', [this.s.workspaceId]);
       const cur = await this._step(sequenceId, stepNo);
       if (!seq || seq.status !== 'active' || seq.replies_gap_at || (ctl && Number(ctl.paused) === 1) || !cur || cur.state !== 'scheduled') return null;
       await this.s.run("UPDATE li_sequence_steps SET state = 'sending', updated_at = ? WHERE sequence_id = ? AND step_no = ? AND state = 'scheduled' AND workspace_id = ?", [String(updatedAt), String(sequenceId), stepNo, this.s.workspaceId]);
@@ -157,13 +157,20 @@ class PgSequences {
     return r ? r.gap_at : null;
   }
 
+  /**
+   * The "Pause all follow-ups" switch of THIS workspace. One customer's
+   * pause must not pause another customer's sequences, so the row is scoped
+   * by the workspace.
+   */
   async control() {
-    const r = await this.s.one('li_sequence_control', 'SELECT paused, updated_at FROM li_sequence_control WHERE id = 1');
+    const r = await this.s.one('li_sequence_control', 'SELECT paused, updated_at FROM li_sequence_control WHERE workspace_id = ? AND id = 1', [this.s.workspaceId]);
     return Object.freeze({ paused: Boolean(r && Number(r.paused) === 1), updatedAt: r ? r.updated_at : null });
   }
 
   async setControl({ paused, updatedAt }) {
-    await this.s.run('INSERT INTO li_sequence_control (id, paused, updated_at) VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET paused = excluded.paused, updated_at = excluded.updated_at', [Boolean(paused), updatedAt]);
+    await this.s.run('INSERT INTO li_sequence_control (workspace_id, id, paused, updated_at) VALUES (?, 1, ?, ?) '
+      + 'ON CONFLICT (workspace_id, id) DO UPDATE SET paused = excluded.paused, updated_at = excluded.updated_at',
+    [this.s.workspaceId, Boolean(paused), updatedAt]);
     return this.control();
   }
 

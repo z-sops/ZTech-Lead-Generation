@@ -45,7 +45,7 @@ async function schemaOf(pool) {
 test('the migrations are applied one version at a time, and recorded', { skip }, async () => {
   await withSchema(async (scoped) => {
     const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
-    const store = new PostgresStore({ pool: scoped, workspaceId: 'local', logger: { warn() {} } });
+    const store = new PostgresStore({ pool: scoped, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
     await store.migrate();
     const applied = await scoped.query('SELECT version FROM li_schema_migrations ORDER BY version');
     assert.deepEqual(applied.rows.map((r) => Number(r.version)), MIGRATIONS.map((m) => m.version));
@@ -85,7 +85,7 @@ test('each migration on its own is idempotent', { skip }, async () => {
 test('the store applies the migrations once and records the versions', { skip }, async () => {
   await withSchema(async (scoped) => {
     const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
-    const store = new PostgresStore({ pool: scoped, workspaceId: 'local', logger: { warn() {} } });
+    const store = new PostgresStore({ pool: scoped, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
     const first = await store.migrate();
     assert.deepEqual(first.applied, MIGRATIONS.map((m) => m.version));
     assert.equal(first.changed, true);

@@ -28,6 +28,12 @@
 
 const crypto = require('node:crypto');
 
+/**
+ * The reserved workspace of the PLATFORM. A global suppression belongs to
+ * it, so a global row is never NULL-scoped and every key stays tenant-safe.
+ */
+const PLATFORM_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000';
+
 /** The canonical timestamp format: ISO-8601, UTC, milliseconds. */
 function canonicalIso(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -244,6 +250,7 @@ function violatedConstraint(err) {
 }
 
 module.exports = {
+  PLATFORM_WORKSPACE_ID,
   canonicalIso,
   toInstant,
   rewritePlaceholders,

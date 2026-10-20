@@ -14,8 +14,9 @@ ALTER TABLE li_outreach_activity ADD CONSTRAINT li_outreach_activity_activity_ty
   CHECK (activity_type IN ('PITCH_APPROVED','OUTREACH_READY','APPROVAL_INVALIDATED','OUTREACH_SEND_BLOCKED','OUTREACH_SEND_ATTEMPTED','OUTREACH_SEND_ACCEPTED','OUTREACH_SEND_FAILED'));
 
 CREATE TABLE IF NOT EXISTS li_outreach_sends (
-  workspace_id        TEXT NOT NULL,
-  send_id             TEXT PRIMARY KEY,
+  workspace_id        UUID NOT NULL,
+  send_id             TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, send_id),
   lead_id             TEXT NOT NULL,
   pitch_id            TEXT NOT NULL,
   channel             TEXT NOT NULL CHECK (channel IN ('email')),
@@ -29,11 +30,11 @@ CREATE TABLE IF NOT EXISTS li_outreach_sends (
   created_at          TIMESTAMPTZ NOT NULL,
   updated_at          TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS li_sends_by_pitch ON li_outreach_sends (pitch_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS li_sends_by_key ON li_outreach_sends (idempotency_key);
+CREATE INDEX IF NOT EXISTS li_sends_by_pitch ON li_outreach_sends (workspace_id, pitch_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS li_sends_by_key ON li_outreach_sends (workspace_id, idempotency_key);
 
 -- THE IDEMPOTENCY GUARANTEE, enforced by the database rather than by application code.
 -- At most ONE accepted send may exist per idempotency key. A failed or blocked attempt is
 -- NOT final, so those states are deliberately outside the index.
 CREATE UNIQUE INDEX IF NOT EXISTS li_sends_one_accepted
-  ON li_outreach_sends (idempotency_key) WHERE state = 'accepted';
+  ON li_outreach_sends (workspace_id, idempotency_key) WHERE state = 'accepted';

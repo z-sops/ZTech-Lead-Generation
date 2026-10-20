@@ -3,8 +3,9 @@
 -- metadata only: no report JSON, no provider credentials, no OI data.
 
 CREATE TABLE IF NOT EXISTS li_oi_associations (
-  workspace_id TEXT NOT NULL,
-  research_id  TEXT PRIMARY KEY,
+  workspace_id UUID NOT NULL,
+  research_id  TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, research_id),
   lead_id      TEXT NOT NULL,
   snapshot_id  TEXT NOT NULL,
   entity_key   TEXT NOT NULL,

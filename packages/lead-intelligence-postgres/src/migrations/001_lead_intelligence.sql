@@ -22,9 +22,10 @@ CREATE TABLE IF NOT EXISTS li_schema_migrations (
 );
 
 CREATE TABLE IF NOT EXISTS li_research_jobs (
-  workspace_id      TEXT NOT NULL,
+  workspace_id      UUID NOT NULL,
   seq               BIGSERIAL,
-  job_id            TEXT PRIMARY KEY,
+  job_id            TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, job_id),
   lead_id           TEXT NOT NULL,
   provider_id       TEXT NOT NULL,
   request_key       TEXT NOT NULL,
@@ -46,15 +47,16 @@ CREATE TABLE IF NOT EXISTS li_research_jobs (
   version           INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS li_jobs_by_lead ON li_research_jobs (workspace_id, lead_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS li_jobs_due ON li_research_jobs (state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS li_jobs_due ON li_research_jobs (workspace_id, state, next_attempt_at);
 -- Duplicate prevention at the database level: one active job per request key.
-CREATE UNIQUE INDEX IF NOT EXISTS li_jobs_one_active ON li_research_jobs (request_key)
+CREATE UNIQUE INDEX IF NOT EXISTS li_jobs_one_active ON li_research_jobs (workspace_id, request_key)
   WHERE state IN ('requested','preflight','started','polling','pending');
 
 CREATE TABLE IF NOT EXISTS li_evidence_packets (
-  workspace_id      TEXT NOT NULL,
+  workspace_id      UUID NOT NULL,
   seq               BIGSERIAL,
-  packet_id         TEXT PRIMARY KEY,
+  packet_id         TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, packet_id),
   lead_id           TEXT NOT NULL,
   job_id            TEXT NOT NULL,
   research_status   TEXT NOT NULL,
@@ -68,9 +70,10 @@ CREATE TABLE IF NOT EXISTS li_evidence_packets (
 CREATE INDEX IF NOT EXISTS li_packets_by_lead ON li_evidence_packets (workspace_id, lead_id, captured_at DESC);
 
 CREATE TABLE IF NOT EXISTS li_research_changes (
-  workspace_id   TEXT NOT NULL,
+  workspace_id   UUID NOT NULL,
   seq            BIGSERIAL,
-  change_id      TEXT PRIMARY KEY,
+  change_id      TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, change_id),
   lead_id        TEXT NOT NULL,
   from_packet_id TEXT NOT NULL,
   to_packet_id   TEXT NOT NULL,
@@ -81,8 +84,9 @@ CREATE TABLE IF NOT EXISTS li_research_changes (
 CREATE INDEX IF NOT EXISTS li_changes_by_lead ON li_research_changes (workspace_id, lead_id, detected_at DESC);
 
 CREATE TABLE IF NOT EXISTS li_saved_searches (
-  workspace_id    TEXT NOT NULL,
-  search_id       TEXT PRIMARY KEY,
+  workspace_id    UUID NOT NULL,
+  search_id       TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, search_id),
   name            TEXT NOT NULL,
   definition_json JSONB NOT NULL,
   created_at      TIMESTAMPTZ NOT NULL,
@@ -90,8 +94,9 @@ CREATE TABLE IF NOT EXISTS li_saved_searches (
 );
 
 CREATE TABLE IF NOT EXISTS li_segments (
-  workspace_id    TEXT NOT NULL,
-  segment_id      TEXT PRIMARY KEY,
+  workspace_id    UUID NOT NULL,
+  segment_id      TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, segment_id),
   name            TEXT NOT NULL,
   kind            TEXT NOT NULL CHECK (kind IN ('static','dynamic')),
   definition_json JSONB NOT NULL,
@@ -101,17 +106,18 @@ CREATE TABLE IF NOT EXISTS li_segments (
 
 -- Static segment membership: references to existing leads only (no lead copies).
 CREATE TABLE IF NOT EXISTS li_segment_members (
-  workspace_id TEXT NOT NULL,
+  workspace_id UUID NOT NULL,
   segment_id   TEXT NOT NULL,
   lead_id      TEXT NOT NULL,
   added_at     TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (segment_id, lead_id)
+  PRIMARY KEY (workspace_id, segment_id, lead_id)
 );
 
 CREATE TABLE IF NOT EXISTS li_pitch_drafts (
-  workspace_id TEXT NOT NULL,
+  workspace_id UUID NOT NULL,
   seq          BIGSERIAL,
-  pitch_id     TEXT PRIMARY KEY,
+  pitch_id     TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, pitch_id),
   lead_id      TEXT NOT NULL,
   packet_id    TEXT,
   status       TEXT NOT NULL,
@@ -123,12 +129,13 @@ CREATE TABLE IF NOT EXISTS li_pitch_drafts (
 CREATE INDEX IF NOT EXISTS li_pitches_by_lead ON li_pitch_drafts (workspace_id, lead_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS li_outreach_approvals (
-  workspace_id TEXT NOT NULL,
+  workspace_id UUID NOT NULL,
   seq          BIGSERIAL,
-  approval_id  TEXT PRIMARY KEY,
+  approval_id  TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, approval_id),
   pitch_id     TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   approved_by  TEXT NOT NULL,
   approved_at  TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS li_approvals_by_pitch ON li_outreach_approvals (pitch_id, approved_at DESC);
+CREATE INDEX IF NOT EXISTS li_approvals_by_pitch ON li_outreach_approvals (workspace_id, pitch_id, approved_at DESC);

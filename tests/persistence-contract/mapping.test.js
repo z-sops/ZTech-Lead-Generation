@@ -99,9 +99,20 @@ function readPgSchemaFromMigrations() {
     while (match) {
       const [, table, body] = match;
       const cols = new Map();
-      for (const rawLine of body.split('\n')) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('--') || line.startsWith('PRIMARY KEY') || line.startsWith('UNIQUE') || line.startsWith('CHECK') || line.startsWith('FOREIGN KEY')) continue;
+      const bodyLines = body.split('\n');
+      for (let i = 0; i < bodyLines.length; i += 1) {
+        const line = bodyLines[i].trim();
+        if (!line || line.startsWith('--') || line.startsWith('PRIMARY KEY') || line.startsWith('UNIQUE') || line.startsWith('FOREIGN KEY')) continue;
+        if (line.startsWith('CHECK')) {
+          // A table constraint, possibly spread over several lines: skip it
+          // whole, so its words are never mistaken for columns.
+          let depth = (line.match(/\(/g) || []).length - (line.match(/\)/g) || []).length;
+          while (depth > 0 && i + 1 < bodyLines.length) {
+            i += 1;
+            depth += (bodyLines[i].match(/\(/g) || []).length - (bodyLines[i].match(/\)/g) || []).length;
+          }
+          continue;
+        }
         const colMatch = /^(\w+)\s+(.+?)(?:\s+NOT NULL)?(?:\s+DEFAULT[^,]*)?(?:,)?$/.exec(line);
         if (!colMatch) continue;
         cols.set(colMatch[1], pgType(colMatch[2]));
@@ -185,6 +196,13 @@ test('every legacy table has a PostgreSQL counterpart, and every column maps', a
         problems.push(`${table}.${column}: no PostgreSQL column`);
         continue;
       }
+      if (column === 'workspace_id') {
+        // The F2 architecture scopes every tenant table by a uuid. The
+        // desktop keeps the column as text, and the desktop's own data and
+        // schema are untouched.
+        if (pgTypeName !== 'uuid') problems.push(`${table}.${column}: the workspace column must be a uuid, not '${pgTypeName}'`);
+        continue;
+      }
       const kind = kindOf(column) || legacyKind(type);
       const allowed = ALLOWED[kind] || ALLOWED.text;
       if (!allowed.includes(pgTypeName)) {
@@ -206,6 +224,57 @@ test('the PostgreSQL schema has no table the desktop does not have', async () =>
   const postgres = readPgSchemaFromMigrations();
   const extra = [...postgres.keys()].filter((t) => !sqlite.has(t));
   assert.deepEqual(extra, [], 'the two schemas describe the same tables');
+});
+
+test('every tenant key and unique index is tenant-safe', () => {
+  // A key that is not scoped by the workspace lets one customer's row block
+  // another customer's row, and lets a lookup cross the boundary. So every
+  // primary key and every UNIQUE index of a tenant table must carry the
+  // workspace, and every index must LEAD with it.
+  const sql = PG_MIGRATIONS.map((m) => m.sql).join('\n');
+  const tables = new Set();
+  for (const m of PG_MIGRATIONS) {
+    for (const match of m.sql.matchAll(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(\w+)/gi)) tables.add(match[1]);
+  }
+  const global = new Set(['li_schema_migrations', 'li_market_rules']);
+  const problems = [];
+
+  // The primary keys, per table.
+  const pkRe = /CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(\w+)\s*\(([\s\S]*?)\n\);/gi;
+  let m = pkRe.exec(sql);
+  while (m) {
+    const [, table, body] = m;
+    if (!global.has(table)) {
+      const pk = /PRIMARY KEY\s+\(([^)]*)\)/i.exec(body);
+      if (!pk) problems.push(`${table}: no primary key`);
+      else if (!/workspace_id/i.test(pk[1])) problems.push(`${table}: the primary key (${pk[1]}) is not scoped by the workspace`);
+    }
+    m = pkRe.exec(sql);
+  }
+
+  // The unique indexes.
+  const uqRe = /CREATE UNIQUE INDEX\s+(?:IF NOT EXISTS\s+)?(\w+)\s+ON\s+(\w+)\s*\(([^)]*)\)/gi;
+  let u = uqRe.exec(sql);
+  while (u) {
+    const [, index, table, columns] = u;
+    if (!global.has(table) && !/workspace_id/i.test(columns)) {
+      problems.push(`${index}: the unique index on ${table} (${columns}) is not scoped by the workspace`);
+    }
+    u = uqRe.exec(sql);
+  }
+
+  // The indexes: every tenant index leads with the workspace.
+  const ixRe = /CREATE (?:UNIQUE )?INDEX\s+(?:IF NOT EXISTS\s+)?(\w+)\s+ON\s+(\w+)\s*\(([^)]*)\)/gi;
+  let i2 = ixRe.exec(sql);
+  while (i2) {
+    const [, index, table, columns] = i2;
+    if (!global.has(table) && !/^\s*workspace_id/i.test(columns)) {
+      problems.push(`${index}: the index on ${table} (${columns}) does not lead with the workspace`);
+    }
+    i2 = ixRe.exec(sql);
+  }
+
+  assert.deepEqual(problems, [], 'every key and index is tenant-safe');
 });
 
 test('the documented mapping names every table', async () => {

@@ -23,7 +23,8 @@ const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src
 const { describePersistenceContract } = require('./contract-suite');
 
 const URL = process.env.ZTECH_PG_URL || '';
-const WORKSPACE = process.env.ZTECH_PG_WORKSPACE || 'local';
+/** The F2 architecture scopes every tenant table by a uuid. */
+const WORKSPACE = process.env.ZTECH_PG_WORKSPACE || '11111111-1111-4111-8111-111111111111';
 
 if (!URL) {
   test('[postgres] the persistence contract (skipped: no PostgreSQL is configured)', { skip: 'set ZTECH_PG_URL to run the contract against a real PostgreSQL' }, () => {});
@@ -68,6 +69,7 @@ if (!URL) {
     create,
     corrupt,
     insertSearch,
+    workspaceId: WORKSPACE,
   });
 
   after(async () => {

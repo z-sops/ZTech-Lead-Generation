@@ -26,10 +26,13 @@
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('@zunitech/lead-intelligence/core/errors');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('@zunitech/lead-intelligence/persistence/contract');
 const { MAILBOX_ID_RE } = require('@zunitech/lead-intelligence/mailbox/mailboxContract');
-const { rewritePlaceholders, encodeValue, decodeValue, isUniqueViolation, violatedConstraint } = require('./dialect');
+const { rewritePlaceholders, encodeValue, decodeValue, isUniqueViolation, violatedConstraint, PLATFORM_WORKSPACE_ID } = require('./dialect');
 
 const ACTIVE_SQL = "('requested','preflight','started','polling','pending')";
 const E_ACTIVE_SQL = "('requested','running','pending')";
+
+/** A workspace identifier is a UUID, as the F2 architecture requires. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const JOB_COLS = [
   'job_id', 'lead_id', 'provider_id', 'request_key', 'requested_domain', 'domain_key', 'state', 'provider_job_id',
@@ -45,20 +48,39 @@ const OI_REFRESH_COLS = ['request_id', 'lead_id', 'state', 'research_id', 'error
 const INTERNAL_COLUMNS = ['workspace_id', 'seq'];
 
 /**
- * The tables that are NOT tenant-owned: the migration ledger, the per-country
- * market rules and the one global "Pause all follow-ups" switch. They carry no
- * workspace, so the store neither writes nor filters one.
+ * The tables that are NOT tenant-owned: the migration ledger, and the
+ * per-country market rules (a market rule is the same in every workspace, so
+ * it is reference data the platform owns). They carry no workspace, so the
+ * store neither writes nor filters one.
+ *
+ * li_sequence_control is NOT global: one customer's pause-all must not pause
+ * another customer's sequences, so it is scoped like every other tenant table.
  */
-const GLOBAL_TABLES = new Set(['li_schema_migrations', 'li_market_rules', 'li_sequence_control']);
+const GLOBAL_TABLES = new Set(['li_schema_migrations', 'li_market_rules']);
+
+/**
+ * The reserved workspace of the PLATFORM. A global suppression belongs to it,
+ * so a global row is never NULL-scoped and every key stays tenant-safe.
+ */
 
 class PostgresStore {
   /**
-   * @param {{pool: object, workspaceId?: string, logger?: object, now?: () => Date}} opts
+   * @param {{pool: object, workspaceId?: string, role?: 'tenant'|'platform', logger?: object, now?: () => Date}} opts
    */
-  constructor({ pool, workspaceId = 'default', logger = console, now = () => new Date() }) {
+  constructor({ pool, workspaceId, role = 'tenant', logger = console, now = () => new Date() }) {
     if (!pool || typeof pool.query !== 'function') throw new TypeError('a pg Pool is required');
+    const ws = String(workspaceId || '');
+    const isPlatform = ws === PLATFORM_WORKSPACE_ID;
+    if (!isPlatform && !UUID_RE.test(ws)) {
+      throw new TypeError('the workspace id must be a UUID (the F2 architecture scopes every tenant table by a uuid)');
+    }
+    if (role !== 'tenant' && role !== 'platform') throw new TypeError('the role must be tenant or platform');
+    if (isPlatform && role !== 'platform') {
+      throw new TypeError('the platform workspace may only be used by the platform role');
+    }
     this.pool = pool;
-    this.workspaceId = String(workspaceId);
+    this.workspaceId = ws;
+    this.role = role;
     this.logger = logger;
     this.now = now;
     this.corruptRows = [];
@@ -160,8 +182,7 @@ class PostgresStore {
 
   /**
    * The connection a statement runs on: the transaction's own client while a
-   * transaction is open, and the pool otherwise. Every write inside a
-   * transaction therefore really is inside that transaction.
+   * transaction is open, and the pool otherwise.
    */
   get client() {
     return this._client || this.pool;
@@ -291,6 +312,9 @@ class PostgresStore {
   /**
    * Run fn inside a transaction. fn may be async; the transaction is only
    * committed once it has finished.
+   */
+  /**
+   * Run fn inside a transaction.
    */
   async tx(fn) {
     const client = await this.pool.connect();
@@ -530,7 +554,7 @@ class PgSavedSearches {
   async upsert(rec) {
     await this.s.insert('li_saved_searches', ['search_id', 'name', 'definition_json', 'created_at', 'updated_at'], [
       rec.search_id, rec.name, { filter: rec.filter }, rec.created_at, rec.updated_at,
-    ], { onConflict: 'search_id', update: ['name', 'definition_json', 'updated_at'] });
+    ], { onConflict: 'workspace_id,search_id', update: ['name', 'definition_json', 'updated_at'] });
     return this.get(rec.search_id);
   }
 
@@ -564,7 +588,7 @@ class PgSegments {
   async upsert(rec) {
     await this.s.insert('li_segments', ['segment_id', 'name', 'kind', 'definition_json', 'created_at', 'updated_at'], [
       rec.segment_id, rec.name, rec.kind, { filter: rec.filter ?? null }, rec.created_at, rec.updated_at,
-    ], { onConflict: 'segment_id', update: ['name', 'kind', 'definition_json', 'updated_at'] });
+    ], { onConflict: 'workspace_id,segment_id', update: ['name', 'kind', 'definition_json', 'updated_at'] });
     return this.get(rec.segment_id);
   }
 
@@ -626,7 +650,7 @@ class PgPitches {
   async upsert(rec) {
     await this.s.insert('li_pitch_drafts', ['pitch_id', 'lead_id', 'packet_id', 'status', 'content_hash', 'draft_json', 'created_at', 'updated_at'], [
       rec.pitch_id, rec.lead_id, rec.packet_id ?? null, rec.status, rec.content_hash, rec, rec.created_at, rec.updated_at,
-    ], { onConflict: 'pitch_id', update: ['packet_id', 'status', 'content_hash', 'draft_json', 'updated_at'] });
+    ], { onConflict: 'workspace_id,pitch_id', update: ['packet_id', 'status', 'content_hash', 'draft_json', 'updated_at'] });
     return { ...rec };
   }
 
@@ -947,7 +971,7 @@ class PgEnrichmentObservations {
         await this.s.insert('li_enrichment_observations', ['observation_id', 'lead_id', 'job_id', 'field', 'status', 'value_json', 'provider_id', 'tier', 'source_ref', 'provider_confidence_json', 'collected_at', 'first_seen_at', 'provenance_id'], [
           o.observation_id, String(o.lead_id), o.job_id, o.field, o.status, o.value === null ? null : o.value, o.provider_id, o.tier, o.source_ref ?? null,
           o.provider_confidence ? o.provider_confidence : null, o.collected_at, o.collected_at, o.provenance_id,
-        ], { onConflict: 'observation_id', update: ['collected_at', 'job_id'] });
+        ], { onConflict: 'workspace_id,observation_id', update: ['collected_at', 'job_id'] });
       }
     });
     return list.length;
@@ -1034,4 +1058,4 @@ class PgOiRefreshRequests {
   }
 }
 
-module.exports = { PostgresStore };
+module.exports = { PostgresStore, PLATFORM_WORKSPACE_ID };

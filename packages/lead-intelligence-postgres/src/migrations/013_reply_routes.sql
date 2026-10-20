@@ -6,8 +6,9 @@
 -- a snippet, not a body - only ids, closed codes and times.
 
 CREATE TABLE IF NOT EXISTS li_reply_routes (
-  workspace_id       TEXT NOT NULL,
-  event_id           TEXT PRIMARY KEY,
+  workspace_id       UUID NOT NULL,
+  event_id           TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, event_id),
   lead_id            TEXT NOT NULL,
   mailbox_id         TEXT NOT NULL,
   kind               TEXT NOT NULL CHECK (kind IN ('reply', 'unsubscribe', 'away')),
@@ -21,4 +22,4 @@ CREATE TABLE IF NOT EXISTS li_reply_routes (
   routed_at           TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS li_reply_routes_by_lead ON li_reply_routes (workspace_id, lead_id, routed_at DESC);
-CREATE INDEX IF NOT EXISTS li_reply_routes_by_time ON li_reply_routes (routed_at DESC);
+CREATE INDEX IF NOT EXISTS li_reply_routes_by_time ON li_reply_routes (workspace_id, routed_at DESC);

@@ -10,8 +10,9 @@
 -- is GLOBAL and carries no workspace.
 
 CREATE TABLE IF NOT EXISTS li_sequences (
-  workspace_id      TEXT NOT NULL,
-  sequence_id       TEXT PRIMARY KEY,
+  workspace_id      UUID NOT NULL,
+  sequence_id       TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, sequence_id),
   lead_id           TEXT NOT NULL,
   mailbox_id        TEXT NOT NULL,
   first_send_id     TEXT NOT NULL,
@@ -31,12 +32,12 @@ CREATE TABLE IF NOT EXISTS li_sequences (
   CHECK ((status = 'stopped') = (stop_reason IS NOT NULL)),
   CHECK ((status = 'paused') = (hold_code IS NOT NULL))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS li_sequences_one_open ON li_sequences (lead_id) WHERE status IN ('draft', 'active', 'paused');
-CREATE UNIQUE INDEX IF NOT EXISTS li_sequences_one_per_first ON li_sequences (first_send_id);
-CREATE INDEX IF NOT EXISTS li_sequences_by_status ON li_sequences (status, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS li_sequences_one_open ON li_sequences (workspace_id, lead_id) WHERE status IN ('draft', 'active', 'paused');
+CREATE UNIQUE INDEX IF NOT EXISTS li_sequences_one_per_first ON li_sequences (workspace_id, first_send_id);
+CREATE INDEX IF NOT EXISTS li_sequences_by_status ON li_sequences (workspace_id, status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS li_sequence_steps (
-  workspace_id    TEXT NOT NULL,
+  workspace_id    UUID NOT NULL,
   sequence_id     TEXT NOT NULL,
   step_no         INTEGER NOT NULL CHECK (step_no BETWEEN 1 AND 3),
   pitch_id        TEXT NOT NULL,
@@ -50,15 +51,16 @@ CREATE TABLE IF NOT EXISTS li_sequence_steps (
   limit_strikes   INTEGER NOT NULL DEFAULT 0 CHECK (limit_strikes BETWEEN 0 AND 10),
   draft_json      JSONB NOT NULL,
   updated_at      TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (sequence_id, step_no)
+  PRIMARY KEY (workspace_id, sequence_id, step_no)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS li_sequence_steps_pitch ON li_sequence_steps (pitch_id);
-CREATE INDEX IF NOT EXISTS li_sequence_steps_due ON li_sequence_steps (state, next_attempt_at);
+CREATE UNIQUE INDEX IF NOT EXISTS li_sequence_steps_pitch ON li_sequence_steps (workspace_id, pitch_id);
+CREATE INDEX IF NOT EXISTS li_sequence_steps_due ON li_sequence_steps (workspace_id, state, next_attempt_at);
 
 CREATE TABLE IF NOT EXISTS li_sequence_events (
-  workspace_id TEXT NOT NULL,
+  workspace_id UUID NOT NULL,
   seq          BIGSERIAL,
-  event_id     TEXT PRIMARY KEY,
+  event_id     TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, event_id),
   sequence_id  TEXT NOT NULL,
   step_no      INTEGER,
   actor        TEXT NOT NULL CHECK (actor IN ('operator', 'scheduler')),
@@ -66,17 +68,23 @@ CREATE TABLE IF NOT EXISTS li_sequence_events (
   code         TEXT,
   at           TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS li_sequence_events_by_sequence ON li_sequence_events (sequence_id, at DESC);
+CREATE INDEX IF NOT EXISTS li_sequence_events_by_sequence ON li_sequence_events (workspace_id, sequence_id, at DESC);
 
 -- The latest reply-history gap per mailbox.
 CREATE TABLE IF NOT EXISTS li_sequence_gaps (
-  workspace_id TEXT NOT NULL,
-  mailbox_id   TEXT PRIMARY KEY,
+  workspace_id UUID NOT NULL,
+  mailbox_id   TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, mailbox_id),
   gap_at       TIMESTAMPTZ NOT NULL
 );
 
+-- The "Pause all follow-ups" switch is WORKSPACE-SCOPED: one customer's pause
+-- must not pause another customer's sequences. The key is (workspace_id, id)
+-- and the id is still 1, so every workspace has exactly one switch.
 CREATE TABLE IF NOT EXISTS li_sequence_control (
-  id         INTEGER PRIMARY KEY CHECK (id = 1),
-  paused     BOOLEAN NOT NULL DEFAULT false,
-  updated_at TIMESTAMPTZ NOT NULL
+  workspace_id UUID NOT NULL,
+  id           INTEGER NOT NULL CHECK (id = 1),
+  paused       BOOLEAN NOT NULL DEFAULT false,
+  updated_at   TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, id)
 );

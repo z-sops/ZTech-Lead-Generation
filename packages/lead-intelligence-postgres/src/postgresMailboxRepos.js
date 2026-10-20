@@ -11,6 +11,7 @@
  */
 
 const MAILBOX_COLS = ['mailbox_id', 'provider', 'email_address', 'display_name', 'status', 'status_code', 'paused_until', 'daily_cap', 'hourly_cap', 'min_gap_seconds', 'window_start', 'window_end', 'window_days', 'time_zone', 'is_default', 'sync_cursor', 'connected_at', 'updated_at'];
+const { LiError } = require('@zunitech/lead-intelligence/core/errors');
 const SENT_COLS = ['send_id', 'mailbox_id', 'provider_message_id', 'stored_message_id', 'thread_id', 'recipient_address', 'recorded_at'];
 const RULE_COLS = ['country_code', 'rule', 'note', 'reviewed_by', 'reviewed_at'];
 const REVIEW_COLS = ['review_id', 'event_id', 'channel', 'normalized_address', 'outcome', 'reviewed_by', 'reviewed_at'];
@@ -119,10 +120,19 @@ class PgMailboxSent {
   }
 }
 
+/**
+ * The market rules are PLATFORM data: a market rule is the same in every
+ * workspace. A tenant may READ them - they decide what is permitted - but
+ * only the platform may WRITE them. The role check here is the M1 form of
+ * that boundary; M2 turns it into a database role.
+ */
 class PgMarketRules {
   constructor(store) { this.s = store; }
 
   async set(rec) {
+    if (this.s.role !== 'platform') {
+      throw new LiError('FORBIDDEN', 'The market rules are platform data: only the platform may write them');
+    }
     const v = { ...rec, country_code: String(rec.country_code || '').toUpperCase() };
     await this.s.insert('li_market_rules', RULE_COLS, RULE_COLS.map((c) => v[c]), { onConflict: 'country_code', update: ['rule', 'note', 'reviewed_by', 'reviewed_at'] });
     return freeze(await this.s.one('li_market_rules', `SELECT ${RULE_COLS.join(', ')} FROM li_market_rules WHERE country_code = ?`, [v.country_code]));
@@ -148,7 +158,7 @@ class PgReplyReviews {
 
   async put(rec) {
     const v = { ...rec };
-    await this.s.insert('li_reply_reviews', REVIEW_COLS, REVIEW_COLS.map((c) => v[c]), { onConflict: 'event_id', update: ['outcome', 'reviewed_by', 'reviewed_at'] });
+    await this.s.insert('li_reply_reviews', REVIEW_COLS, REVIEW_COLS.map((c) => v[c]), { onConflict: 'workspace_id,event_id', update: ['outcome', 'reviewed_by', 'reviewed_at'] });
     return freeze(await this.s.one('li_reply_reviews', `SELECT ${REVIEW_COLS.join(', ')} FROM li_reply_reviews WHERE event_id = ? AND workspace_id = ?`, [v.event_id, this.s.workspaceId]));
   }
 

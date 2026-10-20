@@ -108,7 +108,7 @@ test('the store reports a document that is not an object', { skip: !process.env.
   const admin = new Pool({ connectionString: URL });
   await admin.query('DROP SCHEMA IF EXISTS li_conv CASCADE');
   await admin.query('CREATE SCHEMA li_conv');
-  const store = new PostgresStore({ pool, workspaceId: 'local', logger: { warn() {} } });
+  const store = new PostgresStore({ pool, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
   await store.migrate();
   await store.packets.insert({
     packet_id: 'pkt_1', lead_id: 'L1', job_id: 'rjob_1', research_status: 'complete',
