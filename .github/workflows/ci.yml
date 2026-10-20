@@ -54,20 +54,15 @@ jobs:
         run: npm run check:repo
 
       # Incremental ESLint (audit gap G-07). The error tier is what the
-      # codebase already satisfies, so it must stay at zero. The warning tier
-      # is visible debt; it is reported and its count is printed, but it does
-      # not fail the build.
+      # codebase already satisfies, so it must stay at 0. The warning tier is
+      # visible debt; it is reported and its count is printed, but it does not
+      # fail the build.
+      #
+      # It is a Node script rather than a shell pipeline: a shell redirection
+      # into a JSON file is not portable (PowerShell writes UTF-16, which
+      # JSON.parse rejects) and the failure then looks like a lint error.
       - name: Lint
-        run: |
-          npm run lint
-          npm run lint:report > lint-report.json || true
-          node -e "
-          const r = require('./lint-report.json');
-          const warnings = r.reduce((n, f) => n + f.warningCount, 0);
-          const errors = r.reduce((n, f) => n + f.errorCount, 0);
-          console.log('lint: ' + errors + ' error(s), ' + warnings + ' warning(s) across ' + r.length + ' file(s)');
-          if (errors > 0) { console.error('lint errors must be zero'); process.exit(1); }
-          "
+        run: node scripts/lint-report.js
 
       - name: Test suite
         run: npm test
@@ -89,14 +84,33 @@ jobs:
       # vendors it so it can validate a real envelope offline; this job proves
       # the vendored copy is still identical to the source. The zuni-seo
       # repository is READ ONLY here - it is never modified.
-      - uses: actions/checkout@v4
+      #
+      # The zuni-seo repository is private, so the job's own GITHUB_TOKEN
+      # cannot read it. A token with access (ZUNI_SEO_READ_TOKEN) turns the
+      # comparison on; without it the job reports that it could not run, and
+      # the ALWAYS-ON gate - the SHA-256 manifest test in
+      # tests/lead-intelligence/zuniseo-envelope.test.js - still proves the
+      # vendored files are unmodified.
+      - name: Check out zuni-seo (read only)
+        id: zuniseo
+        continue-on-error: true
+        uses: actions/checkout@v4
         with:
           repository: z-sops/zuni-seo
           ref: feature/geo-growth-intelligence
           path: zuni-seo
+          token: ${{ secrets.ZUNI_SEO_READ_TOKEN }}
 
       - name: The vendored contract is identical to zuni-seo
+        if: steps.zuniseo.outcome == 'success'
         run: node scripts/sync-zuniseo-contract.js --from zuni-seo --check
+
+      - name: The cross-repository comparison needs a token for the private zuni-seo repository
+        if: steps.zuniseo.outcome != 'success'
+        run: |
+          echo "::notice::zuni-seo could not be checked out: the repository is private and this job has no token for it."
+          echo "::notice::Add the ZUNI_SEO_READ_TOKEN secret to turn the cross-repository comparison on."
+          echo "::notice::The always-on gate is tests/lead-intelligence/zuniseo-envelope.test.js, which verifies the vendored contract and fixtures against their recorded SHA-256 manifest."
 
   package:
     name: windows package smoke test

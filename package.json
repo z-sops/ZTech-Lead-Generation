@@ -15,12 +15,13 @@
     "lint": "eslint . --max-warnings 100000",
     "lint:strict": "eslint . --max-warnings 0",
     "lint:report": "eslint . --format json",
+    "lint:gate": "node scripts/lint-report.js",
     "check:repo": "node scripts/check-repo.js",
     "check:contract": "node scripts/sync-zuniseo-contract.js --check",
     "sync:contract": "node scripts/sync-zuniseo-contract.js --from",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "audit:all": "npm audit --audit-level=moderate",
-    "verify": "npm run check:repo && npm run lint && npm test && npm run audit:prod"
+    "verify": "npm run check:repo && npm run lint:gate && npm test && npm run audit:prod"
   },
   "engines": {
     "node": ">=20.19.0"
