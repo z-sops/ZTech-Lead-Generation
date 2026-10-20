@@ -336,6 +336,74 @@ approval: M1 — the repository seam and the PostgreSQL schema.
 
 ---
 
+## 2026-10-20 — M1: the repository seam and the PostgreSQL schema
+
+**Branch:** `feat/m1-postgres-repository` (from the reviewed M0 head
+`26d5efbd`). **Status: implementation complete, awaiting review.**
+
+The Lead Intelligence persistence is now **one interface with two
+implementations**: the desktop's sql.js store, and a PostgreSQL 16 store.
+
+**The seam is explicit.** `packages/lead-intelligence/src/persistence/interfaces.js`
+declares the twenty-five repositories, their methods and the twelve
+invariants a store must preserve. A store that forgets a method fails a test,
+not a production call. The desktop's store satisfies the seam; so does the
+PostgreSQL one.
+
+**The PostgreSQL implementation is a separate package**,
+`packages/lead-intelligence-postgres`, because it needs the `pg` driver and
+the shared core package has **no dependencies at all**. The shared core's
+boundary test still holds: no Electron, no file system, no process, no
+external module.
+
+**The schema mirrors the desktop, one table for one.** Thirteen PostgreSQL
+migrations mirror the thirteen desktop migrations. The differences are the
+ones PostgreSQL is better at: `TIMESTAMPTZ` instead of text timestamps,
+`JSONB` instead of text documents, `BOOLEAN` instead of 0/1 flags, `TIME` for
+the sending window, and a `seq` column where the desktop uses `rowid` (so
+"newest first, insertion order for ties" means the same thing on both
+engines). **The partial unique indexes are kept exactly**: one active job
+per request key, one active enrichment job per lead, one pending OI refresh
+intent per lead, one accepted send per (channel, idempotency key), one trust
+event per event id, one open sequence per lead. The idempotency guarantee is
+enforced by the database on both engines, not by application code.
+
+**The tenancy structures are prepared, and nothing more.** Every
+tenant-owned table carries a `workspace_id`, and the store is bound to one
+workspace. **M1 proves no isolation**: the filter is application-level, the
+RLS policies and the cross-tenant denial suite are M2.
+
+**The contract suite is one suite with two backends.**
+`tests/persistence-contract/contract-suite.js` runs the same thirty
+assertions against the sql.js store and against a real PostgreSQL 16, and the
+two produce identical results. The mapping, the conversions (including the
+malformed cases) and the migration idempotency are proved in the same place.
+The PostgreSQL job runs a **PostgreSQL 16 service container** in CI; without
+one, those assertions are **skipped, and the skip says so**.
+
+**The desktop is untouched in behaviour.** The desktop's store gained a
+public `deleteByLead` on four repositories, a `tx` that also accepts an
+asynchronous callback (a synchronous one still commits in the same tick, as
+before), and two helpers so that one contract test can drive both stores.
+The 1,990 pre-existing assertions still pass unchanged, and the thirteen
+desktop migration files are still byte-identical to the F0/F1 baseline.
+
+**The packaged desktop application is unchanged.** The shared package is
+inside the asar (126 entries); the PostgreSQL package and the `pg` driver are
+**not** in it (0 entries) — the desktop never loads them.
+
+**Tests:** 128 files, **2,053 assertions**, 0 failed (2,046 passed, 7 skipped
+without a PostgreSQL; all 2,053 pass with one).
+
+### Next
+
+M1 is submitted as a **draft pull request** for review. **Nothing merged,
+force-pushed, deployed or deleted; the base branch is untouched.** On
+approval: M2 — tenancy, row-level security and the cross-tenant denial
+suite.
+
+---
+
 ## 2026-10-20 — Critical integration fixes and F1 branding (same branch)
 
 Continued on `feat/cloud-saas-f0-foundation` in all three ZTech repositories.

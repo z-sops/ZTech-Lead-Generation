@@ -116,12 +116,26 @@ class SqlJsStore {
     }
   }
 
-  /** Run fn inside a transaction and persist once after commit. */
+  /**
+   * Run fn inside a transaction and persist once after commit.
+   *
+   * fn may be async: the transaction is only committed once it has finished.
+   * That is what lets the SAME contract test run against this store and
+   * against the PostgreSQL one, whose transactions are asynchronous.
+   *
+   * A SYNCHRONOUS fn commits in the same tick, exactly as it always has: the
+   * desktop's callers rely on the transaction being closed the moment the
+   * call returns, and a deferred commit would leave the next transaction
+   * inside this one.
+   */
   async tx(fn) {
     this.db.run('BEGIN');
     let result;
     try {
-      result = fn();
+      result = fn(this);
+      if (result && typeof result.then === 'function') {
+        result = await result;
+      }
       this.db.run('COMMIT');
     } catch (e) {
       this.db.run('ROLLBACK');
@@ -129,6 +143,17 @@ class SqlJsStore {
     }
     await this.persist();
     return result;
+  }
+
+  /** Run a statement. The number of affected rows. */
+  run(sql, params = []) {
+    this.db.run(sql, params);
+    return this.db.getRowsModified();
+  }
+
+  /** Run a query. The rows. */
+  query(sql, params = []) {
+    return rows(this.db, sql, params);
   }
 
   async purgeLead(leadId) {

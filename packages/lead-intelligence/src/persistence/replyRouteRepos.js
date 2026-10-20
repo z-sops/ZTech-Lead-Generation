@@ -77,6 +77,11 @@ class SqlReplyRoutes {
   _deleteByLeadSql(leadId) {
     this.s.db.run('DELETE FROM li_reply_routes WHERE lead_id = ?', [String(leadId)]);
   }
+
+  /** The public form of the same delete, so both stores satisfy one seam. */
+  async deleteByLead(leadId) {
+    this._deleteByLeadSql(leadId);
+  }
 }
 
 class MemReplyRoutes {

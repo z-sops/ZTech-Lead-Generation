@@ -70,12 +70,54 @@ jobs:
       - name: Production dependency audit
         run: npm run audit:prod
 
+  # M1: the persistence contract, run against a REAL PostgreSQL 16.
+  #
+  # The same contract suite that runs against the desktop's sql.js store runs
+  # here against a real PostgreSQL 16 service container, and the two must
+  # produce identical results. The PostgreSQL schema, the column mapping and
+  # the migration idempotency are proved against the live database too.
+  #
+  # The service container is a plain PostgreSQL 16 with no data in it: no
+  # customer data, no provider credentials, no outreach.
+  postgres:
+    name: postgres persistence contract
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ztech
+          POSTGRES_PASSWORD: ztech
+          POSTGRES_DB: ztech
+        ports:
+          - '5432:5432'
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: The persistence contract, against both backends
+        run: npm test -- --filter persistence-contract
+        env:
+          ZTECH_PG_URL: postgres://ztech:ztech@127.0.0.1:5432/ztech
+          ZTECH_PG_WORKSPACE: local
+
   contract:
     name: zuni-seo contract drift
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

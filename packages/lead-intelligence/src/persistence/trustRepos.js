@@ -139,6 +139,7 @@ class SqlConsents {
       [String(leadId), clampLimit(limit)]).map(freeze);
   }
 
+  async deleteByLead(leadId) { this._deleteByLeadSql(leadId); }
   _deleteByLeadSql(leadId) { this.s.db.run('DELETE FROM li_contact_consents WHERE lead_id = ?', [String(leadId)]); }
 }
 
@@ -180,6 +181,7 @@ class SqlProvenance {
       `SELECT ${PROVENANCE_COLS.join(', ')} FROM li_contact_provenance WHERE lead_id = ? ORDER BY field ASC`, [String(leadId)]).map(freeze);
   }
 
+  async deleteByLead(leadId) { this._deleteByLeadSql(leadId); }
   _deleteByLeadSql(leadId) { this.s.db.run('DELETE FROM li_contact_provenance WHERE lead_id = ?', [String(leadId)]); }
 }
 

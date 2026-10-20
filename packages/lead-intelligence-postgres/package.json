@@ -1,0 +1,18 @@
+{
+  "name": "@zunitech/lead-intelligence-postgres",
+  "version": "0.1.0",
+  "description": "The PostgreSQL 16 implementation of the ZTech Lead Generation Lead Intelligence repository seam: the schema that mirrors the desktop sql.js schema, and the store that satisfies the same contract.",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "@zunitech/lead-intelligence": "*",
+    "pg": "^8.13.1"
+  },
+  "files": [
+    "src"
+  ]
+}

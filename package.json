@@ -55,7 +55,9 @@
       "preload.js",
       "package.json",
       "src/**/*",
-      "packages/**"
+      "packages/lead-intelligence/**",
+      "!packages/lead-intelligence-postgres/**",
+      "!node_modules/pg/**"
     ],
     "win": {
       "target": [

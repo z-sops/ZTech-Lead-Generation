@@ -40,7 +40,10 @@ function checkPatch(patch, allowed) {
 function stepFromRow(r) {
   if (!r) return null;
   let draft = null;
-  try { draft = JSON.parse(r.draft_json); } catch { draft = null; }
+  // The desktop's column is TEXT, so the document is a string here. A store
+  // that already holds it as a document (PostgreSQL's JSONB) is accepted too.
+  if (typeof r.draft_json === 'string') { try { draft = JSON.parse(r.draft_json); } catch { draft = null; } }
+  else if (r.draft_json && typeof r.draft_json === 'object') draft = r.draft_json;
   const { draft_json: _ignored, ...rest } = r;
   return Object.freeze({ ...rest, draft });
 }
@@ -199,6 +202,11 @@ class SqlSequences {
     this.s.db.run('DELETE FROM li_sequence_steps WHERE sequence_id IN (SELECT sequence_id FROM li_sequences WHERE lead_id = ?)', [id]);
     this.s.db.run('DELETE FROM li_sequences WHERE lead_id = ?', [id]);
   }
+
+  /** The public form of the same delete, so both stores satisfy one seam. */
+  async deleteByLead(leadId) {
+    this._deleteByLeadSql(leadId);
+  }
 }
 
 /* ============================= MEMORY ============================== */
@@ -330,5 +338,8 @@ class MemSequences {
 
 module.exports = {
   SqlSequences, MemSequences,
+  // The row helpers are exported so the PostgreSQL implementation reuses exactly
+  // the same normalisation the desktop store uses.
+  stepFromRow, stepToRow, checkPatch, SEQ_PATCHABLE, STEP_PATCHABLE, MAX_LIST,
   SEQUENCE_TABLE_COLUMNS: Object.freeze({ li_sequences: SEQ_COLS, li_sequence_steps: STEP_COLS, li_sequence_events: EVENT_COLS }),
 };
