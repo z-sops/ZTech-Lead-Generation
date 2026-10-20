@@ -111,7 +111,9 @@ jobs:
         run: npm test -- --filter persistence-contract
         env:
           ZTECH_PG_URL: postgres://ztech:ztech@127.0.0.1:5432/ztech
-          ZTECH_PG_WORKSPACE: local
+          # The workspace is a uuid: the F2 architecture scopes every tenant
+          # table by one, and the store refuses anything else.
+          ZTECH_PG_WORKSPACE: 11111111-1111-4111-8111-111111111111
 
   contract:
     name: zuni-seo contract drift
