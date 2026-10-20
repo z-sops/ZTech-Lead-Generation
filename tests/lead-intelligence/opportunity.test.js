@@ -1060,6 +1060,9 @@ test('F. the default config is loopback, bounded and needs no credential', () =>
 });
 
 test('G. every OI route path is one of the fixed engine routes', () => {
+  // The whitelist of every route the gateway may call. The three job routes
+  // are the asynchronous research lifecycle (audit gap G-44); they are fixed
+  // in code like every other route, so the renderer cannot influence them.
   assert.deepEqual(Object.values(ROUTES).filter((v) => typeof v === 'string').sort(),
-    ['/v1/competitors/discover', '/v1/engine', '/v1/health', '/v1/research', '/v1/timeline']);
+    ['/v1/competitors/discover', '/v1/engine', '/v1/health', '/v1/research', '/v1/research/jobs', '/v1/timeline']);
 });

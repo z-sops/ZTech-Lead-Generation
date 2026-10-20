@@ -151,6 +151,10 @@ function mainProcess(routes, leadRows) {
 
 const RESEARCH = `POST ${BASE}/v1/research`;
 const REPORT = `GET ${BASE}/v1/reports/res_20261005120000_abcdef01`;
+// The asynchronous research job lifecycle (audit gap G-44).
+const JOB = `POST ${BASE}/v1/research/jobs`;
+const JOB_STATUS = `GET ${BASE}/v1/research/jobs/res_20261005120000_abcdef01`;
+const JOB_RESULT = `GET ${BASE}/v1/research/jobs/res_20261005120000_abcdef01/result`;
 
 // --- the renderer side --------------------------------------------------------
 
@@ -568,7 +572,17 @@ test('I5-5. no report available at all: the approved copy and a Run button, noth
 
 test('I5-6. an unfinished request: Retry research, and the same notice after reopening', async () => {
   let down = false;
-  const main = mainProcess((key) => (down ? 'refused' : (key === RESEARCH || key === REPORT ? { body: fixtures.report() } : null)));
+  // The research now runs through OI's asynchronous job lifecycle
+  // (audit gap G-44): start a job, poll it, collect the report. The job
+  // routes are answered here, so the panel drives the real path.
+  const main = mainProcess((key) => {
+    if (down) return 'refused';
+    if (key === JOB) return { body: { research_id: 'res_20261005120000_abcdef01', status: 'running', replayed: false } };
+    if (key === JOB_STATUS) return { body: { research_id: 'res_20261005120000_abcdef01', status: 'completed' } };
+    if (key === JOB_RESULT) return { body: fixtures.report() };
+    if (key === RESEARCH || key === REPORT) return { body: fixtures.report() };
+    return null;
+  });
   const p = makePanel(main.api);
   await p.ctl.open('L1');
   down = true;
@@ -581,7 +595,7 @@ test('I5-6. an unfinished request: Retry research, and the same notice after reo
   assert.equal(q.button('oi-run').textContent, 'Retry research');
   down = false;
   await q.ctl.run();
-  const keys = main.log.filter((c) => c.key === RESEARCH).map((c) => c.body.options.idempotency_key);
+  const keys = main.log.filter((c) => c.key === JOB).map((c) => c.body.options.idempotency_key);
   assert.equal(keys.length, 2);
   assert.equal(keys[0], keys[1], 'the retry reused the persisted key');
 });

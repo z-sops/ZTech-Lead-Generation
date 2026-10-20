@@ -50,10 +50,27 @@ const ROUTES = Object.freeze({
   report: (researchId) => `/v1/reports/${encodeURIComponent(researchId)}`,
   analyze: (researchId) => `/v1/reports/${encodeURIComponent(researchId)}/analyze`,
   timeline: '/v1/timeline',
+  // The asynchronous job lifecycle (audit gap G-44). A full research takes
+  // roughly 20-90 s, which no single request may hold open. The job routes
+  // start a run, report its state, and hand back the report when it is ready.
+  jobStart: '/v1/research/jobs',
+  jobStatus: (researchId) => `/v1/research/jobs/${encodeURIComponent(researchId)}`,
+  jobResult: (researchId) => `/v1/research/jobs/${encodeURIComponent(researchId)}/result`,
 });
 
 const BOUNDS = Object.freeze({
+  /** The budget of ONE HTTP call. Every call in the lifecycle is bounded by this. */
   timeoutMs: 30_000,
+  /**
+   * The budget of the WHOLE job lifecycle: start, poll, collect. This is
+   * longer than one call because the run itself takes 20-90 s.
+   */
+  researchBudgetMs: 180_000,
+  /** The first poll delay; it doubles up to `pollMaxMs`. */
+  pollInitialMs: 500,
+  pollMaxMs: 5_000,
+  /** How many times a transient poll failure is retried before the lifecycle gives up. */
+  pollRetries: 3,
   maxHealthTimeoutMs: 5_000,
   maxResponseBytes: 8 * 1024 * 1024,
   maxCompetitors: 25,
@@ -65,6 +82,9 @@ const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
   baseUrl: 'http://127.0.0.1:8099',
   timeoutMs: BOUNDS.timeoutMs,
+  researchBudgetMs: BOUNDS.researchBudgetMs,
+  pollInitialMs: BOUNDS.pollInitialMs,
+  pollMaxMs: BOUNDS.pollMaxMs,
   healthTimeoutMs: BOUNDS.maxHealthTimeoutMs,
   allowLocalhost: true,
   maxCompetitors: 5,
@@ -94,6 +114,9 @@ class OpportunityIntelligenceGateway {
       ...DEFAULT_CONFIG,
       ...config,
       timeoutMs: Number(config.timeoutMs) > 0 ? Number(config.timeoutMs) : BOUNDS.timeoutMs,
+      researchBudgetMs: Number(config.researchBudgetMs) > 0 ? Number(config.researchBudgetMs) : BOUNDS.researchBudgetMs,
+      pollInitialMs: Number(config.pollInitialMs) > 0 ? Number(config.pollInitialMs) : BOUNDS.pollInitialMs,
+      pollMaxMs: Number(config.pollMaxMs) > 0 ? Number(config.pollMaxMs) : BOUNDS.pollMaxMs,
       healthTimeoutMs: Number(config.healthTimeoutMs) > 0 ? Number(config.healthTimeoutMs) : BOUNDS.maxHealthTimeoutMs,
       maxCompetitors: Math.min(
         Math.max(1, Number(config.maxCompetitors) || DEFAULT_CONFIG.maxCompetitors),
@@ -292,6 +315,12 @@ class OpportunityIntelligenceGateway {
    * supplies lead id / company / domain; it never supplies a destination URL,
    * a provider name or a credential. `options` is a closed whitelist.
    *
+   * The run is driven through OI's asynchronous job lifecycle: start, poll,
+   * collect. A single request is never held open for the 20-90 s a research
+   * takes, so the work is not lost when the caller would otherwise time out.
+   * A service that does not offer the job routes is still supported: the
+   * gateway falls back to the original synchronous call.
+   *
    * @returns {{ok:true, report:object} | {ok:false, state:string, error:string}}
    */
   async requestResearch({ leadId, companyName, domain, location = null, industry = null, options = {}, signal } = {}) {
@@ -314,13 +343,126 @@ class OpportunityIntelligenceGateway {
     };
     // Counted so a supervisor never restarts the service under a research request.
     this.inflightResearch += 1;
-    let res;
     try {
-      res = await this.call(ROUTES.research, { method: 'POST', body: payload, signal });
+      return await this.#runResearchJob(payload, { leadId, company, domain: dom, signal });
     } finally {
       this.inflightResearch -= 1;
     }
-    return this.#reportOrError(res, { leadId, company, domain: dom });
+  }
+
+  /**
+   * The job lifecycle: start -> poll -> collect.
+   *
+   * Every step is bounded. The whole lifecycle may take up to
+   * `researchBudgetMs`; each individual call is bounded by `timeoutMs`. A
+   * transient failure while polling is retried a bounded number of times,
+   * because the run itself keeps going on the service side.
+   */
+  async #runResearchJob(payload, context) {
+    const deadline = this.clock().getTime() + this.config.researchBudgetMs;
+    const started = await this.call(ROUTES.jobStart, { method: 'POST', body: payload, signal: context.signal });
+
+    if (!started.ok) {
+      // A service without the job routes: the original synchronous call.
+      if (started.status === 404) return this.#requestResearchSync(payload, context);
+      return {
+        ok: false,
+        state: started.state,
+        error: started.error,
+        status: started.status,
+        oiError: oiErrorOf(started.body),
+      };
+    }
+
+    const body = started.body && typeof started.body === 'object' ? started.body : {};
+    const researchId = typeof body.research_id === 'string' ? body.research_id : null;
+    if (!researchId) {
+      return { ok: false, state: 'invalid_response', error: 'OI returned no research id for the research job' };
+    }
+
+    // A replay: this idempotency key already refers to a finished run, so the
+    // report is stored and no provider was called again.
+    if (body.replayed === true) {
+      const res = await this.call(ROUTES.jobResult(researchId), { signal: context.signal });
+      return this.#reportOrError(res, { ...context, researchId });
+    }
+
+    const polled = await this.#pollUntilTerminal(researchId, deadline, context);
+    if (!polled.ok) return { ...polled, researchId };
+
+    const res = await this.call(ROUTES.jobResult(researchId), { signal: context.signal });
+    if (!res.ok && res.status === 409) {
+      // The job reached a terminal state that is not a report: the service
+      // reports the cause (running, or failed) and whether it can be retried.
+      const oiError = oiErrorOf(res.body);
+      return {
+        ok: false,
+        state: oiError && oiError.retryable ? 'in_progress' : 'failed',
+        error: res.error,
+        status: res.status,
+        oiError,
+        researchId,
+      };
+    }
+    return this.#reportOrError(res, { ...context, researchId });
+  }
+
+  /** The original synchronous call, used when the service has no job routes. */
+  async #requestResearchSync(payload, context) {
+    const res = await this.call(ROUTES.research, { method: 'POST', body: payload, signal: context.signal });
+    return this.#reportOrError(res, context);
+  }
+
+  /**
+   * Poll the job status until it is no longer running, the budget is spent, or
+   * the caller aborts. A transient status failure is retried a bounded number
+   * of times: the run continues on the service side, so a single dropped poll
+   * must not lose the whole research.
+   */
+  async #pollUntilTerminal(researchId, deadline, context) {
+    let delay = this.config.pollInitialMs;
+    let failures = 0;
+    for (;;) {
+      const remaining = deadline - this.clock().getTime();
+      if (remaining <= 0) {
+        return {
+          ok: false,
+          state: 'timeout',
+          error: `OI research did not finish within ${this.config.researchBudgetMs}ms`,
+        };
+      }
+      const res = await this.call(ROUTES.jobStatus(researchId), {
+        timeoutMs: Math.min(this.config.timeoutMs, remaining),
+        signal: context.signal,
+      });
+      if (!res.ok) {
+        if (res.state === 'unavailable' && failures < BOUNDS.pollRetries) {
+          failures += 1;
+          if (!(await this.#wait(Math.min(delay, Math.max(0, deadline - this.clock().getTime())), context))) {
+            return { ok: false, state: 'aborted', error: 'The research request was cancelled.' };
+          }
+          delay = Math.min(delay * 2, this.config.pollMaxMs);
+          continue;
+        }
+        return { ok: false, state: res.state, error: res.error, status: res.status };
+      }
+      const status = res.body && typeof res.body.status === 'string' ? res.body.status : '';
+      if (status && status !== 'running') return { ok: true, status };
+      if (!(await this.#wait(Math.min(delay, Math.max(0, deadline - this.clock().getTime())), context))) {
+        return { ok: false, state: 'aborted', error: 'The research request was cancelled.' };
+      }
+      delay = Math.min(delay * 2, this.config.pollMaxMs);
+    }
+  }
+
+  /** Wait, unless the caller aborts. Returns false when the wait was cancelled. */
+  async #wait(ms, context) {
+    try {
+      await sleep(ms, context.signal);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Candidate competitors only. OI still decides what a competitor is. */
@@ -532,6 +674,26 @@ function describeNetError(e) {
 function truncate(s, n = 200) {
   const t = String(s || '');
   return t.length > n ? `${t.slice(0, n)}...` : t;
+}
+
+/** An abortable sleep. It rejects as soon as the caller's signal aborts. */
+function sleep(ms, signal) {
+  if (!(ms > 0)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    if (typeof timer.unref === 'function') timer.unref();
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    }
+    if (signal) {
+      if (signal.aborted) { clearTimeout(timer); reject(new Error('aborted')); return; }
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
 }
 
 module.exports = {
