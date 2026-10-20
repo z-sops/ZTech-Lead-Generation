@@ -317,54 +317,47 @@ drafts**. Nothing is merged, deployed or released.
 | Opportunity Intelligence | https://github.com/z-sops/ztech-opportunity-intelligence/pull/1 | `main` |
 | Legal | https://github.com/z-sops/ztech-legal/pull/1 | `main` |
 
-The head of each review branch is the tip of the local
-`feat/cloud-saas-f0-foundation` branch in that repository. The exact commit
-SHAs are in the pull requests.
+### CI — GREEN on all three
 
-**CI HAS NOT RUN — 0 check runs on all three PRs.** The reason is a credential
-scope, not a defect: creating a GitHub Actions workflow file needs a token
-with the **`workflow`** scope, and the token the environment can obtain has
-only **`repo`**. GitHub refused the first push with:
+| Repository | Run | Result |
+|---|---|---|
+| ZTech Lead Generation | https://github.com/z-sops/ZTech-Lead-Generation/actions/runs/39403179520 | **success** — 6/6 jobs (ubuntu node 20 + 22, windows node 20 + 22, the zuni-seo contract drift job, the Windows package smoke test) |
+| Opportunity Intelligence | https://github.com/z-sops/ztech-opportunity-intelligence/actions/runs/39399534884 | **success** — 6/6 jobs (ubuntu + windows, Python 3.11 + 3.13, the Node MCP contract test, the container image build) |
+| Legal | https://github.com/z-sops/ztech-legal/actions/runs/39396564845 | **success** — 1/1 job (the legal document check) |
 
-```
-! [remote rejected] feat/cloud-saas-f0-foundation (refusing to allow a
-Personal Access Token to create or update workflow `.github/workflows/ci.yml`
-without `workflow` scope)
-```
+### What the first CI run found
 
-A `git push --dry-run` does **not** detect this, so the blocker only appears
-on a real push.
+The CI was not a formality: it found **five real defects** that every local
+run had missed, because the local environment is Windows and the code had
+never run on Linux.
 
-The workflow files are therefore the **tip commit of each local branch** and
-are the only thing not pushed:
+| # | Defect | Severity |
+|---|---|---|
+| 1 | The OI job lifecycle's poll timer was `unref`'d, so the event loop could drain while the caller was still waiting. Every test in the new lifecycle suite failed on Linux with *"Promise resolution is still pending but the event loop has already resolved"*. | High |
+| 2 | The vendored ZuniSEO contract was hashed as it was **on disk**, but the repository normalises text files to LF, so the drift check failed on a fresh checkout and passed in the working tree. | High |
+| 3 | `tests/company-foundation.test.js` named `src/main/coreclawClient.js`; the real file is `coreClawClient.js`. On Linux that is ENOENT, so a **security-shaped assertion was silently not executing at all**. | High |
+| 4 | `tests/prospect-research-trusted-sender.test.js` built the app's own file URL by hand, producing four slashes on POSIX, so the app's own top frame was not recognised as trusted. | Medium |
+| 5 | The migration used `fs.cpSync`, whose Windows-specific failure modes killed one CI job with a hard abort (0xC0000409) and no message. | Medium |
 
-```
-git diff origin/feat/cloud-saas-f0-foundation..HEAD
- .github/workflows/ci.yml | 124 +++++++++++++++++++++++++++++++++++++++++++++++
-```
+Each is now fixed, each has a regression test, and two new permanent guards
+exist: `tests/path-case.test.js` (every path literal in the suite must match
+the real file, case-sensitively) and the manifest test (the vendored contract
+is hashed as the bytes that are COMMITTED).
 
-**To finish the CI**, one command with a token that has `repo` + `workflow`:
+The Opportunity Intelligence service also had two defects that only its CI
+could find: the ZTech-database guard was platform-dependent (it never fired on
+Linux), and a completed run that observed nothing could not be replayed (the
+idempotency path treated a "failed but completed" report as a broken run and
+lost the research_id).
 
-```bash
-git push origin feat/cloud-saas-f0-foundation
-```
+### The CI blocker that was not a defect
 
-The local branch is exactly one commit ahead of the pushed branch, so that
-push is a plain fast-forward — no force, no history change.
-
-Everything the CI would run has been run locally instead:
-
-| CI step | Local result |
-|---|---|
-| `npm ci` | 443 packages, 34 s |
-| `npm run check:repo` | clean |
-| `npm run lint` | 0 errors, 288 warnings |
-| `npm test` | 121 files, 1,988 assertions, 0 failed, 0 skipped |
-| `npm run audit:prod` | 0 vulnerabilities |
-| `npm run build:win` | `ZTech Lead Generation.exe`, 180 MB |
-| OI `pytest` | 265 passed, 1 skipped |
-| OI `ruff` / `mypy` | clean / clean |
-| Legal `check-legal` | 0 regressions, 11 known gaps |
+The first push was refused: *"refusing to allow a Personal Access Token to
+create or update workflow `.github/workflows/ci.yml` without `workflow`
+scope"*. The available token had only `repo`. A `git push --dry-run` does NOT
+detect this — it passed, and only the real push was refused. With the
+`gh` OAuth token (`repo`, `workflow`, `read:org`, `gist`) the workflows were
+pushed and the CI ran.
 
 ### What is NOT complete (read this before calling anything production-ready)
 
