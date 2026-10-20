@@ -265,8 +265,12 @@ package resolve to the **same module instance** for all 96 modules.
 no child process, no credential store — and never reaches outside itself. The
 boundary test proves it by reading every file in the package.
 
-**No database schema change.** Every migration file and the embedded copies are
-byte-identical to the F0/F1 baseline, and the boundary test asserts it.
+**No database schema change.** All 13 migration files and the embedded copies
+are byte-identical to the F0/F1 baseline, and the boundary test asserts it.
+The check is anchored on a recorded SHA-256 manifest
+(`src/main/lead-intelligence/persistence/migrations.manifest.json`), so it
+holds in the shallow checkout CI does; the comparison against the base ref
+runs as a second check whenever that ref is available.
 
 **The packaged desktop application still works.** The shared package is inside
 the asar (99 files), the workspace link is not, and the resolver falls back to
@@ -285,9 +289,9 @@ follow it through `tests/lead-intelligence/impl.js`. Their intent is unchanged.
 
 ### Next
 
-F0 review package submitted. **Nothing pushed, merged, force-pushed or
-deleted; awaiting approval.** On approval: the G-39/G-40 and G-44 work
-package, then F1.
+M0 is submitted as a **draft pull request** for review. **Nothing merged,
+force-pushed, deployed or deleted; the base branch is untouched.** On
+approval: M1 — the repository seam and the PostgreSQL schema.
 
 ---
 
