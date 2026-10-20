@@ -306,6 +306,62 @@ ZTech Legal
 | G-11 | Medium | The database `.bak` is still one generation behind. |
 | G-10 residual | Low | The `saveDB()` rewrite is the only production change in the persistence layer. |
 
+### Review state (2026-10-20)
+
+The three review branches are **pushed** and the three review PRs are **open as
+drafts**. Nothing is merged, deployed or released.
+
+| Repository | PR | Head (pushed) | Base |
+|---|---|---|---|
+| ZTech Lead Generation | https://github.com/z-sops/ZTech-Lead-Generation/pull/1 | `c1b89f40b13c824f8493b33146d0af876a09ad83` | `feat/lead-intelligence-v0.3` |
+| Opportunity Intelligence | https://github.com/z-sops/ztech-opportunity-intelligence/pull/1 | `f79f0598b61a660db8742b77871229745f8f0388` | `main` |
+| Legal | https://github.com/z-sops/ztech-legal/pull/1 | `11eef2ed49d89ae15a8b7adb36868358c24a2284` | `main` |
+
+**CI HAS NOT RUN — 0 check runs on all three PRs.** The reason is a credential
+scope, not a defect: creating a GitHub Actions workflow file needs a token
+with the **`workflow`** scope, and the token the environment can obtain has
+only **`repo`**. GitHub refused the first push with:
+
+```
+! [remote rejected] feat/cloud-saas-f0-foundation (refusing to allow a
+Personal Access Token to create or update workflow `.github/workflows/ci.yml`
+without `workflow` scope)
+```
+
+A `git push --dry-run` does **not** detect this, so the blocker only appears
+on a real push.
+
+The workflow files are therefore the **tip commit of each local branch** and
+are the only thing not pushed:
+
+```
+git diff origin/feat/cloud-saas-f0-foundation..HEAD
+ .github/workflows/ci.yml | 124 +++++++++++++++++++++++++++++++++++++++++++++++
+```
+
+**To finish the CI**, one command with a token that has `repo` + `workflow`:
+
+```bash
+git push origin feat/cloud-saas-f0-foundation
+```
+
+The local branch is exactly one commit ahead of the pushed branch, so that
+push is a plain fast-forward — no force, no history change.
+
+Everything the CI would run has been run locally instead:
+
+| CI step | Local result |
+|---|---|
+| `npm ci` | 443 packages, 34 s |
+| `npm run check:repo` | clean |
+| `npm run lint` | 0 errors, 288 warnings |
+| `npm test` | 121 files, 1,988 assertions, 0 failed, 0 skipped |
+| `npm run audit:prod` | 0 vulnerabilities |
+| `npm run build:win` | `ZTech Lead Generation.exe`, 180 MB |
+| OI `pytest` | 265 passed, 1 skipped |
+| OI `ruff` / `mypy` | clean / clean |
+| Legal `check-legal` | 0 regressions, 11 known gaps |
+
 ### What is NOT complete (read this before calling anything production-ready)
 
 | # | Limitation | Where it is tracked |
