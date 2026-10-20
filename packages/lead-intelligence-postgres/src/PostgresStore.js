@@ -26,6 +26,7 @@
 const { ConflictError, NotFoundError, DuplicateActiveJobError, LiError } = require('@zunitech/lead-intelligence/core/errors');
 const { packetMeta, normalizePitchListQuery, ACTIVITY_TYPES, normalizeActivityQuery, normalizeSendRecord, normalizeSendQuery } = require('@zunitech/lead-intelligence/persistence/contract');
 const { MAILBOX_ID_RE } = require('@zunitech/lead-intelligence/mailbox/mailboxContract');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { rewritePlaceholders, encodeValue, decodeValue, isUniqueViolation, violatedConstraint, PLATFORM_WORKSPACE_ID } = require('./dialect');
 
 const ACTIVE_SQL = "('requested','preflight','started','polling','pending')";
@@ -84,6 +85,12 @@ class PostgresStore {
     this.logger = logger;
     this.now = now;
     this.corruptRows = [];
+    /**
+     * The transaction context. AsyncLocalStorage, NOT a field on the store:
+     * a field would be shared by every operation running on this instance, so
+     * two concurrent transactions could pick up each other's client.
+     */
+    this.txContext = new AsyncLocalStorage();
 
     this.jobs = new PgJobs(this);
     this.packets = new PgPackets(this);
@@ -181,11 +188,22 @@ class PostgresStore {
   /* ----------------------------- the SQL layer ----------------------------- */
 
   /**
-   * The connection a statement runs on: the transaction's own client while a
-   * transaction is open, and the pool otherwise.
+   * The connection a statement runs on.
+   *
+   * It is the CLIENT OF THE TRANSACTION THIS OPERATION IS INSIDE, and only
+   * that one. The context comes from AsyncLocalStorage, so it follows the
+   * asynchronous call chain of the operation that opened the transaction: a
+   * concurrent operation on the same store instance - or on another instance
+   * of the same pool - can never pick up a foreign transaction's client.
    */
   get client() {
-    return this._client || this.pool;
+    const context = this.txContext.getStore();
+    return context ? context.client : this.pool;
+  }
+
+  /** Is this operation inside a transaction? */
+  get inTransaction() {
+    return Boolean(this.txContext.getStore());
   }
 
   /**
@@ -315,22 +333,50 @@ class PostgresStore {
    */
   /**
    * Run fn inside a transaction.
+   *
+   * The transaction's client is held in the AsyncLocalStorage context, so it
+   * belongs to THIS operation and to nothing else: two transactions running
+   * at the same time, on this store or on another one, never share a client.
+   *
+   * A NESTED transaction joins the outer one through a SAVEPOINT: PostgreSQL
+   * has no nested transactions, and a nested one that opened its own
+   * connection would deadlock against the outer transaction's locks. A
+   * failure inside the nested transaction rolls back to its savepoint only;
+   * the outer transaction decides what happens next.
    */
   async tx(fn) {
+    const outer = this.txContext.getStore();
+    if (outer) return this.nestedTx(fn, outer);
+
     const client = await this.pool.connect();
-    const previous = this._client;
-    this._client = client;
+    const context = { client, savepoint: 0 };
     try {
       await client.query('BEGIN');
-      const result = await fn(this);
+      const result = await this.txContext.run(context, () => fn(this));
       await client.query('COMMIT');
       return result;
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch { /* the connection is already broken */ }
       throw err;
     } finally {
-      this._client = previous;
       client.release();
+    }
+  }
+
+  /**
+   * A transaction inside a transaction: a SAVEPOINT on the outer client.
+   */
+  async nestedTx(fn, context) {
+    context.savepoint += 1;
+    const name = `ztech_sp_${context.savepoint}`;
+    await context.client.query(`SAVEPOINT ${name}`);
+    try {
+      const result = await fn(this);
+      await context.client.query(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (err) {
+      try { await context.client.query(`ROLLBACK TO SAVEPOINT ${name}`); } catch { /* the transaction is already broken */ }
+      throw err;
     }
   }
 
