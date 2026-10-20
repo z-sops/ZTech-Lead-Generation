@@ -311,11 +311,15 @@ ZTech Legal
 The three review branches are **pushed** and the three review PRs are **open as
 drafts**. Nothing is merged, deployed or released.
 
-| Repository | PR | Head (pushed) | Base |
-|---|---|---|---|
-| ZTech Lead Generation | https://github.com/z-sops/ZTech-Lead-Generation/pull/1 | `c1b89f40b13c824f8493b33146d0af876a09ad83` | `feat/lead-intelligence-v0.3` |
-| Opportunity Intelligence | https://github.com/z-sops/ztech-opportunity-intelligence/pull/1 | `f79f0598b61a660db8742b77871229745f8f0388` | `main` |
-| Legal | https://github.com/z-sops/ztech-legal/pull/1 | `11eef2ed49d89ae15a8b7adb36868358c24a2284` | `main` |
+| Repository | PR | Base |
+|---|---|---|
+| ZTech Lead Generation | https://github.com/z-sops/ZTech-Lead-Generation/pull/1 | `feat/lead-intelligence-v0.3` |
+| Opportunity Intelligence | https://github.com/z-sops/ztech-opportunity-intelligence/pull/1 | `main` |
+| Legal | https://github.com/z-sops/ztech-legal/pull/1 | `main` |
+
+The head of each review branch is the tip of the local
+`feat/cloud-saas-f0-foundation` branch in that repository. The exact commit
+SHAs are in the pull requests.
 
 **CI HAS NOT RUN — 0 check runs on all three PRs.** The reason is a credential
 scope, not a defect: creating a GitHub Actions workflow file needs a token
