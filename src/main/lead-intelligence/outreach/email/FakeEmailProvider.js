@@ -1,39 +1,13 @@
 'use strict';
 
-const { EmailProvider, validateEmailMessage } = require('./EmailProvider');
-const { LiError } = require('../../core/errors');
+// M0 compatibility shim.
+//
+// The implementation moved to the shared package @zunitech/lead-intelligence
+// (packages/lead-intelligence/src/outreach/email/FakeEmailProvider.js). This file re-exports it, so every
+// existing require path - the desktop application, the tests, and the modules
+// that stay behind - keeps working unchanged, and there is still exactly ONE
+// implementation of the intelligence engine.
+//
+// Do not add logic here. Change the implementation in the package.
 
-/** In-memory provider for tests and demos. Never delivers anything. */
-class FakeEmailProvider extends EmailProvider {
-  /**
-   * @param {{failWith?: 'send'|'status'|null}} opts
-   */
-  constructor({ failWith = null } = {}) {
-    super();
-    this.failWith = failWith;
-    this.outbox = [];
-    this.seq = 0;
-  }
-
-  get id() { return 'fake-email'; }
-
-  validate(message) { return validateEmailMessage(message); }
-
-  async send(message) {
-    const v = this.validate(message);
-    if (!v.valid) throw new LiError('EMAIL_INVALID', 'Email message is invalid', { errors: v.errors });
-    if (this.failWith === 'send') throw new LiError('EMAIL_SEND_FAILED', 'Fake provider configured to fail');
-    this.seq += 1;
-    const messageId = `fake-msg-${this.seq}`;
-    this.outbox.push({ messageId, status: 'sent', message: { ...message } });
-    return { messageId, status: 'sent' };
-  }
-
-  async getStatus(messageId) {
-    if (this.failWith === 'status') throw new LiError('EMAIL_STATUS_FAILED', 'Fake provider configured to fail');
-    const m = this.outbox.find((x) => x.messageId === messageId);
-    return { messageId, status: m ? m.status : 'unknown' };
-  }
-}
-
-module.exports = { FakeEmailProvider };
+module.exports = require('../../../leadIntPackage').load('outreach/email/FakeEmailProvider.js');

@@ -1,20 +1,13 @@
 'use strict';
 
-const crypto = require('node:crypto');
+// M0 compatibility shim.
+//
+// The implementation moved to the shared package @zunitech/lead-intelligence
+// (packages/lead-intelligence/src/core/ids.js). This file re-exports it, so every
+// existing require path - the desktop application, the tests, and the modules
+// that stay behind - keeps working unchanged, and there is still exactly ONE
+// implementation of the intelligence engine.
+//
+// Do not add logic here. Change the implementation in the package.
 
-function newId(prefix) {
-  return `${prefix}_${crypto.randomUUID()}`;
-}
-
-function stableHash(...parts) {
-  const h = crypto.createHash('sha256');
-  h.update(parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join('␟'));
-  return h.digest('hex');
-}
-
-/** Deterministic id: same inputs -> same id. */
-function stableId(prefix, ...parts) {
-  return `${prefix}_${stableHash(...parts).slice(0, 24)}`;
-}
-
-module.exports = { newId, stableHash, stableId };
+module.exports = require('../../leadIntPackage').load('core/ids.js');

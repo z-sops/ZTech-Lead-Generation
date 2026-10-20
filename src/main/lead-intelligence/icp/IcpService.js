@@ -1,18 +1,13 @@
 'use strict';
 
-const { NotFoundError } = require('../core/errors');
+// M0 compatibility shim.
+//
+// The implementation moved to the shared package @zunitech/lead-intelligence
+// (packages/lead-intelligence/src/icp/IcpService.js). This file re-exports it, so every
+// existing require path - the desktop application, the tests, and the modules
+// that stay behind - keeps working unchanged, and there is still exactly ONE
+// implementation of the intelligence engine.
+//
+// Do not add logic here. Change the implementation in the package.
 
-/** IcpService — evaluate one lead against a target's ICP (read-only, deterministic). */
-class IcpService {
-  constructor({ contexts }) {
-    this.contexts = contexts;
-  }
-
-  async evaluate({ leadId, targetId }) {
-    const ctx = await this.contexts.getContext(leadId, { targetId });
-    if (!ctx.icp || !ctx.icp_fit) throw new NotFoundError('Target', targetId);
-    return ctx.icp_fit;
-  }
-}
-
-module.exports = { IcpService };
+module.exports = require('../../leadIntPackage').load('icp/IcpService.js');
