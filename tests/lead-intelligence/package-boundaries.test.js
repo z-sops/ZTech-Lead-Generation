@@ -252,18 +252,37 @@ test('the ZuniSEO envelope mapper still maps a real contract envelope', () => {
 });
 
 test('M0 introduced NO database schema change', () => {
+  const crypto = require('node:crypto');
   const migrations = path.join(root, 'src', 'main', 'lead-intelligence', 'migrations');
   const files = fs.readdirSync(migrations).filter((f) => f.endsWith('.sql')).sort();
   assert.ok(files.length >= 13, `the migrations are still there (${files.length})`);
+
+  // The recorded manifest is the primary check: it works in a shallow CI
+  // checkout, where the base ref is not available.
+  const manifest = JSON.parse(fs.readFileSync(
+    path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'migrations.manifest.json'), 'utf8'));
   for (const f of files) {
-    const now = fs.readFileSync(path.join(migrations, f));
-    const before = execFileSync('git', ['show', `origin/feat/cloud-saas-f0-foundation:src/main/lead-intelligence/migrations/${f}`], { cwd: root });
-    assert.ok(now.equals(before), `${f} is byte-identical to the F0/F1 baseline`);
+    const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(migrations, f))).digest('hex');
+    assert.equal(actual, manifest.files[f], `${f} is byte-identical to the F0/F1 baseline`);
   }
-  // And the embedded copies in the migrations module are untouched too.
+  assert.deepEqual(Object.keys(manifest.files).sort(), files, 'no migration was added or removed');
+
+  // And the embedded copies in the migrations module are untouched too. The
+  // base ref is only available when the checkout is not shallow, so this
+  // second check is best-effort and says so.
+  const baseRef = 'origin/feat/cloud-saas-f0-foundation';
+  let baseAvailable = false;
+  try {
+    execFileSync('git', ['rev-parse', '--verify', baseRef], { cwd: root, stdio: 'ignore' });
+    baseAvailable = true;
+  } catch {
+    baseAvailable = false;
+  }
   const migrationsJs = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'migrations.js'));
-  const beforeJs = execFileSync('git', ['show', 'origin/feat/cloud-saas-f0-foundation:src/main/lead-intelligence/persistence/migrations.js'], { cwd: root });
-  assert.ok(migrationsJs.equals(beforeJs), 'the embedded migrations are byte-identical to the F0/F1 baseline');
+  if (baseAvailable) {
+    const beforeJs = execFileSync('git', ['show', `${baseRef}:src/main/lead-intelligence/persistence/migrations.js`], { cwd: root });
+    assert.ok(migrationsJs.equals(beforeJs), 'the embedded migrations are byte-identical to the F0/F1 baseline');
+  }
 });
 
 test('the desktop package includes the shared package', () => {

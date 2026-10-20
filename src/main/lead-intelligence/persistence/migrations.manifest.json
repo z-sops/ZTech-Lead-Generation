@@ -1,0 +1,19 @@
+{
+  "_comment": "M0: the SHA-256 of every Lead Intelligence migration at the F0/F1 baseline. M0 must not introduce a database schema change; this manifest is the record the boundary test checks against, and it works in a shallow CI checkout where the base ref is not available.",
+  "baseline": "F0/F1 (feat/cloud-saas-f0-foundation @ 9ac4801)",
+  "files": {
+    "001_lead_intelligence.sql": "b8fde30bcb0a4bcc02908ea6351e81f4716ccf0fe462ae69f99d665c4d8b9109",
+    "002_enrichment.sql": "247e2ef183c412000c004ab7195f7e0c5afb15a56ef17cdfe3e89426701dd6a5",
+    "003_outreach_activity.sql": "4a093fa2b42c04b82cd406b8439f019210fe410a89759d2bd244de2b1f5b8b66",
+    "004_email_send.sql": "d01c9f672cf3c7961340ccb2d48dfc134b30ad0441e8683d3dc21044f0383adb",
+    "005_whatsapp_send.sql": "63602a36d7f941ab16a63da8444b2871bc22c3cd5909b0ec58a82973afc7ae61",
+    "006_oi_associations.sql": "b34dc55092ec41ea9b99e8d2a46ef3f06abd68a9186326b884275b1a31e8ee82",
+    "007_oi_refresh_requests.sql": "378d3903e63d373c1d6448af5f0a8cd1ed9d8e6a75eb30e31a497936a0bf9e78",
+    "008_trust_foundation.sql": "08b822c530252872ffe1e95777f0a0dd301cd07413103bd5a3a1805aea613c07",
+    "009_outreach_handoff_activity.sql": "ca90afbf21326623ab6967a81626d3588bc05493aaaef7824944179a2f6de578",
+    "010_mailbox_transport.sql": "83bc0574a82ad360016b0d55ed9b7bf61ebc24bc8bca62b760dd3170db1e48c9",
+    "011_reply_reviews.sql": "5a67e9efec85632e89bdc68c2ef2a04df250e050b1dff43d545408d5a6e93562",
+    "012_sequences.sql": "b4eab25b5668e4de4f3538e689b59b5d24abf2b3385ff5f5b8ce577346b42523",
+    "013_reply_routes.sql": "bf722512f0557bc2ec75dfd36b4fe86e68502ade9a2d374eefcba5fa712449a2"
+  }
+}
