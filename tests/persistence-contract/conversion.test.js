@@ -100,33 +100,30 @@ test('a value that is not JSON is never stored as a document', () => {
   assert.equal(encoded.corrupt, true, 'it is reported');
 });
 
-test('a JSON value that cannot be a document is reported by the store', async () => {
+test('the store reports a document that is not an object', { skip: !process.env.ZTECH_PG_URL && 'set ZTECH_PG_URL to test the store against a real PostgreSQL' }, async () => {
   const { Pool } = require('pg');
-  const URL = process.env.ZTECH_PG_URL || '';
-  const skip = URL ? false : 'set ZTECH_PG_URL to test the store against a real PostgreSQL';
-  test('the store reports a document that is not an object', { skip }, async () => {
-    const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
-    const pool = new Pool({ connectionString: URL, options: '-c search_path=li_conv' });
-    const admin = new Pool({ connectionString: URL });
-    await admin.query('DROP SCHEMA IF EXISTS li_conv CASCADE');
-    await admin.query('CREATE SCHEMA li_conv');
-    const store = new PostgresStore({ pool, workspaceId: 'local', logger: { warn() {} } });
-    await store.migrate();
-    await store.packets.insert({
-      packet_id: 'pkt_1', lead_id: 'L1', job_id: 'rjob_1', research_status: 'complete',
-      digital_footprint: { state: 'clean' }, requested_domain: 'acme.test',
-      captured_at: '2026-09-01T00:00:00.000Z', freshness: { expires_at: '2026-09-02T00:00:00.000Z' }, created_at: '2026-09-01T00:00:00.000Z',
-      facts: [], findings: [], strengths: [], not_measured: [], limitations: [], source_references: [],
-    });
-    // A document that is valid JSON but not a packet.
-    await store.run("UPDATE li_evidence_packets SET packet_json = '\"not a packet\"'::jsonb WHERE packet_id = 'pkt_1'");
-    const read = await store.packets.get('pkt_1');
-    assert.equal(read, null, 'the row is not trusted');
-    assert.ok(store.corruptRows.length > 0, 'the corrupt row is reported');
-    await admin.query('DROP SCHEMA IF EXISTS li_conv CASCADE');
-    await pool.end();
-    await admin.end();
+  const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
+  const URL = process.env.ZTECH_PG_URL;
+  const pool = new Pool({ connectionString: URL, options: '-c search_path=li_conv' });
+  const admin = new Pool({ connectionString: URL });
+  await admin.query('DROP SCHEMA IF EXISTS li_conv CASCADE');
+  await admin.query('CREATE SCHEMA li_conv');
+  const store = new PostgresStore({ pool, workspaceId: 'local', logger: { warn() {} } });
+  await store.migrate();
+  await store.packets.insert({
+    packet_id: 'pkt_1', lead_id: 'L1', job_id: 'rjob_1', research_status: 'complete',
+    digital_footprint: { state: 'clean' }, requested_domain: 'acme.test',
+    captured_at: '2026-09-01T00:00:00.000Z', freshness: { expires_at: '2026-09-02T00:00:00.000Z' }, created_at: '2026-09-01T00:00:00.000Z',
+    facts: [], findings: [], strengths: [], not_measured: [], limitations: [], source_references: [],
   });
+  // A document that is valid JSON but not a packet.
+  await store.run("UPDATE li_evidence_packets SET packet_json = '\"not a packet\"'::jsonb WHERE packet_id = 'pkt_1'");
+  const read = await store.packets.get('pkt_1');
+  assert.equal(read, null, 'the row is not trusted');
+  assert.ok(store.corruptRows.length > 0, 'the corrupt row is reported');
+  await admin.query('DROP SCHEMA IF EXISTS li_conv CASCADE');
+  await pool.end();
+  await admin.end();
 });
 
 test('the placeholders are rewritten, and a question mark in a literal is left alone', () => {
