@@ -81,6 +81,20 @@ const PROVIDER_RESULT_SCHEMA = {
           value: scalar,
           sourceUrl: S.nullableText(2048),
           untrusted: { type: 'boolean' },
+          // The provider's own record of where the fact came from. Optional:
+          // a provider that does not report a source simply omits it.
+          source: {
+            type: 'object',
+            required: ['type', 'url', 'fetch_time', 'response_hash', 'excerpt'],
+            properties: {
+              type: { type: 'string', minLength: 1, maxLength: 50 },
+              url: S.nullableText(2048),
+              fetch_time: S.nullableIsoDate,
+              response_hash: S.nullableText(80),
+              excerpt: S.nullableText(300),
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
@@ -99,6 +113,7 @@ const PROVIDER_RESULT_SCHEMA = {
           basis: { type: 'string', enum: BASES },
           observed: S.text(4000),
           recommendation: S.text(4000),
+          whatItMeans: S.nullableText(2000),
           urls: S.stringList(50, 2048),
           factKeys: S.stringList(50, 200),
         },

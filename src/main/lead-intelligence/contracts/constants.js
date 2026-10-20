@@ -25,8 +25,22 @@ const PACKET_OUTCOMES = Object.freeze(['complete', 'partial', 'failed']);
 const COMPLETENESS_LEVELS = Object.freeze(['complete', 'partial', 'none']);
 
 const SEVERITIES = Object.freeze(['critical', 'high', 'medium', 'low', 'info']);
-/** Zuni-SEO finding basis: standard / research / heuristic. `unknown` when not provided. */
-const BASES = Object.freeze(['standard', 'research', 'heuristic', 'unknown']);
+/**
+ * Zuni-SEO finding basis, from the research contract v1:
+ *   observed   - directly measured at the site (the fact was seen, not inferred)
+ *   standard   - a standard, rule-based check
+ *   research   - a research-derived finding
+ *   heuristic  - an estimate without a verified magnitude
+ *   unknown    - the provider did not state a basis
+ *
+ * `observed` was added when the Zuni-SEO v1 envelope was mapped natively
+ * (audit gap G-40). The real provider emits it, and reducing it to `unknown`
+ * discarded genuine information. The value is deliberately NOT in the pitch
+ * eligibility list in agent/LeadAgent.js - a finding may only be pitched with
+ * a `standard` or `research` basis - so this widening changes what is
+ * RECORDED, not what is claimed.
+ */
+const BASES = Object.freeze(['standard', 'research', 'heuristic', 'observed', 'unknown']);
 
 const FOOTPRINT = Object.freeze({
   NOT_CHECKED: 'NOT_CHECKED',

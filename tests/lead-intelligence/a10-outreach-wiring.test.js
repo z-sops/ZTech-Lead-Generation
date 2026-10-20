@@ -139,8 +139,11 @@ test('A10 mapper: documented defaults apply — unknown basis, ai_access -> othe
   assert.equal(result.outcome, 'failed', 'no_crawlable_content maps to the failed outcome');
   assert.equal(result.areas[DEFAULTS.aiAccessArea], DEFAULTS.areaStatus, 'the ai_access area is explicitly unknown');
 
-  // A GENUINE v1 basis is preserved; only a basis the contract cannot express
-  // (v1 "observed") or an absent one becomes `unknown`. Neither is invented.
+  // A GENUINE v1 basis is preserved. The research contract's basis vocabulary
+  // is observed | standard | research | heuristic, and ZTech's now carries
+  // `observed` too (audit gap G-40), so the real basis survives instead of
+  // being flattened. It is still never invented: an absent basis becomes
+  // `unknown`, and nothing is ever promoted to `standard`.
   const withBasis = round1PacketMapper(normalizeRound1Record({
     id: 'r1', lead_ref: '5', status: 'complete', domain: 'acme.com', created_at: CLOCK_ISO, updated_at: CLOCK_ISO,
     result: zuniV1Packet(),
@@ -148,7 +151,9 @@ test('A10 mapper: documented defaults apply — unknown basis, ai_access -> othe
   const standard = withBasis.findings.find((g) => g.ruleId === 'meta_description_missing');
   const observed = withBasis.findings.find((g) => g.ruleId === 'slow_server_response');
   assert.equal(standard.basis, 'standard', 'a genuine standard basis survives');
-  assert.equal(observed.basis, DEFAULTS.observedBasis, 'an observed basis becomes unknown, never "standard"');
+  assert.equal(observed.basis, 'observed', 'a genuine observed basis survives');
+  assert.notEqual(observed.basis, 'standard', 'an observed basis is never promoted to standard');
+  assert.notEqual(observed.basis, 'research', 'an observed basis is never promoted to research');
 
   // No basis at all: the explicit default, never a guess.
   const basisless = JSON.parse(JSON.stringify(zuniV1Packet()));

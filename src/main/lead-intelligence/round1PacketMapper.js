@@ -32,7 +32,7 @@
  */
 
 const { mapZuniSeoEnvelope } = require('./providers/envelopeMapper');
-const { AREAS, AREA_STATUS } = require('./contracts/constants');
+const { AREAS } = require('./contracts/constants');
 
 /**
  * Explicit A10 defaults. Each one is a deliberate "we do not know" answer, never
@@ -115,11 +115,20 @@ function fromZuniV1(packet, record) {
 
   const completeness = {};
   const rawCompleteness = isObject(packet.completeness) ? packet.completeness : {};
+  // The contract's ai_access section has no ZTech area. It is not folded into
+  // an area; an incomplete section is reported as a limitation instead, so
+  // nothing is claimed about an area the evidence does not belong to.
   for (const [section, entry] of Object.entries(rawCompleteness)) {
     const area = ZUNI_V1_AREAS[section] || DEFAULTS.area;
     if (area === DEFAULTS.area) continue;
     const status = isObject(entry) ? text(entry.status, 30).toLowerCase() : text(entry, 30).toLowerCase();
-    if (AREA_STATUS.includes(status)) completeness[area] = status;
+    // The raw section state ("complete" / "partial" / "failed") is passed on to
+    // the shared mapper, which owns the translation to a ZTech area status
+    // (complete -> measured). Filtering it here against the ZTech vocabulary
+    // silently DROPPED every v1 section, because the contract's vocabulary
+    // (complete | partial | not_run | failed) is not the ZTech one
+    // (measured | not_measured | failed).
+    if (status) completeness[area] = status;
   }
 
   const facts = asArray(packet.facts).map((f) => {
@@ -134,6 +143,15 @@ function fromZuniV1(packet, record) {
       area: text(f.area, 40),
       untrusted: true,
       source_url: text(source.url, 2048) || null,
+      // The provider's own provenance record for this fact, carried through
+      // unchanged so the evidence chain is not lost.
+      source: {
+        type: text(source.type, 50),
+        url: text(source.url, 2048) || null,
+        fetch_time: text(source.fetch_time, 40) || null,
+        response_hash: text(source.response_hash, 80) || null,
+        excerpt: text(source.excerpt, 300) || null,
+      },
     };
   }).filter(Boolean);
 
@@ -151,12 +169,14 @@ function fromZuniV1(packet, record) {
       severity: text(g.severity, 30).toLowerCase(),
       // v1 DOES carry a basis; it is passed through so genuine data is not
       // discarded. The shared mapper reduces a basis outside the ZTech
-      // vocabulary (e.g. v1 "observed") to `unknown` rather than guessing.
+      // vocabulary to `unknown` rather than guessing.
       basis: text(g.basis, 30).toLowerCase() || DEFAULTS.observedBasis,
       area: text(g.area, 40) || text(g.section, 40),
       // observation -> observed
       observed: text(g.observation, 4000),
       recommendation: text(g.recommendation, 4000),
+      // the contract's plain-language explanation, when it has one
+      what_it_means: g.what_it_means ? text(g.what_it_means, 2000) : null,
       // affectedUrls -> urls
       urls: asArray(g.affected_urls).filter((u) => typeof u === 'string').slice(0, 50).map((u) => text(u, 2048)),
       // factIds -> fact_keys, keeping only ids this record actually carries.
@@ -184,10 +204,42 @@ function fromZuniV1(packet, record) {
   }).filter(Boolean);
 
   const limitations = asArray(packet.limits).map((l) => {
-    if (typeof l === 'string') return { code: 'ROUND1_LIMIT', message: text(l, 1000) };
-    if (isObject(l)) return { code: text(l.code, 100) || 'ROUND1_LIMIT', message: text(l.message, 1000) };
+    if (typeof l === 'string') return { code: 'PROVIDER_LIMIT', message: text(l, 1000) };
+    if (isObject(l)) return { code: text(l.code, 100) || 'PROVIDER_LIMIT', message: text(l.message, 1000) };
     return null;
   }).filter(Boolean);
+
+  // A research section that did not complete is reported as a limitation. The
+  // contract's ai_access section has no ZTech area, so it is never folded into
+  // one; the same limitation is produced by the shared v1 mapper.
+  for (const [section, entry] of Object.entries(isObject(packet.completeness) ? packet.completeness : {})) {
+    const area = ZUNI_V1_AREAS[section] || DEFAULTS.area;
+    if (area !== DEFAULTS.area) continue;
+    const status = isObject(entry) ? text(entry.status, 30).toLowerCase() : text(entry, 30).toLowerCase();
+    if (status && status !== 'complete') {
+      limitations.push({
+        code: 'PROVIDER_SECTION_INCOMPLETE',
+        message: `The ${section} section of the research did not complete (${status}).`,
+      });
+    }
+  }
+
+  // The contract records no top-level source list, but every fact carries its
+  // own source. Distinct (type, url) pairs become the source references, so
+  // the provenance of the evidence survives into the packet.
+  const sources = [];
+  const seenSources = new Set();
+  for (const f of asArray(packet.facts)) {
+    if (!isObject(f)) continue;
+    const source = isObject(f.source) ? f.source : {};
+    const url = text(source.url, 2048);
+    if (!url) continue;
+    const kind = text(source.type, 50) || 'page';
+    const key = `${kind}|${url}`;
+    if (seenSources.has(key)) continue;
+    seenSources.add(key);
+    sources.push({ url, kind });
+  }
 
   const redirectedFrom = text(subject.redirected_from, 2048);
   // Round-1's own `availability` is authoritative for the outcome: a job can be
@@ -211,8 +263,9 @@ function fromZuniV1(packet, record) {
     strengths,
     not_measured: notMeasured,
     limitations,
-    // v1 records no per-URL source list; nothing is invented.
-    sources: [],
+    // The v1 envelope records no top-level source list; the per-fact sources
+    // are used instead, so nothing is invented and nothing is lost.
+    sources,
   };
 }
 

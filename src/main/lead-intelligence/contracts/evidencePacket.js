@@ -31,6 +31,21 @@ const FACT_SCHEMA = {
     value: scalar,
     untrusted: { type: 'boolean' },
     source_url: S.nullableText(2048),
+    // The provider's own provenance record for this fact. Optional, so a
+    // packet written before the research contract was mapped natively stays
+    // valid: it simply has no `source` on its facts.
+    source: {
+      type: 'object',
+      required: ['type', 'url', 'fetch_time', 'response_hash', 'excerpt'],
+      properties: {
+        type: { type: 'string', minLength: 1, maxLength: 50 },
+        url: S.nullableText(2048),
+        fetch_time: S.nullableIsoDate,
+        response_hash: S.nullableText(80),
+        excerpt: S.nullableText(300),
+      },
+      additionalProperties: false,
+    },
     provenance: PROVENANCE_SCHEMA,
   },
   additionalProperties: false,
@@ -48,6 +63,7 @@ const FINDING_SCHEMA = {
     basis: { type: 'string', enum: BASES },
     observed: S.text(4000),
     recommendation: S.text(4000),
+    what_it_means: S.nullableText(2000),
     urls: S.stringList(50, 2048),
     fact_ids: refList,
     provenance: PROVENANCE_SCHEMA,
@@ -232,6 +248,8 @@ function buildEvidencePacket({ leadId, jobId, identity, provider, result, freshn
       value: f.value,
       untrusted: Boolean(f.untrusted),
       source_url: f.sourceUrl == null ? null : f.sourceUrl,
+      // The provider's provenance record, when it reported one.
+      ...(f.source ? { source: f.source } : {}),
       provenance: makeProvenance({ ...base, source_url: f.sourceUrl, fact_id: factId }),
     };
   });
@@ -260,6 +278,7 @@ function buildEvidencePacket({ leadId, jobId, identity, provider, result, freshn
       basis: g.basis,
       observed: g.observed,
       recommendation: g.recommendation || '',
+      what_it_means: g.whatItMeans == null ? null : g.whatItMeans,
       urls: (g.urls || []).slice(0, 50),
       fact_ids: resolve(g.factKeys, `Finding ${g.ruleId}`),
       provenance: makeProvenance({ ...base, source_url: (g.urls && g.urls[0]) || null, finding_id: findingId }),

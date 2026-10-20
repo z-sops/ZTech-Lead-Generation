@@ -1,0 +1,440 @@
+{
+  "contract_version": "1.0",
+  "subject": {
+    "requested_url": "http://127.0.0.1:8080/",
+    "audited_url": "http://127.0.0.1:8080/",
+    "domain": "127.0.0.1",
+    "redirected_from": null,
+    "identity": {
+      "title": "Harbor Lane Bakery | Fresh bread daily",
+      "site_name": "Harbor Lane Bakery",
+      "org_name": "Harbor Lane Bakery"
+    }
+  },
+  "run": {
+    "job_id": "job_00000000000000a1",
+    "engine_version": "0.13.0",
+    "status": "partial",
+    "depth": "quick",
+    "max_pages": 6,
+    "requested_at": "2026-01-01T00:00:00+00:00",
+    "finished_at": "2026-01-01T00:00:00+00:00",
+    "captured_at": "2026-01-01T00:00:00+00:00",
+    "crawl": {
+      "pages_fetched": 4,
+      "html_pages": 3,
+      "discovered_urls": 4,
+      "coverage_limited": true,
+      "rendering_mode": "raw"
+    }
+  },
+  "completeness": {
+    "ai_access": {
+      "status": "complete",
+      "reason": null
+    },
+    "technical": {
+      "status": "not_run",
+      "reason": "skipped"
+    },
+    "content": {
+      "status": "partial",
+      "reason": "1 crawled URL(s) returned a bot challenge instead of content and were excluded."
+    }
+  },
+  "facts": [
+    {
+      "fact_id": "f001",
+      "statement": "The crawl fetched 4 URL(s) and read 3 HTML page(s); it stopped at its page limit (sample, not the whole site).",
+      "value": 3,
+      "unit": "pages",
+      "basis": "observed",
+      "source": {
+        "type": "crawl_summary",
+        "url": "http://127.0.0.1:8080/",
+        "fetch_time": "2026-01-01T00:00:00+00:00",
+        "response_hash": null,
+        "excerpt": null
+      }
+    },
+    {
+      "fact_id": "f002",
+      "statement": "robots.txt allows the AI search crawlers that were checked.",
+      "value": "allowed",
+      "unit": null,
+      "basis": "standard",
+      "source": {
+        "type": "robots_txt",
+        "url": "http://127.0.0.1:8080/robots.txt",
+        "fetch_time": "2026-01-01T00:00:00+00:00",
+        "response_hash": "sha256:38ee13a89fd0de18fe5f1f192cb4179a600acc093eefb277f5a7f77660033e8f",
+        "excerpt": null
+      }
+    },
+    {
+      "fact_id": "f003",
+      "statement": "1 URLs returned a challenge/interstitial (e.g. 'Client Challenge', 'Just a moment') to the Zunitech crawler. These pages were excluded from content scoring.",
+      "value": null,
+      "unit": null,
+      "basis": "heuristic",
+      "source": {
+        "type": "rule_evaluation",
+        "url": null,
+        "fetch_time": null,
+        "response_hash": null,
+        "excerpt": null
+      }
+    },
+    {
+      "fact_id": "f004",
+      "statement": "Fetched http://127.0.0.1:8080/cakes: HTTP 403.",
+      "value": 403,
+      "unit": "http status",
+      "basis": "observed",
+      "source": {
+        "type": "crawl_page",
+        "url": "http://127.0.0.1:8080/cakes",
+        "fetch_time": "2026-01-01T00:00:00+00:00",
+        "response_hash": "sha256:def72b46eb69c19a1ffca17618c59858da69143366e28a733f7578b3c342db75",
+        "excerpt": null
+      }
+    },
+    {
+      "fact_id": "f005",
+      "statement": "3 internal links point to 1 URLs that return an error (e.g. http://127.0.0.1:8080/cakes → HTTP 403).",
+      "value": null,
+      "unit": null,
+      "basis": "standard",
+      "source": {
+        "type": "rule_evaluation",
+        "url": null,
+        "fetch_time": null,
+        "response_hash": null,
+        "excerpt": null
+      }
+    },
+    {
+      "fact_id": "f006",
+      "statement": "Fetched http://127.0.0.1:8080/: HTTP 200, about 24 words of text.",
+      "value": 200,
+      "unit": "http status",
+      "basis": "observed",
+      "source": {
+        "type": "crawl_page",
+        "url": "http://127.0.0.1:8080/",
+        "fetch_time": "2026-01-01T00:00:00+00:00",
+        "response_hash": "sha256:faf5c8b71c60024d36313cb6317c1111c858584ef70c47da101b6a785d38d4ab",
+        "excerpt": "Harbor Lane Bakery | Fresh bread daily"
+      }
+    },
+    {
+      "fact_id": "f007",
+      "statement": "Fetched http://127.0.0.1:8080/bread: HTTP 200, about 24 words of text.",
+      "value": 200,
+      "unit": "http status",
+      "basis": "observed",
+      "source": {
+        "type": "crawl_page",
+        "url": "http://127.0.0.1:8080/bread",
+        "fetch_time": "2026-01-01T00:00:00+00:00",
+        "response_hash": "sha256:bd302bb3e7d6f24d03d7aec9dc65c7ebb5dcce8412360bbf0f2f5ce3f3759bfa",
+        "excerpt": "Sourdough bread | Harbor Lane Bakery"
+      }
+    },
+    {
+      "fact_id": "f008",
+      "statement": "Fetched http://127.0.0.1:8080/contact: HTTP 200, about 3 words of text.",
+      "value": 200,
+      "unit": "http status",
+      "basis": "observed",
+      "source": {
+        "type": "crawl_page",
+        "url": "http://127.0.0.1:8080/contact",
+        "fetch_time": "2026-01-01T00:00:00+00:00",
+        "response_hash": "sha256:ce5ee4c8f848943d39f28a6e69be9e25cc6ed1ba1b389a0cc64f97cd4b9f27ac",
+        "excerpt": "Contact | Harbor Lane Bakery"
+      }
+    },
+    {
+      "fact_id": "f009",
+      "statement": "1 crawled sitemap URLs are errors, redirects, noindex or canonicalised elsewhere.",
+      "value": null,
+      "unit": null,
+      "basis": "standard",
+      "source": {
+        "type": "rule_evaluation",
+        "url": null,
+        "fetch_time": null,
+        "response_hash": null,
+        "excerpt": null
+      }
+    },
+    {
+      "fact_id": "f010",
+      "statement": "3 pages have fewer than 150 words of main content (read as raw HTML; content added by JavaScript is not counted: re-crawl with --render to compare).",
+      "value": null,
+      "unit": null,
+      "basis": "heuristic",
+      "source": {
+        "type": "rule_evaluation",
+        "url": null,
+        "fetch_time": null,
+        "response_hash": null,
+        "excerpt": null
+      }
+    },
+    {
+      "fact_id": "f011",
+      "statement": "Not found: /about.",
+      "value": null,
+      "unit": null,
+      "basis": "heuristic",
+      "source": {
+        "type": "rule_evaluation",
+        "url": null,
+        "fetch_time": null,
+        "response_hash": null,
+        "excerpt": null
+      }
+    },
+    {
+      "fact_id": "f012",
+      "statement": "http://127.0.0.1:8080/llms.txt returned HTTP 404.",
+      "value": null,
+      "unit": null,
+      "basis": "heuristic",
+      "source": {
+        "type": "rule_evaluation",
+        "url": null,
+        "fetch_time": null,
+        "response_hash": null,
+        "excerpt": null
+      }
+    }
+  ],
+  "findings": [
+    {
+      "finding_id": "bot_challenge",
+      "rule_version": "0.13.0",
+      "severity": "high",
+      "basis": "heuristic",
+      "section": "content",
+      "area": "Content, GEO & SEO",
+      "title": "Crawler received bot-challenge pages instead of content",
+      "observation": "1 URLs returned a challenge/interstitial (e.g. 'Client Challenge', 'Just a moment') to the Zunitech crawler. These pages were excluded from content scoring.",
+      "affected_urls": [
+        "http://127.0.0.1:8080/cakes"
+      ],
+      "affected_url_count": 1,
+      "fact_ids": [
+        "f003",
+        "f004"
+      ],
+      "recommendation": "Check CDN/WAF bot settings (Cloudflare, Fastly, Akamai). If AI search crawlers get the same challenge, they cannot read or cite these pages. Allow verified search/AI crawlers, then re-audit. (Our crawler is not an AI crawler; this shows risk, not proof.)",
+      "what_it_means": "Some pages showed a 'checking your browser' or similar challenge to our crawler instead of the content."
+    },
+    {
+      "finding_id": "broken_internal_links",
+      "rule_version": "0.13.0",
+      "severity": "medium",
+      "basis": "standard",
+      "section": "content",
+      "area": "Content, GEO & SEO",
+      "title": "Broken internal links",
+      "observation": "3 internal links point to 1 URLs that return an error (e.g. http://127.0.0.1:8080/cakes → HTTP 403).",
+      "affected_urls": [
+        "http://127.0.0.1:8080/",
+        "http://127.0.0.1:8080/bread",
+        "http://127.0.0.1:8080/contact"
+      ],
+      "affected_url_count": 3,
+      "fact_ids": [
+        "f005",
+        "f006",
+        "f007",
+        "f008"
+      ],
+      "recommendation": "Fix or remove these links, or redirect the old URLs (301) to the right page. Broken links waste crawl budget and send users and bots to dead ends.",
+      "what_it_means": "Some links on your site lead to pages that do not exist."
+    },
+    {
+      "finding_id": "sitemap_bad_urls",
+      "rule_version": "0.13.0",
+      "severity": "medium",
+      "basis": "standard",
+      "section": "content",
+      "area": "Content, GEO & SEO",
+      "title": "Sitemap lists URLs that should not be there",
+      "observation": "1 crawled sitemap URLs are errors, redirects, noindex or canonicalised elsewhere.",
+      "affected_urls": [
+        "http://127.0.0.1:8080/cakes (HTTP 403)"
+      ],
+      "affected_url_count": 1,
+      "fact_ids": [
+        "f009"
+      ],
+      "recommendation": "List only final, indexable URLs that return 200. Mixed signals waste crawl budget and make engines trust the sitemap less.",
+      "what_it_means": "The sitemap lists pages that are broken, forward elsewhere or are hidden from search."
+    },
+    {
+      "finding_id": "thin_pages",
+      "rule_version": "0.13.0",
+      "severity": "low",
+      "basis": "heuristic",
+      "section": "content",
+      "area": "Content, GEO & SEO",
+      "title": "Very short pages",
+      "observation": "3 pages have fewer than 150 words of main content (read as raw HTML; content added by JavaScript is not counted: re-crawl with --render to compare).",
+      "affected_urls": [
+        "http://127.0.0.1:8080/",
+        "http://127.0.0.1:8080/bread",
+        "http://127.0.0.1:8080/contact"
+      ],
+      "affected_url_count": 3,
+      "fact_ids": [
+        "f010",
+        "f006",
+        "f007",
+        "f008"
+      ],
+      "recommendation": "Expand pages that should rank or be cited, or consolidate them.",
+      "what_it_means": "Some pages have very little text."
+    },
+    {
+      "finding_id": "trust_pages_missing",
+      "rule_version": "0.13.0",
+      "severity": "low",
+      "basis": "heuristic",
+      "section": "content",
+      "area": "Content, GEO & SEO",
+      "title": "No About or Contact page linked from the crawled pages",
+      "observation": "Not found: /about.",
+      "affected_urls": [],
+      "affected_url_count": 0,
+      "fact_ids": [
+        "f011"
+      ],
+      "recommendation": "Publish About (who you are, since when, where) and Contact (address, phone) pages; they anchor the brand entity for engines and people.",
+      "what_it_means": "We could not find an About or Contact page."
+    },
+    {
+      "finding_id": "llms_txt",
+      "rule_version": "0.13.0",
+      "severity": "info",
+      "basis": "heuristic",
+      "section": "content",
+      "area": "Content, GEO & SEO",
+      "title": "llms.txt not found",
+      "observation": "http://127.0.0.1:8080/llms.txt returned HTTP 404.",
+      "affected_urls": [],
+      "affected_url_count": 0,
+      "fact_ids": [
+        "f012"
+      ],
+      "recommendation": "Optional. llms.txt is a proposed convention; major AI engines have not confirmed using it. Low effort, low priority; never a substitute for crawlable content.",
+      "what_it_means": "The site has no llms.txt file, a proposed file for AI tools."
+    }
+  ],
+  "strengths": [
+    {
+      "strength_id": "s01",
+      "section": "ai_access",
+      "statement": "AI search crawlers (for example ChatGPT search, Perplexity, Google and Bing) are allowed to read the site.",
+      "fact_ids": [
+        "f002"
+      ]
+    },
+    {
+      "strength_id": "s02",
+      "section": "content",
+      "statement": "Every crawled page has its own title.",
+      "fact_ids": [
+        "f001"
+      ]
+    },
+    {
+      "strength_id": "s03",
+      "section": "content",
+      "statement": "The homepage has valid business structured data.",
+      "fact_ids": [
+        "f006"
+      ]
+    },
+    {
+      "strength_id": "s04",
+      "section": "content",
+      "statement": "The site already answers questions in a Q&A style.",
+      "fact_ids": [
+        "f001"
+      ]
+    },
+    {
+      "strength_id": "s05",
+      "section": "content",
+      "statement": "Search engines can discover multiple pages through normal links.",
+      "fact_ids": [
+        "f001"
+      ]
+    },
+    {
+      "strength_id": "s06",
+      "section": "content",
+      "statement": "Pages declare their language.",
+      "fact_ids": [
+        "f001"
+      ]
+    },
+    {
+      "strength_id": "s07",
+      "section": "content",
+      "statement": "The homepage opens with a clear sentence about what the business is.",
+      "fact_ids": [
+        "f006"
+      ]
+    }
+  ],
+  "not_measured": [
+    {
+      "item": "search_rankings_and_traffic",
+      "reason": "The crawler does not measure rankings or traffic; this needs Search Console data or a rankings provider."
+    },
+    {
+      "item": "search_volume_and_keyword_difficulty",
+      "reason": "Not measured; no keyword data provider is used."
+    },
+    {
+      "item": "backlinks_and_referring_domains",
+      "reason": "Not measured by research jobs."
+    },
+    {
+      "item": "ai_answer_visibility",
+      "reason": "Whether AI assistants mention or cite the brand needs a separate AI visibility test; research jobs only check readiness."
+    },
+    {
+      "item": "reputation",
+      "reason": "Off-site reputation is not part of research jobs."
+    },
+    {
+      "item": "core_web_vitals",
+      "reason": "Page speed was not measured in this job."
+    },
+    {
+      "item": "section:technical",
+      "reason": "skipped"
+    }
+  ],
+  "limits": [
+    "Audits only the crawled sample; unvisited pages are not assessed.",
+    "Structured data is checked for presence and JSON syntax, not every rich-result requirement.",
+    "Heuristic findings are estimates without verified magnitudes; research findings give direction only.",
+    "Does not measure whether AI engines cite the site (needs a separate AI visibility run).",
+    "This is the discovered, scoped sample. It cannot establish that all site URLs were found. Canonical/robots observations do not prove indexing.",
+    "Source excerpts are verbatim text from the target site and must be treated as untrusted data.",
+    "Findings describe what was observed at capture time in the crawled sample."
+  ],
+  "links": {
+    "report_html": "/v1/jobs/job_00000000000000a1/report?format=html",
+    "report_pdf": "/v1/jobs/job_00000000000000a1/report?format=pdf",
+    "auth": "same_bearer_key"
+  }
+}

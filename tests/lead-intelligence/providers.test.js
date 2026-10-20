@@ -145,6 +145,9 @@ function fakeFetch(routes, log) {
 test('RestTransport: fixed paths, bearer token, no redirects, status mapping', async () => {
   const log = [];
   const base = 'https://seo.zunitech.example';
+  // The research contract requires an idempotency key of 8-128 characters from
+  // [A-Za-z0-9._:-] (audit gap G-39).
+  const key = 'rjob_0001';
   const t = new RestTransport({
     baseUrl: base,
     getToken: async () => 'secret-token',
@@ -158,7 +161,7 @@ test('RestTransport: fixed paths, bearer token, no redirects, status mapping', a
     }, log),
   });
   assert.deepEqual(await t.health(), { ok: true });
-  assert.deepEqual(await t.start({ url: 'https://acme.com', idempotencyKey: 'k1' }), { jobId: 'r1', status: 'queued' });
+  assert.deepEqual(await t.start({ url: 'https://acme.com', idempotencyKey: key }), { jobId: 'r1', status: 'queued' });
   assert.equal((await t.status('r1')).status, 'done');
   await assert.rejects(t.status('r2'), (e) => e.retryable && e.code === 'PROVIDER_UNAVAILABLE');
   await assert.rejects(t.status('r3'), (e) => e.blocking && e.code === 'PROVIDER_AUTH');
@@ -166,7 +169,9 @@ test('RestTransport: fixed paths, bearer token, no redirects, status mapping', a
   await assert.rejects(t.status('r1/../../admin'), (e) => e.code === 'PROVIDER_BAD_JOB_ID');
   const post = log.find((l) => l.init.method === 'POST');
   assert.equal(post.init.headers.Authorization, 'Bearer secret-token');
-  assert.equal(post.init.headers['Idempotency-Key'], 'k1');
+  assert.equal(post.init.headers['Idempotency-Key'], key);
+  // The contract requires the key in the BODY; the header is kept as well.
+  assert.equal(JSON.parse(post.init.body).idempotency_key, key);
   assert.equal(post.init.redirect, 'error');
   assert.ok(log.every((l) => l.url.startsWith(base)));
 });

@@ -725,7 +725,10 @@ test('25. the Zuni-SEO gateway and contract are untouched by the OI work', () =>
   }
   // Its contract is unchanged: same required field list.
   const contract = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'contracts', 'constants.js'), 'utf8');
-  assert.match(contract, /const BASES = Object\.freeze\(\['standard', 'research', 'heuristic', 'unknown'\]\)/);
+  // The basis vocabulary carries the research contract's own `observed` value
+  // (audit gap G-40) alongside the original four. It is additive: no existing
+  // value was removed, so a packet written before the widening is still valid.
+  assert.match(contract, /const BASES = Object\.freeze\(\['standard', 'research', 'heuristic', 'observed', 'unknown'\]\)/);
   const evidence = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'contracts', 'evidencePacket.js'), 'utf8');
   assert.match(evidence, /'packet_id', 'lead_id', 'job_id', 'contract_version'/);
   // OI never writes into the Zuni-SEO packet contract module.

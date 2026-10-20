@@ -13,10 +13,18 @@ const { assertJobId, errorForHttpStatus, withTimeout, parseJsonLimited, pickJobI
  * - The bearer token is read in the main process via getToken() at call time
  *   (SafeStorage-backed credential store). It is never stored on this object.
  *
- * Paths VERIFIED against zuni-seo src/zunitech_seo/server/app.py (2026-09-27):
+ * Paths VERIFIED against zuni-seo src/zunitech_seo/server/app.py:
  * GET /v1/research/capabilities, POST /v1/research, GET /v1/research/{job_id},
- * GET /v1/research/{job_id}/result. Whether POST /v1/research reads the Idempotency-Key
- * header is UNVERIFIED (the MCP tool's idempotency_key argument is verified).
+ * GET /v1/research/{job_id}/result.
+ *
+ * IDEMPOTENCY (audit gap G-39): the research contract requires
+ * `idempotency_key` in the REQUEST BODY of POST /v1/research, with the pattern
+ * `^[A-Za-z0-9._:-]{8,128}$`. ZuniSEO does NOT read the `Idempotency-Key`
+ * HTTP header - only the MCP tool argument was previously verified, which is
+ * why the REST transport sent the key as a header and the server answered
+ * 422 INVALID_INPUT. The key is now sent in the body (the header is kept as
+ * well, for a future server that prefers it) and is validated locally, so a
+ * malformed key is a clear local error instead of an opaque remote 422.
  */
 const DEFAULT_PATHS = Object.freeze({
   health: '/v1/research/capabilities',
@@ -24,6 +32,9 @@ const DEFAULT_PATHS = Object.freeze({
   status: '/v1/research/{id}',
   envelope: '/v1/research/{id}/result',
 });
+
+/** The research contract's idempotency_key pattern. */
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 
 class RestTransport {
   /**
@@ -84,7 +95,20 @@ class RestTransport {
   }
 
   async start({ url, idempotencyKey }) {
-    const p = await this._request('POST', 'start', { body: { url }, idempotencyKey });
+    // The research contract requires the key in the body. Validate it here so a
+    // malformed key is a clear, local, non-retryable error rather than a remote
+    // 422 the caller cannot act on.
+    if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+      throw new ProviderError(
+        'PROVIDER_CONFIG_INVALID',
+        'The research idempotency key does not satisfy the research contract (8-128 characters of A-Z a-z 0-9 . _ : -)',
+        { blocking: true },
+      );
+    }
+    const p = await this._request('POST', 'start', {
+      body: { url, idempotency_key: idempotencyKey },
+      idempotencyKey,
+    });
     const jobId = pickJobId(p);
     if (!jobId) throw new ProviderError('PROVIDER_BAD_RESPONSE', 'Research service did not return a job id');
     return { jobId, status: pickStatus(p) || 'running' };
@@ -101,4 +125,4 @@ class RestTransport {
   }
 }
 
-module.exports = { RestTransport, DEFAULT_PATHS };
+module.exports = { RestTransport, DEFAULT_PATHS, IDEMPOTENCY_KEY_PATTERN };

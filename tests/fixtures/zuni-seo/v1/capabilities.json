@@ -1,0 +1,21 @@
+{
+  "contract_version": "1.0",
+  "engine_version": "0.13.0",
+  "sections_available": [
+    "technical",
+    "ai_access",
+    "content"
+  ],
+  "depths": [
+    "quick",
+    "standard"
+  ],
+  "plan": "pro",
+  "limits": {
+    "max_pages": 200,
+    "jobs_per_day": 50,
+    "concurrent": 2,
+    "rendering_allowed": true
+  },
+  "freshness_default_hours": 0.0
+}

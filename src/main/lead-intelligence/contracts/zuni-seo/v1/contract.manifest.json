@@ -1,0 +1,11 @@
+{
+  "source": "zuni-seo",
+  "files": {
+    "src/main/lead-intelligence/contracts/zuni-seo/v1/contract.schema.json": "ac22193791b035d6b316f29b5ace8891d0ecb45e77d8d4e833449ecafc61d259",
+    "tests/fixtures/zuni-seo/v1/capabilities.json": "3440115ccaa46cf14b3b5fa1ae624c2eff58ec674890e892db0f4acc54be8456",
+    "tests/fixtures/zuni-seo/v1/research_result.bakery.json": "42ad4597aa8790d66cc4346e22267b3402b19b5e564bbcefc6753c9eeeaace25",
+    "tests/fixtures/zuni-seo/v1/research_result.bakery.local.json": "94496759230802fdf13e51ba6fb3d179c83e3dee8aed5148462f56bff421f3b3",
+    "tests/fixtures/zuni-seo/v1/research_result.pypi.json": "b44a4be7c8188d4fa659e5f299f48a55b56891e55b21a2b9379d7ac7c66c1a94",
+    "tests/fixtures/zuni-seo/v1/research_start.queued.json": "bcd6ac53530f97dd3bfc58dcd798c0ae8ccae1f3102f89c654ca26f2262cc266"
+  }
+}

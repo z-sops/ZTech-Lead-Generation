@@ -1,0 +1,7 @@
+{
+  "job_id": "job_00000000000000a1",
+  "status": "queued",
+  "reused": false,
+  "captured_at": null,
+  "poll_after_seconds": 5
+}

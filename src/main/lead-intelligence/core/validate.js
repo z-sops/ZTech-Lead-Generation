@@ -137,14 +137,17 @@ function assertValid(schema, value, label = 'input') {
 
 /* Common reusable schema fragments */
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
 const S = {
   id: { type: 'string', pattern: ID_PATTERN },
   leadId: { anyOf: [{ type: 'string', pattern: ID_PATTERN }, { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER }] },
-  isoDate: { type: 'string', maxLength: 40, pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/ },
+  isoDate: { type: 'string', maxLength: 40, pattern: ISO_DATE_PATTERN },
+  /** An ISO timestamp that the provider is allowed to report as null. */
+  nullableIsoDate: { type: 'string', maxLength: 40, pattern: ISO_DATE_PATTERN, nullable: true },
   shortText: { type: 'string', maxLength: 200 },
   text: (max) => ({ type: 'string', maxLength: max }),
   nullableText: (max) => ({ type: 'string', maxLength: max, nullable: true }),
   stringList: (maxItems, maxLength) => ({ type: 'array', maxItems, items: { type: 'string', maxLength } }),
 };
 
-module.exports = { validate, assertValid, typeOf, FORBIDDEN_KEYS, ID_PATTERN, S };
+module.exports = { validate, assertValid, typeOf, FORBIDDEN_KEYS, ID_PATTERN, ISO_DATE_PATTERN, S };
