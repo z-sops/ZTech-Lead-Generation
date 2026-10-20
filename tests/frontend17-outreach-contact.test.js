@@ -34,6 +34,7 @@
 //  10. no send/provider/credential surface; the stored number IS rendered
 
 const fs = require('fs');
+const { implSource } = require('./lead-intelligence/impl');
 const path = require('path');
 const assert = require('assert');
 
@@ -42,11 +43,11 @@ const htmlSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'renderer.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'styles.css'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
-const ipcSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+const ipcSource = implSource('outreach-ipc.js');
 const serviceSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'), 'utf8');
 const accountStoreSource = fs.readFileSync(path.join(root, 'src', 'main', 'accountStore.js'), 'utf8');
 const migrationsSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'migrations.js'), 'utf8');
-const catalogSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'enrichment', 'catalog.js'), 'utf8');
+const catalogSource = implSource('enrichment/catalog.js');
 const pkg = require(path.join(root, 'package.json'));
 
 const tests = [];
@@ -563,7 +564,7 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
       'no ' + banned + ' table was migrated');
   }
   // F17 is a widening of the existing F16 response: the gate itself is untouched.
-  assert.ok(!/contacts|channels\.whatsapp/.test(fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachGate.js'), 'utf8')),
+  assert.ok(!/contacts|channels\.whatsapp/.test(implSource('outreach/OutreachGate.js')),
     'the gate was not widened');
   // F18 declared lock update: the prepare schema now follows the ready schema, so the
   // slice is bounded by the F18 block instead of the next '});' (which used to be the

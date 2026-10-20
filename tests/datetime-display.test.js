@@ -14,6 +14,7 @@
 process.env.TZ = 'Asia/Karachi';
 
 const assert = require('assert');
+const { implSource } = require('./lead-intelligence/impl');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -73,7 +74,7 @@ test('3. no renderer date is formatted with the default locale, UTC getters or a
 
 test('4. display only: no main-process or stored timestamp format changed', () => {
   // The fix lives in the renderer. Stored values are still produced as ISO strings by main.
-  const seq = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'sequences', 'SequenceService.js'), 'utf8');
+  const seq = implSource('sequences/SequenceService.js');
   assert.ok(/toISOString\(\)/.test(seq), 'sequences still store ISO timestamps');
   const mainFiles = [];
   (function walk(d) { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (p.endsWith('.js')) mainFiles.push(p); } })(path.join(root, 'src', 'main'));

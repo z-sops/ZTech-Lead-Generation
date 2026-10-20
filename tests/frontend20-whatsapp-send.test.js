@@ -42,6 +42,7 @@
 // S-section: declared surface locks.
 
 const fs = require('fs');
+const { implSource } = require('./lead-intelligence/impl');
 const { withTrustOffer, grantTrustForLeadsSync } = require('./trust-fixture'); // F26.5
 const path = require('path');
 const assert = require('assert');
@@ -49,10 +50,10 @@ const assert = require('assert');
 const root = path.join(__dirname, '..');
 const serviceSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'), 'utf8');
 const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'renderer.js'), 'utf8');
-const contractSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'contract.js'), 'utf8');
+const contractSource = implSource('persistence/contract.js');
 const migration005 = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'migrations', '005_whatsapp_send.sql'), 'utf8');
-const whatsappProviderSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'whatsapp', 'WhatsAppProvider.js'), 'utf8');
-const whatsappConfigSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'whatsapp', 'sendConfig.js'), 'utf8');
+const whatsappProviderSource = implSource('outreach/whatsapp/WhatsAppProvider.js');
+const whatsappConfigSource = implSource('outreach/whatsapp/sendConfig.js');
 const { MemoryStore } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'MemoryStore.js'));
 const { WhatsAppProvider, validateWhatsAppMessage } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'whatsapp', 'WhatsAppProvider.js'));
 const { evaluateSendCapability, checkFromNumber } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'whatsapp', 'sendConfig.js'));
@@ -503,7 +504,7 @@ test('B3. message validation is the provider\'s own, and refuses before any send
 
 // ============================================================ C. IPC
 
-const ipcSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+const ipcSource = implSource('outreach-ipc.js');
 const { registerOutreachIpc, CHANNELS, INPUT_SCHEMAS } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'));
 
 function ipcHarness(outreach, { trusted = true } = {}) {

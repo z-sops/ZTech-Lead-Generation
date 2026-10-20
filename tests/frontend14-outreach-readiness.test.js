@@ -21,6 +21,7 @@
 //  10. delivery capability comes from the backend, never guessed in the renderer
 
 const fs = require('fs');
+const { implSource } = require('./lead-intelligence/impl');
 const path = require('path');
 const assert = require('assert');
 
@@ -30,8 +31,8 @@ const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'rende
 const cssSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'styles.css'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
 const serviceSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'), 'utf8');
-const gateSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachGate.js'), 'utf8');
-const contractSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'contract.js'), 'utf8');
+const gateSource = implSource('outreach/OutreachGate.js');
+const contractSource = implSource('persistence/contract.js');
 const migrationsSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'migrations.js'), 'utf8');
 const pkg = require(path.join(root, 'package.json'));
 

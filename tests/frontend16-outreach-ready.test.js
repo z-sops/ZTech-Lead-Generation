@@ -19,6 +19,7 @@
 //   9. no new persisted ready status, flag or table
 
 const fs = require('fs');
+const { implSource } = require('./lead-intelligence/impl');
 const path = require('path');
 const assert = require('assert');
 
@@ -26,9 +27,9 @@ const root = path.join(__dirname, '..');
 const htmlSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'renderer.js'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
-const ipcSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+const ipcSource = implSource('outreach-ipc.js');
 const serviceSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'), 'utf8');
-const gateSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachGate.js'), 'utf8');
+const gateSource = implSource('outreach/OutreachGate.js');
 const contract = require(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'contract.js'));
 const { MemoryStore } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'MemoryStore.js'));
 const { OutreachService } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'));
@@ -560,7 +561,7 @@ test('8. preload is read-only, Campaigns stays disabled, and F12-F15 are untouch
 
 test('9. no new persisted ready status, flag or table exists', () => {
   // The three pitch statuses are untouched and still the only persisted ones.
-  const contractSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'contract.js'), 'utf8');
+  const contractSource = implSource('persistence/contract.js');
   const statuses = (contractSource.match(/PITCH_STATUSES = Object\.freeze\(\[([^\]]*)\]/s) || [])[1] || '';
   assert.deepStrictEqual(statuses.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean),
     ['draft', 'insufficient_evidence', 'needs_revision'], 'no ready status was added to the pitch model');

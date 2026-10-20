@@ -6,6 +6,7 @@
 // provider-independent part. Gmail send / read-back / sync wait for Step 1A and are NOT here.
 
 const assert = require('assert');
+const { implSource } = require('./lead-intelligence/impl');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
@@ -135,7 +136,7 @@ test('1b. Microsoft connect is refused with MAILBOX_PROVIDER_UNVERIFIED before a
   await assert.rejects(svc.connect({ provider: 'microsoft365' }), (e) => e.code === 'MAILBOX_PROVIDER_UNVERIFIED' && e.message === 'Microsoft 365 — verification required before activation');
   assert.strictEqual(browser.opened.length, 0, 'no browser opened');
   assert.strictEqual(google.calls.length, 0, 'nothing contacted');
-  const src = fs.readFileSync(path.join(LI, 'mailbox', 'graph', 'GraphMailboxTransport.js'), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const src = implSource('mailbox/graph/GraphMailboxTransport.js').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
   assert.ok(!/Mail\.(Send|Read|ReadBasic|ReadWrite)|graph\.microsoft\.com|login\.microsoftonline|fetch|scope/i.test(src), 'the Graph transport requests no scope and reaches no endpoint');
   const ipc = ipcFor(svc);
   const r = await ipc.call(MAILBOX_CHANNELS_IPC.CONNECT, { provider: 'microsoft365' });
@@ -502,9 +503,9 @@ test('6b. a mailbox can never report a bounce, a complaint or a WhatsApp event (
 });
 
 test('6c. no renderer path can claim source "mailbox": the trust IPC never forwards a source', () => {
-  const src = fs.readFileSync(path.join(LI, 'trust', 'trust-ipc.js'), 'utf8');
+  const src = implSource('trust/trust-ipc.js');
   assert.ok(!/'mailbox'/.test(src) && !/source\s*:/.test(src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '').replace(/source:\s*'user'/g, '')), 'the trust IPC sets no mailbox source');
-  const mipc = fs.readFileSync(path.join(LI, 'mailbox', 'mailbox-ipc.js'), 'utf8');
+  const mipc = implSource('mailbox/mailbox-ipc.js');
   assert.ok(!/intake/.test(mipc), 'the mailbox IPC cannot write trust events');
 });
 

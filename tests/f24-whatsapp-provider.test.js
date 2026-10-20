@@ -25,7 +25,14 @@ const path = require('path');
 const assert = require('assert');
 
 const root = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+// M0: a moved Lead Intelligence module is read from the shared package.
+const { implSource } = require('./lead-intelligence/impl');
+const read = (p) => {
+  // M0: a moved Lead Intelligence module is read from the shared package.
+  const rel = p.split(path.sep).join('/');
+  if (rel.startsWith('src/main/lead-intelligence/')) return implSource(rel.slice('src/main/lead-intelligence/'.length));
+  return fs.readFileSync(path.join(root, p), 'utf8');
+};
 
 const serviceSource = read(path.join('src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'));
 const whatsappConfigSource = read(path.join('src', 'main', 'lead-intelligence', 'outreach', 'whatsapp', 'whatsappConfig.js'));

@@ -10,6 +10,7 @@
  */
 
 const { test } = require('node:test');
+const { implSource } = require('./impl');
 const assert = require('node:assert/strict');
 const path = require('path');
 
@@ -718,18 +719,18 @@ test('24e. the bridge refuses to invent an observation for an unavailable provid
 test('25. the Zuni-SEO gateway and contract are untouched by the OI work', () => {
   const fs = require('fs');
   const root = path.join(__dirname, '..', '..');
-  const zuni = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'research', 'ProspectIntelligenceGateway.js'), 'utf8');
+  const zuni = implSource('research/ProspectIntelligenceGateway.js');
   // The Zuni-SEO gateway must not know OI exists.
   for (const token of ['opportunity', 'Opportunity', 'oiContract', 'oi.read', 'IntelligenceReport']) {
     assert.equal(zuni.includes(token), false, `Zuni-SEO gateway must not mention ${token}`);
   }
   // Its contract is unchanged: same required field list.
-  const contract = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'contracts', 'constants.js'), 'utf8');
+  const contract = implSource('contracts/constants.js');
   // The basis vocabulary carries the research contract's own `observed` value
   // (audit gap G-40) alongside the original four. It is additive: no existing
   // value was removed, so a packet written before the widening is still valid.
   assert.match(contract, /const BASES = Object\.freeze\(\['standard', 'research', 'heuristic', 'observed', 'unknown'\]\)/);
-  const evidence = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'contracts', 'evidencePacket.js'), 'utf8');
+  const evidence = implSource('contracts/evidencePacket.js');
   assert.match(evidence, /'packet_id', 'lead_id', 'job_id', 'contract_version'/);
   // OI never writes into the Zuni-SEO packet contract module.
   assert.equal(evidence.includes('OpportunityIntelligence'), false);
@@ -979,7 +980,7 @@ test('30. OI adds exactly one ID-only table, no send path and no change to F12-F
   }
 
   // The outreach activity enum is untouched: 7 operational events, no research event.
-  const contract = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'contract.js'), 'utf8');
+  const contract = implSource('persistence/contract.js');
   const block = contract.slice(contract.indexOf('ACTIVITY_TYPES'), contract.indexOf('ACTIVITY_TYPES') + 600);
   for (const ev of ['PITCH_APPROVED', 'OUTREACH_READY', 'OUTREACH_SEND_ATTEMPTED', 'OUTREACH_SEND_ACCEPTED', 'OUTREACH_SEND_FAILED']) {
     assert.ok(block.includes(ev), `${ev} must still exist`);

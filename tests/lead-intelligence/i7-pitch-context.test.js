@@ -9,6 +9,7 @@
  */
 
 const { test } = require('node:test');
+const { implSource } = require('./impl');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
@@ -94,7 +95,7 @@ test('2. bridge freshness comes from the one policy: expires 30 days after gener
   assert.equal(f.max_age_days, 30);
   assert.equal(Date.parse(f.expires_at) - Date.parse(f.captured_at), 30 * DAY);
   assert.equal(ctx.freshness.state, 'fresh');
-  const src = fs.readFileSync(path.join(OP, 'OpportunityIntelligenceService.js'), 'utf8');
+  const src = implSource('opportunity/OpportunityIntelligenceService.js');
   assert.match(src, /OI_FRESHNESS_POLICY\.EXPIRED_AFTER_DAYS \* 24/, 'the 30 days come from oiFreshness, not a new number');
 });
 

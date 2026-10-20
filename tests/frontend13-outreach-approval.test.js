@@ -22,6 +22,7 @@
 //   9. F12's read-only pins and the empty/error states are unchanged
 
 const fs = require('fs');
+const { implSource } = require('./lead-intelligence/impl');
 const path = require('path');
 const assert = require('assert');
 
@@ -29,9 +30,9 @@ const root = path.join(__dirname, '..');
 const htmlSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'renderer.js'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
-const ipcSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+const ipcSource = implSource('outreach-ipc.js');
 const serviceSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'), 'utf8');
-const gateSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachGate.js'), 'utf8');
+const gateSource = implSource('outreach/OutreachGate.js');
 const pkg = require(path.join(root, 'package.json'));
 
 const tests = [];

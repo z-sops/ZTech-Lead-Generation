@@ -19,6 +19,7 @@
 //  11. F12/F13/F14 behaviour is untouched
 
 const fs = require('fs');
+const { implSource } = require('./lead-intelligence/impl');
 const os = require('os');
 const path = require('path');
 const assert = require('assert');
@@ -27,7 +28,7 @@ const root = path.join(__dirname, '..');
 const htmlSource = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'renderer.js'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'preload.js'), 'utf8');
-const ipcSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+const ipcSource = implSource('outreach-ipc.js');
 const serviceSource = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'), 'utf8');
 const contract = require(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'contract.js'));
 const { MemoryStore } = require(path.join(root, 'src', 'main', 'lead-intelligence', 'persistence', 'MemoryStore.js'));

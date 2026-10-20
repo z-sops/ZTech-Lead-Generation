@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const { implSource } = require('./lead-intelligence/impl');
 const path = require('path');
 const assert = require('assert');
 
@@ -41,8 +42,8 @@ function researchChannels() {
 // Phase I2: the seven Opportunity Intelligence channels are registered by
 // registerOpportunityIntelIpc in src/main/lead-intelligence/opportunity/opportunity-ipc.js.
 function leadIntelChannels() {
-  const outreachSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
-  const opportunitySrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'opportunity', 'opportunity-ipc.js'), 'utf8');
+  const outreachSrc = implSource('outreach-ipc.js');
+  const opportunitySrc = implSource('opportunity/opportunity-ipc.js');
   const outreach = [...outreachSrc.matchAll(/'(lead-intel:[a-z-]+)'/g)].map(m => m[1]);
   const opportunity = [...opportunitySrc.matchAll(/'(lead-intel:opportunity-[a-z-]+)'/g)].map(m => m[1]);
   // I3/I4 declared lock update: the OI settings/service registrars (oi-config:*, oi-service:*).
@@ -54,19 +55,19 @@ function leadIntelChannels() {
   const outreachSettingsSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach', 'outreach-settings-ipc.js'), 'utf8');
   const outreachSettings = [...outreachSettingsSrc.matchAll(/'(outreach-settings:[a-z-]+)'/g)].map(m => m[1]);
   // I6 declared lock update: the read-only lead timeline registrar.
-  const timelineSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'timeline', 'timeline-ipc.js'), 'utf8');
+  const timelineSrc = implSource('timeline/timeline-ipc.js');
   const timelineChannels = [...timelineSrc.matchAll(/'(lead-intel:timeline)'/g)].map(m => m[1]);
   // F26.5 declared lock update: the trust registrar (five channels).
-  const trustSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'trust', 'trust-ipc.js'), 'utf8');
+  const trustSrc = implSource('trust/trust-ipc.js');
   const trustChannels = [...trustSrc.matchAll(/'(lead-intel:trust-[a-z]+)'/g)].map(m => m[1]);
   // F26.6 declared lock update: the mailbox registrar (ten channels, none sends).
-  const mailboxSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'mailbox', 'mailbox-ipc.js'), 'utf8');
+  const mailboxSrc = implSource('mailbox/mailbox-ipc.js');
   const mailboxChannels = [...mailboxSrc.matchAll(/'(lead-intel:(?:mailbox|market)-[a-z-]+)'/g)].map(m => m[1]);
   // F28 declared lock update: the sequence registrar (eight channels, none sends).
-  const sequenceSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'sequences', 'sequence-ipc.js'), 'utf8');
+  const sequenceSrc = implSource('sequences/sequence-ipc.js');
   const sequenceChannels = [...sequenceSrc.matchAll(/'(lead-intel:sequence-[a-z-]+)'/g)].map(m => m[1]);
   // F29 declared lock update: the reply-router registrar (three channels, none sends).
-  const replyRouteSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'replies', 'reply-router-ipc.js'), 'utf8');
+  const replyRouteSrc = implSource('replies/reply-router-ipc.js');
   const replyRouteChannels = [...replyRouteSrc.matchAll(/'(lead-intel:reply-route[a-z-]*)'/g)].map(m => m[1]);
   return [...outreach, ...opportunity, ...oiSettings, ...outreachSettings, ...timelineChannels, ...trustChannels, ...mailboxChannels, ...sequenceChannels, ...replyRouteChannels];
 }

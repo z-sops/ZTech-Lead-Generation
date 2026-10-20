@@ -15,6 +15,7 @@
 // that decides or sends changed.
 
 const assert = require('assert');
+const { implSource } = require('./lead-intelligence/impl');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -187,7 +188,7 @@ test('7. a ledger or mailbox read failure degrades to unknown/null and never fai
 });
 
 test('8. wiring: the gate IPC serves gateView; both tables use the mailbox note; no address or token crosses', async () => {
-  const ipcSrc = fs.readFileSync(path.join(root, 'src', 'main', 'lead-intelligence', 'outreach-ipc.js'), 'utf8');
+  const ipcSrc = implSource('outreach-ipc.js');
   assert.ok(/CHANNELS\.OUTREACH_GATE[\s\S]{0,200}outreach\.gateView\(/.test(ipcSrc));
   assert.ok(/outreachTransportNote\(g\.transport, g\.delivery\) \|\| f14DeliveryNote\(g\.delivery\)/.test(src));
   assert.ok(/outreachTransportNote\(item && item\.transport, gate\.delivery\) \|\| f16ReadyDeliveryNote\(gate\.delivery\)/.test(src));

@@ -3,6 +3,7 @@
 // F29 - migration 013 and the reply-route repositories (SqlJs + Memory twins). No network anywhere.
 
 const test = require('node:test');
+const { implSource } = require('./impl');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -88,6 +89,6 @@ test('F29 store: put is idempotent on event id; confirm changes only the confirm
 test('F29 store: the runtime declares li_reply_routes, and nothing in the store holds text', () => {
   const rt = fs.readFileSync(path.join(LI, 'lead-intelligence-runtime.js'), 'utf8');
   assert.ok(rt.includes("'li_reply_routes',"));
-  const repo = fs.readFileSync(path.join(LI, 'persistence', 'replyRouteRepos.js'), 'utf8');
+  const repo = implSource('persistence/replyRouteRepos.js');
   assert.ok(!/subject|snippet|body/i.test(repo.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')), 'the repository has no text field');
 });

@@ -4,6 +4,7 @@
 // the per-mailbox send-time query and the pure pacing rules. No network anywhere.
 
 const test = require('node:test');
+const { implSource } = require('./impl');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -298,6 +299,6 @@ test('P9. country normalisation: aliases first, ISO codes only - "UK" is GB, "EN
 });
 
 test('P8. pacing is pure: no timers, no queue, no store, no network', () => {
-  const src = fs.readFileSync(path.join(LI, 'mailbox', 'pacing.js'), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const src = implSource('mailbox/pacing.js').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
   assert.ok(!/setTimeout|setInterval|require\(['"](?!\.)|fetch|store|queue\s*[=.(]/i.test(src), 'no side effects in pacing.js');
 });

@@ -26,7 +26,15 @@ const path = require('path');
 const assert = require('assert');
 
 const root = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+// M0: a moved Lead Intelligence module is read from the shared package, where
+// its implementation now lives; everything else is read where it always was.
+const { implSource } = require('./lead-intelligence/impl');
+const LI_MARKER = 'src/main/lead-intelligence/';
+const read = (p) => {
+  const rel = p.split(path.sep).join('/');
+  if (rel.startsWith(LI_MARKER)) return implSource(rel.slice(LI_MARKER.length));
+  return fs.readFileSync(path.join(root, p), 'utf8');
+};
 
 const serviceSource = read(path.join('src', 'main', 'lead-intelligence', 'outreach', 'OutreachService.js'));
 const resendConfigSource = read(path.join('src', 'main', 'lead-intelligence', 'outreach', 'email', 'resendConfig.js'));

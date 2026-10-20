@@ -11,6 +11,7 @@
  */
 
 const { test } = require('node:test');
+const { implSource } = require('./impl');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
@@ -119,7 +120,7 @@ test('1. freshness boundaries come from the one policy module: 0, 6.9, 7, 30, 31
   assert.deepEqual({ ...f }, { state: 'stale', ageDays: 10, generatedAt: at(10.5), refreshRecommended: true });
   assert.equal(classifyOiFreshness(at(1), new Date(T0)).refreshRecommended, false);
   // No magic numbers elsewhere: the service and renderer never restate the thresholds.
-  const svcSrc = fs.readFileSync(path.join(OP, 'OpportunityIntelligenceService.js'), 'utf8');
+  const svcSrc = implSource('opportunity/OpportunityIntelligenceService.js');
   assert.equal(/\b(7|30)\s*\*\s*(24|DAY)/.test(svcSrc), false);
 });
 
@@ -146,8 +147,17 @@ test('3. freshness is shown from the stored association when OI is down', async 
 
 test('4. freshness never reaches outreach: no outreach or gate module imports it, every view says affects_outreach:false', async () => {
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
-  const users = walk(LI).filter((f) => f.endsWith('.js') && fs.readFileSync(f, 'utf8').includes('oiFreshness'));
-  assert.deepEqual(users.map((f) => path.relative(OP, f)).sort(), ['OpportunityIntelligenceService.js']);
+  // M0: the moved modules now live in the shared package, and the desktop
+  // tree keeps a compatibility shim at each original path. A shim is not an
+  // implementation, so it must not be read as one.
+  const isShim = (f) => fs.readFileSync(f, 'utf8').includes('M0 compatibility shim');
+  const packageTree = path.join(__dirname, '..', '..', 'packages', 'lead-intelligence', 'src');
+  const implementations = [
+    ...walk(packageTree),
+    ...walk(LI).filter((f) => !isShim(f)),
+  ];
+  const users = implementations.filter((f) => f.endsWith('.js') && fs.readFileSync(f, 'utf8').includes('oiFreshness'));
+  assert.deepEqual(users.map((f) => path.basename(f)).sort(), ['OpportunityIntelligenceService.js']);
   const b = await build();
   const views = [await b.run(), await b.svc.latestForLead({ leadId: LEAD })];
   b.now.t += 40 * DAY;
@@ -159,7 +169,9 @@ test('4. freshness never reaches outreach: no outreach or gate module imports it
 
 test('5. nothing runs by itself: no timers in the I5 modules, and opening the drawer never posts', async () => {
   for (const f of ['oiFreshness.js', 'OpportunityRefreshLedger.js', 'OpportunityIntelligenceService.js']) {
-    const src = fs.readFileSync(path.join(OP, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    // M0: these modules moved to the shared package, so the source is read
+    // from there.
+    const src = implSource(`opportunity/${f}`).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     assert.equal(/setInterval|setTimeout|setImmediate|schedule/i.test(src), false, f);
   }
   const b = await build();

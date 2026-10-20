@@ -9,6 +9,7 @@
  */
 
 const { test } = require('node:test');
+const { implSource } = require('./impl');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
@@ -242,7 +243,7 @@ test('8. no network, even with OI associations present (T1)', async () => {
   const v = await tl.forLead(LEAD);
   assert.equal(fetchGuard.calls, n);
   assert.equal(v.events.filter((e) => e.kind === 'OI_REPORT_RECORDED').length, 2);
-  const src = fs.readFileSync(path.join(LI, 'timeline', 'LeadTimeline.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const src = implSource('timeline/LeadTimeline.js').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   assert.equal(/fetch|gateway|getReport|getTimeline|require\(['"]http/.test(src), false);
 });
 
@@ -271,7 +272,7 @@ test('10. every Activity type maps to one kind; an unknown type is OUTREACH_UNKN
 
 test('11. no delivered / opened / read / replied event can be produced', () => {
   for (const k of EVENT_KINDS) assert.equal(/DELIVER|OPEN(ED)?$|_READ$|REPL/i.test(k), false, k);
-  const src = fs.readFileSync(path.join(LI, 'timeline', 'LeadTimeline.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const src = implSource('timeline/LeadTimeline.js').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   assert.equal(/delivered|opened|replied/i.test(src), false);
 });
 

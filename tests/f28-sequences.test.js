@@ -5,6 +5,7 @@
 // call. Each test states the rule it pins.
 
 const assert = require('assert');
+const { implSource } = require('./lead-intelligence/impl');
 const fs = require('fs');
 const path = require('path');
 
@@ -598,13 +599,13 @@ test('9a. one send per mailbox per tick; "Pause all follow-ups" stops every tick
 });
 
 test('9b. scope (static): the scheduler only asks for due steps; nothing in F28 names Resend, the handoff or Microsoft', () => {
-  const sched = fs.readFileSync(path.join(LI, 'sequences', 'SequenceScheduler.js'), 'utf8');
+  const sched = implSource('sequences/SequenceScheduler.js');
   assert.ok(!/outreach|sendFromMailbox|sendEmail|handoff/.test(sched.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')), 'the scheduler calls only SequenceService');
   for (const f of ['SequenceService.js', 'SequenceScheduler.js', 'sequence-ipc.js']) {
     const src = fs.readFileSync(path.join(LI, 'sequences', f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
     assert.ok(!/Resend|Graph|microsoft|handoff\(|sendEmail\(|sendWhatsApp\(/i.test(src), f);
   }
-  const svc = fs.readFileSync(path.join(LI, 'sequences', 'SequenceService.js'), 'utf8');
+  const svc = implSource('sequences/SequenceService.js');
   assert.strictEqual((svc.match(/sendFromMailbox\(/g) || []).length, 1, 'exactly one send call site');
 });
 
