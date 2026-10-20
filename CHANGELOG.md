@@ -13,6 +13,73 @@ for the licence terms.
 
 ---
 
+## [Unreleased] — critical integration fixes and F1 branding (branch `feat/cloud-saas-f0-foundation`)
+
+### Fixed
+
+- **G-40 — the ZuniSEO evidence mapper could not read a real ZuniSEO envelope.**
+  It understood only a flat/legacy alias dialect, so a genuine Evidence
+  Envelope v1 either threw `MALFORMED_ENVELOPE` or produced a result with
+  **every fact and every finding dropped** — the real ids are `fact_id` and
+  `finding_id`, while the flat mapper looked for `key`, `id` and `rule_id`.
+  The v1 dialect is now mapped natively: every fact, finding, strength,
+  not-measured item and limit survives with its statement, value, severity,
+  basis, observation, recommendation, affected URLs, plain-language
+  explanation, fact references, capture time, engine version and contract
+  version. The dialect is detected from the data, the contract's integrity
+  rules are enforced (unique fact ids, resolvable references, consistent
+  affected-URL counts), and an unsupported contract version is refused.
+  The Round-1 path was also dropping **every** v1 section, because it filtered
+  the contract's section vocabulary against the ZTech one.
+- **G-39 — the REST transport sent the idempotency key as an HTTP header.**
+  The research contract requires `idempotency_key` in the request **body**, and
+  the service does not read the header, so `POST /v1/research` answered
+  `422 INVALID_INPUT`. The key is now sent in the body (the header is kept as
+  well) and is validated locally against the contract pattern.
+- **G-44 — the Opportunity Intelligence research timed out in normal use.** A
+  full research takes 20-90 s; the gateway made one synchronous call with a
+  30 s budget, so the report was never collected. The research now runs
+  through an asynchronous job lifecycle — start, poll, collect — with a
+  bounded total budget, a bounded retry on a transient poll failure, and
+  explicit `failed` / `in_progress` / `timeout` outcomes. A service without
+  the job routes is still supported.
+- **G-41 — the ZuniSEO research contract is now vendored** with a sync
+  script, a recorded SHA-256 manifest, a test that the vendored files are
+  unmodified, and a CI job that checks ZuniSEO out read-only and proves the
+  copy is still identical. The ZuniSEO repository is never modified.
+
+### Added
+
+- **F1 — the product identity and the data-directory compatibility layer.**
+  The product is **ZTech Lead Generation**, the brand is **ZuniTech**, the
+  parent company is **Zuni Enterprise**. The data directory is now resolved
+  explicitly: an installation made under the product's previous name
+  (`phone全球获客`, `phone-global-leads`, `com.whatsapp.automation`) is
+  **moved** to the new one on the first start, so no lead, credential, mailbox
+  token, consent record or setting is lost; and if the move cannot be
+  completed the old directory keeps being used rather than starting empty.
+- `src/main/paths.js` and `src/main/appPaths.js`: the one place that knows
+  where the product keeps its data. The resolution itself takes the platform
+  app-data directory as an argument, so it is not Electron-specific and runs
+  unchanged in a server deployment.
+- A fact may now carry the provider's own provenance record (type, URL, fetch
+  time, response hash, excerpt) and a finding its plain-language explanation.
+  Both are optional, so a packet written earlier stays valid.
+- The `observed` finding basis — which the real provider emits — is now a
+  first-class value instead of being flattened to `unknown`. The widening is
+  additive, and the pitch gate still allows only `standard` and `research`.
+
+### Test baseline
+
+| | Before F0 | After F0 | Now |
+|---|---|---|---|
+| Test files executed | 89 | 117 | **120** |
+| Assertions | 1,921 | 1,937 | **1,971** |
+| Failing | 0 | 0 | **0** |
+| Skipped silently | up to 37 | 0 | **0** |
+
+---
+
 ## [Unreleased] — F0 foundation (branch `feat/cloud-saas-f0-foundation`)
 
 ### Fixed

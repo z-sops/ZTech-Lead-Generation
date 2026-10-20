@@ -4,7 +4,11 @@ const { randomUUID } = require('crypto');
 const { logger } = require('./logger');
 const { writeFileAtomic } = require('./lead-intelligence/persistence/atomicFile');
 
-const DATA_DIR = path.join(require('electron').app.getPath('userData'), 'data');
+// F1: the data directory follows the resolved product data directory, so the
+// lead library, the job ledger and the Lead Intelligence tables move with the
+// rest of the data when the product identity changes. The resolution also
+// migrates an installation made under the product's previous name.
+const DATA_DIR = require('./appPaths').getAppPaths().dataPath;
 
 function csvField(value) {
   let s = value === undefined || value === null ? '' : String(value);

@@ -1,5 +1,11 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
+// F1: the product data directory is resolved FIRST, before anything reads it.
+// An installation made under the product's previous name is migrated here, so
+// no lead, credential, mailbox token, consent record or setting is lost when
+// the identity changes.
+const { applyUserDataPath } = require('./src/main/appPaths');
+applyUserDataPath();
 const { AccountStore, normalizeListQuery } = require('./src/main/accountStore');
 const { logger } = require('./src/main/logger');
 const { ProviderManager } = require('./src/main/providers/providerManager');
@@ -842,7 +848,7 @@ function createMainWindow() {
     height: 900,
     minWidth: 1200,
     minHeight: 760,
-    title: 'phone全球获客',
+    title: 'ZTech Lead Generation',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

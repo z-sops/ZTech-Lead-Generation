@@ -240,3 +240,74 @@ was lost.
 F0 review package submitted. **Nothing pushed, merged, force-pushed or
 deleted; awaiting approval.** On approval: the G-39/G-40 and G-44 work
 package, then F1.
+
+---
+
+## 2026-10-20 — Critical integration fixes and F1 branding (same branch)
+
+Continued on `feat/cloud-saas-f0-foundation` in all three ZTech repositories.
+**Nothing pushed, merged or deleted.**
+
+### G-39 / G-40 — ZuniSEO evidence mapping (ZTech Lead Generation)
+
+| | |
+|---|---|
+| **Problem** | The mapper understood only a flat/legacy alias dialect. A genuine ZuniSEO Evidence Envelope v1 either threw `MALFORMED_ENVELOPE` or produced a result with **every fact and every finding dropped** (the real ids are `fact_id` / `finding_id`; the flat mapper looked for `key` / `id` / `rule_id`). The REST transport also sent the idempotency key as an HTTP header, which the service does not read, so `POST /v1/research` answered 422. |
+| **Change** | The v1 dialect is mapped natively, from the contract's own field names. The dialect is detected from the data, never assumed. The contract's integrity rules are enforced. The idempotency key goes in the request **body** and is validated locally. |
+| **Also found** | The Round-1 path filtered the contract's section vocabulary against the ZTech one, so **every** v1 section was silently dropped and the technical and content completeness never reached the packet. |
+| **Contract widenings** | The basis vocabulary now carries the contract's own `observed` value (additive; old packets stay valid; the pitch gate still allows only `standard` and `research`). A fact may carry the provider's provenance record; a finding its plain-language explanation. Both optional. |
+| **Evidence** | 16 new assertions in `tests/lead-intelligence/zuniseo-envelope.test.js` against **ZuniSEO's own golden fixtures** (vendored read-only): every fact, finding, strength, limitation, timestamp and source survives; a regression proof that the old path dropped them; and an equivalence proof that the native v1 mapping and the Round-1 path agree. |
+| **G-41** | The contract is vendored with a sync script, a SHA-256 manifest, a test and a CI job that checks ZuniSEO out read-only. **ZuniSEO was not modified.** |
+
+### G-44 — Opportunity Intelligence job lifecycle (both repositories)
+
+| | |
+|---|---|
+| **Problem** | A full research takes 20-90 s; the gateway made one synchronous call with a 30 s budget. A routine research timed out client-side while the service kept working, and the report was never collected. |
+| **OI side** | `ResearchService` gained a job lifecycle on the **same** repository contract and the **same** `research_jobs` table: `start_job` claims the row atomically by idempotency key and runs the pipeline in the background; `job_status` reports the state, the timestamps and the error; `job_result` returns the report, refuses with `IN_PROGRESS` (retryable) while it runs, and re-raises the stored failure when it failed. `_run` was split into `_prepare` and `_execute` so both paths share one implementation. Three **additive** REST routes; the synchronous route is unchanged. |
+| **ZTech side** | The gateway drives start → poll → collect. One call keeps the 30 s budget; the whole lifecycle may take up to 180 s. A transient poll failure is retried a bounded number of times, because the run continues on the service side. Outcomes are explicit: `failed` (with OI's own error code), `in_progress` (retryable) and `timeout` — a state distinct from `unavailable`. A service without the job routes falls back to the original synchronous call. The report is still validated against the OI contract before ZTech believes it. |
+| **Evidence** | 13 new OI tests (`tests/test_job_lifecycle.py`) and 9 new ZTech tests (`tests/lead-intelligence/oi-job-lifecycle.test.js`): start/poll/collect, the replay, the conflict, the duplicate start, the failure path, the interrupted run, the malformed id, the unchanged synchronous route, the budget, the retry and the contract validation. |
+
+### F1 — branding and data compatibility (all three repositories)
+
+| | |
+|---|---|
+| **Identity** | **Zuni Enterprise** (parent) → **ZuniTech** (technology brand) → **ZTech Lead Generation** (product). Used consistently in the product metadata, the window title, both READMEs and the legal documents. |
+| **No invented registration details** | The registered entity name, registration number and registered address are **not confirmed** and are **not stated**. Every legal document carries a clearly flagged placeholder, and `scripts/check-legal.js` now **fails** if that placeholder is removed. |
+| **Data compatibility** | The product used to be shipped as `phone全球获客` / `phone-global-leads` / `com.whatsapp.automation`, which determine the user-data directory. Renaming without a migration would have silently emptied every existing installation. The data directory is now resolved explicitly: a legacy directory is **moved** to the new one on the first start, and if the move cannot be completed the **old directory keeps being used** rather than starting empty. 9 new tests. |
+| **Cloud reuse** | `src/main/paths.js` takes the platform app-data directory as an argument, so the resolution is not Electron-specific. The two module-scope Electron reads (`accountStore.js`, `logger.js`) now go through one injected resolution. **No desktop-specific architecture was added and no frontend was rewritten.** |
+| **China-region functionality** | Preserved. The Chinese text remaining in `src/renderer/renderer.js` is **internal source comments** documenting the China-region phone-number rules, which the handover requires to be preserved; it is not customer-facing branding. Translating it would also break the frontend tests, which slice the renderer by those comment markers. |
+
+### Test evidence
+
+```
+ZTech Lead Generation
+  node tests/run-all.js   -> 120 files, 1971 assertions, 0 failed, 0 skipped
+  npm run lint            -> 0 errors, 288 warnings
+  npm run check:repo      -> clean
+  npm run audit:prod      -> 0 vulnerabilities
+
+Opportunity Intelligence
+  pytest -q               -> 265 passed, 1 skipped
+  ruff                    -> All checks passed!
+  mypy                    -> no issues in 48 source files
+
+ZTech Legal
+  node scripts/check-legal.js -> 0 regressions, 11 known gaps (was 13)
+```
+
+### Still open
+
+| Gap | Severity | Note |
+|---|---|---|
+| G-44 residual | Medium | The ZTech gateway still waits for the job in one call. A caller that closes the app mid-research loses the *collection* of the result, although the run itself completes on the service. The cloud job API is F2/F4 work. |
+| G-46 | High | The OI service still has no tenant scoping, no CORS and one static bearer token. The new job routes inherit the same limits. |
+| G-58 / G-59 / G-60 | Critical | The legal rewrite is still open: the documents still describe a local-only, Gmail-only desktop app. 11 tracked gaps in `ztech-legal/docs/LEGAL-GAPS.md`. |
+| G-11 | Medium | The database `.bak` is still one generation behind. |
+| G-10 residual | Low | The `saveDB()` rewrite is the only production change in the persistence layer. |
+
+### Next
+
+The remaining F1 work: the ZuniTech visual identity (logo, design tokens, a
+unified dashboard shell) and the product-metadata/documentation pass. The
+frontend is not being rewritten — only restyled and consolidated.

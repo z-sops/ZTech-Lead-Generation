@@ -1,8 +1,8 @@
 {
-  "name": "phone-global-leads",
+  "name": "ztech-lead-generation",
   "version": "1.0.0",
-  "description": "phone全球获客",
-  "author": "",
+  "description": "ZTech Lead Generation - AI-powered business lead discovery and opportunity intelligence, by ZuniTech (Zuni Enterprise).",
+  "author": "ZuniTech",
   "main": "main.js",
   "scripts": {
     "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
@@ -42,8 +42,8 @@
     "sql.js": "^1.10.3"
   },
   "build": {
-    "appId": "com.whatsapp.automation",
-    "productName": "phone全球获客",
+    "appId": "com.zunitech.ztech-lead-generation",
+    "productName": "ZTech Lead Generation",
     "files": [
       "index.html",
       "main.js",

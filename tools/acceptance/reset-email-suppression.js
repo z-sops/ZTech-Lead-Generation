@@ -138,18 +138,27 @@ function parseArgs(argv) {
   return a;
 }
 
-/** The one ZTech database on this computer; null (pass --db) when there is none or more than one. */
+/**
+ * The one ZTech database on this computer; null (pass --db) when there is none or more than one.
+ *
+ * F1: the product's data folder is now "ZTech Lead Generation". The folders the
+ * product used before the rename are still checked, so the tool keeps working
+ * on an installation that has not been migrated yet.
+ */
+const DATA_FOLDERS = ['ZTech Lead Generation', 'ztech-lead-generation', 'phone-global-leads', 'phone全球获客', 'com.whatsapp.automation'];
 function defaultDbPath(env = process.env) {
   if (!env.APPDATA) return { file: null, found: [] };
-  const found = ['phone-global-leads', 'phone全球获客'].map((n) => path.join(env.APPDATA, n, 'data', 'whatsapp.db')).filter((f) => fs.existsSync(f));
+  const found = DATA_FOLDERS.map((n) => path.join(env.APPDATA, n, 'data', 'whatsapp.db')).filter((f) => fs.existsSync(f));
   return { file: found.length === 1 ? found[0] : null, found };
 }
 
 /** ZTech keeps the database in memory and writes it back: a reset while it runs would be overwritten. */
 // Process names via PowerShell in UTF-8 (tasklist prints in the OEM code page, which garbles the
-// packaged "phone全球获客" name). The packaged name also counts when garbled: "phone" followed only
-// by non-ASCII characters or "?". Windows' own "PhoneExperienceHost" (Phone Link) is NOT ZTech.
-const ZTECH_PROCESS = /^(electron|phone-global-leads|phone[^\x00-\x7F?]+|phone\?+|ztech)$/i;
+// packaged name). The current packaged name is "ZTech Lead Generation"; the previous ones
+// ("phone全球获客", "phone-global-leads") still count, and the garbled form counts too: "phone"
+// followed only by non-ASCII characters or "?". Windows' own "PhoneExperienceHost" (Phone Link)
+// is NOT ZTech.
+const ZTECH_PROCESS = /^(electron|ztech lead generation|ztech-lead-generation|phone-global-leads|phone[^\x00-\x7F?]+|phone\?+|ztech)$/i;
 /** The names of running processes that could be ZTech: [] when none, ['(could not check)'] when unknown. */
 function ztechRunning(exec = require('child_process').execSync, platform = process.platform) {
   if (platform !== 'win32') return [];
