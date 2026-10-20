@@ -6,6 +6,7 @@
 
 const path = require('path');
 const assert = require('assert');
+const { pathToFileURL } = require('url');
 
 const { createTrustedSender, expectedWindowUrls, normalizeUrl, DEV_PORT_FALLBACK } =
   require(path.join(__dirname, '..', 'src', 'main', 'prospect-research', 'trusted-sender.js'));
@@ -18,7 +19,10 @@ function test(name, fn) {
 }
 
 const INDEX_PATH = path.join(__dirname, '..', 'index.html');
-const INDEX_URL = 'file:///' + INDEX_PATH.replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1:');
+// The SAME helper the implementation uses. A hand-built 'file:///' + path is
+// wrong on POSIX (it produces four slashes), which is what the Linux CI run
+// reported: the app's own top frame was not recognised as trusted.
+const INDEX_URL = pathToFileURL(INDEX_PATH).href;
 
 function fakeWindow(topUrl, overrides) {
   const o = overrides || {};

@@ -484,7 +484,7 @@ function test(name, fn) {
       assert.ok(!new RegExp(banned, 'i').test(P1D_BLOCK), 'no P1-D feature surface: ' + banned);
     }
     // The provider stack is untouched.
-    for (const file of ['coreclawClient.js', 'providers/coreclawAdapter.js', 'providers/providerManager.js',
+    for (const file of ['coreClawClient.js', 'providers/coreclawAdapter.js', 'providers/providerManager.js',
       'credentialVault.js', 'proxyDetector.js']) {
       const source = fs.readFileSync(path.join(root, 'src', 'main', file), 'utf8');
       assert.ok(!/companyKey|companyId/.test(source), 'provider stack untouched: ' + file);
