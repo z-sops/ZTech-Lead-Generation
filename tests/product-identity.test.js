@@ -214,11 +214,10 @@ test('a disk failure during the copy leaves the original intact', () => {
     mkdirSync: (p, o) => { if (String(p).includes('.migrating-')) throw enospc; return fs.mkdirSync(p, o); },
     readdirSync: fs.readdirSync,
     renameSync: () => { throw enospc; },
-    cpSync: () => { throw enospc; },
-    rmSync: fs.rmSync,
-    writeFileSync: fs.writeFileSync,
-    statSync: fs.statSync,
+    writeFileSync: () => { throw enospc; },
     readFileSync: fs.readFileSync,
+    statSync: fs.statSync,
+    rmSync: fs.rmSync,
   };
 
   const r = resolveUserDataPath({ appData: root, fsImpl: broken });
@@ -241,15 +240,14 @@ test('an INTERRUPTED migration leaves no half-copied directory in place', () => 
     mkdirSync: fs.mkdirSync,
     readdirSync: fs.readdirSync,
     renameSync: fs.renameSync,
-    cpSync: (...args) => {
+    readFileSync: fs.readFileSync,
+    statSync: fs.statSync,
+    rmSync: fs.rmSync,
+    writeFileSync: (target, data) => {
       copies += 1;
       if (copies > 1) throw new Error('the process was interrupted');
-      return fs.cpSync(...args);
+      return fs.writeFileSync(target, data);
     },
-    rmSync: fs.rmSync,
-    writeFileSync: fs.writeFileSync,
-    statSync: fs.statSync,
-    readFileSync: fs.readFileSync,
   };
 
   const r = resolveUserDataPath({ appData: root, fsImpl: interrupted });

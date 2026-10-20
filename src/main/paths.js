@@ -174,6 +174,27 @@ function verifyDirectoryIntegrity(source, destination, fsImpl = fs) {
 }
 
 /**
+ * Copy a file or a directory tree, explicitly.
+ *
+ * `fs.cpSync` is deliberately NOT used: it has Windows-specific failure modes
+ * (a hard process abort with no message), and the first CI run killed one
+ * Windows job with STATUS_STACK_BUFFER_OVERRUN while it was copying. A
+ * directory copy here is a handful of lines, and it behaves identically on
+ * every platform.
+ */
+function copyTree(from, to, fsImpl = fs) {
+  const stat = fsImpl.statSync(from);
+  if (stat.isDirectory()) {
+    fsImpl.mkdirSync(to, { recursive: true });
+    for (const entry of fsImpl.readdirSync(from)) {
+      copyTree(path.join(from, entry), path.join(to, entry), fsImpl);
+    }
+    return;
+  }
+  fsImpl.writeFileSync(to, fsImpl.readFileSync(from));
+}
+
+/**
  * Copy a directory, verifying the copy and never touching the source.
  *
  * @param {string} from the source directory (never modified)
@@ -188,11 +209,7 @@ function copyDirectoryVerified(from, to, options = {}) {
   try {
     fsImpl.mkdirSync(staging, { recursive: true });
     for (const entry of fsImpl.readdirSync(from)) {
-      fsImpl.cpSync(path.join(from, entry), path.join(staging, entry), {
-        recursive: true,
-        force: true,
-        errorOnExist: false,
-      });
+      copyTree(path.join(from, entry), path.join(staging, entry), fsImpl);
     }
 
     if (verify) {
@@ -246,7 +263,7 @@ function copyDirectoryVerified(from, to, options = {}) {
     try {
       fsImpl.renameSync(staging, to);
     } catch {
-      fsImpl.cpSync(staging, to, { recursive: true, force: true, errorOnExist: false });
+      copyTree(staging, to, fsImpl);
       fsImpl.rmSync(staging, { recursive: true, force: true });
     }
 
@@ -460,9 +477,11 @@ module.exports = {
   resolveUserDataPath,
   findLegacyDirectory,
   copyDirectoryVerified,
+  copyTree,
   rollbackUserData,
   verifyDirectoryIntegrity,
   listFilesRecursive,
   hashFile,
   directoryHasContent,
+  isUsableTarget,
 };
