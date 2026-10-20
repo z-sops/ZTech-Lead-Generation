@@ -4,6 +4,9 @@
   "description": "ZTech Lead Generation - AI-powered business lead discovery and opportunity intelligence, by ZuniTech (Zuni Enterprise).",
   "author": "ZuniTech",
   "main": "main.js",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
     "start": "electron .",
@@ -51,7 +54,8 @@
       "main.js",
       "preload.js",
       "package.json",
-      "src/**/*"
+      "src/**/*",
+      "packages/lead-intelligence/**/*"
     ],
     "win": {
       "target": [

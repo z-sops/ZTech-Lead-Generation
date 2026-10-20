@@ -39,6 +39,8 @@ const nodeScope = {
     'preload.js',
     'src/main/**/*.js',
     'src/main/**/*.cjs',
+    'packages/**/src/**/*.js',
+    'packages/**/src/**/*.cjs',
     'tests/**/*.js',
     'scripts/**/*.js',
     'tools/**/*.js',
