@@ -374,8 +374,62 @@ Nothing in this programme is production-complete. The work so far is a
 **reviewable engineering milestone** with its tests, its limitations and its
 rollback path documented.
 
+### F2 — architecture and implementation plan (2026-10-20)
+
+**Branch:** `feat/f2-cloud-saas-architecture` (based on the F0/F1 head `9ac4801`).
+**Status: DESIGN FOR REVIEW — no implementation has started.**
+
+`docs/F2-CLOUD-SAAS-ARCHITECTURE.md` (1,778 lines) delivers the ten required
+items:
+
+| # | Deliverable | Section |
+|---|---|---|
+| 1 | Current-code reuse and dependency map | §2 |
+| 2 | Proposed cloud service architecture | §3 |
+| 3 | PostgreSQL entity relationship design | §4 |
+| 4 | Tenant isolation and access-control model | §5 |
+| 5 | Native CRM workflows and data contracts | §6 |
+| 6 | Customer dashboard navigation and feature specification | §7 |
+| 7 | Background-job and recovery design | §8 |
+| 8 | Authentication, secrets and billing boundaries | §9 |
+| 9 | Incremental migration plan from the Electron application | §10 |
+| 10 | Implementation milestones with acceptance criteria and tests | §11 |
+
+**The four decisions that define it:**
+
+1. **The intelligence engine is extracted, not rewritten.** The pure modules
+   under `src/main/lead-intelligence/` move into a shared
+   `@zunitech/lead-intelligence` package that both the desktop app and the
+   cloud service import. The **15 invariants** the existing tests already
+   protect (§2.4) are the acceptance criteria for the extraction.
+2. **PostgreSQL row-level security is the isolation mechanism.** Every
+   tenant-owned table carries `workspace_id` with a `FORCE`d RLS policy, and
+   the application role is **not** the table owner, so it cannot bypass the
+   policy. The cross-tenant denial suite asserts isolation *at the database
+   level*, not only in the application.
+3. **The desktop app becomes a thin client of the same service**, keeping its
+   local mode. The renderer is **not** rewritten in F2.
+4. **Every paid provider call is a durable job with a lease**, recorded in a
+   `provider_invocations` ledger whose unique idempotency key is the existing
+   `sendIdempotencyKey` pattern generalised. A retry can never bill CoreClaw
+   twice or send a second email.
+
+**Two orderings are not negotiable:** M2 (tenancy) lands before any customer
+row is written; M4 (the job queue and the invocation ledger) lands before any
+paid provider is called from the cloud.
+
+**The plan deliberately does not close these known gaps yet** — they are F2
+work, and they stay open until it is done: no tenant isolation, no cloud
+authentication, no browser-independent durable job recovery, and an OI service
+that still has one shared bearer token.
+
 ### Next
 
-The remaining F1 work: the ZuniTech visual identity (logo, design tokens, a
-unified dashboard shell) and the product-metadata/documentation pass. The
-frontend is not being rewritten — only restyled and consolidated.
+The F2 plan is submitted for review. On approval the work starts at **M0**
+(extract the shared package) and **M1** (the repository seam and the
+PostgreSQL schema) — the two milestones that are mechanical, low-risk, and that
+de-risk everything else. **M2 (tenancy and RLS) must complete before a single
+customer row is written.**
+
+The remaining F1 work — the dashboard shell and the product-metadata pass —
+runs alongside, without touching the cloud design.
