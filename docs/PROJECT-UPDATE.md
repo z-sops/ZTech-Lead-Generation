@@ -469,6 +469,76 @@ denial suite — is **awaiting authorization**.
 
 ---
 
+## 2026-10-21 — M2: secure multi-tenant database isolation
+
+**Branch:** `feat/m2-tenant-isolation` (from the accepted M1 head
+`02795dc4`). **Status: implementation complete, awaiting review.**
+
+**The tenant boundary is now a property of the DATABASE, not of the
+application.** A customer in workspace A cannot read, modify, delete,
+reference or control workspace B's records — **even when the application's
+workspace filters are missing or wrong**, because the row-level security
+policies refuse it.
+
+- **Row-level security** is ENABLED and **FORCED** on all 28 tenant-owned
+  tables, with one policy each: the row's workspace must equal the
+  transaction's context.
+- **The context is server-derived and transaction-local.** It is set by
+  `li.set_workspace()`, a `SECURITY DEFINER` function that checks the
+  **calling role** is entitled to the workspace — so a caller that passes
+  somebody else's workspace id gets an error and no context. The setting
+  disappears at COMMIT or ROLLBACK, so a pooled connection cannot carry one
+  tenant's context into another's work.
+- **Missing, invalid and mismatched contexts fail closed.** The context
+  function returns NULL, and NULL matches no row and allows no write.
+- **Four database roles**: the migrator owns the schema; the app, worker and
+  platform roles do not own a table, are not superusers and have no
+  `BYPASSRLS`. `PUBLIC` holds no privileges at all.
+- **The startup assertion** checks the live database — the role's own
+  properties, the ownership of every table, RLS enabled and forced on every
+  tenant table, the policy on every table, the tenant-table inventory, the
+  `PUBLIC` privileges, and the platform data's write permissions. The test
+  proves the assertion is real by showing it failing for a privileged role.
+- **The workspace-aware foreign keys** mean a tenant can neither reference nor
+  collide with another tenant's record. The business identifiers are
+  unchanged.
+- **The global suppression** blocks every workspace and exposes nothing: a
+  tenant may not create, change or delete one (the application refuses, and
+  so does the database), cannot see one, and asks the authorized
+  `li.is_suppressed()` — which answers with a yes or a no, never a row.
+- **The market rules** are platform data: a tenant reads them, only the
+  platform writes them.
+
+**The evidence.** The denial suite runs raw SQL as the **runtime role** — not
+the owner — and proves that `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `UPSERT`,
+joins, aggregates and cross-tenant references are all refused across two
+independent tenants, that two tenants may hold the same business keys, and
+that a missing, invalid or mismatched context fails closed. The concurrency
+suite proves the transaction's client belongs to the operation that opened
+it, that the context does not survive the transaction, and that eight
+concurrent transactions get eight connections.
+
+**The tests now run against a real PostgreSQL 16 with the production roles**,
+in a database whose schema is named `li` — the name the deployment has — so
+what the tests exercise is what a deployment runs.
+
+**What this does NOT do:** it does not authenticate anybody (M3), and it does
+not add the job queue (M4) or the break-glass path (M6). The platform role
+cannot read the tenant tables at all, which is the safe default; the audited
+break-glass path is M6's work. And the context is set by the server from the
+authenticated session — this milestone makes the **database's** answer to that
+context safe; it does not yet decide **who the caller is**.
+
+Full detail: `docs/M2-TENANT-ISOLATION.md`.
+
+### Next
+
+M2 is submitted as a **draft pull request** for review. **Nothing merged,
+force-pushed, deployed or deleted; the base branch is untouched.** M3 —
+authentication, organisations and roles — is **awaiting authorization**.
+
+---
+
 ## 2026-10-20 — Critical integration fixes and F1 branding (same branch)
 
 Continued on `feat/cloud-saas-f0-foundation` in all three ZTech repositories.

@@ -469,6 +469,28 @@ desktop adapter and the browser client speak the same language.
 | **Foreign keys are added, but `NOT VALID` then validated** | The legacy data has dangling ids; the migration must not fail on day one |
 | **Ids keep their existing formats** (`li_*`, `pkt_`, `mbx_`, `seq_`, `res_`) | The contracts, the exported files and the tests all depend on them |
 
+**M2 clarification (2026-10-21).** Two of these rules were made concrete by
+the M2 implementation, and the document is updated to match:
+
+- **The workspace context is a transaction-local setting, not a parameter.**
+  §3.4 describes `WorkspaceCtx` as a parameter on every repository method.
+  The implementation binds the store to **one** workspace and sets the
+  database's context on the exact transaction that runs the query
+  (`set_config('app.workspace_id', …, true)`), through a `SECURITY DEFINER`
+  function that verifies the **calling role** is entitled to that workspace.
+  A request therefore cannot choose the security context: a caller that
+  passes another workspace's id gets an error and no context. The repository
+  signatures are unchanged, and the isolation does not depend on a parameter
+  being passed correctly.
+- **The foreign keys that are added are the workspace-aware ones between
+  records this schema owns** — `li_sequence_steps` → `li_sequences` and
+  `li_outreach_approvals` → `li_pitch_drafts`, both
+  `FOREIGN KEY (workspace_id, id) REFERENCES … (workspace_id, id)`. They are
+  added directly rather than `NOT VALID` first, because they are created
+  empty. The legacy tables with dangling ids keep their absence of foreign
+  keys, and the composite foreign keys of §4.8 for the CRM tables remain M5's
+  work.
+
 ### 4.2 The ERD — platform and tenancy
 
 ```

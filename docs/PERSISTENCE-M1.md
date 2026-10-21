@@ -176,7 +176,7 @@ workspace, and only the platform may write it). `li_sequence_control` is
 | `li_sequence_steps` | `li_sequence_steps` | |
 | `li_sequence_events` | `li_sequence_events` | |
 | `li_sequence_gaps` | `li_sequence_gaps` | |
-| `li_sequence_control` | `li_sequence_control` | global |
+| `li_sequence_control` | `li_sequence_control` | **workspace-scoped** — one row per workspace, `PK (workspace_id, id)` with `id = 1`. One customer's pause-all must not pause another customer's sequences. |
 | `li_reply_routes` | `li_reply_routes` | |
 
 **Thirty tables, one for one. The mapping test proves it** — against the

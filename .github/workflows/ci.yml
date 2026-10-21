@@ -70,12 +70,16 @@ jobs:
       - name: Production dependency audit
         run: npm run audit:prod
 
-  # M1: the persistence contract, run against a REAL PostgreSQL 16.
+  # M1 and M2: the persistence contract, run against a REAL PostgreSQL 16.
   #
   # The same contract suite that runs against the desktop's sql.js store runs
   # here against a real PostgreSQL 16 service container, and the two must
   # produce identical results. The PostgreSQL schema, the column mapping and
   # the migration idempotency are proved against the live database too.
+  #
+  # Since M2 the suite also runs with the RUNTIME roles - the app, worker and
+  # platform roles - so the row-level security, the role separation and the
+  # cross-tenant denial are exercised as they are in a deployment.
   #
   # The service container is a plain PostgreSQL 16 with no data in it: no
   # customer data, no provider credentials, no outreach.
