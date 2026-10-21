@@ -1,0 +1,55 @@
+-- PostgreSQL 16 roles (M2).
+--
+-- Four roles, with different powers:
+--
+--   ztech_migrator  LOGIN. OWNS the schema and the tables. It is the only
+--                   role that may change the schema, and it is NEVER used by
+--                   a running service. It is the role that applies the
+--                   migrations.
+--   ztech_app       LOGIN. The API service. It is NOT the owner, it is NOT a
+--                   superuser and it does NOT have BYPASSRLS, so the
+--                   policies apply to it. It may read and write the tenant
+--                   tables, and it may set the workspace context for the
+--                   workspaces it is granted.
+--   ztech_worker    LOGIN. The background worker. The same powers as the API
+--                   for the tenant tables, and no more: it cannot touch the
+--                   platform data.
+--   ztech_platform  LOGIN. The platform console. It may READ the global
+--                   reference data and WRITE the platform's own rows: the
+--                   global suppressions and the market rules. It cannot
+--                   write a tenant's rows.
+--
+-- The passwords are placeholders that MUST be replaced by the deployment:
+-- the environment supplies them, and this file never contains a real one.
+--
+-- Applied by scripts/provision-postgres.js, as the cluster administrator.
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_migrator') THEN
+    CREATE ROLE ztech_migrator LOGIN PASSWORD 'CHANGE_ME_migrator';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_app') THEN
+    CREATE ROLE ztech_app LOGIN PASSWORD 'CHANGE_ME_app';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_worker') THEN
+    CREATE ROLE ztech_worker LOGIN PASSWORD 'CHANGE_ME_worker';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_platform') THEN
+    CREATE ROLE ztech_platform LOGIN PASSWORD 'CHANGE_ME_platform';
+  END IF;
+END;
+$$;
+
+-- The runtime roles must not be superusers and must not bypass the row
+-- security system. These are the properties the startup assertion checks in
+-- the LIVE database, and this is where they are established.
+ALTER ROLE ztech_app NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+ALTER ROLE ztech_worker NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+ALTER ROLE ztech_platform NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+ALTER ROLE ztech_migrator NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+
+-- The grants on the schema, the tables and the functions are applied by the
+-- schema migration (014_tenant_isolation.sql), which runs after the tables
+-- exist. This file only creates the roles and their attributes, because a
+-- role must exist before it can be granted anything.

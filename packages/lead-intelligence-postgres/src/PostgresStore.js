@@ -29,6 +29,14 @@ const { MAILBOX_ID_RE } = require('@zunitech/lead-intelligence/mailbox/mailboxCo
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { rewritePlaceholders, encodeValue, decodeValue, isUniqueViolation, violatedConstraint, PLATFORM_WORKSPACE_ID } = require('./dialect');
 
+const REPOSITORY_NAMES = Object.freeze({
+  jobs: true, packets: true, changes: true, savedSearches: true, segments: true, pitches: true,
+  approvals: true, activity: true, sends: true, enrichmentJobs: true, enrichmentObservations: true,
+  oiAssociations: true, oiRefreshRequests: true, suppressions: true, consents: true, provenance: true,
+  trustEvents: true, recipientRefs: true, mailboxes: true, mailboxSent: true, marketRules: true,
+  replyReviews: true, sequences: true, replyRoutes: true,
+});
+
 const ACTIVE_SQL = "('requested','preflight','started','polling','pending')";
 const E_ACTIVE_SQL = "('requested','running','pending')";
 
@@ -68,7 +76,7 @@ class PostgresStore {
   /**
    * @param {{pool: object, workspaceId?: string, role?: 'tenant'|'platform', logger?: object, now?: () => Date}} opts
    */
-  constructor({ pool, workspaceId, role = 'tenant', logger = console, now = () => new Date() }) {
+  constructor({ pool, workspaceId, role = 'tenant', schema = 'li', logger = console, now = () => new Date() }) {
     if (!pool || typeof pool.query !== 'function') throw new TypeError('a pg Pool is required');
     const ws = String(workspaceId || '');
     const isPlatform = ws === PLATFORM_WORKSPACE_ID;
@@ -76,10 +84,12 @@ class PostgresStore {
       throw new TypeError('the workspace id must be a UUID (the F2 architecture scopes every tenant table by a uuid)');
     }
     if (role !== 'tenant' && role !== 'platform') throw new TypeError('the role must be tenant or platform');
+    if (!/^[a-z_][a-z0-9_]*$/.test(String(schema))) throw new TypeError('the schema name must be a plain identifier');
     if (isPlatform && role !== 'platform') {
       throw new TypeError('the platform workspace may only be used by the platform role');
     }
     this.pool = pool;
+    this.schema = String(schema);
     this.workspaceId = ws;
     this.role = role;
     this.logger = logger;
@@ -124,6 +134,36 @@ class PostgresStore {
 
     const routes = require('./postgresReplyRouteRepos');
     this.replyRoutes = new routes.PgReplyRoutes(this);
+
+    // Every repository call runs INSIDE a transaction that carries the
+    // workspace context. Without that, the row-level security policies would
+    // see no context at all and refuse everything - which is the correct
+    // behaviour, but not the behaviour the service wants: the context must
+    // be set on the exact client that runs the query, and it must be set for
+    // every operation.
+    for (const name of Object.keys(REPOSITORY_NAMES)) {
+      this[name] = this.scoped(this[name]);
+    }
+  }
+
+  /**
+   * Wrap a repository so that every method runs in a transaction with the
+   * workspace context set.
+   *
+   * The repository's own internal transaction becomes a SAVEPOINT inside it,
+   * so the whole operation is one atomic unit with one context.
+   *
+   * @param {object} repo
+   */
+  scoped(repo) {
+    const store = this;
+    return new Proxy(repo, {
+      get(target, prop) {
+        const value = target[prop];
+        if (typeof value !== 'function') return value;
+        return (...args) => store.tx(() => value.apply(target, args));
+      },
+    });
   }
 
   /* ----------------------------- migrations ----------------------------- */
@@ -332,17 +372,21 @@ class PostgresStore {
    * committed once it has finished.
    */
   /**
-   * Run fn inside a transaction.
+   * Run fn inside a transaction, with the WORKSPACE CONTEXT set.
    *
-   * The transaction's client is held in the AsyncLocalStorage context, so it
-   * belongs to THIS operation and to nothing else: two transactions running
-   * at the same time, on this store or on another one, never share a client.
+   * The context is set with `li.set_workspace()`, which is SECURITY DEFINER
+   * and checks that the CALLING ROLE is entitled to the workspace. So a
+   * caller that passes somebody else's workspace id gets an error and no
+   * context: the request can never choose the security context.
    *
-   * A NESTED transaction joins the outer one through a SAVEPOINT: PostgreSQL
-   * has no nested transactions, and a nested one that opened its own
-   * connection would deadlock against the outer transaction's locks. A
-   * failure inside the nested transaction rolls back to its savepoint only;
-   * the outer transaction decides what happens next.
+   * The setting is transaction-local (`SET LOCAL` semantics inside the
+   * function), so it disappears at COMMIT or ROLLBACK and a pooled
+   * connection can never carry one tenant's context into another tenant's
+   * work.
+   *
+   * A NESTED transaction joins the outer one through a SAVEPOINT:
+   * PostgreSQL has no nested transactions, and a nested one that opened its
+   * own connection would deadlock against the outer transaction's locks.
    */
   async tx(fn) {
     const outer = this.txContext.getStore();
@@ -352,6 +396,7 @@ class PostgresStore {
     const context = { client, savepoint: 0 };
     try {
       await client.query('BEGIN');
+      await client.query(`SELECT ${this.schema}.set_workspace($1)`, [this.workspaceId]);
       const result = await this.txContext.run(context, () => fn(this));
       await client.query('COMMIT');
       return result;
@@ -862,9 +907,15 @@ class PgSends {
     const existing = await this.findAcceptedBySend(sendId);
     if (existing) return { ok: true, row: existing };
     try {
-      await this.s.run("UPDATE li_outreach_sends SET state = 'accepted', provider_id = ?, provider_message_id = ?, updated_at = ? WHERE send_id = ? AND state = 'attempted' AND workspace_id = ?", [
-        providerId === undefined ? null : providerId, providerMessageId === undefined ? null : providerMessageId, at, String(sendId), this.s.workspaceId,
-      ]);
+      // The UPDATE runs inside a SAVEPOINT: if the partial unique index
+      // refuses it, the transaction is still usable afterwards, so the
+      // replay lookup below can run. Without the savepoint a failed
+      // statement would abort the whole transaction.
+      await this.s.tx(async () => {
+        await this.s.run("UPDATE li_outreach_sends SET state = 'accepted', provider_id = ?, provider_message_id = ?, updated_at = ? WHERE send_id = ? AND state = 'attempted' AND workspace_id = ?", [
+          providerId === undefined ? null : providerId, providerMessageId === undefined ? null : providerMessageId, at, String(sendId), this.s.workspaceId,
+        ]);
+      });
     } catch (err) {
       const winner = await this.findAcceptedForSendOfKey(sendId);
       if (winner) return { ok: false, code: 'ALREADY_ACCEPTED', row: winner };

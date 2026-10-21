@@ -206,6 +206,10 @@ function describePersistenceContract(backend) {
 
   test(`[${label}] the approvals round-trip, and a regenerated draft drops them`, async () => {
     const store = await create();
+    // The approval refers to the pitch, so the pitch exists first. On the
+    // desktop there is no foreign key, so this changes nothing there; on
+    // PostgreSQL the reference is workspace-aware.
+    await store.pitches.upsert(pitch());
     await store.approvals.insert({ approval_id: 'ap1', pitch_id: 'p1', content_hash: 'h1', approved_by: 'Zee', approved_at: T1 });
     assert.equal((await store.approvals.latestForPitch('p1')).approved_by, 'Zee');
     await store.approvals.deleteForPitches(['p1']);

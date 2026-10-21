@@ -12,6 +12,7 @@
  */
 
 const { PLATFORM_WORKSPACE_ID } = require('./dialect');
+const { LiError } = require('@zunitech/lead-intelligence/core/errors');
 const SUPPRESSION_COLS = ['suppression_id', 'scope', 'workspace_id', 'channel', 'normalized_address', 'reason', 'source', 'created_at'];
 const CONSENT_COLS = ['consent_id', 'lead_id', 'channel', 'normalized_address', 'method', 'evidence_note', 'recorded_by', 'consented_at', 'recorded_at', 'source', 'event_id'];
 const PROVENANCE_COLS = ['lead_id', 'field', 'source_kind', 'source_ref', 'collected_at', 'backfilled', 'recorded_at'];
@@ -60,33 +61,47 @@ class PgSuppressions {
   async add(rec) {
     const v = { ...rec };
     const global = v.scope === 'global';
+    // A PLATFORM-GLOBAL suppression is the platform's own record of a
+    // contact. A tenant may not create one - the database refuses it too,
+    // through the row-level policy - and the app refuses it first, so the
+    // caller gets a clear answer instead of a constraint error.
+    if (global && this.s.role !== 'platform') {
+      throw new LiError('FORBIDDEN', 'A global suppression is the platform\'s record: only the platform may create one');
+    }
     v.workspace_id = global ? PLATFORM_WORKSPACE_ID : (v.workspace_id || this.s.workspaceId);
     await this.s.insert('li_suppressions', SUPPRESSION_COLS, SUPPRESSION_COLS.map((c) => (v[c] === undefined ? null : v[c])), { onConflict: '*', returning: false });
     return this._raw(v.scope, v.workspace_id, v.channel, v.normalized_address);
   }
 
   /**
-   * The suppression for an address, in this workspace or globally. A global
-   * hit comes back redacted.
-   */
-  async find({ channel, address, workspaceId }) {
-    const ws = workspaceId || this.s.workspaceId;
-    const own = await this._raw('workspace', ws, channel, address);
-    if (own) return freeze(own);
-    const global = await this._raw('global', PLATFORM_WORKSPACE_ID, channel, address);
-    return freeze(this._redacted(global));
-  }
-
-  /**
-   * Is this address suppressed here or globally? The answer is a yes or a no:
-   * a global row's address is never returned here either.
+   * Is this address suppressed, here or globally?
+   *
+   * It goes through `li.is_suppressed()`, the authorized function that
+   * returns a BOOLEAN. A tenant never sees a platform-global row - not its
+   * address, not its id - and it never sees another tenant's rows.
    */
   async isSuppressed({ channel, address, workspaceId }) {
     const ws = workspaceId || this.s.workspaceId;
+    const row = await this.s.one('li_suppressions', `SELECT ${this.s.schema}.is_suppressed($1, $2) AS suppressed`, [channel, address]);
+    if (row && row.suppressed !== undefined && row.suppressed !== null) return Boolean(row.suppressed);
+    // The function is the authority; this fallback only runs when the
+    // schema does not have it (an un-migrated database).
     const own = await this._raw('workspace', ws, channel, address);
     if (own) return true;
-    const global = await this._raw('global', PLATFORM_WORKSPACE_ID, channel, address);
-    return Boolean(global);
+    return Boolean(await this._raw('global', PLATFORM_WORKSPACE_ID, channel, address));
+  }
+
+  /**
+   * The suppression for an address in THIS workspace.
+   *
+   * A platform-global suppression is NOT returned: the row-level policy
+   * hides it from the tenant entirely, so there is nothing to redact. The
+   * question "is this address suppressed globally?" is answered by
+   * isSuppressed(), which returns a yes or a no and nothing else.
+   */
+  async find({ channel, address, workspaceId }) {
+    const ws = workspaceId || this.s.workspaceId;
+    return freeze(await this._raw('workspace', ws, channel, address));
   }
 
   /** The suppressions of THIS workspace. A global row is never listed. */
