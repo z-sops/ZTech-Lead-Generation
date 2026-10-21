@@ -458,7 +458,10 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA id TO ztech_identity;
 -- nothing else.
 GRANT EXECUTE ON FUNCTION li.issue_workspace_token(UUID, TEXT, UUID, UUID, INTEGER)
   TO ztech_control, ztech_identity;
-GRANT EXECUTE ON FUNCTION li.grant_workspace(UUID, TEXT) TO ztech_identity, ztech_control;
+-- The workspace ceiling is the IDENTITY SERVICE's business, and only the
+-- identity service may widen it. The control plane may issue a token and
+-- nothing else: it may not grant a workspace.
+GRANT EXECUTE ON FUNCTION li.grant_workspace(UUID, TEXT) TO ztech_identity;
 
 -- The audit log is append-only for the identity service: it may add a
 -- record, and it may not change or erase one.

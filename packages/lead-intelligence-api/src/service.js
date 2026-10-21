@@ -34,6 +34,37 @@ class AuthService {
     this.logger = logger;
   }
 
+  /**
+   * A transaction.
+   *
+   * A PostgreSQL transaction belongs to ONE connection: the BEGIN, the
+   * statements and the COMMIT must all run on the connection that was
+   * acquired for it. A pool hands out a different connection for every
+   * query, so a transaction spread over the pool is not a transaction at
+   * all - the BEGIN and the COMMIT land on different sessions, and the
+   * statements in between are not in any transaction.
+   *
+   * So this acquires a client, runs everything on it, and always gives it
+   * back: on success, on failure, and on a rollback that failed too.
+   */
+  async tx(fn) {
+    const client = await this.db.connect();
+    let began = false;
+    try {
+      await client.query('BEGIN');
+      began = true;
+      const result = await fn(client);
+      await client.query('COMMIT');
+      began = false;
+      return result;
+    } catch (err) {
+      if (began) await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   /* ----------------------------- the audit ----------------------------- */
 
   async audit(entry) {
@@ -140,34 +171,28 @@ class AuthService {
     const orgId = newId();
     const workspaceId = newId();
     const slug = `${orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${orgId.slice(0, 8)}`;
-    await this.db.query('BEGIN');
-    try {
-      await this.db.query(
+    await this.tx(async (client) => {
+      await client.query(
         'INSERT INTO id.users (user_id, email, password_hash, display_name) VALUES ($1, $2, $3, $4)',
         [userId, clean, hashPassword(password), displayName || null],
       );
-      await this.db.query(
+      await client.query(
         'INSERT INTO id.organizations (org_id, name, slug) VALUES ($1, $2, $3)',
         [orgId, orgName, slug],
       );
-      await this.db.query(
+      await client.query(
         'INSERT INTO id.workspaces (workspace_id, org_id, name) VALUES ($1, $2, $3)',
         [workspaceId, orgId, String(workspaceName || `${orgName} workspace`).trim()],
       );
-      await this.db.query(
-        `INSERT INTO id.workspace_memberships (membership_id, workspace_id, user_id, role)
-         VALUES ($1, $2, $3, 'owner')`,
+      await client.query(
+        `INSERT INTO id.workspace_memberships (membership_id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')`,
         [newId(), workspaceId, userId],
       );
-        // The database's CEILING: the role that serves the tenant may act
-        // for this workspace. It is added through the control plane, because
-        // the grants table is not the service's to write.
-        await this.db.query('SELECT li.grant_workspace($1, $2)', [workspaceId, this.roles.app]);
-        await this.db.query('COMMIT');
-      } catch (err) {
-        await this.db.query('ROLLBACK').catch(() => {});
-        throw err;
-      }
+      // The database's CEILING: the role that serves the tenant may act
+      // for this workspace. It is added through the control plane, because
+      // the grants table is not the service's to write.
+      await client.query('SELECT li.grant_workspace($1, $2)', [workspaceId, this.roles.app]);
+    });
     const issued = await this.issueSession(userId);
     await this.audit({
       user_id: userId, session_id: issued.sessionId, org_id: orgId, workspace_id: workspaceId,
@@ -180,9 +205,13 @@ class AuthService {
    * Log in. The password is checked against the stored verifier, and the
    * session token is a fresh random value.
    */
-  async login({ email, password, throttle }) {
+  async login({ email, password, throttle, address }) {
     const clean = String(email || '').trim();
-    const key = `${clean.toLowerCase()}|${throttle.address || ''}`;
+    // The throttle's key is the ADDRESS as well as the email address: a
+    // failure from one place must not lock out the same person from
+    // another, and a spray from one place must not lock out an address it
+    // does not own. The address is the CONNECTION's, not a header's.
+    const key = `${clean.toLowerCase()}|${address || ''}`;
     if (throttle.blocked(key)) {
       await this.audit({ action: 'auth.login', outcome: 'deny', reason: 'throttled' });
       throw new ServiceError(429, 'too_many_attempts', 'too many attempts; try again later');
@@ -332,7 +361,22 @@ class AuthService {
    */
   async invite(session, { orgId, workspaceId, email, role, teamId }) {
     if (!isRole(role)) throw bad('invalid_role', 'that role does not exist');
-    await this.authorize(session, workspaceId, 'member.invite');
+    const actor = await this.authorize(session, workspaceId, 'member.invite');
+    // NOBODY GRANTS A ROLE ABOVE THEIR OWN AUTHORITY. The roles are
+    // ordered, and the first is the strongest, so a grant may not be
+    // stronger than the one the inviter holds.
+    //
+    // This is what closes the self-promotion path: a manager or an admin
+    // cannot invite themselves as an owner, because the owner is above
+    // them, and the invitation is refused before it is written.
+    if (ROLES.indexOf(role) < ROLES.indexOf(actor.role)) {
+      await this.audit({
+        user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
+        action: 'member.invite', outcome: 'deny', reason: 'role_above_authority',
+        detail: { actor: actor.role, requested: role },
+      });
+      throw forbidden('role_above_authority', `you may not grant a role above your own (${actor.role})`);
+    }
     // The organization comes from the WORKSPACE, not from the caller: a
     // client may not name the organization it is inviting into.
     const workspace = await this.workspace(workspaceId);
@@ -355,8 +399,8 @@ class AuthService {
       [invitationId, targetOrg, workspaceId, target, role, teamId || null, token.hash, session.user_id, expires.toISOString()],
     );
     await this.audit({
-      user_id: session.user_id, session_id: session.session_id, org_id: orgId, workspace_id: workspaceId,
-      action: 'member.invite', outcome: 'allow', detail: { role },
+      user_id: session.user_id, session_id: session.session_id, org_id: targetOrg, workspace_id: workspaceId,
+      action: 'member.invite', outcome: 'allow', detail: { role, actor: actor.role },
     });
     return { invitationId, email: target, role, expiresAt: expires, token: token.token };
   }
@@ -379,27 +423,64 @@ class AuthService {
       });
       throw forbidden('wrong_address', 'that invitation was sent to somebody else');
     }
-    await this.db.query('BEGIN');
-    try {
-      await this.db.query(
+    // AN EXISTING MEMBERSHIP IS NOT SILENTLY UPGRADED. An invitation may
+    // not be used to change the role of somebody who is already a member:
+    // that is a role change, and it goes through the role change path, with
+    // its own authority checks and its own audit.
+    const existing = await this.membershipOf(session.user_id, invitation.workspace_id);
+    if (existing) {
+      await this.audit({
+        user_id: session.user_id, session_id: session.session_id, workspace_id: invitation.workspace_id,
+        action: 'member.invite.accept', outcome: 'deny', reason: 'already_a_member',
+        detail: { role: existing.role },
+      });
+      throw conflict('already_a_member', 'you are already a member of this workspace');
+    }
+    // THE AUTHORITY IS REVALIDATED. The inviter may have been removed, or
+    // demoted, since the invitation was written - so the grant it names is
+    // checked against the inviter's CURRENT role, and against the
+    // last-owner protection, at the moment the invitation is accepted.
+    const inviter = await this.membershipOf(invitation.invited_by, invitation.workspace_id);
+    if (!inviter) {
+      await this.audit({
+        user_id: session.user_id, session_id: session.session_id, workspace_id: invitation.workspace_id,
+        action: 'member.invite.accept', outcome: 'deny', reason: 'inviter_gone',
+      });
+      throw forbidden('inviter_gone', 'the invitation is no longer valid');
+    }
+    if (ROLES.indexOf(invitation.role) < ROLES.indexOf(inviter.role)) {
+      await this.audit({
+        user_id: session.user_id, session_id: session.session_id, workspace_id: invitation.workspace_id,
+        action: 'member.invite.accept', outcome: 'deny', reason: 'role_above_authority',
+        detail: { inviter: inviter.role, granted: invitation.role },
+      });
+      throw forbidden('role_above_authority', 'that invitation grants more than its author may grant');
+    }
+    // The membership and the consumption of the invitation are committed
+    // TOGETHER, on one connection, and the invitation row is locked so that
+    // two simultaneous acceptances cannot both take it.
+    const accepted = await this.tx(async (client) => {
+      const locked = (await client.query(
+        'SELECT * FROM id.invitations WHERE invitation_id = $1 FOR UPDATE',
+        [invitation.invitation_id],
+      )).rows[0];
+      if (!locked || locked.accepted_at || locked.revoked_at) {
+        throw conflict('invitation_used', 'that invitation was already used');
+      }
+      await client.query(
         `INSERT INTO id.workspace_memberships (membership_id, workspace_id, user_id, role, team_id)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (workspace_id, user_id) WHERE revoked_at IS NULL
-         DO UPDATE SET role = EXCLUDED.role, team_id = EXCLUDED.team_id, revoked_at = NULL`,
+         VALUES ($1, $2, $3, $4, $5)`,
         [newId(), invitation.workspace_id, session.user_id, invitation.role, invitation.team_id],
       );
-      await this.db.query('UPDATE id.invitations SET accepted_at = now() WHERE invitation_id = $1', [invitation.invitation_id]);
-      await this.db.query('COMMIT');
-    } catch (err) {
-      await this.db.query('ROLLBACK').catch(() => {});
-      throw err;
-    }
+      await client.query('UPDATE id.invitations SET accepted_at = now() WHERE invitation_id = $1', [invitation.invitation_id]);
+      return { workspaceId: invitation.workspace_id, orgId: invitation.org_id, role: invitation.role };
+    });
     await this.audit({
       user_id: session.user_id, session_id: session.session_id, org_id: invitation.org_id,
       workspace_id: invitation.workspace_id, action: 'member.invite.accept', outcome: 'allow',
       detail: { role: invitation.role },
     });
-    return { workspaceId: invitation.workspace_id, orgId: invitation.org_id, role: invitation.role };
+    return accepted;
   }
 
   /* ------------------------- the member's life ------------------------- */
@@ -425,38 +506,52 @@ class AuthService {
    */
   async removeMember(session, { workspaceId, userId }) {
     const actor = await this.authorize(session, workspaceId, 'member.remove');
-    const target = await this.membershipOf(userId, workspaceId);
-    if (!target) throw missing('no_membership', 'that person is not a member of this workspace');
-    if (target.role === 'owner' && actor.role !== 'owner') {
-      await this.audit({
-        user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
-        action: 'member.remove', outcome: 'deny', reason: 'owner_protected',
-      });
-      throw forbidden('owner_protected', 'only an owner may remove an owner');
-    }
-    if (target.role === 'owner') {
-      const owners = (await this.db.query(
-        `SELECT count(*)::int AS n FROM id.workspace_memberships
-          WHERE workspace_id = $1 AND role = 'owner' AND revoked_at IS NULL`,
+    // The membership rows are LOCKED for the duration of the decision, so
+    // two removals at the same time cannot both count the owners before
+    // either of them has removed one: a workspace can never be left
+    // without an owner.
+    return this.tx(async (client) => {
+      await client.query(
+        'SELECT membership_id FROM id.workspace_memberships WHERE workspace_id = $1 FOR UPDATE',
         [workspaceId],
-      )).rows[0].n;
-      if (owners <= 1) {
+      );
+      const target = (await client.query(
+        `SELECT membership_id, role FROM id.workspace_memberships
+          WHERE workspace_id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+        [workspaceId, userId],
+      )).rows[0];
+      if (!target) throw missing('no_membership', 'that person is not a member of this workspace');
+      if (target.role === 'owner' && actor.role !== 'owner') {
         await this.audit({
           user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
-          action: 'member.remove', outcome: 'deny', reason: 'last_owner',
+          action: 'member.remove', outcome: 'deny', reason: 'owner_protected',
         });
-        throw forbidden('last_owner', 'a workspace must keep at least one owner');
+        throw forbidden('owner_protected', 'only an owner may remove an owner');
       }
-    }
-    await this.db.query(
-      'UPDATE id.workspace_memberships SET revoked_at = now() WHERE workspace_id = $1 AND user_id = $2 AND revoked_at IS NULL',
-      [workspaceId, userId],
-    );
-    await this.audit({
-      user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
-      action: 'member.remove', outcome: 'allow', detail: { removed: userId, role: target.role },
+      if (target.role === 'owner') {
+        const owners = (await client.query(
+          `SELECT count(*)::int AS n FROM id.workspace_memberships
+            WHERE workspace_id = $1 AND role = 'owner' AND revoked_at IS NULL`,
+          [workspaceId],
+        )).rows[0].n;
+        if (owners <= 1) {
+          await this.audit({
+            user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
+            action: 'member.remove', outcome: 'deny', reason: 'last_owner',
+          });
+          throw forbidden('last_owner', 'a workspace must keep at least one owner');
+        }
+      }
+      await client.query(
+        'UPDATE id.workspace_memberships SET revoked_at = now() WHERE workspace_id = $1 AND user_id = $2 AND revoked_at IS NULL',
+        [workspaceId, userId],
+      );
+      await this.audit({
+        user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
+        action: 'member.remove', outcome: 'allow', detail: { removed: userId, role: target.role },
+      });
+      return { removed: userId };
     });
-    return { removed: userId };
   }
 
   /**
@@ -466,38 +561,57 @@ class AuthService {
   async changeRole(session, { workspaceId, userId, role }) {
     if (!isRole(role)) throw bad('invalid_role', 'that role does not exist');
     const actor = await this.authorize(session, workspaceId, 'member.role');
-    const target = await this.membershipOf(userId, workspaceId);
-    if (!target) throw missing('no_membership', 'that person is not a member of this workspace');
-    if (target.role === 'owner' && actor.role !== 'owner') {
+    // NOBODY GRANTS A ROLE ABOVE THEIR OWN AUTHORITY, here either.
+    if (ROLES.indexOf(role) < ROLES.indexOf(actor.role)) {
       await this.audit({
         user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
-        action: 'member.role', outcome: 'deny', reason: 'owner_protected',
+        action: 'member.role', outcome: 'deny', reason: 'role_above_authority',
+        detail: { actor: actor.role, requested: role },
       });
-      throw forbidden('owner_protected', 'only an owner may change an owner\'s role');
+      throw forbidden('role_above_authority', `you may not grant a role above your own (${actor.role})`);
     }
-    if (target.role === 'owner' && role !== 'owner') {
-      const owners = (await this.db.query(
-        `SELECT count(*)::int AS n FROM id.workspace_memberships
-          WHERE workspace_id = $1 AND role = 'owner' AND revoked_at IS NULL`,
+    return this.tx(async (client) => {
+      await client.query(
+        'SELECT membership_id FROM id.workspace_memberships WHERE workspace_id = $1 FOR UPDATE',
         [workspaceId],
-      )).rows[0].n;
-      if (owners <= 1) {
+      );
+      const target = (await client.query(
+        `SELECT membership_id, role FROM id.workspace_memberships
+          WHERE workspace_id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+        [workspaceId, userId],
+      )).rows[0];
+      if (!target) throw missing('no_membership', 'that person is not a member of this workspace');
+      if (target.role === 'owner' && actor.role !== 'owner') {
         await this.audit({
           user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
-          action: 'member.role', outcome: 'deny', reason: 'last_owner',
+          action: 'member.role', outcome: 'deny', reason: 'owner_protected',
         });
-        throw forbidden('last_owner', 'a workspace must keep at least one owner');
+        throw forbidden('owner_protected', 'only an owner may change an owner\'s role');
       }
-    }
-    await this.db.query(
-      'UPDATE id.workspace_memberships SET role = $3 WHERE workspace_id = $1 AND user_id = $2 AND revoked_at IS NULL',
-      [workspaceId, userId, role],
-    );
-    await this.audit({
-      user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
-      action: 'member.role', outcome: 'allow', detail: { user: userId, role },
+      if (target.role === 'owner' && role !== 'owner') {
+        const owners = (await client.query(
+          `SELECT count(*)::int AS n FROM id.workspace_memberships
+            WHERE workspace_id = $1 AND role = 'owner' AND revoked_at IS NULL`,
+          [workspaceId],
+        )).rows[0].n;
+        if (owners <= 1) {
+          await this.audit({
+            user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
+            action: 'member.role', outcome: 'deny', reason: 'last_owner',
+          });
+          throw forbidden('last_owner', 'a workspace must keep at least one owner');
+        }
+      }
+      await client.query(
+        'UPDATE id.workspace_memberships SET role = $3 WHERE workspace_id = $1 AND user_id = $2 AND revoked_at IS NULL',
+        [workspaceId, userId, role],
+      );
+      await this.audit({
+        user_id: session.user_id, session_id: session.session_id, workspace_id: workspaceId,
+        action: 'member.role', outcome: 'allow', detail: { user: userId, role },
+      });
+      return { userId, role };
     });
-    return { userId, role };
   }
 
   /* --------------------------- the workspace --------------------------- */

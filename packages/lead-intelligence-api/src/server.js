@@ -25,16 +25,40 @@ const CSRF_HEADER = 'x-csrf-token';
  *   - every authorization decision is audited.
  */
 class ApiServer {
-  constructor({ identity, tenant, storeFor, logger = console, secureCookies = false } = {}) {
+  constructor({ identity, tenant, storeFor, logger = console, secureCookies = false, trustedProxyHops = 0 } = {}) {
     this.service = new AuthService({ identity, tenant, logger });
     this.storeFor = storeFor;
     this.logger = logger;
     this.secureCookies = secureCookies;
+    this.trustedProxyHops = Number(trustedProxyHops) || 0;
     this.loginThrottle = new Throttle({ limit: 5, windowMs: 15 * 60 * 1000 });
     this.suppressionThrottle = new Throttle({ limit: 30, windowMs: 60 * 1000 });
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => this.fail(res, err));
     });
+  }
+
+  /**
+   * The address of the caller, for the throttles.
+   *
+   * It is the CONNECTION's address. A proxy header - `X-Forwarded-For` and
+   * its relatives - is written by the client, so it is not evidence of
+   * anything: a forged one would let an attacker spread the failures over
+   * a thousand fake addresses, and would hide the spray.
+   *
+   * Behind a proxy the connection's address is the proxy's, so the
+   * deployment says how many proxies it trusts: the address is then taken
+   * from the rightmost UNTRUSTED hop. With the default of zero, no header
+   * is believed at all.
+   */
+  callerAddress(req) {
+    const socket = req.socket.remoteAddress || '';
+    if (!this.trustedProxyHops) return socket;
+    const header = req.headers['x-forwarded-for'];
+    if (!header) return socket;
+    const hops = String(header).split(',').map((h) => h.trim()).filter(Boolean);
+    if (hops.length < this.trustedProxyHops) return socket;
+    return hops[hops.length - this.trustedProxyHops];
   }
 
   listen(port, host = '127.0.0.1') {
@@ -187,7 +211,7 @@ class ApiServer {
 
   async login(req, res) {
     const body = await this.body(req);
-    const address = req.socket.remoteAddress || '';
+    const address = this.callerAddress(req);
     const result = await this.service.login({
       email: body.email, password: body.password, throttle: this.loginThrottle, address,
     });
@@ -290,7 +314,12 @@ class ApiServer {
     await this.service.authorize(session, workspaceId, 'suppression.check');
     const body = await this.body(req);
     const store = await this.storeFor(session, workspaceId);
-    const suppressed = await store.isSuppressed(body.channel, body.address);
+    // The check runs INSIDE a transaction that carries the workspace
+    // context: the context is bound to THIS session and to THIS user, and
+    // the database re-checks the session's entitlement on every read. A
+    // logout, a withdrawn membership or a revoked session therefore stops
+    // the check, even in a transaction that was already open.
+    const suppressed = await store.tx(async () => store.isSuppressed(body.channel, body.address));
     this.suppressionThrottle.fail(key);
     this.json(res, 200, { suppressed: Boolean(suppressed) });
   }
