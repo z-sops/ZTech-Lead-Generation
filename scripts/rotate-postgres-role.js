@@ -55,7 +55,8 @@ async function main() {
   if (!check.ok) {
     console.error(`${env} ${check.reason}.`);
     console.error('Nothing has been changed: the role keeps whatever credential it has.');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const admin = new Pool({ connectionString: ADMIN_URL });
@@ -63,7 +64,8 @@ async function main() {
     const before = await roleProperties(admin, ROLE);
     if (!before) {
       console.error(`the role ${ROLE} does not exist.`);
-      process.exit(1);
+      process.exitCode = 1;
+    return;
     }
     console.log(`  before: ${describeRole(before)}`);
 
@@ -91,7 +93,8 @@ async function main() {
     if (problems.length) {
       console.error('');
       for (const p of problems) console.error(`  ${p}`);
-      process.exit(1);
+      process.exitCode = 1;
+    return;
     }
     console.log('');
     console.log('The role is rotated. Restart the services that use it, so that the');
@@ -103,5 +106,6 @@ async function main() {
 
 main().catch((err) => {
   console.error(err.message);
-  process.exit(1);
+  process.exitCode = 1;
+  return;
 });

@@ -27,11 +27,18 @@ class AuthService {
   /**
    * @param {{identity: object, tenant: object, roles?: object, logger?: object}} deps
    */
-  constructor({ identity, tenant, roles = { app: 'ztech_app' }, logger = console }) {
+  constructor({ identity, tenant, roles = { app: 'ztech_app' }, logger = console, platformConsole = false }) {
     this.db = identity;
     this.tenant = tenant;
     this.roles = roles;
     this.logger = logger;
+    /**
+     * Whether this service is the PLATFORM CONSOLE. Only the platform
+     * console may suspend an account: a customer of one organization has
+     * no business closing an account that belongs to any other
+     * organization - or to any other organization at all.
+     */
+    this.platformConsole = platformConsole;
     /**
      * Pause points for the concurrency tests.
      *
@@ -176,33 +183,25 @@ class AuthService {
    * entitlement: the database checks the account on every read, so a
    * transaction that is already open loses its access too.
    *
-   * Only an owner of an organization the account belongs to may disable
-   * it, and the decision is taken on the locked membership rows.
+   * This is a PLATFORM operation, and it is not a customer one. A customer
+   * of one organization has no business closing an account that belongs to
+   * somebody else's organization - or to any other organization at all - so
+   * the operation exists only on the platform console's service, and the
+   * customer API refuses it outright.
    */
   async disableUser(session, { userId }) {
+    if (!this.platformConsole) {
+      await this.audit({
+        user_id: session.user_id, session_id: session.session_id,
+        action: 'auth.disable', outcome: 'deny', reason: 'not_a_platform_console',
+        detail: { requested: userId },
+      });
+      throw forbidden('not_a_platform_console', 'suspending an account is a platform operation');
+    }
     const target = await this.findUser(userId);
     if (!target) throw missing('no_user', 'there is no such user');
     try {
       return await this.tx(async (client) => {
-        // The organizations the account belongs to: the ones it is a member
-        // of, and the ones its workspaces belong to.
-        const orgs = (await client.query(
-          `SELECT org_id FROM (
-             SELECT org_id FROM id.organization_memberships WHERE user_id = $1 AND revoked_at IS NULL
-             UNION
-             SELECT w.org_id FROM id.workspace_memberships m
-               JOIN id.workspaces w ON w.workspace_id = m.workspace_id
-              WHERE m.user_id = $1 AND m.revoked_at IS NULL
-           ) o ORDER BY org_id`,
-          [userId],
-        )).rows.map((r) => r.org_id);
-        if (!orgs.length) throw forbidden('not_an_owner', 'you may not disable that account');
-        let allowed = false;
-        for (const orgId of orgs) {
-          const role = await this.organizationAuthority(client, session.user_id, orgId);
-          if (role === 'owner') { allowed = true; break; }
-        }
-        if (!allowed) throw forbidden('not_an_owner', 'you may not disable that account');
         await client.query('UPDATE id.users SET disabled_at = now() WHERE user_id = $1', [userId]);
         await client.query('UPDATE id.sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
         await this.audit({
@@ -448,7 +447,25 @@ class AuthService {
   }
 
   /**
-   * The caller's authority over an organization.
+   * The caller's role IN THE ORGANIZATION.
+   *
+   * It comes from the organization's own membership, and from nothing else.
+   * A workspace role never becomes an organization role: an admin who owns
+   * a workspace is an admin OF THAT WORKSPACE, and an organization owner
+   * is the organization's owner, which is a different thing with different
+   * powers.
+   */
+  async organizationRole(client, userId, orgId) {
+    const row = (await client.query(
+      `SELECT role FROM id.organization_memberships
+        WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE`,
+      [orgId, userId],
+    )).rows[0];
+    return row ? row.role : null;
+  }
+
+  /**
+   * The caller's authority to act OVER an organization.
    *
    * It is the STRONGEST of two things: their membership of the
    * organization, and their strongest membership in one of the
@@ -457,10 +474,14 @@ class AuthService {
    * FIRST workspace; an admin of a workspace is the second, and it is what
    * lets them create more.
    *
+   * This is an authority OVER the organization, and it is deliberately not
+   * the same thing as the organization's ROLE: it is used for one
+   * decision, and it never becomes a role anybody else can see.
+   *
    * The rows are LOCKED, so the decision is made on the memberships as
    * they are at that moment.
    */
-  async organizationAuthority(client, userId, orgId) {
+  async workspaceAuthorityOverOrg(client, userId, orgId) {
     const orgMembership = (await client.query(
       `SELECT role FROM id.organization_memberships
         WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE`,
@@ -496,7 +517,7 @@ class AuthService {
     if (!clean) throw bad('invalid_workspace', 'the workspace needs a name');
     try {
       return await this.tx(async (client) => {
-        const role = await this.organizationAuthority(client, session.user_id, orgId);
+        const role = await this.workspaceAuthorityOverOrg(client, session.user_id, orgId);
         if (!role) throw forbidden('no_membership', 'you are not a member of this organization');
         if (!hasPermission(role, 'workspace.create')) {
           throw forbidden('insufficient_role', 'your role does not allow creating a workspace');

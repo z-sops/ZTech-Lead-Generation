@@ -25,8 +25,9 @@ const CSRF_HEADER = 'x-csrf-token';
  *   - every authorization decision is audited.
  */
 class ApiServer {
-  constructor({ identity, tenant, storeFor, logger = console, secureCookies = false, trustedProxyHops = 0 } = {}) {
-    this.service = new AuthService({ identity, tenant, logger });
+  constructor({ identity, tenant, storeFor, logger = console, secureCookies = false, trustedProxyHops = 0, platformConsole = false } = {}) {
+    this.service = new AuthService({ identity, tenant, logger, platformConsole });
+    this.platformConsole = platformConsole;
     this.storeFor = storeFor;
     this.logger = logger;
     this.secureCookies = secureCookies;
@@ -194,8 +195,15 @@ class ApiServer {
     const checks = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/suppressions\/check$/i);
     if (checks && method === 'POST') return this.suppressionCheck(req, res, checks[1]);
 
-    const disable = path.match(/^\/api\/users\/([0-9a-f-]+)\/disable$/i);
-    if (disable && method === 'POST') return this.disableUser(req, res, disable[1]);
+    // SUSPENDING AN ACCOUNT IS NOT A CUSTOMER OPERATION. A customer of one
+    // organization has no business closing an account that belongs to
+    // somebody else's organization - or to any other organization at all -
+    // so the route exists only on the platform console's service. On the
+    // customer API there is no such route at all.
+    if (this.platformConsole) {
+      const disable = path.match(/^\/api\/users\/([0-9a-f-]+)\/disable$/i);
+      if (disable && method === 'POST') return this.disableUser(req, res, disable[1]);
+    }
 
     const records = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/records$/i);
     if (records && method === 'GET') return this.records(req, res, records[1]);
