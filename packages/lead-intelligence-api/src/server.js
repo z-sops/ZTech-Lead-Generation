@@ -194,6 +194,9 @@ class ApiServer {
     const checks = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/suppressions\/check$/i);
     if (checks && method === 'POST') return this.suppressionCheck(req, res, checks[1]);
 
+    const disable = path.match(/^\/api\/users\/([0-9a-f-]+)\/disable$/i);
+    if (disable && method === 'POST') return this.disableUser(req, res, disable[1]);
+
     const records = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/records$/i);
     if (records && method === 'GET') return this.records(req, res, records[1]);
 
@@ -322,6 +325,14 @@ class ApiServer {
     const suppressed = await store.tx(async () => store.isSuppressed(body.channel, body.address));
     this.suppressionThrottle.fail(key);
     this.json(res, 200, { suppressed: Boolean(suppressed) });
+  }
+
+  async disableUser(req, res, userId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    const disabled = await this.service.disableUser(session, { userId });
+    this.json(res, 200, disabled);
   }
 
   /**

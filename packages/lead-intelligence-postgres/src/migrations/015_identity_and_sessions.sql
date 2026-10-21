@@ -69,6 +69,22 @@ CREATE TABLE IF NOT EXISTS id.workspaces (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS id_workspaces_org_name ON id.workspaces (org_id, lower(name));
 
+-- The membership of a user in an ORGANIZATION, with the role they hold
+-- there. It is what makes an organization usable: an organization without
+-- an owner is an organization nobody may act for, so the creator of an
+-- organization is its owner, and the owner's rights are what let the
+-- organization have its first workspace.
+CREATE TABLE IF NOT EXISTS id.organization_memberships (
+  membership_id UUID PRIMARY KEY,
+  org_id        UUID NOT NULL REFERENCES id.organizations (org_id) ON DELETE CASCADE,
+  user_id       UUID NOT NULL REFERENCES id.users (user_id) ON DELETE CASCADE,
+  role          TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'manager', 'member', 'viewer')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at    TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS id_organization_memberships_active
+  ON id.organization_memberships (org_id, user_id) WHERE revoked_at IS NULL;
+
 -- A user's membership of a workspace, with the ROLE they hold there and
 -- the TEAM (group) filter that scopes what they may see.
 --
@@ -167,10 +183,12 @@ BEGIN
   END IF;
   SELECT EXISTS (
     SELECT 1 FROM id.sessions s
+     JOIN id.users u ON u.user_id = s.user_id
      WHERE s.session_id = p_session
        AND s.user_id = p_user
        AND s.revoked_at IS NULL
        AND s.expires_at > pg_catalog.clock_timestamp()
+       AND u.disabled_at IS NULL
   ) INTO v_alive;
   IF NOT v_alive THEN
     RETURN FALSE;

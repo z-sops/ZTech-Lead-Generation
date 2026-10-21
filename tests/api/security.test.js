@@ -196,7 +196,7 @@ if (!process.env.ZTECH_PG_URL) {
     const guest = await signUp('c1e-guest@ztech.test', 'C1E Guest', 'C1E Guest Workspace');
     const res = await guest.client.post('/api/invitations/accept', { token: invite.body.token });
     assert.equal(res.status, 403);
-    assert.equal(res.body.error, 'role_above_authority');
+    assert.equal(res.body.error, 'inviter_lost_permission');
   });
 
   test('C1: the last owner is protected on every path', async () => {
