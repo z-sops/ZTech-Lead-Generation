@@ -489,7 +489,15 @@ the M2 implementation, and the document is updated to match:
   added directly rather than `NOT VALID` first, because they are created
   empty. The legacy tables with dangling ids keep their absence of foreign
   keys, and the composite foreign keys of §4.8 for the CRM tables remain M5's
-  work.
+
+  **M2 correction (2026-10-21, second pass).** The first bullet above is
+  **superseded**: the context is NOT a transaction-local setting. A custom setting is
+  writable by any role, so a session could forge the tenant it was acting for;
+  the forgery was reproduced against a real PostgreSQL 16 before it was fixed. The
+  context now lives in a table the runtime roles cannot write, and it is opened
+  with a token that only the control plane may issue. The repository signatures
+  are still unchanged, and the isolation still does not depend on a parameter
+  being passed correctly. See `docs/M2-TENANT-ISOLATION.md`.
 
 ### 4.2 The ERD — platform and tenancy
 
@@ -835,15 +843,37 @@ ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leads FORCE  ROW LEVEL SECURITY;   -- applies even to the owner
 
 CREATE POLICY leads_tenant_isolation ON leads
-  USING      (workspace_id = current_setting('app.workspace_id', true)::uuid)
-  WITH CHECK (workspace_id = current_setting('app.workspace_id', true)::uuid);
+  USING      (workspace_id = li.current_workspace())
+  WITH CHECK (workspace_id = li.current_workspace());
 ```
+
+> **CORRECTION (M2, 2026-10-21) — do not use `current_setting('app.workspace_id')`
+> in a policy.** The sketch above originally read the tenant from a custom
+> setting. A custom setting is ordinary configuration, and **any** role may
+> write one with `set_config()`; a session authorised for tenant A could
+> write tenant B's id into it, and the policy would hand it B's rows. It was
+> reproduced against a real PostgreSQL 16 before it was fixed, and
+> PostgreSQL 16 cannot lock a custom setting down (`REVOKE SET ON PARAMETER`
+> applies to known parameters only, not to placeholders).
+>
+> The context therefore does **not** live in a setting. It lives in a table
+> the runtime roles cannot write, and it is opened with a **token** that only
+> the control plane may issue:
+>
+> ```sql
+> -- the control plane signs a token for (role, workspace)
+> SELECT li.issue_workspace_token('…', 'ztech_app', 300);
+> -- the runtime session presents it; the function checks the signature
+> SELECT li.set_workspace('…', '<the token>');
+> ```
+>
+> See `docs/M2-TENANT-ISOLATION.md` for the trust boundary.
 
 The API sets the tenant **per transaction**, never per session:
 
 ```ts
 await tx(async (t) => {
-  await t.set_config('app.workspace_id', ctx.workspaceId, true);  -- true = transaction-local
+  await t.query('SELECT li.set_workspace($1, $2)', [ctx.workspaceId, ctx.workspaceToken]);
   return t.query('SELECT ... FROM leads WHERE ...');
 });
 ```

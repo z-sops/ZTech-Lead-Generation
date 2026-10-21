@@ -483,17 +483,25 @@ policies refuse it.
 - **Row-level security** is ENABLED and **FORCED** on all 28 tenant-owned
   tables, with one policy each: the row's workspace must equal the
   transaction's context.
-- **The context is server-derived and transaction-local.** It is set by
-  `li.set_workspace()`, a `SECURITY DEFINER` function that checks the
-  **calling role** is entitled to the workspace — so a caller that passes
-  somebody else's workspace id gets an error and no context. The setting
-  disappears at COMMIT or ROLLBACK, so a pooled connection cannot carry one
-  tenant's context into another's work.
-- **Missing, invalid and mismatched contexts fail closed.** The context
-  function returns NULL, and NULL matches no row and allows no write.
-- **Four database roles**: the migrator owns the schema; the app, worker and
-  platform roles do not own a table, are not superusers and have no
-  `BYPASSRLS`. `PUBLIC` holds no privileges at all.
+  - **The context is server-derived, transactional and PROVED.** It is set by
+    `li.set_workspace(workspace, token)`, a `SECURITY DEFINER` function that
+    verifies a **signed token** — HMAC-SHA256, bound to the workspace, to the
+    role and to a lifetime — before it writes the context. The context lives
+    in a table the runtime roles cannot write, and it carries the
+    transaction id, so it belongs to one transaction and one role.
+  - **The token is the authority; the grant is a ceiling.** Only the
+    **control plane** (`ztech_control`) may issue a token — a runtime
+    session may present one, never ask for one. A role granted many
+    workspaces still reaches only the one it holds a token for, so the
+    isolation is per-customer, not "one role, many tenants".
+  - **Missing, invalid, expired and mismatched contexts fail closed.** The
+    context function returns NULL, and NULL matches no row and allows no
+    write.
+  - **Five database roles**: the migrator owns the schema, the tables and the
+    SECURITY DEFINER functions; the **control plane** may issue a token and
+    nothing else; the app, worker and platform roles do not own a table, are
+    not superusers and have no `BYPASSRLS`. `PUBLIC` holds no privileges at
+    all.
 - **The startup assertion** checks the live database — the role's own
   properties, the ownership of every table, RLS enabled and forced on every
   tenant table, the policy on every table, the tenant-table inventory, the
@@ -518,16 +526,55 @@ suite proves the transaction's client belongs to the operation that opened
 it, that the context does not survive the transaction, and that eight
 concurrent transactions get eight connections.
 
-**The tests now run against a real PostgreSQL 16 with the production roles**,
-in a database whose schema is named `li` — the name the deployment has — so
-what the tests exercise is what a deployment runs.
+  **The tests now run against a real PostgreSQL 16 with the production roles**,
+  in a database whose schema is named `li` — the name the deployment has — and
+  with the migrations applied **as the migration role**, so the tables and the
+  SECURITY DEFINER functions are owned by the role that owns them in
+  production, and not by the administrator. What the tests exercise is what a
+  deployment runs.
 
-**What this does NOT do:** it does not authenticate anybody (M3), and it does
-not add the job queue (M4) or the break-glass path (M6). The platform role
-cannot read the tenant tables at all, which is the safe default; the audited
-break-glass path is M6's work. And the context is set by the server from the
-authenticated session — this milestone makes the **database's** answer to that
-context safe; it does not yet decide **who the caller is**.
+  **Security review corrections (the same branch).** The review found a real
+  breach and a real gap in the evidence, and both are fixed:
+
+  - **C1 — the forged workspace context.** The context was kept in the custom
+    setting `app.workspace_id`, and the policy trusted it. A custom setting
+    is writable by **any** role with `set_config()`, so a session authorised
+    for workspace A could write workspace B's id into it and read — and
+    write — B's rows. It was **reproduced against a real PostgreSQL 16**
+    before it was fixed. PostgreSQL 16 cannot close that door by locking the
+    setting down (`REVOKE SET ON PARAMETER` applies to known parameters, not
+    to placeholders), so the context no longer lives in a setting at all: it
+    lives in a table the runtime roles cannot write, and it is opened with a
+    signed token that only the control plane may issue. The new **forgery
+    suite** proves that a forged setting — direct `SET`, `set_config`, a
+    prepared statement, and a reused connection — changes nothing, that the
+    context table cannot be written by a runtime role, that a runtime role may
+    not issue a token, and that a token is bound to its workspace, its role
+    and its lifetime.
+  - **C2 — the production ownership.** The test harness applied the
+    migrations through the administrator, so the functions under test were
+    owned by a superuser — a property no deployment has. The harness now
+    applies them **as the migration role**, and the new **production-roles
+    suite** proves the ownership, the real role properties (SUPERUSER,
+    BYPASSRLS, CREATEROLE, CREATEDB), the effective privileges, that
+    `li.is_suppressed()` answers for a tenant's own address, a platform
+    global address and an unsuppressed address, that a tenant cannot
+    enumerate the global rows, and that the function cannot be used to read
+    or write tenant data.
+  - **A discrepancy corrected**: the documentation said the migration role
+    bypasses the row-level security; `roles.sql` never said so, and the
+    database said no. It is now stated in `roles.sql`, and the test asserts
+    it.
+
+  **What this does NOT do:** it does not authenticate anybody (M3), and it does
+  not add the job queue (M4) or the break-glass path (M6). The platform role
+  cannot read the tenant tables at all, which is the safe default; the audited
+  break-glass path is M6's work. And the **trust boundary** runs between the
+  application and the database: the application decides *which* tenant a
+  request is for, the database decides *whether* that claim is well-formed,
+  current and effective. M3 binds the authenticated user and session to the
+  application's side of that line, and the application will ask the control
+  plane for a token rather than carrying the secret.
 
 Full detail: `docs/M2-TENANT-ISOLATION.md`.
 
