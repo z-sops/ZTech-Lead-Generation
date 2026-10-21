@@ -477,28 +477,11 @@ if (!process.env.ZTECH_PG_URL) {
     // The member may work.
     const before = await member.invitee.client.get(`/api/workspaces/${owner.workspaceId}/records`);
     assert.equal(before.status, 200);
-    // The PLATFORM CONSOLE disables the account. It is a platform
-    // operation, so the platform console's service is the one that has it.
-    const console = new ApiServer({
-      identity: identityPool,
-      tenant: tenantPool,
-      platformConsole: true,
-      logger: { warn() {}, error() {} },
-      storeFor: async (session, workspaceId) => new PostgresStore({
-        pool: tenantPool, controlPool, workspaceId, sessionId: session.session_id, userId: session.user_id,
-        logger: { warn() {} },
-      }),
-    });
-    const address = await console.listen(0);
-    try {
-      const operator = new Client(`http://127.0.0.1:${address.port}`);
-      operator.cookie = owner.client.cookie;
-      operator.csrf = owner.client.csrf;
-      const disabled = await operator.post(`/api/users/${member.invitee.userId}/disable`, {});
-      assert.equal(disabled.status, 200, `the account was disabled: ${JSON.stringify(disabled.body)}`);
-    } finally {
-      await console.close();
-    }
+    // The account is suspended by a PRIVILEGED DATABASE OPERATION - the same
+    // kind of operation that applies a migration. It is NOT done with a
+    // customer session, and there is no HTTP route that can do it.
+    await db.owner.query('UPDATE id.users SET disabled_at = now() WHERE user_id = $1', [member.invitee.userId]);
+    await db.owner.query('UPDATE id.sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [member.invitee.userId]);
     // The session is dead.
     const after = await member.invitee.client.get(`/api/workspaces/${owner.workspaceId}/records`);
     assert.equal(after.status, 401, 'the session no longer works');
@@ -517,21 +500,36 @@ if (!process.env.ZTECH_PG_URL) {
     );
   });
 
-  test('C13: a customer CANNOT suspend an account, and the route does not exist', async () => {
+  test('C13: a customer CANNOT suspend an account, and there is no route to try', async () => {
     const owner = await signUp('c13-owner@ztech.test', 'C13 Corp', 'C13 Workspace');
     const member = await addMember(owner, 'member', 'c13-member@ztech.test');
     // The customer's API has no such route: it is not there at all.
     const res = await owner.client.post(`/api/users/${member.invitee.userId}/disable`, {});
     assert.equal(res.status, 404, 'the customer API has no account-suspension route');
-    // And the service refuses it even if it is called directly.
-    await assert.rejects(
-      server.service.disableUser(
-        { user_id: owner.userId, session_id: 'x', email: owner.client.cookie },
-        { userId: member.invitee.userId },
-      ),
-      /platform operation/i,
-      'the service refuses it for a customer',
-    );
+    // And there is no route on a PLATFORM-CONSOLE-CONFIGURED server either:
+    // a configuration flag is not an authentication.
+    const console = new ApiServer({
+      identity: identityPool,
+      tenant: tenantPool,
+      platformConsole: true,
+      logger: { warn() {}, error() {} },
+      storeFor: async (session, workspaceId) => new PostgresStore({
+        pool: tenantPool, controlPool, workspaceId, sessionId: session.session_id, userId: session.user_id,
+        logger: { warn() {} },
+      }),
+    });
+    const address = await console.listen(0);
+    try {
+      const operator = new Client(`http://127.0.0.1:${address.port}`);
+      operator.cookie = owner.client.cookie;
+      operator.csrf = owner.client.csrf;
+      const attempt = await operator.post(`/api/users/${member.invitee.userId}/disable`, {});
+      assert.equal(attempt.status, 404, 'a platform-console configuration does not create the route');
+    } finally {
+      await console.close();
+    }
+    // The service has no session-callable suspension either.
+    assert.equal(typeof server.service.disableUser, 'undefined', 'the service has no such operation to call');
     // The account is untouched.
     const user = (await identityPool.query('SELECT disabled_at FROM id.users WHERE user_id = $1', [member.invitee.userId])).rows[0];
     assert.equal(user.disabled_at, null, 'the account was NOT disabled');
@@ -561,16 +559,10 @@ if (!process.env.ZTECH_PG_URL) {
       [owner.orgId, admin.invitee.userId],
     )).rows;
     assert.deepEqual(orgRole, [], 'the workspace owner has NO organization role');
-    // And so they have no organization-level power: the account-suspension
-    // operation is a platform one, and it is refused for them.
-    await assert.rejects(
-      server.service.disableUser(
-        { user_id: admin.invitee.userId, session_id: 'x' },
-        { userId: owner.userId },
-      ),
-      /platform operation/i,
-      'a workspace owner may not suspend an account',
-    );
+    // And so they have no organization-level power: there is no route to
+    // suspend an account, and no service operation either.
+    const attempt = await admin.invitee.client.post(`/api/users/${owner.userId}/disable`, {});
+    assert.equal(attempt.status, 404, 'a workspace owner may not suspend an account');
     const untouched = (await identityPool.query('SELECT disabled_at FROM id.users WHERE user_id = $1', [owner.userId])).rows[0];
     assert.equal(untouched.disabled_at, null, 'and the organization owner is untouched');
   });

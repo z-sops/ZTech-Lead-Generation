@@ -131,27 +131,33 @@ an owner's role, and a workspace always keeps at least one owner.
 - **Nothing from the database** — no credential, no workspace token — is ever
   returned to the browser.
 
-### Suspending an account is a PLATFORM operation (C13)
+### Suspending an account is not a service operation (C13, C15)
 
 An organization owner must not be able to close an account that belongs to
 somebody else's organization — or, worse, to close an account that belongs
 to a user of **an unrelated organization**, over a row in an unrelated
 organization's workspace.
 
-So the customer-accessible global operation is **gone**. The account
-suspension lives on the **platform console's** service, and only there:
+So the customer-accessible global operation is **gone**, and so is the
+"platform console" version of it:
 
 - the customer API has **no such route at all** — a request for it is a
-  `404`, not a `403` — because a customer operation that suspends
-  accounts across organizations should not exist in the customer's API;
-- the service refuses it for a customer (`403 not_a_platform_console`),
-  so the door is closed at both layers;
-- the **platform console** may suspend an account, and the enforcement is
-  the same as it always was: the sessions die at once (the API's session
-  validation ignores a disabled account) and the **entitlement** dies with
-  them (the database's `li.session_entitled()` ignores a disabled
-  account), so a transaction that is already open loses its access and no
-  token may be issued for the account.
+  `404`, not a `403` — because a customer operation that suspends accounts
+  across organizations should not exist in the customer's API;
+- a **platform-console-configured server has no such route either**: a
+  configuration flag is not an authentication, and the flag is now
+  documented as a *marker* that authorizes nothing;
+- the service has **no session-callable suspension** at all: there is no
+  method to call;
+- the **enforcement** of a suspension is unchanged and still in both
+  layers: the sessions die at once (the API's session validation ignores a
+  disabled account) and the **entitlement** dies with them (the database's
+  `li.session_entitled()` ignores a disabled account), so a transaction
+  that is already open loses its access and no token may be issued for the
+  account.
+
+An account is suspended by a **privileged database operation**, and the
+platform console will get its own operator authentication when it is built.
 
 ### The organization and the workspace are two ladders (C14)
 
@@ -266,7 +272,7 @@ The identity service is proved to work with an identity pool of **one**:
 the audit writes inside a transaction and the connection it uses are the
 same connection, so there is nothing to deadlock against.
 
-### A disabled account (C11)
+### A disabled account (C11, C15)
 
 `id.users.disabled_at` means: the account is closed. It is enforced in
 **both** places:
@@ -277,7 +283,18 @@ same connection, so there is nothing to deadlock against.
   **entitlement** is dead too — a transaction that is already open loses
   its access, and no token may be issued for the account at all.
 
-Only an owner of an organization the account belongs to may disable it.
+**How an account is suspended is not a service operation.** There is no
+HTTP route for it, on any server, and there is no service method a session
+can call: a configuration flag (`platformConsole: true`) is **not** an
+authentication, and neither is a customer session, an organization-owner
+role, or possession of a CSRF token. An account is suspended by a
+**privileged database operation** — the same kind of operation that applies
+a migration — and the platform console will get its own operator
+authentication when it is built (M6).
+
+The enforcement is proved through that privileged fixture: the account is
+suspended in the database, and then the session is **401** and the database
+refuses to issue a token for it.
 
 ### The CI evidence, stated exactly (C12)
 
@@ -285,12 +302,12 @@ The numbers are two different runs, and they are not interchangeable.
 
 | Run | What it proves | The numbers |
 |---|---|---|
-| **The platform matrix** (ubuntu and windows, node 20 and 22) | the code, the contract suites and the desktop regressions, **without a database** | **139 files, 2,077 assertions, 2,046 passed, 31 skipped** — the 31 skipped are the PostgreSQL suites, which are skipped because there is no PostgreSQL on those runners |
-| **The PostgreSQL job** (ubuntu, with a PostgreSQL 16 service container) | the persistence contract, the API authorization suites and the production provisioning path, against a **real** PostgreSQL 16 | the persistence contract: **14 files, 171 assertions, 171 passed, 0 skipped**; the API suites: **35 + 15 tests**; the provisioning: **10 tests** |
+| **The platform matrix** (ubuntu and windows, node 20 and 22) | the code, the contract suites and the desktop regressions, **without a database** | **140 files, 2,078 assertions, 2,046 passed, 32 skipped** - the 32 skipped are the PostgreSQL-dependent assertions, skipped because those runners have no database |
+| **The PostgreSQL job** (ubuntu, with a PostgreSQL 16 service container) | the persistence contract, the API authorization suites and the production provisioning path, against a **real** PostgreSQL 16 | the persistence contract: **14 files, 171 assertions, 171 passed, 0 skipped**; the API suites: **52 tests, 52 passed, 0 skipped**; the provisioning: **10 tests, 10 passed, 0 skipped** |
 
-So the honest statement is: **2,223 assertions pass with a real PostgreSQL
+So the honest statement is: **2,225 assertions pass with a real PostgreSQL
 16** (the local run above), and the standard matrix reports 2,046 passed
-with 31 skipped, because it has no database. Neither number is the other.
+with 32 skipped, because it has no database
 
 **And the cross-repository ZuniSEO comparison did not run.** The
 `zuni-seo contract drift` job checks out the private `zuni-seo` repository
