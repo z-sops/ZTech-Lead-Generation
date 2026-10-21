@@ -84,14 +84,33 @@ REVOKE ALL ON li.workspace_grants FROM PUBLIC;
 -- The transaction id is what makes the context transactional: a row written
 -- in one transaction does not answer for the next one, so a connection that
 -- is reused carries no context into the next tenant's work.
+--
+-- The EXPIRY is what bounds it. The token's expiry is written into the row
+-- and checked on every read, so a context does not outlive the credential
+-- that opened it: a transaction that is still open when the token expires
+-- loses its access, in the middle of the transaction, and fails closed.
 CREATE TABLE IF NOT EXISTS li.workspace_context (
   backend_pid  INTEGER NOT NULL,
   xid          XID8 NOT NULL,
   role_name    NAME NOT NULL,
   workspace_id UUID NOT NULL,
+  expires_at   TIMESTAMPTZ,
   PRIMARY KEY (backend_pid)
 );
+-- An installation that already has the table gets the column.
+ALTER TABLE li.workspace_context ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 REVOKE ALL ON li.workspace_context FROM PUBLIC;
+
+-- The longest a workspace token may live, and therefore the longest a
+-- context may live. A transaction that holds a context cannot hold one for
+-- longer than this, however long it runs.
+CREATE OR REPLACE FUNCTION li.max_token_lifetime() RETURNS INTEGER
+LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog
+AS $$
+  SELECT 300;
+$$;
+REVOKE ALL ON FUNCTION li.max_token_lifetime() FROM PUBLIC;
 
 -- The control plane's secret: the key the workspace tokens are signed with.
 --
@@ -253,6 +272,13 @@ BEGIN
   IF v_xid IS NULL OR v_xid <> v_context.xid THEN
     RETURN NULL;
   END IF;
+  -- The context does not outlive the CREDENTIAL that opened it. The expiry
+  -- is in the row, and the row is in a table the runtime role cannot
+  -- write, so a session cannot push it forward. A transaction that is
+  -- still open when the token expires loses its access, there and then.
+  IF v_context.expires_at IS NULL OR v_context.expires_at <= pg_catalog.statement_timestamp() THEN
+    RETURN NULL;
+  END IF;
   -- The context belongs to ONE role. A connection that changes role mid
   -- transaction does not inherit the context.
   IF v_context.role_name <> session_user THEN
@@ -299,8 +325,8 @@ BEGIN
   IF p_workspace IS NULL THEN
     RAISE EXCEPTION 'a workspace is required' USING ERRCODE = '22023';
   END IF;
-  IF p_ttl_seconds IS NULL OR p_ttl_seconds <= 0 OR p_ttl_seconds > 3600 THEN
-    RAISE EXCEPTION 'the token lifetime must be between 1 and 3600 seconds' USING ERRCODE = '22023';
+  IF p_ttl_seconds IS NULL OR p_ttl_seconds <= 0 OR p_ttl_seconds > li.max_token_lifetime() THEN
+    RAISE EXCEPTION 'the token lifetime must be between 1 and % seconds', li.max_token_lifetime() USING ERRCODE = '22023';
   END IF;
   -- The ceiling: the role must be granted the workspace, or there is no
   -- token for it.
@@ -405,12 +431,14 @@ BEGIN
   IF NOT v_allowed THEN
     RAISE EXCEPTION 'workspace % is not granted to %', p_workspace, session_user USING ERRCODE = '42501';
   END IF;
-  INSERT INTO li.workspace_context (backend_pid, xid, role_name, workspace_id)
-  VALUES (pg_backend_pid(), pg_catalog.pg_current_xact_id(), session_user, p_workspace)
+  INSERT INTO li.workspace_context (backend_pid, xid, role_name, workspace_id, expires_at)
+  VALUES (pg_backend_pid(), pg_catalog.pg_current_xact_id(), session_user, p_workspace,
+          pg_catalog.to_timestamp(v_expires))
   ON CONFLICT (backend_pid) DO UPDATE
     SET xid = EXCLUDED.xid,
         role_name = EXCLUDED.role_name,
-        workspace_id = EXCLUDED.workspace_id;
+        workspace_id = EXCLUDED.workspace_id,
+        expires_at = EXCLUDED.expires_at;
 END;
 $$;
 REVOKE ALL ON FUNCTION li.set_workspace(UUID, TEXT) FROM PUBLIC;

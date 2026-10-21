@@ -281,6 +281,38 @@ async function assertRuntimeRoles(pool, opts = {}) {
     if (migrator[0].rolsuper) problems.push(`${MIGRATOR_ROLE} is a SUPERUSER`);
   }
 
+  // 14. The context is BOUNDED.
+  //
+  // The expiry of the credential is written into the context record, and
+  // the record is in a table the runtime role cannot write - so a context
+  // cannot outlive the token that opened it, and it cannot be pushed
+  // forward. The maximum lifetime is an explicit, sane number.
+  // The catalogue, not information_schema: the runtime role has no
+  // privilege on the context table, and information_schema only shows what
+  // the caller may see.
+  const contextColumn = (await pool.query(
+    `SELECT count(*)::int AS n
+       FROM pg_attribute a
+       JOIN pg_class c ON c.oid = a.attrelid
+       JOIN pg_namespace ns ON ns.oid = c.relnamespace
+      WHERE ns.nspname = $1 AND c.relname = 'workspace_context'
+        AND a.attname = 'expires_at' AND a.attnum > 0 AND NOT a.attisdropped`,
+    [schema],
+  )).rows[0].n;
+  if (!contextColumn) problems.push('the context record has no expiry');
+  // The maximum is read from the CATALOGUE, not by calling the function:
+  // the runtime role may not execute the helpers, and it does not need to.
+  const maximum = (await pool.query(
+    `SELECT (regexp_match(p.prosrc, 'SELECT[\\s\\n]+([0-9]+)'))[1]::int AS n
+       FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+      WHERE ns.nspname = $1 AND p.proname = 'max_token_lifetime'`,
+    [schema],
+  )).rows[0];
+  if (!maximum) problems.push('the maximum token lifetime does not exist');
+  else if (!(maximum.n > 0 && maximum.n <= 3600)) {
+    problems.push(`the maximum token lifetime is ${maximum.n} seconds, which is not a sane bound`);
+  }
+
   return {
     ok: problems.length === 0,
     problems,

@@ -96,7 +96,7 @@ class PostgresStore {
      * context, and it says so rather than running unprotected.
      */
     this.controlPool = controlPool;
-    this.tokenTtlSeconds = Math.max(60, Number(tokenTtlSeconds) || 300);
+    this.tokenTtlSeconds = Math.min(300, Math.max(60, Number(tokenTtlSeconds) || 300));
     /** The workspace tokens this store holds, and when they stop being used. */
     this.tokenCache = new Map();
     /** The database role this store's pool connects as. */
