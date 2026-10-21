@@ -84,23 +84,25 @@ function urlWithDatabase(urlString, database) {
  * suite: it is the catalogue's row lock, not a defect.
  */
 async function ensureRoles(admin) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const rolesFile = path.join(__dirname, '..', '..', '..', 'packages', 'lead-intelligence-postgres', 'src', 'roles.sql');
+  // The procedure is the PRODUCTION one: the roles are created NOLOGIN,
+  // with no password at all (roles.sql), and only then is the test
+  // credential set and the login enabled. A test that provisioned the
+  // roles differently would not be exercising what a deployment runs.
+  await retry(() => admin.query(fs.readFileSync(rolesFile, 'utf8')));
   for (const role of Object.values(ROLES)) {
-    const existing = (await admin.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [role])).rows;
-    if (existing.length) {
-      // The password is NOT re-set here: the roles are shared by every suite
-      // in the cluster, and changing a password while the other suites are
-      // connecting to it disturbs their sessions. The password is constant.
-      continue;
-    }
-    await retry(() => admin.query(`CREATE ROLE ${role} LOGIN PASSWORD '${ROLE_PASSWORD}'`));
+    // The credential is set through a server-side format(), so the
+    // password never appears in a log or in an error message.
+    const { rows } = await retry(() => admin.query(
+      "SELECT format('ALTER ROLE %I PASSWORD %L', $1::text, $2::text) AS statement",
+      [role, ROLE_PASSWORD],
+    ));
+    await retry(() => admin.query(rows[0].statement));
+    const { rows: login } = await retry(() => admin.query("SELECT format('ALTER ROLE %I LOGIN', $1::text) AS statement", [role]));
+    await retry(() => admin.query(login[0].statement));
   }
-  // The runtime roles and the control plane must not be superusers and must
-  // not bypass the row-level security. The migration role is the trusted
-  // one: it bypasses the policies, and it never serves a request.
-  for (const role of [ROLES.app, ROLES.worker, ROLES.platform, ROLES.control]) {
-    await retry(() => admin.query(`ALTER ROLE ${role} NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`));
-  }
-  await retry(() => admin.query(`ALTER ROLE ${ROLES.migrator} BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`));
 }
 
 /** Run fn while holding the cluster-wide setup lock. */

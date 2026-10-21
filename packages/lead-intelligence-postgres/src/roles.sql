@@ -1,6 +1,6 @@
 -- PostgreSQL 16 roles (M2).
 --
--- Five roles, with different powers:
+-- FIVE roles, with different powers:
 --
 --   ztech_migrator  LOGIN. OWNS the schema, the tables and the SECURITY
 --                   DEFINER functions. It is the only role that may change
@@ -32,27 +32,40 @@
 --                   global suppressions and the market rules. It cannot
 --                   write a tenant's rows.
 --
--- The passwords are placeholders that MUST be replaced by the deployment:
--- the environment supplies them, and this file never contains a real one.
+-- ---------------------------------------------------------------------------
+-- THERE IS NO DEFAULT PASSWORD.
+-- ---------------------------------------------------------------------------
+--
+-- Every role is created NOLOGIN, with NO password at all. A role that has
+-- no credential cannot be logged into, so a role that is created and never
+-- configured is closed rather than open.
+--
+-- The credential comes from the deployment's environment, and
+-- `scripts/provision-postgres.js` sets it and only then enables the login.
+-- If the credential is missing or malformed, that script changes nothing
+-- and fails. An earlier version of this file gave the roles a `CHANGE_ME_*`
+-- password: a password that is written down in the repository is not a
+-- password, and every role that still has one must be rotated with
+-- `scripts/rotate-postgres-role.js`.
 --
 -- Applied by scripts/provision-postgres.js, as the cluster administrator.
 
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_migrator') THEN
-    CREATE ROLE ztech_migrator LOGIN PASSWORD 'CHANGE_ME_migrator';
+    CREATE ROLE ztech_migrator NOLOGIN;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_control') THEN
-    CREATE ROLE ztech_control LOGIN PASSWORD 'CHANGE_ME_control';
+    CREATE ROLE ztech_control NOLOGIN;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_app') THEN
-    CREATE ROLE ztech_app LOGIN PASSWORD 'CHANGE_ME_app';
+    CREATE ROLE ztech_app NOLOGIN;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_worker') THEN
-    CREATE ROLE ztech_worker LOGIN PASSWORD 'CHANGE_ME_worker';
+    CREATE ROLE ztech_worker NOLOGIN;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_platform') THEN
-    CREATE ROLE ztech_platform LOGIN PASSWORD 'CHANGE_ME_platform';
+    CREATE ROLE ztech_platform NOLOGIN;
   END IF;
 END;
 $$;
@@ -64,7 +77,7 @@ ALTER ROLE ztech_app NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATI
 ALTER ROLE ztech_worker NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE ztech_platform NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 
--- The control plane may not bypass the row security system either: it never
+-- The control plane may not bypass the row-level security either: it never
 -- reads a row, and a role that could read every tenant's rows would be a
 -- prize worth stealing.
 ALTER ROLE ztech_control NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
