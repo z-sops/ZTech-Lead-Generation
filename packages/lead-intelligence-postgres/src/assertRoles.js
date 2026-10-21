@@ -65,7 +65,7 @@ const POLICY_NAME = 'tenant_isolation';
 const SECURITY_FUNCTIONS = Object.freeze([
   { name: 'set_workspace', args: 'uuid,text' },
   { name: 'current_workspace', args: '' },
-  { name: 'issue_workspace_token', args: 'uuid,text,integer' },
+  { name: 'issue_workspace_token', args: 'uuid,text,uuid,uuid,integer' },
   { name: 'is_suppressed', args: 'text,text' },
 ]);
 
@@ -200,7 +200,7 @@ async function assertRuntimeRoles(pool, opts = {}) {
   // This is the heart of it: a session that could ask for a token for any
   // workspace could choose its own tenant. Only the control plane may.
   const mayIssue = (await pool.query(
-    "SELECT has_function_privilege(current_user, 'li.issue_workspace_token(uuid,text,integer)', 'EXECUTE') AS may_issue",
+    "SELECT has_function_privilege(current_user, 'li.issue_workspace_token(uuid,text,uuid,uuid,integer)', 'EXECUTE') AS may_issue",
   )).rows[0].may_issue;
   if (mayIssue) problems.push('the runtime role may issue a workspace token');
 

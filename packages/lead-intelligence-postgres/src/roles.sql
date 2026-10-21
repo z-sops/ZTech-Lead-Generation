@@ -67,6 +67,9 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_platform') THEN
     CREATE ROLE ztech_platform NOLOGIN;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_identity') THEN
+    CREATE ROLE ztech_identity NOLOGIN;
+  END IF;
 END;
 $$;
 
@@ -81,6 +84,10 @@ ALTER ROLE ztech_platform NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPL
 -- reads a row, and a role that could read every tenant's rows would be a
 -- prize worth stealing.
 ALTER ROLE ztech_control NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+
+-- The identity service: it may read and write the IDENTITY tables and issue
+-- the workspace tokens. It may NOT read the tenant tables.
+ALTER ROLE ztech_identity NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 
 -- The migration role: not a superuser, but it IS the trusted role that
 -- bypasses the policies. It owns the tables, and the migrations it applies

@@ -41,6 +41,7 @@ const ROLES = Object.freeze({
   platform: 'ztech_platform',
   migrator: 'ztech_migrator',
   control: 'ztech_control',
+  identity: 'ztech_identity',
 });
 
 /** The reserved workspace of the platform. */
@@ -184,6 +185,12 @@ async function freshDatabase(name, opts = {}) {
     }
     // The platform console may open the platform's own workspace.
     await owner.query('INSERT INTO li.workspace_grants (role_name, workspace_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [ROLES.platform, PLATFORM_WORKSPACE_ID]);
+
+    // THE IDENTITY. Since M3 a workspace token is bound to a SESSION and a
+    // USER, so the suites need one: a user, a membership of the workspace,
+    // and a session. The suites use it to open their contexts, exactly as
+    // the service does.
+    const identity = await createIdentity(owner, opts, workspaces);
     // The pools for the runtime roles and for the control plane.
     const pool = new Pool({ connectionString: roleUrl(ROLES.app, name), options: '-c search_path=li' });
     pool.on('error', () => { /* the database is dropped at the end of the suite */ });
@@ -196,21 +203,99 @@ async function freshDatabase(name, opts = {}) {
     // not open a context of its own.
     const controlPool = new Pool({ connectionString: roleUrl(ROLES.control, name), options: '-c search_path=li' });
     controlPool.on('error', () => {});
+    // The identity service's pool: it may read and write the `id` tables and
+    // issue the workspace tokens, and it may not read a tenant row.
+    const identityPool = new Pool({ connectionString: roleUrl(ROLES.identity, name), options: '-c search_path=li,id' });
+    identityPool.on('error', () => {});
 
-    /**
-     * A workspace token, from the control plane. This is the only way to get
-     * one: the runtime role may not issue a token for itself.
-     */
-    async function mintToken(forWorkspace, forRole = ROLES.app, ttl = 300) {
-      const res = await controlPool.query('SELECT li.issue_workspace_token($1, $2, $3) AS token', [forWorkspace, forRole, ttl]);
-      return res.rows[0].token;
-    }
+  /**
+   * A workspace token, from the control plane. This is the only way to get
+   * one: the runtime role may not issue a token for itself, and the token
+   * is bound to a SESSION and a USER as well as to the workspace.
+   */
+  async function mintToken(forWorkspace, forRole = ROLES.app, ttl = 300, forSession = null, forUser = null) {
+    const res = await controlPool.query(
+      'SELECT li.issue_workspace_token($1, $2, $3, $4, $5) AS token',
+      [forWorkspace, forRole, forSession || identity.sessionId, forUser || identity.userId, ttl],
+    );
+    return res.rows[0].token;
+  }
 
-    return { admin, pool, owner, controlPool, platformPool, url: roleUrl(ROLES.app, name), workspace, mintToken };
+    return {
+      admin, pool, owner, controlPool, identityPool, platformPool, url: roleUrl(ROLES.app, name), workspace, mintToken,
+      ...identity,
+    };
   } finally {
     await lock.query('SELECT pg_advisory_unlock($1)', [SETUP_LOCK]).catch(() => {});
     lock.release();
   }
+}
+
+/**
+ * Create the identity the suites need: a user, a membership of the
+ * workspace, and a session.
+ *
+ * Since M3 a workspace token is bound to a SESSION and a USER, so the
+ * suites cannot open a context with a database role alone - and that is the
+ * point: the role is a ceiling, the session is the entitlement.
+ */
+async function createIdentity(owner, opts, workspaces) {
+  const crypto = require('node:crypto');
+  const userId = crypto.randomUUID();
+  const sessionId = crypto.randomUUID();
+  const orgId = crypto.randomUUID();
+  const email = `suite-${userId.slice(0, 8)}@ztech.test`;
+  const tokenHash = crypto.createHash('sha256').update('suite-token').digest('hex');
+  const csrfHash = crypto.createHash('sha256').update('suite-csrf').digest('hex');
+  await owner.query(
+    'INSERT INTO id.users (user_id, email, password_hash) VALUES ($1, $2, $3)',
+    [userId, email, 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAA'],
+  );
+  await owner.query('INSERT INTO id.organizations (org_id, name, slug) VALUES ($1, $2, $3)', [orgId, 'The Suite', `suite-${orgId.slice(0, 8)}`]);
+  const primary = opts.workspace || workspaces[0];
+  await owner.query(
+    'INSERT INTO id.workspaces (workspace_id, org_id, name) VALUES ($1, $2, $3)',
+    [primary, orgId, 'The Suite Workspace'],
+  );
+  await owner.query(
+    `INSERT INTO id.workspace_memberships (membership_id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')`,
+    [crypto.randomUUID(), primary, userId],
+  );
+  await owner.query(
+    `INSERT INTO id.sessions (session_id, user_id, token_hash, csrf_hash, expires_at)
+     VALUES ($1, $2, $3, $4, now() + interval '1 day')`,
+    [sessionId, userId, tokenHash, csrfHash],
+  );
+
+  /**
+   * A second identity, for another workspace: a different user, with
+   * their own session and their own membership. Two users of the SAME
+   * database role, which is what the multi-workspace suite needs.
+   */
+  async function sessionFor(workspaceId, role = 'owner') {
+    const otherUser = crypto.randomUUID();
+    const otherSession = crypto.randomUUID();
+    await owner.query(
+      'INSERT INTO id.users (user_id, email, password_hash) VALUES ($1, $2, $3)',
+      [otherUser, `suite-${otherUser.slice(0, 8)}@ztech.test`, 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAA'],
+    );
+    await owner.query(
+      'INSERT INTO id.workspaces (workspace_id, org_id, name) VALUES ($1, $2, $3) ON CONFLICT (workspace_id) DO NOTHING',
+      [workspaceId, orgId, `Suite Workspace ${workspaceId.slice(0, 8)}`],
+    );
+    await owner.query(
+      `INSERT INTO id.workspace_memberships (membership_id, workspace_id, user_id, role) VALUES ($1, $2, $3, $4)`,
+      [crypto.randomUUID(), workspaceId, otherUser, role],
+    );
+    await owner.query(
+      `INSERT INTO id.sessions (session_id, user_id, token_hash, csrf_hash, expires_at)
+       VALUES ($1, $2, $3, $4, now() + interval '1 day')`,
+      [otherSession, otherUser, crypto.createHash('sha256').update(otherUser).digest('hex'), csrfHash],
+    );
+    return { sessionId: otherSession, userId: otherUser };
+  }
+
+  return { userId, sessionId, sessionFor };
 }
 
 /**
