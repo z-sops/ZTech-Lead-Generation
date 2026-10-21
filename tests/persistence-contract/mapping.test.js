@@ -285,16 +285,13 @@ test('the documented mapping names every table', async () => {
 });
 
 test('the live PostgreSQL schema matches the migration files', { skip: !process.env.ZTECH_PG_URL && 'set ZTECH_PG_URL to compare against a live PostgreSQL' }, async () => {
-  const { Pool } = require('pg');
-  const pool = new Pool({ connectionString: process.env.ZTECH_PG_URL });
-  const admin = pool;
-  await admin.query('DROP SCHEMA IF EXISTS li_map CASCADE');
-  await admin.query('CREATE SCHEMA li_map');
-  const scoped = new Pool({ connectionString: process.env.ZTECH_PG_URL, options: '-c search_path=li_map' });
+  // A real database, with the schema named `li` - the name the deployment
+  // has - and the migrations applied by the owner.
+  const { freshDatabase, dropDatabase } = require('./lib/postgres');
+  const db = await freshDatabase('ztech_mapping', { workspace: '11111111-1111-4111-8111-111111111111' });
   try {
-    for (const m of PG_MIGRATIONS) await scoped.query(m.sql);
-    const rows = await scoped.query(
-      "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'li_map' ORDER BY table_name, column_name",
+    const rows = await db.owner.query(
+      "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'li' ORDER BY table_name, column_name",
     );
     const live = new Map();
     for (const r of rows.rows) {
@@ -313,8 +310,6 @@ test('the live PostgreSQL schema matches the migration files', { skip: !process.
     }
     assert.deepEqual(problems, [], 'the migration files and the live database agree');
   } finally {
-    await admin.query('DROP SCHEMA IF EXISTS li_map CASCADE');
-    await scoped.end();
-    await admin.end();
+    await dropDatabase('ztech_mapping', [db.pool, db.owner, db.platformPool, db.admin]);
   }
 });
