@@ -610,6 +610,38 @@ concurrent transactions get eight connections.
   stay out of every runtime service; and the credentials themselves come
   from the secret store, never a default.
 
+  **The final provisioning patch.** The review found one defect on the
+  production path: `GRANT CREATE ON DATABASE` single-quoted the database
+  name as a **string literal** rather than quoting it as an **identifier**.
+  Every name is now quoted by PostgreSQL's own `format('%I', ...)`, and a
+  role name that is not a plain identifier is refused outright. The
+  credential path was also hardened: `ALTER ROLE ... PASSWORD` cannot take
+  a bind parameter, so the secret would have had to appear in the SQL text
+  — and SQL text is what a statement log contains. The **SCRAM-SHA-256
+  verifier** is now computed in the script and written to `pg_authid` as a
+  **bind parameter**, so the password is in no statement, in no log, and
+  the stored value is one-way.
+
+  **The production path is now a required CI step.** A new suite runs the
+  **real** script, with its **real default role list** — all five roles —
+  against an **isolated** PostgreSQL 16 cluster of its own (a second
+  service container in the workflow). It proves that a missing or an
+  invalid credential fails **before anything is changed**, that all five
+  roles are configured with the right properties, that the **migrator** can
+  create the `li` schema and apply the migrations and owns the tables with
+  RLS enabled and forced, that a **runtime role can create neither**, that
+  the stored value is a verifier, and that no known placeholder works.
+
+  **M3 has to solve the per-user grant.** The database grant today is per
+  PostgreSQL **role**, not per end user: every user shares `ztech_app`. So
+  removing one user's membership must neither lock out every other
+  legitimate user of that workspace, nor leave the removed user's session
+  authorized. The handoff says how — the session becomes the unit of the
+  grant, alongside the role's ceiling — and lists the proofs M3 must
+  produce against the real authentication system: logout, membership
+  removal, role changes, concurrent user sessions, invitation permissions
+  and cross-workspace HTTP denial.
+
   **What this does NOT do:** it does not authenticate anybody (M3), and it does
   not add the job queue (M4) or the break-glass path (M6). The platform role
   cannot read the tenant tables at all, which is the safe default; the audited

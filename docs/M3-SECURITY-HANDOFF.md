@@ -73,6 +73,61 @@ whose session is not the caller's.
 **Rule.** Two independent user sessions never hold the same token, and a
 token that is presented in a session it was not issued for is refused.
 
+### 3a. The grant is per role; M3 needs it per session
+
+**This is the sharpest thing M3 has to get right.**
+
+Today the database grant is `li.workspace_grants (role_name, workspace_id)`:
+it says *this PostgreSQL role may act for this workspace*. Every end user
+of the service shares the role `ztech_app`. So a grant is **per service
+role, not per end user**, and that has two consequences that M3 must
+resolve:
+
+- **Removing one user's membership must not remove access for every other
+  legitimate user who shares `ztech_app`.** Withdrawing the
+  `(ztech_app, workspace)` grant would lock out *every* user of that
+  workspace at once. That is not a revocation, it is an outage.
+- **Removing one user's membership must not leave that user's session
+  authorized.** Leaving the grant in place, because other users still need
+  it, leaves the removed user's session working — with the same token
+  shape, on the same role, in the same workspace.
+
+The resolution is to make the **session** the unit of the grant, not the
+role:
+
+```
+li.workspace_grants (role_name, workspace_id)          -- the service's ceiling
+li.session_grants   (session_id, workspace_id, user_id) -- the user's entitlement
+```
+
+- the **role's** grant stays the **ceiling**: a session may never reach a
+  workspace the role is not granted;
+- the **session's** grant is the **entitlement**: it names the user, and it
+  is withdrawn when the membership ends;
+- the token carries the **session**, and `li.current_workspace()` re-checks
+  the session's entitlement on every read — the same way it re-checks the
+  role's grant today, which is what makes a withdrawal take effect at once.
+
+**Rule.** The database can tell one user's session from another's, so a
+membership is revoked for **that user** and for **that user only**.
+
+### 3b. The proofs M3 must produce, against the real authentication system
+
+Not against a mock, and not against the database alone — against the
+**authentication system** that M3 itself builds:
+
+| Proof | What it must show |
+|---|---|
+| **Logout** | the session's entitlement is withdrawn, the token is refused, and the context it opened stops working — at once, not at the next token |
+| **Membership removal** | the removed user's session loses access, and **every other legitimate user of the same workspace keeps it** |
+| **Role change** | the old role's access ends and the new one begins, in the same session, without a window in which both or neither holds |
+| **Concurrent user sessions** | two users in one workspace, in two sessions, with two tokens, do not interfere: neither sees the other's, and neither can present the other's token |
+| **Invitation permissions** | a user who has been invited but has not accepted holds **no** access; accepting it grants exactly the invited workspace, and no more |
+| **Cross-workspace HTTP denial** | a request for another workspace's resource over the real API is refused with `403`, and no token is minted for it |
+
+**Rule.** Each of these is proved by a test that runs against the real
+authentication system, and the M2 suites stay green underneath them.
+
 ## 4. Access ends when it should
 
 **Revoke access promptly on logout, on membership removal, and on a role

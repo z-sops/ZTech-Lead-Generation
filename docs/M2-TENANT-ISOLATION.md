@@ -119,9 +119,28 @@ new credential, re-enables the login, and then **verifies** that the old
 credential and every known placeholder no longer work.
 
 The credentials are never printed, never written to a file, and never put
-on a command line. The test harness provisions the cluster's roles the
+on a command line. And the password never reaches the database **as a
+password**: `ALTER ROLE ... PASSWORD` cannot take a bind parameter, so the
+secret would have to appear in the SQL text — and SQL text is what a
+statement log contains. Instead the **SCRAM-SHA-256 verifier** is computed
+in the provisioning script and written to `pg_authid` as a **bind
+parameter**:
+
+```
+SCRAM-SHA-256$4096:<salt>$<stored key>:<server key>
+```
+
+So the stored value is one-way, the statement carries a parameter and not a
+secret, and neither the server's statement log nor a proxy's can contain
+the credential. The test harness provisions the cluster's roles the
 **production way** — NOLOGIN first, then the credential, then LOGIN — so
 the tests exercise what a deployment runs.
+
+The database name, the role names and the table names are **quoted as
+identifiers**, by PostgreSQL's own `format('%I', ...)`, never as string
+literals: a database name is an identifier, and a literal there is not only
+wrong but a way in. A role name that is not a plain identifier is refused
+outright.
 
 ### Who is trusted
 
@@ -349,6 +368,38 @@ does not outlive the credential that opened it:
 - the ordinary transaction behaviour is untouched: a **rollback** takes the
   context with it, a nested **SAVEPOINT** keeps it, and a **reused
   connection** carries none.
+
+### The production provisioning suite
+
+`tests/persistence-contract/provisioning.test.js` runs the **real script**,
+with its **real default role list** — all five roles — against an
+**isolated** PostgreSQL 16 cluster of its own. It is not a probe role and
+not a mocked script: the deployment's provisioning path, on a cluster that
+nothing else is using, so the credentials it sets are the ones the test
+chose.
+
+It proves:
+
+- a **missing** credential fails **before anything is changed** — no role is
+  created, no database is created;
+- an **invalid** credential fails the same way;
+- the production path configures **all five roles**: each may log in, none
+  is a superuser, none may create roles or databases, none expires, only
+  the migration role bypasses the policies, and the credential it was given
+  works;
+- the value that is stored is a **SCRAM verifier**, the password is not in
+  it, and **no statement in any of the scripts puts the password into the
+  SQL text**;
+- **no known placeholder** works for any role;
+- the **migrator** can connect, create the `li` schema and apply the
+  migrations, and it **owns** the tables, with the row-level security
+  enabled and forced on all of them;
+- a **runtime role can not create that schema**, and it does not bypass the
+  row-level security.
+
+It is a **required CI step**: the workflow gives the job a second,
+isolated PostgreSQL 16 service container and runs this suite against it,
+on its own, so the production path is proved on every run.
 
 ### The credentials suite (C3)
 
