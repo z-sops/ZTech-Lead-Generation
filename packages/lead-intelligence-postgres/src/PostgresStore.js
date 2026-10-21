@@ -74,9 +74,9 @@ const GLOBAL_TABLES = new Set(['li_schema_migrations', 'li_market_rules']);
 
 class PostgresStore {
   /**
-   * @param {{pool: object, workspaceId?: string, role?: 'tenant'|'platform', logger?: object, now?: () => Date}} opts
+   * @param {{pool: object, controlPool?: object, workspaceId?: string, role?: 'tenant'|'platform', logger?: object, now?: () => Date, tokenTtlSeconds?: number}} opts
    */
-  constructor({ pool, workspaceId, role = 'tenant', schema = 'li', logger = console, now = () => new Date() }) {
+  constructor({ pool, controlPool = null, workspaceId, role = 'tenant', schema = 'li', logger = console, now = () => new Date(), tokenTtlSeconds = 300 }) {
     if (!pool || typeof pool.query !== 'function') throw new TypeError('a pg Pool is required');
     const ws = String(workspaceId || '');
     const isPlatform = ws === PLATFORM_WORKSPACE_ID;
@@ -89,6 +89,18 @@ class PostgresStore {
       throw new TypeError('the platform workspace may only be used by the platform role');
     }
     this.pool = pool;
+    /**
+     * The CONTROL PLANE connection. It is not used for data: it is used to
+     * ask the database for a workspace token, because the runtime role is
+     * not allowed to issue one. Without it the store cannot open a tenant
+     * context, and it says so rather than running unprotected.
+     */
+    this.controlPool = controlPool;
+    this.tokenTtlSeconds = Math.max(60, Number(tokenTtlSeconds) || 300);
+    /** The workspace tokens this store holds, and when they stop being used. */
+    this.tokenCache = new Map();
+    /** The database role this store's pool connects as. */
+    this.dbRoleName = null;
     this.schema = String(schema);
     this.workspaceId = ws;
     this.role = role;
@@ -372,17 +384,64 @@ class PostgresStore {
    * committed once it has finished.
    */
   /**
+   * The database role this store's pool connects as.
+   *
+   * The token is bound to the role it is for, so the store has to know which
+   * role it is before it can ask for one.
+   */
+  async dbRole() {
+    if (this.dbRoleName) return this.dbRoleName;
+    const res = await this.pool.query('SELECT current_user AS r');
+    this.dbRoleName = String(res.rows[0].r);
+    return this.dbRoleName;
+  }
+
+  /**
+   * A workspace token for this store's workspace, from the CONTROL PLANE.
+   *
+   * The runtime role may not issue a token - that is what stops a session
+   * from choosing its own tenant. So the token comes from a separate
+   * connection, whose role may do that one thing and nothing else.
+   *
+   * The token is short-lived and cached, so a transaction does not cost a
+   * round trip to the control plane. The deadline is RELATIVE (a lifetime,
+   * not a wall-clock time), so a difference between the application's clock
+   * and the database's clock cannot make the store use a token that has
+   * expired.
+   */
+  async tokenFor(workspaceId) {
+    const now = Date.now();
+    const cached = this.tokenCache.get(workspaceId);
+    if (cached && cached.until > now) return cached.token;
+    if (!this.controlPool) {
+      throw new Error(
+        'a control-plane connection is required to open a workspace context: '
+        + 'the runtime role may not issue a workspace token, and a context without a token is forgeable',
+      );
+    }
+    const role = await this.dbRole();
+    const ttl = this.tokenTtlSeconds;
+    const res = await this.controlPool.query(
+      `SELECT ${this.schema}.issue_workspace_token($1, $2, $3) AS token`,
+      [workspaceId, role, ttl],
+    );
+    const token = res.rows[0].token;
+    // A margin, so a token is never used in the moments before it expires.
+    this.tokenCache.set(workspaceId, { token, until: now + (ttl - 30) * 1000 });
+    return token;
+  }
+
+  /**
    * Run fn inside a transaction, with the WORKSPACE CONTEXT set.
    *
-   * The context is set with `li.set_workspace()`, which is SECURITY DEFINER
-   * and checks that the CALLING ROLE is entitled to the workspace. So a
-   * caller that passes somebody else's workspace id gets an error and no
-   * context: the request can never choose the security context.
-   *
-   * The setting is transaction-local (`SET LOCAL` semantics inside the
-   * function), so it disappears at COMMIT or ROLLBACK and a pooled
-   * connection can never carry one tenant's context into another tenant's
-   * work.
+   * The context is set with `li.set_workspace(workspace, token)`, which is
+   * SECURITY DEFINER and checks the token: a token that is not signed by
+   * the control plane, that is for another workspace, that is for another
+   * role, or that has expired, is refused - and the session gets no
+   * context at all. The context is stored in a table the runtime roles
+   * cannot write, and it carries the transaction id, so it belongs to ONE
+   * transaction: a pooled connection can never carry one tenant's context
+   * into another tenant's work.
    *
    * A NESTED transaction joins the outer one through a SAVEPOINT:
    * PostgreSQL has no nested transactions, and a nested one that opened its
@@ -392,11 +451,23 @@ class PostgresStore {
     const outer = this.txContext.getStore();
     if (outer) return this.nestedTx(fn, outer);
 
+    // The token is fetched BEFORE the transaction opens: it comes from
+    // another connection, and a failure to get one should not abort a
+    // transaction that has not begun.
+    //
+    // The PLATFORM store does not open a context at all. The platform's own
+    // policies are written against the reserved platform workspace, and the
+    // platform role has no privileges on the tenant tables - so a context
+    // would give it nothing and could only be a way to reach a tenant's
+    // rows. It is not granted set_workspace() either.
+    const token = this.role === 'platform' ? null : await this.tokenFor(this.workspaceId);
     const client = await this.pool.connect();
     const context = { client, savepoint: 0 };
     try {
       await client.query('BEGIN');
-      await client.query(`SELECT ${this.schema}.set_workspace($1)`, [this.workspaceId]);
+      if (token !== null) {
+        await client.query(`SELECT ${this.schema}.set_workspace($1, $2)`, [this.workspaceId, token]);
+      }
       const result = await this.txContext.run(context, () => fn(this));
       await client.query('COMMIT');
       return result;

@@ -36,7 +36,7 @@ if (!process.env.ZTECH_PG_URL) {
     return pool.connect().then(async (client) => {
       try {
         await client.query('BEGIN');
-        await client.query('SELECT li.set_workspace($1)', [A]);
+        await client.query('SELECT li.set_workspace($1, $2)', [A, await db.mintToken(A, ROLES.app)]);
         const result = await fn(client);
         await client.query('COMMIT');
         return result;
@@ -54,7 +54,7 @@ if (!process.env.ZTECH_PG_URL) {
     return pool.connect().then(async (client) => {
       try {
         await client.query('BEGIN');
-        await client.query('SELECT li.set_workspace($1)', [B]);
+        await client.query('SELECT li.set_workspace($1, $2)', [B, await db.mintToken(B, ROLES.app)]);
         const result = await fn(client);
         await client.query('COMMIT');
         return result;
@@ -218,12 +218,12 @@ if (!process.env.ZTECH_PG_URL) {
   });
 
   test('the context does not survive the transaction', async () => {
-    // The setting is transaction-local, so a pooled connection cannot carry
-    // one tenant's context into the next operation.
+    // The context belongs to ONE transaction, so a pooled connection cannot
+    // carry one tenant's context into the next operation.
     const rows = await pool.connect().then(async (client) => {
       try {
         await client.query('BEGIN');
-        await client.query('SELECT li.set_workspace($1)', [A]);
+        await client.query('SELECT li.set_workspace($1, $2)', [A, await db.mintToken(A, ROLES.app)]);
         const inside = await client.query('SELECT count(*)::int AS n FROM li.li_research_jobs');
         await client.query('COMMIT');
         const after = await client.query('SELECT count(*)::int AS n FROM li.li_research_jobs');

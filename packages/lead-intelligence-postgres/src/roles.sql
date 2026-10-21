@@ -1,19 +1,32 @@
 -- PostgreSQL 16 roles (M2).
 --
--- Four roles, with different powers:
+-- Five roles, with different powers:
 --
---   ztech_migrator  LOGIN. OWNS the schema and the tables. It is the only
---                   role that may change the schema, and it is NEVER used by
---                   a running service. It is the role that applies the
---                   migrations.
+--   ztech_migrator  LOGIN. OWNS the schema, the tables and the SECURITY
+--                   DEFINER functions. It is the only role that may change
+--                   the schema, and it is NEVER used by a running service.
+--                   It is the role that applies the migrations.
+--                   It has BYPASSRLS - it is the trusted role, and the
+--                   policies do not apply to it. That is a deliberate,
+--                   stated privilege: a role that could bypass the
+--                   policies must never serve a request.
+--
+--   ztech_control   LOGIN. The CONTROL PLANE. It may do exactly one
+--                   thing: ask the database to issue a workspace token.
+--                   It may not read a row, write a row, or open a context
+--                   of its own. It exists so that the token issuer is not
+--                   the role that runs the tenant's queries.
+--
 --   ztech_app       LOGIN. The API service. It is NOT the owner, it is NOT a
 --                   superuser and it does NOT have BYPASSRLS, so the
 --                   policies apply to it. It may read and write the tenant
---                   tables, and it may set the workspace context for the
---                   workspaces it is granted.
+--                   tables, and it may open a context for a workspace it
+--                   holds a TOKEN for.
+--
 --   ztech_worker    LOGIN. The background worker. The same powers as the API
 --                   for the tenant tables, and no more: it cannot touch the
 --                   platform data.
+--
 --   ztech_platform  LOGIN. The platform console. It may READ the global
 --                   reference data and WRITE the platform's own rows: the
 --                   global suppressions and the market rules. It cannot
@@ -28,6 +41,9 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_migrator') THEN
     CREATE ROLE ztech_migrator LOGIN PASSWORD 'CHANGE_ME_migrator';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_control') THEN
+    CREATE ROLE ztech_control LOGIN PASSWORD 'CHANGE_ME_control';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ztech_app') THEN
     CREATE ROLE ztech_app LOGIN PASSWORD 'CHANGE_ME_app';
@@ -47,7 +63,16 @@ $$;
 ALTER ROLE ztech_app NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE ztech_worker NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE ztech_platform NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-ALTER ROLE ztech_migrator NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+
+-- The control plane may not bypass the row security system either: it never
+-- reads a row, and a role that could read every tenant's rows would be a
+-- prize worth stealing.
+ALTER ROLE ztech_control NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+
+-- The migration role: not a superuser, but it IS the trusted role that
+-- bypasses the policies. It owns the tables, and the migrations it applies
+-- are the ones that install the policies. It never serves a request.
+ALTER ROLE ztech_migrator BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 
 -- The grants on the schema, the tables and the functions are applied by the
 -- schema migration (014_tenant_isolation.sql), which runs after the tables

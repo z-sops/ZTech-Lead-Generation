@@ -25,7 +25,7 @@ const DATABASE = 'ztech_migrations';
 async function withSchema(fn) {
   const db = await freshDatabase(DATABASE, { workspace: '11111111-1111-4111-8111-111111111111' });
   try {
-    return await fn(db.owner, db.pool);
+    return await fn(db.owner, db.pool, db.controlPool);
   } finally {
     await dropDatabase(DATABASE, [db.pool, db.owner, db.admin]);
   }
@@ -39,9 +39,9 @@ async function schemaOf(pool) {
 }
 
 test('the migrations are applied one version at a time, and recorded', { skip }, async () => {
-  await withSchema(async (scoped) => {
+  await withSchema(async (scoped, runtime, controlPool) => {
     const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
-    const store = new PostgresStore({ pool: scoped, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
+    const store = new PostgresStore({ pool: scoped, controlPool, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
     await store.migrate();
     const applied = await scoped.query('SELECT version FROM li_schema_migrations ORDER BY version');
     assert.deepEqual(applied.rows.map((r) => Number(r.version)), MIGRATIONS.map((m) => m.version));
@@ -49,7 +49,7 @@ test('the migrations are applied one version at a time, and recorded', { skip },
 });
 
 test('applying every migration again changes nothing', { skip }, async () => {
-  await withSchema(async (scoped) => {
+  await withSchema(async (scoped, runtime, controlPool) => {
     await withSetupLock(scoped, async () => { for (const m of MIGRATIONS) await scoped.query(m.sql); });
     const before = await schemaOf(scoped);
     const appliedBefore = await scoped.query('SELECT version FROM li_schema_migrations ORDER BY version');
@@ -62,7 +62,7 @@ test('applying every migration again changes nothing', { skip }, async () => {
 });
 
 test('each migration on its own is idempotent', { skip }, async () => {
-  await withSchema(async (scoped) => {
+  await withSchema(async (scoped, runtime, controlPool) => {
     for (const m of MIGRATIONS) {
       await scoped.query(m.sql);
       await scoped.query(m.sql);
@@ -79,9 +79,9 @@ test('each migration on its own is idempotent', { skip }, async () => {
 });
 
 test('the store applies the migrations once and records the versions', { skip }, async () => {
-  await withSchema(async (scoped) => {
+  await withSchema(async (scoped, runtime, controlPool) => {
     const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
-    const store = new PostgresStore({ pool: scoped, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
+    const store = new PostgresStore({ pool: scoped, controlPool, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
     const first = await store.migrate();
     assert.deepEqual(first.applied, MIGRATIONS.map((m) => m.version));
     assert.equal(first.changed, true);
