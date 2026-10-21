@@ -566,6 +566,50 @@ concurrent transactions get eight connections.
     database said no. It is now stated in `roles.sql`, and the test asserts
     it.
 
+  **Final review corrections (the same branch).** Two more issues, both
+  fixed and both proved by new suites:
+
+  - **C3 — the predictable credentials.** `roles.sql` created the roles
+    with a known `CHANGE_ME_*` password, and the provisioning carried on
+    when the environment had none, so the placeholder stayed in force. A
+    password that is in the repository is not a password. Every role is now
+    created **NOLOGIN with no password at all**, the credential comes from
+    the environment, and the role is enabled only once the credential is
+    set. The provisioning **fails closed**: a missing or malformed
+    credential changes nothing and exits with an error that names the
+    variables and never their values. The result is then **verified**
+    against the live database — the role may log in, it is not a
+    superuser, it does not bypass the policies, the new credential works,
+    and no known placeholder does. A safe **rotation** procedure
+    (`scripts/rotate-postgres-role.js`) disables the login, sets the new
+    credential, re-enables it and proves that the old one stopped working.
+    The harness provisions the cluster's roles the same way, so the tests
+    exercise what a deployment runs.
+  - **C4 — the token lifetime.** `li.set_workspace()` checked the expiry
+    when it opened the context, and `li.current_workspace()` did not check
+    it afterwards — so a context could outlive its credential for as long
+    as the transaction lived. The expiry is now written into the context
+    record, in a table the runtime role cannot write, and it is checked on
+    **every read**: a transaction that is still open when the token expires
+    loses its access there and then — a `SELECT` sees nothing, an `UPDATE`
+    changes nothing, an `INSERT` is refused — and fails closed. A token may
+    not be issued with a lifetime beyond the explicit maximum
+    (`li.max_token_lifetime()`, 300 seconds). A rollback still takes the
+    context with it, a nested SAVEPOINT still keeps it, and a reused
+    connection still carries none.
+
+  **The M3 handoff is written down** (`docs/M3-SECURITY-HANDOFF.md`), so the
+  next milestone inherits the rules instead of reinventing them: a token is
+  minted from the session's membership and never from a client-provided
+  workspace id; the control-plane credential and the minting call are
+  server-side only, with no HTTP route that mints a token; two independent
+  sessions never share a token; logout, a membership removal and a role
+  change revoke access at once, through the grant rather than the clock;
+  the global suppression check is authorized and rate-limited so it cannot
+  be used to enumerate addresses; the migration and BYPASSRLS credentials
+  stay out of every runtime service; and the credentials themselves come
+  from the secret store, never a default.
+
   **What this does NOT do:** it does not authenticate anybody (M3), and it does
   not add the job queue (M4) or the break-glass path (M6). The platform role
   cannot read the tenant tables at all, which is the safe default; the audited

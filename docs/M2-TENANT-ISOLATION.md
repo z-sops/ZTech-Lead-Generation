@@ -20,6 +20,9 @@ application's filters are a convenience on top of them.
 | **The role suite** | `tests/persistence-contract/roles.test.js` |
 | **The concurrency suite** | `tests/persistence-contract/concurrency.test.js` |
 | **The multi-workspace suite** | `tests/persistence-contract/multi-workspace.test.js` |
+| **The credentials suite** | `tests/persistence-contract/credentials.test.js` |
+| **The token-lifetime suite** | `tests/persistence-contract/token-lifetime.test.js` |
+| **The M3 handoff** | `docs/M3-SECURITY-HANDOFF.md` |
 
 ---
 
@@ -91,6 +94,34 @@ token for it. **This is what makes the isolation per-customer**, and not
 no amount of SQL in that session can turn it into a session for B. The
 forgery suite proves exactly that, with a role that is granted **both**
 workspaces.
+
+### The credentials
+
+**No role is provisioned with a known default password.**
+
+Every role is created **NOLOGIN, with no password at all**. The credential
+comes from the deployment's environment, and `scripts/provision-postgres.js`
+sets it and only then enables the login. A role that is created and never
+configured is **closed**, not open: it cannot be logged into, so it cannot
+be used at all.
+
+The provisioning **fails closed**: if a credential is missing or malformed,
+it changes **nothing** and exits with an error, naming the variables that
+are missing — never their values. A malformed credential is refused: it
+must be at least 16 characters, it may not contain a line break, and it may
+not be a placeholder.
+
+An earlier version of `roles.sql` gave the roles a `CHANGE_ME_*` password.
+A password that is written down in the repository is not a password, so
+every role that still carries one must be rotated with
+`scripts/rotate-postgres-role.js`, which disables the login first, sets the
+new credential, re-enables the login, and then **verifies** that the old
+credential and every known placeholder no longer work.
+
+The credentials are never printed, never written to a file, and never put
+on a command line. The test harness provisions the cluster's roles the
+**production way** — NOLOGIN first, then the credential, then LOGIN — so
+the tests exercise what a deployment runs.
 
 ### Who is trusted
 
@@ -223,7 +254,9 @@ database**:
 12. the control plane is not a superuser, does not bypass the policies, is a
     member of no other role, holds no privilege on any table, and may execute
     the token issuer;
-13. the migration role is not a superuser.
+13. the migration role is not a superuser;
+14. the context record carries an expiry, and the maximum token lifetime is a
+    sane, explicit number.
 
 The test proves the assertion is real by showing it **failing** for a
 privileged role.
@@ -298,6 +331,47 @@ the effective privileges are the production ones:
   it cannot write, and the global rows stay invisible through every other
   path.
 
+### The token lifetime suite (C4)
+
+`tests/persistence-contract/token-lifetime.test.js` proves that a context
+does not outlive the credential that opened it:
+
+- the context record carries the **expiry** of the token that opened it,
+  and the record is in a table the runtime role cannot write — so a session
+  cannot push it forward;
+- a token may not be issued with a lifetime longer than the maximum
+  (`li.max_token_lifetime()`, 300 seconds), and the database refuses;
+- a transaction that is **open when the token expires** loses its access:
+  `li.current_workspace()` answers NULL, a `SELECT` sees nothing, an
+  `UPDATE` changes nothing, and an `INSERT` is refused;
+- the loss of access is **not a lockout**: a fresh token opens a fresh
+  context and the session works again;
+- the ordinary transaction behaviour is untouched: a **rollback** takes the
+  context with it, a nested **SAVEPOINT** keeps it, and a **reused
+  connection** carries none.
+
+### The credentials suite (C3)
+
+`tests/persistence-contract/credentials.test.js` proves that no role is ever
+provisioned with a known default password:
+
+- `roles.sql` sets **no password**, and creates the roles NOLOGIN;
+- a credential is **validated** before it is used: missing, empty, too
+  short, a line break, the role name and every known placeholder are
+  refused;
+- a role with **no credential cannot be logged into** at all;
+- the provisioning **fails closed** when a credential is missing, and when
+  one is malformed — and it changes nothing when it does;
+- the provisioning **verifies the result** against the live database: the
+  role may log in, it is not a superuser, it does not bypass the policies
+  (except the migration role), it has no expiry, the new credential works,
+  and **no known placeholder works**;
+- a role that still carries a placeholder can be **rotated away safely**,
+  and the placeholder stops working;
+- the rotation refuses a missing or malformed credential and changes
+  nothing;
+- no credential is ever printed — not on stdout, not in the error output.
+
 ## The global suppression, and the platform data
 
 A platform-global suppression is the platform's own record of a contact. A
@@ -354,5 +428,30 @@ runtime role may execute them.
   separate issuer service; nothing else has to change.
 - **The token is bound to the role, not to the connection.** A token that
   leaked could be used by another session of the same role until it expired
-  (at most an hour, at most five minutes by default). Binding it to the
-  connection would need a round trip to the control plane per transaction.
+  (at most five minutes; the maximum is 300 seconds). Binding it to the
+  **session** is M3's work, and the handoff says how.
+
+---
+
+## The M3 handoff
+
+M2 made the database safe. It did **not** decide **who the caller is**, and
+that is M3's work. The rules that follow from this design are written out
+in **`docs/M3-SECURITY-HANDOFF.md`**, so that the next milestone inherits
+them rather than reinventing them:
+
+- a workspace token is minted from the **session's membership**, never from
+  a client-provided workspace id;
+- the control-plane credential and the token-minting call are **server-side
+  only** — never in a browser, and there is no HTTP route that mints a
+  token;
+- two independent user sessions never share a token;
+- logout, a membership removal and a role change **revoke access at once**
+  — through the grant, which `li.current_workspace()` re-checks on every
+  read, not through the clock;
+- the global suppression check is **authorized and rate-limited**, so it
+  cannot be used to enumerate addresses;
+- the migration and BYPASSRLS credentials stay **out of every runtime
+  service**;
+- the credentials themselves: from the secret store, never a default, and
+  the provisioning fails closed.
