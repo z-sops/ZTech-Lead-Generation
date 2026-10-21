@@ -333,6 +333,46 @@ if (!process.env.ZTECH_PG_URL) {
 
   /* ---------------- C9: an organization is usable ---------------- */
 
+  test('C8/C10: an injected failure leaves no workspace, no membership and no ALLOW record', async () => {
+    const owner = await signUp('c8c-owner@ztech.test', 'C8C Corp', 'C8C Workspace');
+    const before = (await identityPool.query('SELECT count(*)::int AS n FROM id.workspaces')).rows[0].n;
+    const allowsBefore = (await identityPool.query(
+      "SELECT count(*)::int AS n FROM id.authorization_audit WHERE action = 'workspace.create' AND outcome = 'allow'",
+    )).rows[0].n;
+    // The failure is INJECTED IN THE DATABASE, deterministically: the
+    // database refuses this one name. No sleep, no patched pool, no
+    // timing.
+    await db.owner.query("ALTER TABLE id.workspaces ADD CONSTRAINT ztech_test_refusal CHECK (name <> 'Doomed Workspace')");
+    try {
+      const res = await owner.client.post(`/api/organizations/${owner.orgId}/workspaces`, { name: 'Doomed Workspace' });
+      assert.equal(res.status, 500, 'the creation failed');
+    } finally {
+      await db.owner.query('ALTER TABLE id.workspaces DROP CONSTRAINT IF EXISTS ztech_test_refusal');
+    }
+    // Nothing was left behind: the transaction rolled back the workspace,
+    // the membership and the ceiling together.
+    const after = (await identityPool.query('SELECT count(*)::int AS n FROM id.workspaces')).rows[0].n;
+    assert.equal(after, before, 'no workspace was left behind');
+    const memberships = (await identityPool.query(
+      `SELECT count(*)::int AS n FROM id.workspace_memberships m
+         JOIN id.workspaces w ON w.workspace_id = m.workspace_id
+        WHERE w.name = 'Doomed Workspace' AND m.revoked_at IS NULL`,
+    )).rows[0].n;
+    assert.equal(memberships, 0, 'and no membership');
+    // And no ALLOW record claims a creation that did not happen: the
+    // allow record is written inside the transaction, so it rolled back
+    // with it.
+    const allows = (await identityPool.query(
+      "SELECT count(*)::int AS n FROM id.authorization_audit WHERE action = 'workspace.create' AND outcome = 'allow'",
+    )).rows[0].n;
+    assert.equal(allows, allowsBefore, 'no allow record claims a mutation that did not happen');
+    // The DENIAL is written outside the transaction, so it is durable.
+    const denials = (await identityPool.query(
+      "SELECT count(*)::int AS n FROM id.authorization_audit WHERE action = 'workspace.create' AND outcome = 'deny'",
+    )).rows[0].n;
+    assert.ok(denials > 0, 'the denial is recorded, and it is durable');
+  });
+
   test('C9: the creator of an organization owns it, and may create its first workspace', async () => {
     const owner = await signUp('c9-owner@ztech.test', 'C9 Corp', 'C9 Workspace');
     // The owner creates another organization.
