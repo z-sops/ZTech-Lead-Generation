@@ -20,9 +20,13 @@
 
 const { Pool } = require('pg');
 const { URL: Url } = require('node:url');
+const crypto = require('node:crypto');
 
 /** The shortest credential that is accepted. */
 const MIN_LENGTH = 16;
+
+/** The SCRAM parameters PostgreSQL uses. */
+const SCRAM_ITERATIONS = 4096;
 
 /**
  * The placeholders the earlier provisioning used. They must never work, and
@@ -71,6 +75,18 @@ function validateCredential(role, value) {
 }
 
 /**
+ * Is this a plain PostgreSQL identifier?
+ *
+ * A role name comes from the environment, and it is used to build
+ * statements. It is checked here, so a name that is not an identifier is
+ * refused rather than quoted - quoting alone would let a name carry a
+ * comma and grant a role nobody meant to grant.
+ */
+function isPlainIdentifier(name) {
+  return typeof name === 'string' && /^[a-z_][a-z0-9_]{0,62}$/.test(name);
+}
+
+/**
  * The credentials of every role, read from the environment.
  *
  * @param {string[]} [names] the roles to collect (default: the five)
@@ -91,25 +107,54 @@ function collectCredentials(names = ROLES.map((r) => r.name)) {
       else malformed.push(`${env} (${check.reason})`);
       continue;
     }
+    if (!isPlainIdentifier(name)) {
+      malformed.push(`${env} (the role name is not a plain identifier)`);
+      continue;
+    }
     credentials.push({ ...role, name, env, password: value });
   }
   return { credentials, missing, malformed };
 }
 
 /**
+ * A SCRAM-SHA-256 verifier for a password: the thing PostgreSQL stores in
+ * `pg_authid.rolpassword`.
+ *
+ * The point of computing it HERE is that the PASSWORD ITSELF never reaches
+ * the database. `ALTER ROLE ... PASSWORD '...'` cannot take a bind
+ * parameter, so the secret has to appear in the SQL text - and SQL text is
+ * what a statement log contains. With a verifier, the statement is
+ * parameterised, the secret is nowhere, and the stored value cannot be
+ * turned back into the password either.
+ *
+ * The construction is the standard one:
+ *
+ *   SaltedPassword = PBKDF2-HMAC-SHA256(password, salt, iterations)
+ *   ClientKey      = HMAC(SaltedPassword, "Client Key")
+ *   StoredKey      = SHA256(ClientKey)
+ *   ServerKey      = HMAC(SaltedPassword, "Server Key")
+ *
+ * and the verifier is `SCRAM-SHA-256$<i>:<salt>$<storedkey>:<serverkey>`.
+ */
+function scramVerifier(password) {
+  const salt = crypto.randomBytes(16);
+  const salted = crypto.pbkdf2Sync(password, salt, SCRAM_ITERATIONS, 32, 'sha256');
+  const clientKey = crypto.createHmac('sha256', salted).update('Client Key').digest();
+  const storedKey = crypto.createHash('sha256').update(clientKey).digest();
+  const serverKey = crypto.createHmac('sha256', salted).update('Server Key').digest();
+  return 'SCRAM-SHA-256$' + SCRAM_ITERATIONS + ':' + salt.toString('base64')
+    + '$' + storedKey.toString('base64') + ':' + serverKey.toString('base64');
+}
+
+/**
  * Set a role's credential and enable it.
  *
- * `ALTER ROLE ... PASSWORD` cannot take a bind parameter, so the statement
- * is built server-side with `format()` and the value is transported as a
- * parameter. The credential is never written to a log, an error message or
- * a file.
+ * The verifier is transported as a BIND PARAMETER, so the password appears
+ * in no statement, in no log and in no error message - and the value that
+ * is stored is a one-way verifier.
  */
 async function setCredential(admin, role, password) {
-  const { rows } = await admin.query(
-    "SELECT format('ALTER ROLE %I PASSWORD %L', $1::text, $2::text) AS statement",
-    [role, password],
-  );
-  await admin.query(rows[0].statement);
+  await admin.query('UPDATE pg_authid SET rolpassword = $1 WHERE rolname = $2', [scramVerifier(password), role]);
   const { rows: login } = await admin.query("SELECT format('ALTER ROLE %I LOGIN', $1::text) AS statement", [role]);
   await admin.query(login[0].statement);
 }
@@ -181,6 +226,6 @@ function describeRole(properties) {
 }
 
 module.exports = {
-  MIN_LENGTH, PLACEHOLDERS, ROLES, passwordEnvVar, validateCredential, collectCredentials,
-  setCredential, disableLogin, roleProperties, credentialUrl, canLogIn, describeRole,
+  MIN_LENGTH, PLACEHOLDERS, ROLES, SCRAM_ITERATIONS, passwordEnvVar, validateCredential, collectCredentials,
+  isPlainIdentifier, scramVerifier, setCredential, disableLogin, roleProperties, credentialUrl, canLogIn, describeRole,
 };

@@ -92,17 +92,32 @@ async function main() {
     }
 
     // 3. The database, and who may connect to it and create in it.
+    //
+    // The names are QUOTED AS IDENTIFIERS, never as string literals: a
+    // database name is an identifier, and a string literal there is not
+    // only wrong but a way in. The quoting is done by PostgreSQL's own
+    // format('%I'), so no name is ever pasted into a statement.
     const exists = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [DATABASE]);
     if (!exists.rows.length) {
-      await admin.query(`CREATE DATABASE ${DATABASE}`);
+      const { rows: make } = await admin.query("SELECT format('CREATE DATABASE %I', $1::text) AS statement", [DATABASE]);
+      await admin.query(make[0].statement);
       console.log(`  the database ${DATABASE} is created`);
     } else {
       console.log(`  the database ${DATABASE} is already there`);
     }
-    await admin.query(`GRANT CONNECT ON DATABASE ${DATABASE} TO ${credentials.map((r) => r.name).join(', ')}`);
+    const { rows: connect } = await admin.query(
+      `SELECT format('GRANT CONNECT ON DATABASE %I TO %s', $1::text,
+              (SELECT string_agg(format('%I', r), ', ') FROM unnest($2::text[]) AS r)) AS statement`,
+      [DATABASE, credentials.map((role) => role.name)],
+    );
+    await admin.query(connect[0].statement);
     // The migration role creates the schema, and owns everything in it.
-    if (credentials.some((r) => r.name === 'ztech_migrator')) {
-      await admin.query('GRANT CREATE ON DATABASE $1 TO ztech_migrator'.replace('$1', `'${DATABASE}'`));
+    if (credentials.some((role) => role.name === 'ztech_migrator')) {
+      const { rows: create } = await admin.query(
+        "SELECT format('GRANT CREATE ON DATABASE %I TO %I', $1::text, $2::text) AS statement",
+        [DATABASE, 'ztech_migrator'],
+      );
+      await admin.query(create[0].statement);
     }
 
     // 4. The verification, against the live database.
