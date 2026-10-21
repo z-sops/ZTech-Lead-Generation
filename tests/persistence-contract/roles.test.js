@@ -77,7 +77,7 @@ if (!process.env.ZTECH_PG_URL) {
     const platformStore = new PostgresStore({ pool: platform, controlPool: db.controlPool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
     await platformStore.marketRules.set({ country_code: 'PK', rule: 'consent_required', note: 'note', reviewed_by: 'Zee', reviewed_at: T1 });
 
-    const tenantStore = new PostgresStore({ pool: tenant, controlPool: db.controlPool, workspaceId: A, role: 'tenant', logger: { warn() {} } });
+    const tenantStore = new PostgresStore({ pool: tenant, controlPool: db.controlPool, sessionId: db.sessionId, userId: db.userId, workspaceId: A, role: 'tenant', logger: { warn() {} } });
     assert.equal((await tenantStore.marketRules.get('pk')).rule, 'consent_required', 'a tenant may read it');
     await assert.rejects(
       tenantStore.marketRules.set({ country_code: 'GB', rule: 'consent_required', note: 'n', reviewed_by: 'X', reviewed_at: T1 }),
@@ -94,7 +94,7 @@ if (!process.env.ZTECH_PG_URL) {
   test('a tenant may not create, change or delete a platform-global suppression', async () => {
     const tenant = new Pool({ connectionString: roleUrl(ROLES.app, DATABASE), options: '-c search_path=li' });
     const platform = new Pool({ connectionString: roleUrl(ROLES.platform, DATABASE), options: '-c search_path=li' });
-    const tenantStore = new PostgresStore({ pool: tenant, controlPool: db.controlPool, workspaceId: A, role: 'tenant', logger: { warn() {} } });
+    const tenantStore = new PostgresStore({ pool: tenant, controlPool: db.controlPool, sessionId: db.sessionId, userId: db.userId, workspaceId: A, role: 'tenant', logger: { warn() {} } });
     const platformStore = new PostgresStore({ pool: platform, controlPool: db.controlPool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
 
     // The application refuses it.
@@ -124,7 +124,7 @@ if (!process.env.ZTECH_PG_URL) {
   test('the tenant can ask whether an address is suppressed, without seeing it', async () => {
     const tenant = new Pool({ connectionString: roleUrl(ROLES.app, DATABASE), options: '-c search_path=li' });
     const platform = new Pool({ connectionString: roleUrl(ROLES.platform, DATABASE), options: '-c search_path=li' });
-    const tenantStore = new PostgresStore({ pool: tenant, controlPool: db.controlPool, workspaceId: A, role: 'tenant', logger: { warn() {} } });
+    const tenantStore = new PostgresStore({ pool: tenant, controlPool: db.controlPool, sessionId: db.sessionId, userId: db.userId, workspaceId: A, role: 'tenant', logger: { warn() {} } });
     const platformStore = new PostgresStore({ pool: platform, controlPool: db.controlPool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
     await platformStore.suppressions.add({ suppression_id: 'sup_g2', scope: 'global', channel: 'email', normalized_address: 'hidden@platform.test', reason: 'bounce', source: 'relay', created_at: T1 });
 

@@ -39,7 +39,7 @@ if (!process.env.ZTECH_PG_URL) {
   async function create() {
     if (!db) db = await freshDatabase(DATABASE, { workspace: WORKSPACE });
     await truncateAll(db.owner);
-    const store = new PostgresStore({ pool: db.pool, controlPool: db.controlPool, workspaceId: WORKSPACE, logger: { warn() {} } });
+    const store = new PostgresStore({ pool: db.pool, controlPool: db.controlPool, sessionId: db.sessionId, userId: db.userId, workspaceId: WORKSPACE, logger: { warn() {} } });
     return store;
   }
 

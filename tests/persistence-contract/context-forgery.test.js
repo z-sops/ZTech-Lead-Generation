@@ -172,7 +172,7 @@ if (!process.env.ZTECH_PG_URL) {
     const client = await app.connect();
     try {
       await assert.rejects(
-        client.query('SELECT li.issue_workspace_token($1, $2, 300)', [B, ROLES.app]),
+        client.query('SELECT li.issue_workspace_token($1, $2, $3, $4, 300)', [B, ROLES.app, db.sessionId, db.userId]),
         /permission denied/i,
         'a session may not ask for its own token',
       );
@@ -262,7 +262,7 @@ if (!process.env.ZTECH_PG_URL) {
     // And there is no way for the session to get a token for B.
     const client = await app.connect();
     try {
-      await assert.rejects(client.query('SELECT li.issue_workspace_token($1, $2, 300)', [B, ROLES.app]), /permission denied/i);
+      await assert.rejects(client.query('SELECT li.issue_workspace_token($1, $2, $3, $4, 300)', [B, ROLES.app, db.sessionId, db.userId]), /permission denied/i);
     } finally {
       client.release();
     }

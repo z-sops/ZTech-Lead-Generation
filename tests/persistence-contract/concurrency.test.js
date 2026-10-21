@@ -39,7 +39,7 @@ const DATABASE = 'ztech_concurrency';
 async function withSchema(fn) {
   const db = await freshDatabase(DATABASE, { workspace: WORKSPACE });
   try {
-    return await fn(db.pool, db.owner, db.controlPool);
+    return await fn(db.pool, db.owner, db.controlPool, db.sessionId, db.userId);
   } finally {
     await dropDatabase(DATABASE, [db.pool, db.owner, db.admin]);
   }
@@ -53,15 +53,15 @@ function read(store, sql, params) {
   return store.tx(() => store.one('li_saved_searches', sql, params));
 }
 
-async function freshStore(pool, controlPool) {
+async function freshStore(pool, controlPool, sessionId, userId) {
   // The migrations were applied by the harness, as the owner: the runtime
   // role may not create tables.
-  return new PostgresStore({ pool, controlPool, workspaceId: WORKSPACE, logger: { warn() {} } });
+  return new PostgresStore({ pool, controlPool, sessionId, userId, workspaceId: WORKSPACE, logger: { warn() {} } });
 }
 
 test('two simultaneous transactions use different clients', { skip }, async () => {
-  await withSchema(async (pool, owner, controlPool) => {
-    const store = await freshStore(pool, controlPool);
+  await withSchema(async (pool, owner, controlPool, sessionId, userId) => {
+    const store = await freshStore(pool, controlPool, sessionId, userId);
     const clients = [];
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
@@ -85,11 +85,11 @@ test('two simultaneous transactions use different clients', { skip }, async () =
 });
 
 test('a transaction cannot see another transaction\'s uncommitted work', { skip }, async () => {
-  await withSchema(async (pool, owner, controlPool) => {
-    const store = await freshStore(pool, controlPool);
+  await withSchema(async (pool, owner, controlPool, sessionId, userId) => {
+    const store = await freshStore(pool, controlPool, sessionId, userId);
     // A second store on the same pool: a different operation, a different
     // connection, and its own transaction context.
-    const other = await freshStore(pool, controlPool);
+    const other = await freshStore(pool, controlPool, sessionId, userId);
     const seen = [];
 
     const writer = store.tx(async () => {
@@ -111,8 +111,8 @@ test('a transaction cannot see another transaction\'s uncommitted work', { skip 
 });
 
 test('a rollback in one transaction leaves the other one alone', { skip }, async () => {
-  await withSchema(async (pool, owner, controlPool) => {
-    const store = await freshStore(pool, controlPool);
+  await withSchema(async (pool, owner, controlPool, sessionId, userId) => {
+    const store = await freshStore(pool, controlPool, sessionId, userId);
     let committed = false;
     await assert.rejects(store.tx(async () => {
       await store.run('INSERT INTO li_saved_searches (workspace_id, search_id, name, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -134,8 +134,8 @@ test('a rollback in one transaction leaves the other one alone', { skip }, async
 });
 
 test('an operation outside a transaction never uses a transaction\'s client', { skip }, async () => {
-  await withSchema(async (pool, owner, controlPool) => {
-    const store = await freshStore(pool, controlPool);
+  await withSchema(async (pool, owner, controlPool, sessionId, userId) => {
+    const store = await freshStore(pool, controlPool, sessionId, userId);
     let insideClient = null;
     const transaction = store.tx(async () => {
       insideClient = store.client;
@@ -156,8 +156,8 @@ test('an operation outside a transaction never uses a transaction\'s client', { 
 });
 
 test('a nested transaction joins the outer one, and rolls back only its own work', { skip }, async () => {
-  await withSchema(async (pool, owner, controlPool) => {
-    const store = await freshStore(pool, controlPool);
+  await withSchema(async (pool, owner, controlPool, sessionId, userId) => {
+    const store = await freshStore(pool, controlPool, sessionId, userId);
     let failed = null;
     await store.tx(async () => {
       await store.run('INSERT INTO li_saved_searches (workspace_id, search_id, name, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -181,8 +181,8 @@ test('a nested transaction joins the outer one, and rolls back only its own work
 });
 
 test('a nested transaction that succeeds is part of the outer one', { skip }, async () => {
-  await withSchema(async (pool, owner, controlPool) => {
-    const store = await freshStore(pool, controlPool);
+  await withSchema(async (pool, owner, controlPool, sessionId, userId) => {
+    const store = await freshStore(pool, controlPool, sessionId, userId);
     await store.tx(async () => {
       await store.tx(async () => {
         await store.run('INSERT INTO li_saved_searches (workspace_id, search_id, name, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -195,8 +195,8 @@ test('a nested transaction that succeeds is part of the outer one', { skip }, as
 });
 
 test('many concurrent transactions each get their own connection', { skip }, async () => {
-  await withSchema(async (pool, owner, controlPool) => {
-    const store = await freshStore(pool, controlPool);
+  await withSchema(async (pool, owner, controlPool, sessionId, userId) => {
+    const store = await freshStore(pool, controlPool, sessionId, userId);
     const clients = new Set();
     const work = [];
     for (let i = 0; i < 8; i += 1) {
@@ -215,8 +215,8 @@ test('many concurrent transactions each get their own connection', { skip }, asy
 });
 
 test('a transaction that fails leaves the pool usable', { skip }, async () => {
-  await withSchema(async (pool, owner, controlPool) => {
-    const store = await freshStore(pool, controlPool);
+  await withSchema(async (pool, owner, controlPool, sessionId, userId) => {
+    const store = await freshStore(pool, controlPool, sessionId, userId);
     await assert.rejects(store.tx(async () => {
       await store.run('SELECT 1 FROM a_table_that_does_not_exist');
     }));

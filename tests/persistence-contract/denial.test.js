@@ -29,6 +29,7 @@ if (!process.env.ZTECH_PG_URL) {
 } else {
   const DATABASE = 'ztech_denial';
   let db = null;
+  let bSession = null;
   let pool = null;
 
   /** A transaction with workspace A's context, on the runtime role. */
@@ -54,7 +55,7 @@ if (!process.env.ZTECH_PG_URL) {
     return pool.connect().then(async (client) => {
       try {
         await client.query('BEGIN');
-        await client.query('SELECT li.set_workspace($1, $2)', [B, await db.mintToken(B, ROLES.app)]);
+        await client.query('SELECT li.set_workspace($1, $2)', [B, await db.mintToken(B, ROLES.app, 300, bSession.sessionId, bSession.userId)]);
         const result = await fn(client);
         await client.query('COMMIT');
         return result;
@@ -86,6 +87,7 @@ if (!process.env.ZTECH_PG_URL) {
 
   test('the denial suite is set up: two tenants, one runtime role', async () => {
     db = await freshDatabase(DATABASE, { workspaces: [A, B] });
+    bSession = await db.sessionFor(B);
     pool = new Pool({ connectionString: roleUrl(ROLES.app, DATABASE), options: '-c search_path=li' });
     // A row for workspace B, written by the owner (the deployment's migrator).
     await db.owner.query(

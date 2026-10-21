@@ -33,7 +33,12 @@ const path = require('node:path');
 
 const initSqlJs = require('sql.js');
 const { MIGRATIONS: SQLITE_MIGRATIONS } = require('../../src/main/lead-intelligence/persistence/migrations');
-const { MIGRATIONS: PG_MIGRATIONS } = require('../../packages/lead-intelligence-postgres/src/index');
+const { MIGRATIONS: ALL_PG_MIGRATIONS } = require('../../packages/lead-intelligence-postgres/src/index');
+
+// The TENANT migrations. The identity schema (migration 015) is a
+// different schema with different tables, and this test compares the tenant
+// schema with the desktop's.
+const PG_MIGRATIONS = ALL_PG_MIGRATIONS.filter((m) => m.version < 15);
 
 const root = path.join(__dirname, '..', '..');
 const DOC = path.join(root, 'docs', 'PERSISTENCE-M1.md');
