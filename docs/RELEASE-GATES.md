@@ -11,6 +11,8 @@ not a task: it is a condition, and it is closed only by evidence.
 | RG-4 | A role with no credential cannot be logged into | **CLOSED** | The roles are created NOLOGIN; proved by the credentials suite |
 | RG-5 | The provisioning fails closed when a credential is missing or malformed | **CLOSED** | Proved by the credentials suite and by the production provisioning suite |
 | RG-6 | The production provisioning path is exercised on every CI run | **CLOSED** | The workflow gives the job an isolated PostgreSQL 16 cluster and runs the provisioning suite as its own required step |
+| RG-7 | The **workspace token** is understood for what it is: a bearer credential, with the server as the boundary and the database as the boundary for the entitlement | **CLOSED** | 	ests/api/security.test.js - a copied token opens a context on another connection under the same role (proved, not denied), the API never accepts a token from a client, and a revoked session's token is refused wherever it is presented |
+| RG-8 | The **login throttle** is shared across the service instances | **OPEN - deployment** | The limiter is in memory: with more than one instance the counter must be shared. The key is the connection's address and the email address together, and no proxy header is believed |
 
 ---
 
