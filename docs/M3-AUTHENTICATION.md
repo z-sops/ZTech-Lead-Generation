@@ -131,6 +131,64 @@ an owner's role, and a workspace always keeps at least one owner.
 - **Nothing from the database** — no credential, no workspace token — is ever
   returned to the browser.
 
+### Suspending an account is a PLATFORM operation (C13)
+
+An organization owner must not be able to close an account that belongs to
+somebody else's organization — or, worse, to close an account that belongs
+to a user of **an unrelated organization**, over a row in an unrelated
+organization's workspace.
+
+So the customer-accessible global operation is **gone**. The account
+suspension lives on the **platform console's** service, and only there:
+
+- the customer API has **no such route at all** — a request for it is a
+  `404`, not a `403` — because a customer operation that suspends
+  accounts across organizations should not exist in the customer's API;
+- the service refuses it for a customer (`403 not_a_platform_console`),
+  so the door is closed at both layers;
+- the **platform console** may suspend an account, and the enforcement is
+  the same as it always was: the sessions die at once (the API's session
+  validation ignores a disabled account) and the **entitlement** dies with
+  them (the database's `li.session_entitled()` ignores a disabled
+  account), so a transaction that is already open loses its access and no
+  token may be issued for the account.
+
+### The organization and the workspace are two ladders (C14)
+
+A **workspace owner** and an **organization owner** are different things,
+and one must never become the other.
+
+- The **organization role** comes from `id.organization_memberships`, and
+  from nothing else. It is the organization's own ladder.
+- The **workspace role** comes from `id.workspace_memberships`, and from
+  nothing else. It is the workspace's own ladder.
+- The **workspace-owner invariant** is preserved: the creator of a new
+  workspace is that workspace's **owner** ✔ — a workspace always has an
+  owner ✔ — and that is a *workspace* role ✔.
+- The authority to **create a workspace** in an organization is computed
+  separately, as the strongest of the caller's organization role and their
+  strongest workspace role in that organization. It is used for that one
+  decision and it **never becomes a role anybody else can see** ✔.
+
+So a workspace admin may create another workspace ✔ and owns it ✔ — and
+their **organization role is still nothing** ✔: they gain no organization
+power, and in particular they cannot suspend an account ✔.
+
+### The injected-failure test, described exactly
+
+The failure is injected **in the database**, deterministically, with a
+`CHECK` constraint on `id.workspace_memberships` that refuses one user
+(`NOT VALID`, so it applies to new rows only). It therefore lands on the
+**membership insert — the second step of the transaction** — so the
+**workspace insert has already succeeded** by the time it fires.
+
+That is what makes the proof worth having: if the transaction were not
+atomic, the workspace would survive the failure ✔. The test asserts that
+no workspace, no membership and no ceiling were left behind ✔, that **no
+ALLOW record** claims a creation that did not happen ✔ (the allow record is
+written inside the transaction, so it rolled back with it), and that the
+**DENIAL** record is durable ✔.
+
 ## The corrections the security review required (the second pass)
 
 ### The decision is made at COMMIT time (C6)

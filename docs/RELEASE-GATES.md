@@ -16,6 +16,8 @@ not a task: it is a condition, and it is closed only by evidence.
 | RG-9 | A **disabled account** holds no access, in the API and in the database | **CLOSED** | `tests/api/integrity.test.js` - the session is dead at once (401), the database refuses the entitlement, and no token may be issued for the account |
 | RG-10 | The **authorization decisions** are made on the state that exists at commit time | **CLOSED** | `tests/api/integrity.test.js` - the permission checks are inside the transaction, on the locked membership rows; the concurrency tests use barriers, not sleeps |
 | RG-11 | The **CI evidence** is reported exactly, and the ZuniSEO comparison is not claimed | **CLOSED** | `docs/M3-AUTHENTICATION.md` - the matrix numbers and the PostgreSQL-job numbers are reported separately, and the `zuni-seo contract drift` job is disclosed as NOT having run the comparison |
+| RG-12 | **Suspending an account** is a platform operation, and never a customer one | **CLOSED** | `tests/api/integrity.test.js` - the customer API has no such route (404), the service refuses it (403), the account is untouched, and the platform console's service may do it - with the database and the API enforcement unchanged |
+| RG-13 | The **organization ladder and the workspace ladder** are separate | **CLOSED** | `tests/api/integrity.test.js` - a workspace admin who creates a workspace owns IT, and their organization role is still nothing: no organization power, and no account suspension |
 
 ---
 
