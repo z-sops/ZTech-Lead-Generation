@@ -16,28 +16,24 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { MIGRATIONS } = require('../../packages/lead-intelligence-postgres/src/index');
+const { freshDatabase, dropDatabase, withSetupLock, skip } = require('./lib/postgres');
 
 const URL = process.env.ZTECH_PG_URL || '';
-const skip = URL ? false : 'set ZTECH_PG_URL to run the migrations against a real PostgreSQL';
+
+const DATABASE = 'ztech_migrations';
 
 async function withSchema(fn) {
-  const { Pool } = require('pg');
-  const admin = new Pool({ connectionString: URL });
-  const scoped = new Pool({ connectionString: URL, options: '-c search_path=li_mig' });
-  await admin.query('DROP SCHEMA IF EXISTS li_mig CASCADE');
-  await admin.query('CREATE SCHEMA li_mig');
+  const db = await freshDatabase(DATABASE, { workspace: '11111111-1111-4111-8111-111111111111' });
   try {
-    return await fn(scoped, admin);
+    return await fn(db.owner, db.pool);
   } finally {
-    await admin.query('DROP SCHEMA IF EXISTS li_mig CASCADE');
-    await scoped.end();
-    await admin.end();
+    await dropDatabase(DATABASE, [db.pool, db.owner, db.admin]);
   }
 }
 
 async function schemaOf(pool) {
   const res = await pool.query(
-    "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'li_mig' ORDER BY table_name, column_name",
+    "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'li' ORDER BY table_name, column_name",
   );
   return res.rows.map((r) => `${r.table_name}.${r.column_name}:${r.data_type}`).join('\n');
 }
@@ -54,10 +50,10 @@ test('the migrations are applied one version at a time, and recorded', { skip },
 
 test('applying every migration again changes nothing', { skip }, async () => {
   await withSchema(async (scoped) => {
-    for (const m of MIGRATIONS) await scoped.query(m.sql);
+    await withSetupLock(scoped, async () => { for (const m of MIGRATIONS) await scoped.query(m.sql); });
     const before = await schemaOf(scoped);
     const appliedBefore = await scoped.query('SELECT version FROM li_schema_migrations ORDER BY version');
-    for (const m of MIGRATIONS) await scoped.query(m.sql);
+    await withSetupLock(scoped, async () => { for (const m of MIGRATIONS) await scoped.query(m.sql); });
     const after = await schemaOf(scoped);
     const appliedAfter = await scoped.query('SELECT version FROM li_schema_migrations ORDER BY version');
     assert.equal(after, before, 'the schema is the same');
@@ -72,11 +68,11 @@ test('each migration on its own is idempotent', { skip }, async () => {
       await scoped.query(m.sql);
     }
     const tables = await scoped.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'li_mig' AND table_type = 'BASE TABLE' ORDER BY table_name",
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'li' AND table_type = 'BASE TABLE' ORDER BY table_name",
     );
     const names = tables.rows.map((r) => r.table_name);
     for (const m of MIGRATIONS) {
-      const created = m.sql.match(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(\w+)/i);
+      const created = m.sql.match(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:\w+\.)?(\w+)/i);
       if (created) assert.ok(names.includes(created[1]), `${created[1]} exists after its migration ran twice`);
     }
   });

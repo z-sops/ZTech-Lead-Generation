@@ -32,26 +32,23 @@ const assert = require('node:assert/strict');
 const { Pool } = require('pg');
 const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
 const { PLATFORM_WORKSPACE_ID } = require('../../packages/lead-intelligence-postgres/src/dialect');
+const { freshDatabase, dropDatabase, skip } = require('./lib/postgres');
 
 const URL = process.env.ZTECH_PG_URL || '';
-const skip = URL ? false : 'set ZTECH_PG_URL to run the multi-workspace tests against a real PostgreSQL';
 
 const A = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
 const T1 = '2026-09-01T00:00:00.000Z';
 const T2 = '2026-09-02T00:00:00.000Z';
 
+const DATABASE = 'ztech_multi';
+
 async function withSchema(fn) {
-  const admin = new Pool({ connectionString: URL });
-  const scoped = new Pool({ connectionString: URL, options: '-c search_path=li_multi' });
-  await admin.query('DROP SCHEMA IF EXISTS li_multi CASCADE');
-  await admin.query('CREATE SCHEMA li_multi');
+  const db = await freshDatabase(DATABASE, { workspace: A, workspaces: [A, B, PLATFORM_WORKSPACE_ID] });
   try {
-    return await fn(scoped, admin);
+    return await fn(db.pool, db.owner, db.platformPool);
   } finally {
-    await admin.query('DROP SCHEMA IF EXISTS li_multi CASCADE');
-    await scoped.end();
-    await admin.end();
+    await dropDatabase(DATABASE, [db.pool, db.owner, db.platformPool, db.admin]);
   }
 }
 
@@ -73,10 +70,9 @@ function packet(over = {}) {
 }
 
 test('two workspaces can hold the same business key', { skip }, async () => {
-  await withSchema(async (pool) => {
+  await withSchema(async (pool, owner, platformPool) => {
     const a = new PostgresStore({ pool, workspaceId: A, logger: { warn() {} } });
     const b = new PostgresStore({ pool, workspaceId: B, logger: { warn() {} } });
-    await a.migrate();
 
     // The same request key, the same lead, the same job id, the same domain.
     await a.jobs.insert(job());
@@ -143,10 +139,9 @@ test('two workspaces can hold the same business key', { skip }, async () => {
 });
 
 test('one workspace cannot read the other\'s rows', { skip }, async () => {
-  await withSchema(async (pool) => {
+  await withSchema(async (pool, owner, platformPool) => {
     const a = new PostgresStore({ pool, workspaceId: A, logger: { warn() {} } });
     const b = new PostgresStore({ pool, workspaceId: B, logger: { warn() {} } });
-    await a.migrate();
     await a.jobs.insert(job());
     await a.packets.insert(packet());
     await a.pitches.upsert({ pitch_id: 'p1', lead_id: 'L1', status: 'draft', content_hash: 'h1', created_at: T1, updated_at: T1 });
@@ -166,10 +161,9 @@ test('one workspace cannot read the other\'s rows', { skip }, async () => {
 });
 
 test('a row of one workspace cannot be written under another workspace\'s key', { skip }, async () => {
-  await withSchema(async (pool) => {
+  await withSchema(async (pool, owner, platformPool) => {
     const a = new PostgresStore({ pool, workspaceId: A, logger: { warn() {} } });
     const b = new PostgresStore({ pool, workspaceId: B, logger: { warn() {} } });
-    await a.migrate();
     await a.jobs.insert(job());
     // B may hold the same id, but it is B's own row: the key is tenant-scoped.
     await b.jobs.insert(job({ request_key: 'other-key' }));
@@ -181,10 +175,9 @@ test('a row of one workspace cannot be written under another workspace\'s key', 
 });
 
 test('one workspace\'s pause-all does not pause another\'s sequences', { skip }, async () => {
-  await withSchema(async (pool) => {
+  await withSchema(async (pool, owner, platformPool) => {
     const a = new PostgresStore({ pool, workspaceId: A, logger: { warn() {} } });
     const b = new PostgresStore({ pool, workspaceId: B, logger: { warn() {} } });
-    await a.migrate();
     await a.sequences.setControl({ paused: true, updatedAt: T1 });
     assert.equal((await a.sequences.control()).paused, true, 'workspace A is paused');
     assert.equal((await b.sequences.control()).paused, false, 'workspace B is not');
@@ -192,10 +185,9 @@ test('one workspace\'s pause-all does not pause another\'s sequences', { skip },
 });
 
 test('the market rules are platform data', { skip }, async () => {
-  await withSchema(async (pool) => {
+  await withSchema(async (pool, owner, platformPool) => {
     const tenant = new PostgresStore({ pool, workspaceId: A, role: 'tenant', logger: { warn() {} } });
-    const platform = new PostgresStore({ pool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
-    await tenant.migrate();
+    const platform = new PostgresStore({ pool: platformPool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
 
     await assert.rejects(
       tenant.marketRules.set({ country_code: 'PK', rule: 'consent_required', note: 'note', reviewed_by: 'Zee', reviewed_at: T1 }),
@@ -209,25 +201,22 @@ test('the market rules are platform data', { skip }, async () => {
 });
 
 test('a global suppression blocks every workspace, and exposes no contact information', { skip }, async () => {
-  await withSchema(async (pool) => {
+  await withSchema(async (pool, owner, platformPool) => {
     const a = new PostgresStore({ pool, workspaceId: A, logger: { warn() {} } });
     const b = new PostgresStore({ pool, workspaceId: B, logger: { warn() {} } });
-    const platform = new PostgresStore({ pool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
-    await a.migrate();
+    const platform = new PostgresStore({ pool: platformPool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
 
     await platform.suppressions.add({ suppression_id: 'sup_g', scope: 'global', channel: 'email', normalized_address: 'secret@other.test', reason: 'unsubscribe', source: 'relay', created_at: T1 });
 
     // It blocks both workspaces...
-    assert.ok(await a.suppressions.find({ channel: 'email', address: 'secret@other.test' }), 'workspace A is blocked');
-    assert.ok(await b.suppressions.find({ channel: 'email', address: 'secret@other.test' }), 'workspace B is blocked');
-    assert.equal(await a.suppressions.isSuppressed({ channel: 'email', address: 'secret@other.test' }), true);
-    assert.equal(await b.suppressions.isSuppressed({ channel: 'email', address: 'secret@other.test' }), true);
+    assert.equal(await a.suppressions.isSuppressed({ channel: 'email', address: 'secret@other.test' }), true, 'workspace A is blocked');
+    assert.equal(await b.suppressions.isSuppressed({ channel: 'email', address: 'secret@other.test' }), true, 'workspace B is blocked');
 
-    // ...but the address is never shown to a tenant.
+    // ...but the address is never shown to a tenant: the row is invisible to
+    // it, so there is nothing to redact - and the authorized check answers
+    // with a yes or a no.
     const found = await a.suppressions.find({ channel: 'email', address: 'secret@other.test' });
-    assert.equal(found.normalized_address, null, 'the address is redacted');
-    assert.equal(found.redacted, true);
-    assert.equal(found.reason, 'unsubscribe', 'the reason is still there: the caller needs it');
+    assert.equal(found, null, 'the tenant cannot read the global row at all');
     const listed = await a.suppressions.list({});
     assert.equal(listed.rows.length, 0, 'a global row is never listed to a tenant');
     const byAddress = await a.suppressions.listForAddress({ channel: 'email', address: 'secret@other.test' });
@@ -236,10 +225,9 @@ test('a global suppression blocks every workspace, and exposes no contact inform
 });
 
 test('a workspace sees only its own suppressions', { skip }, async () => {
-  await withSchema(async (pool) => {
+  await withSchema(async (pool, owner, platformPool) => {
     const a = new PostgresStore({ pool, workspaceId: A, logger: { warn() {} } });
     const b = new PostgresStore({ pool, workspaceId: B, logger: { warn() {} } });
-    await a.migrate();
     await a.suppressions.add({ suppression_id: 'sup_a', scope: 'workspace', channel: 'email', normalized_address: 'a@b.test', reason: 'bounce', source: 'relay', created_at: T1 });
     assert.ok(await a.suppressions.find({ channel: 'email', address: 'a@b.test' }));
     assert.equal(await b.suppressions.find({ channel: 'email', address: 'a@b.test' }), null, 'workspace B does not see it');

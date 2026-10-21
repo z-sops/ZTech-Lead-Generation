@@ -26,6 +26,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { canonicalIso, toInstant, encodeValue, decodeValue, rewritePlaceholders } = require('../../packages/lead-intelligence-postgres/src/dialect');
+const { freshDatabase, dropDatabase, skip } = require('./lib/postgres');
 
 test('a well-formed timestamp survives the conversion unchanged', () => {
   const iso = '2026-09-01T00:00:00.000Z';
@@ -104,26 +105,24 @@ test('the store reports a document that is not an object', { skip: !process.env.
   const { Pool } = require('pg');
   const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
   const URL = process.env.ZTECH_PG_URL;
-  const pool = new Pool({ connectionString: URL, options: '-c search_path=li_conv' });
-  const admin = new Pool({ connectionString: URL });
-  await admin.query('DROP SCHEMA IF EXISTS li_conv CASCADE');
-  await admin.query('CREATE SCHEMA li_conv');
+  const db = await freshDatabase('ztech_conversion', { workspace: '11111111-1111-4111-8111-111111111111' });
+  const pool = db.pool;
   const store = new PostgresStore({ pool, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
-  await store.migrate();
   await store.packets.insert({
     packet_id: 'pkt_1', lead_id: 'L1', job_id: 'rjob_1', research_status: 'complete',
     digital_footprint: { state: 'clean' }, requested_domain: 'acme.test',
     captured_at: '2026-09-01T00:00:00.000Z', freshness: { expires_at: '2026-09-02T00:00:00.000Z' }, created_at: '2026-09-01T00:00:00.000Z',
     facts: [], findings: [], strengths: [], not_measured: [], limitations: [], source_references: [],
   });
-  // A document that is valid JSON but not a packet.
-  await store.run("UPDATE li_evidence_packets SET packet_json = '\"not a packet\"'::jsonb WHERE packet_id = 'pkt_1'");
+  // A document that is valid JSON but not a packet. The write runs inside a
+  // transaction, because the row-level security needs the workspace context.
+  await store.tx(async () => {
+    await store.run("UPDATE li_evidence_packets SET packet_json = '\"not a packet\"'::jsonb WHERE packet_id = 'pkt_1'");
+  });
   const read = await store.packets.get('pkt_1');
   assert.equal(read, null, 'the row is not trusted');
   assert.ok(store.corruptRows.length > 0, 'the corrupt row is reported');
-  await admin.query('DROP SCHEMA IF EXISTS li_conv CASCADE');
-  await pool.end();
-  await admin.end();
+  await dropDatabase('ztech_conversion', [db.pool, db.owner, db.admin]);
 });
 
 test('the placeholders are rewritten, and a question mark in a literal is left alone', () => {

@@ -28,30 +28,35 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Pool } = require('pg');
 const { PostgresStore } = require('../../packages/lead-intelligence-postgres/src/PostgresStore');
+const { freshDatabase, dropDatabase, skip } = require('./lib/postgres');
 
 const URL = process.env.ZTECH_PG_URL || '';
-const skip = URL ? false : 'set ZTECH_PG_URL to run the concurrency tests against a real PostgreSQL';
 
 const WORKSPACE = '22222222-2222-4222-8222-222222222222';
 
+const DATABASE = 'ztech_concurrency';
+
 async function withSchema(fn) {
-  const admin = new Pool({ connectionString: URL });
-  const scoped = new Pool({ connectionString: URL, options: '-c search_path=li_conc' });
-  await admin.query('DROP SCHEMA IF EXISTS li_conc CASCADE');
-  await admin.query('CREATE SCHEMA li_conc');
+  const db = await freshDatabase(DATABASE, { workspace: WORKSPACE });
   try {
-    return await fn(scoped, admin);
+    return await fn(db.pool, db.owner);
   } finally {
-    await admin.query('DROP SCHEMA IF EXISTS li_conc CASCADE');
-    await scoped.end();
-    await admin.end();
+    await dropDatabase(DATABASE, [db.pool, db.owner, db.admin]);
   }
 }
 
+/**
+ * A read inside a scoped transaction. Without a context the policies refuse
+ * everything - that is the point - so every operation runs in one.
+ */
+function read(store, sql, params) {
+  return store.tx(() => store.one('li_saved_searches', sql, params));
+}
+
 async function freshStore(pool) {
-  const store = new PostgresStore({ pool, workspaceId: WORKSPACE, logger: { warn() {} } });
-  await store.migrate();
-  return store;
+  // The migrations were applied by the harness, as the owner: the runtime
+  // role may not create tables.
+  return new PostgresStore({ pool, workspaceId: WORKSPACE, logger: { warn() {} } });
 }
 
 test('two simultaneous transactions use different clients', { skip }, async () => {
@@ -91,7 +96,7 @@ test('a transaction cannot see another transaction\'s uncommitted work', { skip 
       await store.run('INSERT INTO li_saved_searches (workspace_id, search_id, name, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
         [WORKSPACE, 'tx1', 'Inside', JSON.stringify({ filter: null }), '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
       // The writer sees its own uncommitted row...
-      const inside = await store.one('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['tx1', WORKSPACE]);
+      const inside = await read(store, 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['tx1', WORKSPACE]);
       assert.ok(inside, 'the transaction sees its own write');
       // ...and another operation, on another connection, does not.
       const outside = await other.one('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['tx1', WORKSPACE]);
@@ -100,7 +105,7 @@ test('a transaction cannot see another transaction\'s uncommitted work', { skip 
 
     await writer;
     assert.equal(seen[0], null, 'the uncommitted row is invisible to another operation');
-    const after = await store.one('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['tx1', WORKSPACE]);
+    const after = await read(store, 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['tx1', WORKSPACE]);
     assert.ok(after, 'and visible once the transaction committed');
   });
 });
@@ -114,7 +119,7 @@ test('a rollback in one transaction leaves the other one alone', { skip }, async
         [WORKSPACE, 'rolled_back', 'Rolled back', JSON.stringify({ filter: null }), '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
       throw new Error('deliberate');
     }));
-    const gone = await store.one('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['rolled_back', WORKSPACE]);
+    const gone = await read(store, 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['rolled_back', WORKSPACE]);
     assert.equal(gone, null, 'the rolled-back row is gone');
 
     await store.tx(async () => {
@@ -123,7 +128,7 @@ test('a rollback in one transaction leaves the other one alone', { skip }, async
       committed = true;
     });
     assert.equal(committed, true);
-    const kept = await store.one('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['kept', WORKSPACE]);
+    const kept = await read(store, 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['kept', WORKSPACE]);
     assert.ok(kept, 'the other transaction kept its work');
   });
 });
@@ -136,14 +141,14 @@ test('an operation outside a transaction never uses a transaction\'s client', { 
       insideClient = store.client;
       // A read issued from inside the transaction uses the transaction's
       // client...
-      const inside = await store.one('li_saved_searches', 'SELECT COUNT(*) AS c FROM li_saved_searches WHERE workspace_id = ?', [WORKSPACE]);
+      const inside = await read(store, 'SELECT COUNT(*) AS c FROM li_saved_searches WHERE workspace_id = ?', [WORKSPACE]);
       assert.ok(inside);
       // ...and a read issued OUTSIDE it (after the transaction ended) does
       // not, even though it is the same store instance.
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
     await transaction;
-    const after = await store.one('li_saved_searches', 'SELECT COUNT(*) AS c FROM li_saved_searches WHERE workspace_id = ?', [WORKSPACE]);
+    const after = await read(store, 'SELECT COUNT(*) AS c FROM li_saved_searches WHERE workspace_id = ?', [WORKSPACE]);
     assert.ok(after);
     assert.equal(store.inTransaction, false, 'the store is not in a transaction any more');
     assert.notEqual(store.client, insideClient, 'the client is the pool again');
@@ -168,9 +173,9 @@ test('a nested transaction joins the outer one, and rolls back only its own work
       }
     });
     assert.ok(failed, 'the inner failure reached the caller');
-    const outer = await store.one('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['outer', WORKSPACE]);
+    const outer = await read(store, 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['outer', WORKSPACE]);
     assert.ok(outer, 'the outer transaction committed its own work');
-    const inner = await store.one('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['inner', WORKSPACE]);
+    const inner = await read(store, 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['inner', WORKSPACE]);
     assert.equal(inner, null, 'the inner transaction rolled back to its savepoint');
   });
 });
@@ -184,7 +189,7 @@ test('a nested transaction that succeeds is part of the outer one', { skip }, as
           [WORKSPACE, 'nested', 'Nested', JSON.stringify({ filter: null }), '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
       });
     });
-    const row = await store.one('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['nested', WORKSPACE]);
+    const row = await read(store, 'SELECT search_id FROM li_saved_searches WHERE search_id = ? AND workspace_id = ?', ['nested', WORKSPACE]);
     assert.ok(row, 'the nested write was committed with the outer transaction');
   });
 });
@@ -204,7 +209,7 @@ test('many concurrent transactions each get their own connection', { skip }, asy
     }
     await Promise.all(work);
     assert.equal(clients.size, 8, 'the eight transactions used eight different connections');
-    const rows = await store.q('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE workspace_id = ?', [WORKSPACE]);
+    const rows = await store.tx(() => store.q('li_saved_searches', 'SELECT search_id FROM li_saved_searches WHERE workspace_id = ?', [WORKSPACE]));
     assert.equal(rows.length, 8, 'and all eight rows are there');
   });
 });
@@ -215,7 +220,7 @@ test('a transaction that fails leaves the pool usable', { skip }, async () => {
     await assert.rejects(store.tx(async () => {
       await store.run('SELECT 1 FROM a_table_that_does_not_exist');
     }));
-    const after = await store.one('li_saved_searches', 'SELECT COUNT(*) AS c FROM li_saved_searches WHERE workspace_id = ?', [WORKSPACE]);
+    const after = await read(store, 'SELECT COUNT(*) AS c FROM li_saved_searches WHERE workspace_id = ?', [WORKSPACE]);
     assert.ok(after, 'the pool still works after the failed transaction');
   });
 });
