@@ -27,6 +27,11 @@ const CSRF_HEADER = 'x-csrf-token';
 class ApiServer {
   constructor({ identity, tenant, storeFor, logger = console, secureCookies = false, trustedProxyHops = 0, platformConsole = false } = {}) {
     this.service = new AuthService({ identity, tenant, logger, platformConsole });
+    /**
+     * Whether this server is the platform console. It is a MARKER, and it
+     * is NOT an authorization: a configuration flag is not an
+     * authentication, and nothing here is reachable because of it.
+     */
     this.platformConsole = platformConsole;
     this.storeFor = storeFor;
     this.logger = logger;
@@ -195,15 +200,13 @@ class ApiServer {
     const checks = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/suppressions\/check$/i);
     if (checks && method === 'POST') return this.suppressionCheck(req, res, checks[1]);
 
-    // SUSPENDING AN ACCOUNT IS NOT A CUSTOMER OPERATION. A customer of one
-    // organization has no business closing an account that belongs to
-    // somebody else's organization - or to any other organization at all -
-    // so the route exists only on the platform console's service. On the
-    // customer API there is no such route at all.
-    if (this.platformConsole) {
-      const disable = path.match(/^\/api\/users\/([0-9a-f-]+)\/disable$/i);
-      if (disable && method === 'POST') return this.disableUser(req, res, disable[1]);
-    }
+    // THERE IS NO ACCOUNT-SUSPENSION ROUTE. Not on the customer API and
+    // not on a platform-console configuration either: a configuration flag
+    // is not an authentication, and until there is an independent
+    // platform-operator authentication there is no way to reach a
+    // suspension from HTTP at all. An account is suspended by a privileged
+    // database operation, and the enforcement of a suspension is in
+    // sessionFor() and in the database's entitlement check.
 
     const records = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/records$/i);
     if (records && method === 'GET') return this.records(req, res, records[1]);
@@ -333,14 +336,6 @@ class ApiServer {
     const suppressed = await store.tx(async () => store.isSuppressed(body.channel, body.address));
     this.suppressionThrottle.fail(key);
     this.json(res, 200, { suppressed: Boolean(suppressed) });
-  }
-
-  async disableUser(req, res, userId) {
-    const session = await this.requireSession(req, res);
-    if (!session) return;
-    if (!await this.requireCsrf(req, res, session)) return;
-    const disabled = await this.service.disableUser(session, { userId });
-    this.json(res, 200, disabled);
   }
 
   /**

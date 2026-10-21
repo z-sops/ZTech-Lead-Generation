@@ -33,10 +33,9 @@ class AuthService {
     this.roles = roles;
     this.logger = logger;
     /**
-     * Whether this service is the PLATFORM CONSOLE. Only the platform
-     * console may suspend an account: a customer of one organization has
-     * no business closing an account that belongs to any other
-     * organization - or to any other organization at all.
+     * Whether this service is the PLATFORM CONSOLE. It is a MARKER, and
+     * it is NOT an authorization: a configuration flag is not an
+     * authentication, and no operation here is reachable because of it.
      */
     this.platformConsole = platformConsole;
     /**
@@ -179,46 +178,20 @@ class AuthService {
   }
 
   /**
-   * Disable an account. Its sessions stop working at once, and so does its
-   * entitlement: the database checks the account on every read, so a
-   * transaction that is already open loses its access too.
+  /**
+   * Suspending an account is NOT a service operation.
    *
-   * This is a PLATFORM operation, and it is not a customer one. A customer
-   * of one organization has no business closing an account that belongs to
-   * somebody else's organization - or to any other organization at all - so
-   * the operation exists only on the platform console's service, and the
-   * customer API refuses it outright.
+   * There is no method here that a session can call to close an account,
+   * on any server, with any flag set. An account is suspended by a
+   * PRIVILEGED DATABASE OPERATION - the same kind of operation that
+   * applies a migration - and until there is an independent platform-
+   * operator authentication, that is the only way it happens.
+   *
+   * The ENFORCEMENT is here and it is unchanged: a disabled account's
+   * sessions are ignored by sessionFor(), and the database's
+   * li.session_entitled() ignores it too, so the account's entitlement
+   * dies with its sessions - even in a transaction that is already open.
    */
-  async disableUser(session, { userId }) {
-    if (!this.platformConsole) {
-      await this.audit({
-        user_id: session.user_id, session_id: session.session_id,
-        action: 'auth.disable', outcome: 'deny', reason: 'not_a_platform_console',
-        detail: { requested: userId },
-      });
-      throw forbidden('not_a_platform_console', 'suspending an account is a platform operation');
-    }
-    const target = await this.findUser(userId);
-    if (!target) throw missing('no_user', 'there is no such user');
-    try {
-      return await this.tx(async (client) => {
-        await client.query('UPDATE id.users SET disabled_at = now() WHERE user_id = $1', [userId]);
-        await client.query('UPDATE id.sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
-        await this.audit({
-          user_id: session.user_id, session_id: session.session_id,
-          action: 'auth.disable', outcome: 'allow', detail: { disabled: userId },
-        }, client);
-        return { disabled: userId };
-      });
-    } catch (err) {
-      await this.audit({
-        user_id: session.user_id, session_id: session.session_id,
-        action: 'auth.disable', outcome: 'deny', reason: err.code || 'error',
-      });
-      throw err;
-    }
-  }
-
   /* -------------------------------- the users ----------------------------- */
 
   async findUserByEmail(email) {
