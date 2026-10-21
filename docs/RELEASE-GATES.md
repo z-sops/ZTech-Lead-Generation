@@ -13,6 +13,9 @@ not a task: it is a condition, and it is closed only by evidence.
 | RG-6 | The production provisioning path is exercised on every CI run | **CLOSED** | The workflow gives the job an isolated PostgreSQL 16 cluster and runs the provisioning suite as its own required step |
 | RG-7 | The **workspace token** is understood for what it is: a bearer credential, with the server as the boundary and the database as the boundary for the entitlement | **CLOSED** | 	ests/api/security.test.js - a copied token opens a context on another connection under the same role (proved, not denied), the API never accepts a token from a client, and a revoked session's token is refused wherever it is presented |
 | RG-8 | The **login throttle** is shared across the service instances | **OPEN - deployment** | The limiter is in memory: with more than one instance the counter must be shared. The key is the connection's address and the email address together, and no proxy header is believed |
+| RG-9 | A **disabled account** holds no access, in the API and in the database | **CLOSED** | `tests/api/integrity.test.js` - the session is dead at once (401), the database refuses the entitlement, and no token may be issued for the account |
+| RG-10 | The **authorization decisions** are made on the state that exists at commit time | **CLOSED** | `tests/api/integrity.test.js` - the permission checks are inside the transaction, on the locked membership rows; the concurrency tests use barriers, not sleeps |
+| RG-11 | The **CI evidence** is reported exactly, and the ZuniSEO comparison is not claimed | **CLOSED** | `docs/M3-AUTHENTICATION.md` - the matrix numbers and the PostgreSQL-job numbers are reported separately, and the `zuni-seo contract drift` job is disclosed as NOT having run the comparison |
 
 ---
 

@@ -131,7 +131,119 @@ an owner's role, and a workspace always keeps at least one owner.
 - **Nothing from the database** — no credential, no workspace token — is ever
   returned to the browser.
 
-## The corrections the security review required
+## The corrections the security review required (the second pass)
+
+### The decision is made at COMMIT time (C6)
+
+`removeMember()` and `changeRole()` used to authorize the actor BEFORE the
+transaction and its locks. An actor who was demoted or removed while the
+request was in flight could therefore complete a privileged mutation with
+stale authority.
+
+Now the permission check is made **inside** the transaction, on the
+**locked** membership rows: the actor's role is read from the rows the
+transaction holds the lock on, so it is the role the actor has *now*. The
+same revalidation applies to the invitation and the workspace creation.
+
+The concurrency tests are **deterministic**: the service has pause points
+that hold a transaction at a known moment, and a barrier that lets the
+other operation reach its own point before the first is released. There is
+not a single sleep in the file — a test that waits and hopes is a test that
+is sometimes wrong.
+
+What the tests prove: a demotion that lands **before** the mutation is
+refused; a demotion that is **attempted** while the mutation holds the lock
+waits, and the mutation completes with the authority it held — the order is
+decided, not hoped for.
+
+### The invitation's authority, atomically (C7)
+
+Inside the acceptance's own transaction, with the invitation row and the
+membership rows locked:
+
+- the invitation is re-read under its lock: expiry, revocation and
+  consumption are checked again;
+- the invitee's active membership is re-checked, so an invitation can never
+  silently upgrade one;
+- the **inviter's** membership is re-validated, and the inviter must still
+  hold **`member.invite`** — not merely a role strong enough on paper — and
+  a role strong enough for the grant the invitation names.
+
+A manager who invites a viewer and is then demoted to a member cannot have
+that invitation accepted: the demotion took `member.invite` away, and the
+acceptance finds out.
+
+### The workspace is atomic, and always has an owner (C8)
+
+The workspace, the database ceiling and the membership are ONE
+transaction, and the creator is the workspace's **owner** — so a new
+workspace always has at least one owner, whoever created it. An admin
+creating a workspace does not produce an ownerless workspace.
+
+### An organization is usable (C9)
+
+An organization without an owner is an organization nobody may act for.
+The creator of an organization is its **owner**, in the same transaction,
+through the organization's own membership — and that is what lets them
+create the organization's first workspace.
+
+The caller's authority over an organization is the **strongest** of their
+organization membership and their strongest membership in one of that
+organization's workspaces: the organization's owner may create its first
+workspace, and a workspace admin may create more.
+
+### The audit, and the pool (C10)
+
+The **allow** record of a mutation is written **inside** the mutation's own
+transaction, on that transaction's connection. It therefore cannot outlive
+it: a record can never claim a mutation that did not happen, and a record
+written on the pool could not have been rolled back with its transaction at
+all.
+
+The **denial** record is written **outside** the transaction, on the pool:
+a decision that was really taken must be durable, even though the
+transaction it refused is gone.
+
+The identity service is proved to work with an identity pool of **one**:
+the audit writes inside a transaction and the connection it uses are the
+same connection, so there is nothing to deadlock against.
+
+### A disabled account (C11)
+
+`id.users.disabled_at` means: the account is closed. It is enforced in
+**both** places:
+
+- the API's session validation ignores a disabled account's sessions, so
+  the session is dead at once;
+- the database's entitlement check ignores a disabled account, so the
+  **entitlement** is dead too — a transaction that is already open loses
+  its access, and no token may be issued for the account at all.
+
+Only an owner of an organization the account belongs to may disable it.
+
+### The CI evidence, stated exactly (C12)
+
+The numbers are two different runs, and they are not interchangeable.
+
+| Run | What it proves | The numbers |
+|---|---|---|
+| **The platform matrix** (ubuntu and windows, node 20 and 22) | the code, the contract suites and the desktop regressions, **without a database** | **139 files, 2,077 assertions, 2,046 passed, 31 skipped** — the 31 skipped are the PostgreSQL suites, which are skipped because there is no PostgreSQL on those runners |
+| **The PostgreSQL job** (ubuntu, with a PostgreSQL 16 service container) | the persistence contract, the API authorization suites and the production provisioning path, against a **real** PostgreSQL 16 | the persistence contract: **14 files, 171 assertions, 171 passed, 0 skipped**; the API suites: **35 + 15 tests**; the provisioning: **10 tests** |
+
+So the honest statement is: **2,223 assertions pass with a real PostgreSQL
+16** (the local run above), and the standard matrix reports 2,046 passed
+with 31 skipped, because it has no database. Neither number is the other.
+
+**And the cross-repository ZuniSEO comparison did not run.** The
+`zuni-seo contract drift` job checks out the private `zuni-seo` repository
+with `continue-on-error: true`, so without `ZUNI_SEO_READ_TOKEN` the job
+**reports success while the comparison never executed**. It is NOT a
+successful comparison, and it must not be reported as one. The always-on
+gate is the **SHA-256 manifest test** in
+`tests/lead-intelligence/zuniseo-envelope.test.js`, which proves the
+vendored files are unmodified, offline, on every run.
+
+## The corrections the security review required (the first pass)
 
 ### Nobody grants a role above their own authority
 
