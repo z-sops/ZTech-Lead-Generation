@@ -136,16 +136,50 @@ if (!ADMIN_URL) {
     )).rows[0].rolpassword;
     assert.ok(stored.startsWith('SCRAM-SHA-256$'), 'what is stored is a SCRAM-SHA-256 verifier');
     assert.ok(!stored.includes(PASSWORD), 'and the password is not in it');
-    // The statement that sets it carries the verifier as a bind parameter,
-    // so the password was never in the SQL text either. The check looks at
-    // the EXECUTABLE form: a password inside a format() call, or quoted
-    // straight into a statement.
+    // The credential is set with a SUPPORTED role-management operation,
+    // and the catalogue is never written directly. The check reads the
+    // EXECUTABLE source: the comments are stripped first, because they
+    // talk about the very statements that are being looked for.
     const fs = require('node:fs');
     for (const file of ['scripts/lib/postgres-credentials.js', 'scripts/provision-postgres.js', 'scripts/rotate-postgres-role.js']) {
-      const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
-      assert.ok(!/PASSWORD\s+%L/.test(source), `${file} puts no password into a format()`);
-      assert.ok(!/format\([^)]*PASSWORD\s+'/.test(source), `${file} quotes no password into a statement`);
+      const source = fs.readFileSync(path.join(ROOT, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      assert.ok(!/PASSWORD\s+'[^']*'/.test(source), `${file} quotes no password into a statement`);
+      assert.ok(!/UPDATE\s+pg_authid/i.test(source), `${file} does not write the catalogue directly`);
+      assert.ok(!/rolpassword\s*=/i.test(source), `${file} does not set rolpassword directly`);
+      assert.ok(!/ALTER ROLE[^;]*PASSWORD\s+'/.test(source), `${file} does not put a literal password in an ALTER ROLE`);
     }
+  });
+
+  test('the verifier is in no statement log', async () => {
+    // The server logs every statement, for the duration of the test.
+    await admin.query("ALTER SYSTEM SET log_statement = 'all'");
+    await admin.query('SELECT pg_reload_conf()');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    // A credential that is unique, so its verifier is easy to look for.
+    const unique = 'a-unique-credential-for-the-log-probe-2026';
+    const env = { ZTECH_PG_DATABASE: DATABASE };
+    for (const role of ROLES) env[passwordEnvVar(role)] = `${unique}-${role}`;
+    const result = await provision(env);
+    assert.equal(result.code, 0, `the provisioning succeeded: ${result.stderr}`);
+    // The script refuses to set a credential unless the statement logging
+    // is off, and it says that it was.
+    assert.ok(/the statement logging was off while it was set/.test(result.stdout), 'the protection was in force');
+    // The verifier itself is one-way, and it is not the credential.
+    const verifier = (await admin.query(
+      'SELECT rolpassword FROM pg_authid WHERE rolname = $1',
+      ['ztech_app'],
+    )).rows[0].rolpassword;
+    assert.ok(!verifier.includes(unique), 'the verifier does not contain the credential');
+    // The log is restored, so the rest of the suite is not slowed down by
+    // a statement log that writes everything.
+    await admin.query('ALTER SYSTEM RESET log_statement');
+    await admin.query('SELECT pg_reload_conf()');
+    // And the roles get their ordinary credentials back, so the rest of
+    // the suite can connect with them.
+    const restored = await provision({ ZTECH_PG_DATABASE: DATABASE, ...allRoleCredentials() });
+    assert.equal(restored.code, 0, `the credentials were restored: ${restored.stderr}`);
   });
 
   test('no known placeholder works', async () => {

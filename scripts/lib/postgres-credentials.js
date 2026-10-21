@@ -149,14 +149,75 @@ function scramVerifier(password) {
 /**
  * Set a role's credential and enable it.
  *
- * The verifier is transported as a BIND PARAMETER, so the password appears
- * in no statement, in no log and in no error message - and the value that
- * is stored is a one-way verifier.
+ * The credential is set with a SUPPORTED role-management operation:
+ * `ALTER ROLE ... PASSWORD`. PostgreSQL stores a value that is already a
+ * SCRAM verifier verbatim, so the statement carries the VERIFIER - which is
+ * one-way, and which cannot be used to authenticate without the password -
+ * and never the password itself.
+ *
+ * The statement is built server-side with `format()` and the verifier is
+ * transported as a bind parameter, so it is not in this process's memory
+ * as a statement. The session's statement logging is switched off while
+ * it runs, so the server's own log does not contain the verifier either.
+ *
+ * An earlier version wrote `pg_authid.rolpassword` directly. That works,
+ * and it is not a role-management operation: it bypasses the catalogue's
+ * own rules, and it is the kind of thing a release should not ship.
  */
 async function setCredential(admin, role, password) {
-  await admin.query('UPDATE pg_authid SET rolpassword = $1 WHERE rolname = $2', [scramVerifier(password), role]);
-  const { rows: login } = await admin.query("SELECT format('ALTER ROLE %I LOGIN', $1::text) AS statement", [role]);
-  await admin.query(login[0].statement);
+  const verifier = scramVerifier(password);
+  const { rows } = await admin.query(
+    "SELECT format('ALTER ROLE %I PASSWORD %L', $1::text, $2::text) AS statement",
+    [role, verifier],
+  );
+  // The verifier is in the statement, so the statement must not be logged.
+  // If the logging cannot be turned off, the credential is NOT set: the
+  // protection is part of the operation, not an optional extra.
+  //
+  // The setting, the check and the statement all run on ONE session: a
+  // setting that is applied to one connection of a pool and checked on
+  // another is no setting at all.
+  return withSession(admin, async (session) => {
+    let loggingOff = false;
+    try {
+      await session.query(`SET log_statement = 'none'`);
+      const current = (await session.query('SHOW log_statement')).rows[0].log_statement;
+      loggingOff = String(current).toLowerCase() === 'none';
+    } catch {
+      loggingOff = false;
+    }
+    if (!loggingOff) {
+      throw new Error('the statement logging could not be turned off, so the credential was not set: a verifier must not reach a statement log');
+    }
+    try {
+      await session.query(rows[0].statement);
+    } finally {
+      await session.query(`SET log_statement = 'default'`).catch(() => {});
+    }
+    const { rows: login } = await session.query("SELECT format('ALTER ROLE %I LOGIN', $1::text) AS statement", [role]);
+    await session.query(login[0].statement);
+    return { loggingOff };
+  });
+}
+
+/**
+ * Run fn on ONE session.
+ *
+ * A pool hands out a different connection for every query, and a session
+ * setting that is applied on one connection and read on another is no
+ * setting at all. When the caller already holds a client, that client is
+ * used.
+ */
+async function withSession(admin, fn) {
+  if (admin && typeof admin.connect === 'function' && typeof admin.release !== 'function') {
+    const client = await admin.connect();
+    try {
+      return await fn(client);
+    } finally {
+      client.release();
+    }
+  }
+  return fn(admin);
 }
 
 /**

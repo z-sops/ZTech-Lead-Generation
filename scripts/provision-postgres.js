@@ -87,8 +87,9 @@ async function main() {
         const { rows: make } = await admin.query("SELECT format('CREATE ROLE %I NOLOGIN', $1::text) AS statement", [role.name]);
         await admin.query(make[0].statement);
       }
-      await setCredential(admin, role.name, role.password);
+      const applied = await setCredential(admin, role.name, role.password);
       console.log(`  ${role.name}: credential set from ${role.env}`);
+      if (applied && applied.loggingOff) console.log(`    (the statement logging was off while it was set)`);
     }
 
     // 3. The database, and who may connect to it and create in it.
