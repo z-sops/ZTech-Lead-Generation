@@ -9,8 +9,10 @@ const { executeNoop } = require('./noop');
  *
  * The loop is: claim a job, obtain an execution credential for it, open
  * the job context, run the job, write the result. A heartbeat renews the
- * lease while the job runs. A graceful shutdown stops the loop, lets the
- * current job finish, and releases it.
+ * lease AND refreshes the execution credential, so a job that outlives the
+ * token's lifetime keeps a valid authority. A graceful shutdown stops the
+ * CLAIMS and cancels the in-flight work cooperatively, while the heartbeat
+ * keeps the lease alive for as long as the completion is authorised.
  *
  * Every step is authorised by the DATABASE, not by this process: the claim
  * verifies the identity credential, the execution credential is signed only
@@ -21,7 +23,9 @@ const { executeNoop } = require('./noop');
 class Worker {
   /**
    * @param {{pool: import('pg').Pool, config: object, logger: object,
-   *          identity?: IdentityProvider, executor?: Function, now?: () => number}} deps
+   *          identity?: IdentityProvider, executor?: Function,
+   *          now?: () => number, setIntervalImpl?: Function,
+   *          clearIntervalImpl?: Function}} deps
    */
   constructor(deps) {
     this.pool = deps.pool;
@@ -30,21 +34,36 @@ class Worker {
     this.identity = deps.identity || new IdentityProvider(deps.config);
     this.executor = deps.executor || executeNoop;
     this.now = deps.now || (() => Date.now());
+    this.setIntervalImpl = deps.setIntervalImpl || setInterval;
+    this.clearIntervalImpl = deps.clearIntervalImpl || clearInterval;
+
     this.running = false;
     this.stopping = false;
     this.current = null;
     this.heartbeat = null;
     this.processed = 0;
+
+    // The authority of the job that is running.
+    this.authorityLost = false;
+    this.jobToken = null;
+    this.jobTokenExpiresAt = 0;
+    this.activeController = null;
+    this.heartbeatInFlight = false;
   }
 
-  /** Ask the loop to stop. The current job is allowed to finish. */
+  /**
+   * Ask the loop to stop.
+   *
+   * New claims stop. The job that is running is cancelled COOPERATIVELY:
+   * the executor is told, through an AbortSignal, that it should stop.
+   * The heartbeat is deliberately NOT cleared here — the lease must stay
+   * alive for as long as the completion is authorised, and the heartbeat
+   * stops when the job ends.
+   */
   stop() {
     this.stopping = true;
     this.running = false;
-    if (this.heartbeat) {
-      clearInterval(this.heartbeat);
-      this.heartbeat = null;
-    }
+    if (this.activeController) this.activeController.abort();
   }
 
   /**
@@ -77,9 +96,87 @@ class Worker {
       return true;
     } catch (err) {
       // A worker that cannot renew its lease must stop doing protected work.
-      this.log.warn('lease.renewal_failed', { job_id: job.job_id, error: err });
-      this.stop();
+      this.loseAuthority('lease.renewal_failed', job, err);
       return false;
+    }
+  }
+
+  /**
+   * The execution credential of the running job, and when it expires.
+   *
+   * @param {object} job
+   * @returns {Promise<{token: string, expiresAt: number}>}
+   */
+  async executionCredential(job) {
+    const identityToken = await this.identity.get();
+    const rows = await withTransaction(this.pool, (client) => client.query(
+      'SELECT li.request_job_token($1, $2, $3, $4)',
+      [job.job_id, job.fencing_token, identityToken, this.config.tokenTtlSeconds],
+    ));
+    // The database decides: it refuses the request when the lease has
+    // lapsed, when the fencing token has moved on, or when the job is no
+    // longer held by this worker. A refreshed credential can therefore
+    // NEVER resurrect a stale or reclaimed lease.
+    return {
+      token: rows.rows[0].request_job_token,
+      expiresAt: this.now() + this.config.tokenTtlSeconds * 1000,
+    };
+  }
+
+  /**
+   * Refresh the execution credential before it expires.
+   *
+   * @param {object} job
+   * @returns {Promise<boolean>} whether the authority is still valid
+   */
+  async refreshToken(job) {
+    const margin = Math.floor((this.config.tokenTtlSeconds * 1000) / 2);
+    if (this.jobToken && this.now() < this.jobTokenExpiresAt - margin) return true;
+    try {
+      const credential = await this.executionCredential(job);
+      this.jobToken = credential.token;
+      this.jobTokenExpiresAt = credential.expiresAt;
+      return true;
+    } catch (err) {
+      this.loseAuthority('token.refresh_failed', job, err);
+      return false;
+    }
+  }
+
+  /**
+   * The authority is gone. Nothing protected may be written from now on.
+   *
+   * @param {string} event
+   * @param {object} job
+   * @param {Error} err
+   */
+  loseAuthority(event, job, err) {
+    this.authorityLost = true;
+    this.log.warn(event, { job_id: job && job.job_id, error: err });
+    // The in-flight work is cancelled cooperatively: there is no authority
+    // to finish it with.
+    if (this.activeController) this.activeController.abort();
+    this.stop();
+  }
+
+  /**
+   * One heartbeat: renew the lease, then refresh the credential.
+   *
+   * There is never more than one heartbeat in flight: a slow renewal must
+   * not queue another one behind it, or the worker would send a burst of
+   * renewals and of token requests.
+   *
+   * @param {object} job
+   */
+  async heartbeatOnce(job) {
+    if (this.heartbeatInFlight) return;
+    this.heartbeatInFlight = true;
+    try {
+      const renewed = await this.renew(job);
+      if (!renewed) return;
+      await this.refreshToken(job);
+    } finally {
+      this.heartbeatInFlight = false;
     }
   }
 
@@ -90,12 +187,10 @@ class Worker {
    * @returns {Promise<string>}
    */
   async executionToken(job) {
-    const identityToken = await this.identity.get();
-    const rows = await withTransaction(this.pool, (client) => client.query(
-      'SELECT li.request_job_token($1, $2, $3, $4)',
-      [job.job_id, job.fencing_token, identityToken, this.config.tokenTtlSeconds],
-    ));
-    return rows.rows[0].request_job_token;
+    const credential = await this.executionCredential(job);
+    this.jobToken = credential.token;
+    this.jobTokenExpiresAt = credential.expiresAt;
+    return credential.token;
   }
 
   /**
@@ -105,7 +200,7 @@ class Worker {
    * @returns {Promise<boolean>}
    */
   async isCancelled(job) {
-    const rows = await withJobContext(this.pool, job.job_id, job.token, (client) => client.query(
+    const rows = await withJobContext(this.pool, job.job_id, this.jobToken, (client) => client.query(
       'SELECT state FROM li.job_queue WHERE job_id = $1',
       [job.job_id],
     ));
@@ -123,7 +218,11 @@ class Worker {
    * @returns {Promise<number>} the rows written
    */
   async writeResult(job, state, result, error) {
-    const rows = await withJobContext(this.pool, job.job_id, job.token, (client) => client.query(
+    if (this.authorityLost) {
+      this.log.warn('write.refused_no_authority', { job_id: job.job_id, state });
+      return 0;
+    }
+    const rows = await withJobContext(this.pool, job.job_id, this.jobToken, (client) => client.query(
       'SELECT li.write_job_result($1, $2, $3, $4, $5)',
       [job.job_id, job.fencing_token, state, result ? JSON.stringify(result) : null, error],
     ));
@@ -137,20 +236,30 @@ class Worker {
    */
   async runJob(job) {
     this.current = job;
+    this.authorityLost = false;
+    this.jobToken = null;
+    this.jobTokenExpiresAt = 0;
+    this.heartbeatInFlight = false;
+
+    const controller = new AbortController();
+    this.activeController = controller;
+
     this.log.info('job.claimed', {
       job_id: job.job_id, job_type: job.job_type, fencing_token: job.fencing_token,
       attempt_count: job.attempt_count,
     });
 
-    // The heartbeat: the lease is renewed while the job runs. A worker
-    // that cannot renew stops.
-    this.heartbeat = setInterval(() => {
-      this.renew(job).catch(() => {});
-    }, this.config.heartbeatSeconds * 1000);
-    if (this.heartbeat.unref) this.heartbeat.unref();
-
     try {
-      job.token = await this.executionToken(job);
+      await this.executionToken(job);
+
+      // The heartbeat: the lease is renewed AND the credential is refreshed,
+      // so a job that outlives the token's lifetime keeps a valid
+      // authority. It keeps running while a graceful shutdown is in
+      // progress, because the completion is still authorised.
+      this.heartbeat = this.setIntervalImpl(() => {
+        this.heartbeatOnce(job).catch(() => {});
+      }, this.config.heartbeatSeconds * 1000);
+      if (this.heartbeat && this.heartbeat.unref) this.heartbeat.unref();
 
       // The cancellation checkpoint: before the work, and before the write.
       if (await this.isCancelled(job)) {
@@ -164,7 +273,15 @@ class Worker {
         jobType: job.job_type,
         payload: job.payload || {},
         jobClass: job.job_class || 'noop',
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) {
+        // The work was cancelled cooperatively. There may be no authority
+        // to write with, and a cancelled job must not be written as
+        // succeeded.
+        this.log.info('job.aborted', { job_id: job.job_id });
+        return;
+      }
       const written = await this.writeResult(job, 'succeeded', outcome, null);
       if (written === 0) {
         // The fencing token moved on: another worker owns this job now.
@@ -181,10 +298,14 @@ class Worker {
         this.log.error('job.write_failed', { job_id: job.job_id, error: writeErr });
       }
     } finally {
+      // The heartbeat stops when the JOB ends, not when the worker is asked
+      // to stop: the lease must stay alive for as long as the completion
+      // is authorised.
       if (this.heartbeat) {
-        clearInterval(this.heartbeat);
+        this.clearIntervalImpl(this.heartbeat);
         this.heartbeat = null;
       }
+      this.activeController = null;
       this.current = null;
     }
   }

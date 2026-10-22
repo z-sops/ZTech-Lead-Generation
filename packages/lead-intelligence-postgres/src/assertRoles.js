@@ -480,18 +480,42 @@ async function assertRuntimeRoles(pool, opts = {}) {
     if (workerMay.may_write_context) problems.push(`${WORKER_ROLE} may write the workspace context`);
     if (workerMay.may_read_secret) problems.push(`${WORKER_ROLE} may read the control plane secret`);
 
-    // H7: the worker holds no DML on the legacy tenant business tables.
-    // The queue and the platform's reference data are not legacy tenant
-    // business data, and they are excluded on purpose.
-    const legacyDml = (await pool.query(
-      `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = $1 AND c.relkind = 'r' AND c.relname <> ALL($2)
-          AND (c.relacl::TEXT LIKE ('%' || $3 || '=r/%') OR c.relacl::TEXT LIKE ('%' || $3 || '=a/%')
-               OR c.relacl::TEXT LIKE ('%' || $3 || '=w/%') OR c.relacl::TEXT LIKE ('%' || $3 || '=d/%'))`,
-      [schema, ['job_queue', 'li_market_rules'], WORKER_ROLE],
-    )).rows.map((r) => r.relname);
-    for (const t of legacyDml) {
-      problems.push(`${WORKER_ROLE} holds a privilege on the legacy tenant table ${t}`);
+    // H7: the worker holds no privilege at all on the legacy tenant
+    // business tables.
+    //
+    // The check is has_table_privilege() over the WHOLE inventory, one
+    // operation at a time. A textual search of the access control list
+    // cannot be trusted: an ACL entry is a COMBINED string such as
+    // 'ztech_worker=arwd/owner', so a pattern that looks for '=r/' or
+    // '=a/' matches nothing at all and the privilege is missed. The
+    // effective privilege is asked of the catalogue instead.
+    const legacyTables = TENANT_TABLES.filter((t) => t !== 'job_queue');
+    const legacyPrivileges = (await pool.query(
+      `SELECT t.relname, p.privilege_type
+         FROM unnest($2::text[]) AS t(relname)
+         JOIN pg_class c ON c.relname = t.relname
+              AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = $1)
+         CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) AS p(privilege_type)
+        WHERE has_table_privilege($3, c.oid, p.privilege_type)`,
+      [schema, legacyTables, WORKER_ROLE],
+    )).rows;
+    for (const p of legacyPrivileges) {
+      problems.push(`${WORKER_ROLE} holds ${p.privilege_type} on the legacy tenant table ${p.relname}`);
+    }
+
+    // C1: the worker may READ the queue and may not CHANGE it. Every
+    // mutation of a job goes through a SECURITY DEFINER function that
+    // checks the identity, the lease, the fencing token and the state.
+    const queuePrivileges = (await pool.query(
+      `SELECT p.privilege_type
+         FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) AS p(privilege_type)
+        WHERE has_table_privilege($1, $2, p.privilege_type)`,
+      [WORKER_ROLE, `${schema}.job_queue`],
+    )).rows.map((r) => r.privilege_type);
+    for (const privilege of queuePrivileges) {
+      if (privilege !== 'SELECT') {
+        problems.push(`${WORKER_ROLE} holds ${privilege} on ${schema}.job_queue: every queue mutation must go through an authorised function`);
+      }
     }
 
     // The worker may not be a member of any other role: an inherited

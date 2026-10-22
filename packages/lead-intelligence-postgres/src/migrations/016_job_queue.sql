@@ -267,7 +267,18 @@ CREATE POLICY tenant_isolation ON li.job_queue
   WITH CHECK (li.job_row_authorized(job_id, workspace_id, fencing_token));
 
 REVOKE ALL ON li.job_queue FROM PUBLIC;
-GRANT SELECT, UPDATE ON li.job_queue TO ztech_worker;
+
+-- The worker may READ the queue, and nothing else.
+--
+-- There is deliberately NO UPDATE, NO INSERT and NO DELETE: every mutation
+-- of a job goes through a SECURITY DEFINER function that checks the
+-- worker's identity, the lease, the fencing token and the job's state
+-- itself. A row-level policy limits WHICH job the worker may see, but it
+-- does not limit WHICH COLUMNS it may write, and a direct UPDATE could
+-- set a job's state, payload, result, attempt counters, lease owner or
+-- class without any of those checks. The privilege is therefore not
+-- granted, and the startup assertion proves it is not there.
+GRANT SELECT ON li.job_queue TO ztech_worker;
 
 -- -------------------------------------------------------------------------
 -- 3. The bounds.
@@ -757,8 +768,21 @@ DECLARE
   v_fence  BIGINT;
   v_rows   INTEGER;
 BEGIN
-  IF p_state IS NULL OR p_state NOT IN ('running','succeeded','failed','cancelled','uncertain') THEN
-    RAISE EXCEPTION 'the state % is not one a job may be written into', p_state USING ERRCODE = '22023';
+  -- The UNCERTAIN state is reserved for the provider-aware P2 lifecycle.
+  --
+  -- 'uncertain' means the provider's outcome is unknown: the dispatch may
+  -- have happened and the response may have been lost. P1 has no provider
+  -- and no provider ledger, so it can neither observe nor record that
+  -- state, and a job it holds is a NO-OP whose outcome it knows. Writing
+  -- it would also break the queue's own lease-state constraint, because a
+  -- state that is not 'leased' or 'running' may hold no lease owner.
+  -- The state exists in the schema for P2; P1 refuses to write it, with a
+  -- reason, rather than failing later on a constraint.
+  IF p_state = 'uncertain' THEN
+    RAISE EXCEPTION 'the uncertain state is reserved for the provider-aware P2 lifecycle: P1 runs no-op jobs only and may not record an unknown provider outcome' USING ERRCODE = '42501';
+  END IF;
+  IF p_state IS NULL OR p_state NOT IN ('running','succeeded','failed','cancelled') THEN
+    RAISE EXCEPTION 'the state % is not one a job may be written into in P1', p_state USING ERRCODE = '22023';
   END IF;
   -- The context decides. Without a valid job context there is nothing to
   -- write: the function refuses by writing ZERO rows.

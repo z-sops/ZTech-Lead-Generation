@@ -14,6 +14,7 @@
 const SECRET_KEYS = new Set([
   'token', 'identitytoken', 'jobtoken', 'password', 'secret', 'authorization',
   'cookie', 'credential', 'identity', 'idtoken', 'accesstoken',
+  'workertoken', 'sessiontoken', 'apikey', 'dbpassword', 'databaseurl',
 ]);
 
 /* The replacement for a redacted value. */
@@ -27,7 +28,10 @@ const REDACTED = '[redacted]';
  * @returns {unknown}
  */
 function redactValue(key, value) {
-  if (SECRET_KEYS.has(String(key).toLowerCase())) return REDACTED;
+  // The comparison ignores the separators, so 'identity_token' and
+  // 'identityToken' are the same key.
+  const normalised = String(key).toLowerCase().replace(/[-_]/g, '');
+  if (SECRET_KEYS.has(normalised)) return REDACTED;
   if (typeof value === 'string') {
     // A token-shaped string is redacted wherever it appears: the key may be
     // innocent, but the value is a credential.

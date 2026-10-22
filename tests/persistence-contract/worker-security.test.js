@@ -18,6 +18,9 @@ const {
 const {
   assertRuntimeRoles, TENANT_TABLES, WORKER_ROLE,
 } = require('../../packages/lead-intelligence-postgres/src/assertRoles');
+const {
+  assertWorkerIdentity,
+} = require('../../packages/lead-intelligence-worker/src/db');
 
 const A = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb';
@@ -271,9 +274,14 @@ if (!process.env.ZTECH_PG_URL) {
       assert.equal(mine.rows[0].job_id, claim.job_id, "and it is the worker's own job");
       const theirs = await client.query('SELECT job_id FROM li.job_queue WHERE job_id = $1', [otherJob]);
       assert.equal(theirs.rows.length, 0, 'another job of the SAME workspace is not visible');
-      // And a direct write to it affects zero rows.
-      const wrote = await client.query("UPDATE li.job_queue SET state = 'succeeded' WHERE job_id = $1", [otherJob]);
-      assert.equal(wrote.rowCount, 0, 'and it may not be written');
+      // And a direct write is refused: C1 removed the UPDATE privilege, so
+      // the refusal is a permission denial rather than the zero rows the
+      // policy alone used to produce.
+      await assert.rejects(
+        client.query("UPDATE li.job_queue SET state = 'succeeded' WHERE job_id = $1", [otherJob]),
+        /permission denied/i,
+        'and it may not be written',
+      );
     } finally {
       await client.query('ROLLBACK').catch(() => {});
       client.release();
@@ -289,8 +297,11 @@ if (!process.env.ZTECH_PG_URL) {
       await client.query('SELECT li.set_workspace_for_job($1, $2)', [claim.job_id, jobToken]);
       const theirs = await client.query('SELECT job_id FROM li.job_queue WHERE job_id = $1', [foreignJob]);
       assert.equal(theirs.rows.length, 0, 'a job of another workspace is invisible');
-      const wrote = await client.query("UPDATE li.job_queue SET state = 'succeeded' WHERE job_id = $1", [foreignJob]);
-      assert.equal(wrote.rowCount, 0, 'and it may not be written');
+      await assert.rejects(
+        client.query("UPDATE li.job_queue SET state = 'succeeded' WHERE job_id = $1", [foreignJob]),
+        /permission denied/i,
+        'and it may not be written',
+      );
     } finally {
       await client.query('ROLLBACK').catch(() => {});
       client.release();
@@ -453,5 +464,136 @@ if (!process.env.ZTECH_PG_URL) {
 
   test('the tenant inventory includes the queue', () => {
     assert.ok(TENANT_TABLES.includes('job_queue'), 'job_queue is a protected tenant table');
+  });
+
+  // ------------------------------------------------------------------ C1
+  test('C1: the worker may not UPDATE the queue directly, on ANY column', async () => {
+    const { worker, claim, jobToken } = await claimWithToken('worker-no-update');
+    const columns = ['state', 'payload', 'result', 'attempt_count', 'max_attempts', 'lease_owner', 'job_class'];
+    for (const column of columns) {
+      const client = await worker.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT li.set_workspace_for_job($1, $2)', [claim.job_id, jobToken]);
+        await assert.rejects(
+          client.query(`UPDATE li.job_queue SET ${column} = ${column === 'state' ? "'succeeded'" : column === 'result' || column === 'payload' ? "'{}'::jsonb" : 'NULL'} WHERE job_id = $1`, [claim.job_id]),
+          /permission denied/i,
+          `a direct UPDATE of ${column} is refused`,
+        );
+        await client.query('ROLLBACK');
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    }
+    // And the row is untouched.
+    const row = await db.owner.query('SELECT state, attempt_count, lease_owner FROM li.job_queue WHERE job_id = $1', [claim.job_id]);
+    assert.equal(row.rows[0].state, 'leased', 'the job is still leased');
+    assert.equal(row.rows[0].lease_owner, 'worker-no-update', 'and the lease is intact');
+  });
+
+  test('C1: the AUTHORISED functions still work', async () => {
+    const { worker, claim, jobToken } = await claimWithToken('worker-authorised');
+    const client = await worker.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT li.set_workspace_for_job($1, $2)', [claim.job_id, jobToken]);
+      const written = await client.query(
+        'SELECT li.write_job_result($1, $2, $3, $4, $5) AS n',
+        [claim.job_id, claim.fencing_token, 'succeeded', '{"ok":true}', null],
+      );
+      assert.equal(Number(written.rows[0].n), 1, 'the fenced write still works');
+      await client.query('COMMIT');
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+    const row = await db.owner.query('SELECT state FROM li.job_queue WHERE job_id = $1', [claim.job_id]);
+    assert.equal(row.rows[0].state, 'succeeded', 'and the job succeeded');
+  });
+
+  // ------------------------------------------------------------------ C2
+  test('C2: the catalogue DETECTS a legacy privilege, and passes once it is revoked', async () => {
+    // The check must be able to SEE a privilege that is really there. The
+    // old textual ACL search could not: a combined ACL entry such as
+    // 'ztech_worker=arwd/owner' matches no '=r/' or '=a/' pattern.
+    await db.owner.query('GRANT SELECT, UPDATE ON li.li_saved_searches TO ztech_worker');
+    try {
+      const detected = await assertRuntimeRoles(db.pool);
+      assert.equal(detected.ok, false, 'the assertion FAILS while the privilege is there');
+      assert.ok(
+        detected.problems.some((p) => /li_saved_searches/.test(p) && /SELECT|UPDATE/.test(p)),
+        `and it names the table and the privilege: ${JSON.stringify(detected.problems)}`,
+      );
+    } finally {
+      await db.owner.query('REVOKE SELECT, UPDATE ON li.li_saved_searches FROM ztech_worker');
+    }
+    const repaired = await assertRuntimeRoles(db.pool);
+    assert.deepEqual(repaired.problems, [], 'and it passes again once the privilege is revoked');
+  });
+
+  // ------------------------------------------------------------------ C3
+  test('C3: a REFRESHED credential cannot resurrect a reclaimed lease', async () => {
+    const { worker, identity, claim, jobToken } = await claimWithToken('worker-reclaimed');
+    // The lease is reclaimed: the job is requeued and the fencing token
+    // advances, so the previous holder is dead.
+    await db.owner.query(
+      `UPDATE li.job_queue SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL,
+              fencing_token = fencing_token + 1 WHERE job_id = $1`, [claim.job_id],
+    );
+    await assert.rejects(
+      worker.query('SELECT li.request_job_token($1, $2, $3, $4)', [claim.job_id, claim.fencing_token, identity, 120]),
+      /fencing token|lease|not in an executable state/i,
+      'the refresh is refused: the fencing token has moved on',
+    );
+    const client = await worker.connect();
+    try {
+      await client.query('BEGIN');
+      await assert.rejects(
+        client.query('SELECT li.set_workspace_for_job($1, $2)', [claim.job_id, jobToken]),
+        /fencing token|lease|not in an executable state/i,
+        'and the old credential opens no context',
+      );
+      await client.query('ROLLBACK');
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+  });
+
+  // ------------------------------------------------------------------ C4
+  test('C4: the startup check accepts the worker role and refuses the customer role', async () => {
+    const worker = workerPool();
+    const asWorker = await assertWorkerIdentity(worker);
+    assert.deepEqual(asWorker.problems, [], 'the worker role is accepted');
+    assert.equal(asWorker.ok, true);
+    assert.equal(asWorker.sessionUser, WORKER_ROLE);
+
+    const asApp = await assertWorkerIdentity(db.pool);
+    assert.equal(asApp.ok, false, 'the customer role is refused');
+    assert.ok(asApp.problems.some((p) => /not ztech_worker/.test(p)), 'and it says why');
+  });
+
+  // ------------------------------------------------------------------ C5
+  test('C5: the uncertain transition is REFUSED in P1, with a reason', async () => {
+    const { worker, claim, jobToken } = await claimWithToken('worker-uncertain');
+    const client = await worker.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT li.set_workspace_for_job($1, $2)', [claim.job_id, jobToken]);
+      await assert.rejects(
+        client.query('SELECT li.write_job_result($1, $2, $3, $4, $5)', [claim.job_id, claim.fencing_token, 'uncertain', null, 'x']),
+        /reserved for the provider-aware P2 lifecycle/i,
+        "the uncertain state is refused, and it says it is reserved for P2",
+      );
+      await client.query('ROLLBACK');
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+    // The job is untouched.
+    const row = await db.owner.query('SELECT state, lease_owner FROM li.job_queue WHERE job_id = $1', [claim.job_id]);
+    assert.equal(row.rows[0].state, 'leased', 'the job is still leased');
+    assert.equal(row.rows[0].lease_owner, 'worker-uncertain', 'and the lease is intact');
   });
 }

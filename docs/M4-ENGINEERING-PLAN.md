@@ -921,6 +921,18 @@ independent layers ✔, so that closing one does not open another ✔:
 context may be opened with one ✔ (H3), and the worker's own job-scoped
 functions never consult it ✔.
 
+**The worker may READ the queue, and may not CHANGE it** ✔. The
+`SELECT` privilege is all it holds on `li.job_queue` ✔: there is no
+`UPDATE`, no `INSERT` and no `DELETE` ✔. A row-level policy limits **which
+job** the worker may see ✔, but it does not limit **which columns** it may
+write ✔ — and a direct `UPDATE` could set a job's state, payload, result,
+attempt counters, lease owner or class without any of the checks the
+authorised functions make ✔. **Every mutation of a job therefore goes
+through a `SECURITY DEFINER` function** — the claim ✔, the renewal ✔, the
+recovery ✔, the result write ✔ — each of which verifies the worker's
+identity, the lease, the fencing token and the job's state itself ✔. The
+startup assertion proves the privilege is not there ✔.
+
 **H7: the worker no longer holds the legacy tenant business tables** ✔. The
 worker role was granted them in migration 014, before there was a worker ✔,
 and it never needed them ✔ — a job context cannot reach the workspace-wide
@@ -937,6 +949,7 @@ schema `USAGE` ✔, the sequence privileges ✔, the platform's reference data
 | **The provider-ledger-aware recovery** | P1's recovery requeues **verified no-op jobs only** ✔. A **chargeable** job whose lease lapses is **not** requeued and is **not** given an outcome ✔: whether the provider was called is unknown until the ledger exists ✔, and an outcome may not be invented ✔. Such a job is reported as `deferred_to_p2` ✔ and left untouched ✔ | **P2** ✔ — `li.provider_ledger` (migration 017) and the ledger-driven recovery of §10 ✔ |
 | **The job-event audit trail** | P1 records the state machine's transitions in `li.job_queue` itself and in `last_error` ✔, but there is **no append-only event log** ✔ — `li.job_events` is migration 019 ✔. **P1's transitions are not fully audited** ✔ | **P2+** ✔ — `019_job_events.sql` ✔ |
 | **The real provider work** | P1 executes **no-op jobs only** ✔. The no-op executor refuses a chargeable job loudly ✔ | **P2** ✔ |
+| **The `uncertain` state** | The state exists in the schema ✔, but **P1 refuses to write it** ✔: `uncertain` means the provider's outcome is unknown ✔, and P1 has no provider and no provider ledger to know it ✔. Writing it would also break the queue's own lease-state constraint ✔ — a state that is not `leased` or `running` may hold no lease owner ✔ — so the refusal is explicit and reasoned rather than a late constraint violation ✔ | **P2** ✔ — with the provider ledger, where the outcome is observable ✔ |
 | **The customer API for jobs** | P1 gives the customer role **no** privilege on `li.job_queue` ✔; the job endpoints, the listing and the cancellation are P4 ✔ | **P4** ✔ |
 | **The out-of-repository worker consumers** | The compatibility review of the worker role was **repository-level only** ✔: no application code in this repository uses the worker role ✔, the only `set_workspace()` caller is the `ztech_app` tenant path ✔, and no workflow requiring workspace-scoped worker access was identified ✔. **Any consumer OUTSIDE this repository** — an operator script, a deployment manifest, a service in another repository — has **not** been independently inventoried ✔, and H1–H3 plus H7 would break it ✔ | **The owner** ✔ — a release blocker until confirmed ✔ |
 
