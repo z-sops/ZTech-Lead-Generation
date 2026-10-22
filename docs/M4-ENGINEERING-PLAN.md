@@ -14,11 +14,32 @@ pre-authentication throttle, and the owner decisions.
 
 ---
 
+## 0b. The consolidation cross-reference
+
+Every contradiction found in the previous revision is resolved **in place**,
+in the section named here — not by appending a parallel explanation ✔.
+
+| The contradiction | Where it was | Where it is now |
+|---|---|---|
+| The account had a `credit_balance` that could go **negative**, while the model also derived an available from it | §2.3, §4.1, §4.5 | §2.3 (the columns: `credit_purchased`, `credit_consumed`, `credit_reserved`, with the available **derived**) ✔ and §4.1 (the model table) ✔ — the negative balance and the debt are **gone** ✔ |
+| The settlement SQL deducted the **whole** provider charge | §4.2 | §4.2 — the chargeable part is bounded by the approved maximum **and** by what the customer bought ✔, and the overrun is recorded on the ledger ✔ |
+| A provider overrun was written as a customer **debt** | §4.5 | §4.5 — the platform absorbs it under the default, and a receivable exists only if **U1** authorises it ✔ |
+| The worked example was described two ways | §4.5, §4.7 | §4.7 — **one** example everywhere: 20 reserved, 24 actual, a **four-credit** overrun ✔ |
+| The locking order was not stated | §4 | §4.6 — the reservation row always precedes the account row ✔ |
+| `li.credit_reservations` had **no** `job_id`, yet the job-scoped policy used one | §2.3, §5.6 | §2.3 — the column is added, with a trigger that guarantees it agrees with the invocation's job ✔; §5.6 — the policy and the customer/mutation separation ✔ |
+| The ledger had both `prepared` and `dispatched`, and `dispatched` meant "sent" in one place and "intent" in another | §2.2, §3.4, §6, §10 | §2.2, §3.4, §6.3, §10 — the five states are `reserved`, `dispatching`, `confirmed`, `failed`, `uncertain` ✔, and `dispatching` is the **durable dispatch intent** ✔ |
+| A failed reservation could leave a `reserved` ledger row with no hold | §6.3 | §6.3 — the reservation and the ledger row are **one transaction** ✔ |
+| The throttle's example was a **single** bucket, and the two buckets were not atomic | §9.2 | §9.2 and §9.2.1 — one statement, one transaction, a fixed lock order, and the refusal decided before any write ✔ |
+| The email-only bucket's lockout risk was unstated | §9.2 | §9.2 — the trade-off is stated, with the layered limits ✔ |
+| `IF NOT EXISTS` was offered as the repair for an invalid concurrent index | §7.7 | §7.7 — the migration inspects `pg_index.indisvalid` and rebuilds ✔ |
+| D4 and U1 read as if a commercial policy were settled | §12 | §12 — marked **proposed, not in force** ✔, and the owner sheet carries the conservative default ✔ |
+
+
 ## 0. The R1–R7 correction matrix
 
 | | What was wrong | What it says now | Where |
 |---|---|---|---|
-| **R1** | The reservation reduced `credit_balance` **and** the available credits were computed by subtracting the reserved ones — the same credits were counted twice | One model: `credit_balance` is the total unspent credits **including the held ones**, `credit_reserved` is the portion held, and `available = balance - reserved`. A reservation raises the hold and does **not** touch the balance | §4 |
+| **R1** | The reservation reduced `credit_purchased` **and** the available credits were computed by subtracting the reserved ones — the same credits were counted twice | One model: `credit_purchased` is the total unspent credits **including the held ones**, `credit_reserved` is the portion held, and `available = balance - reserved`. A reservation raises the hold and does **not** touch the balance | §4 |
 | **R2** | The claim statement selected only `queued` rows, so its expired-lease condition could never fire | Recovery of expired `leased`/`running` jobs is a **separate statement** with its own decision, and claiming is a second statement over `queued` rows only | §3.4, §3.5 |
 | **R3** | The worker had no authorization of its own, and reusing a customer session was not viable | A **job-scoped worker credential**, bound to the job, the workspace, the worker, the lease and the fencing token, issued by the control plane — never a borrowed customer session | §5 |
 | **R4** | The unique `(provider, idempotency_key)` constraint was described as preventing duplicate charges | It prevents duplicate **ledger identities**; it does **not** prevent a repeated physical request or a repeated charge. The dispatch moments are separated, and an uncertain outcome is never automatically retried | §6 |
@@ -121,18 +142,26 @@ request with that key (§6).
 | `li.credit_accounts` | |
 |---|---|
 | `workspace_id` | `UUID PRIMARY KEY` |
-| `credit_balance` | `INTEGER NOT NULL DEFAULT 0` — the **total unspent** credits, **including the held ones**. It may go **negative**, and a negative balance is the **debt** a workspace owes |
-| `credit_reserved` | `INTEGER NOT NULL DEFAULT 0` — the portion currently **held**; never negative |
-| `version` | `BIGINT NOT NULL DEFAULT 0` — the optimistic-lock counter |
-| `updated_at` | `TIMESTAMPTZ` |
+| `credit_purchased` | `INTEGER NOT NULL DEFAULT 0` — the total credits ever **bought** ✔ |
+| `credit_consumed` | `INTEGER NOT NULL DEFAULT 0` — the total **settled as the customer's spend** ✔ |
+| `credit_reserved` | `INTEGER NOT NULL DEFAULT 0` — the portion currently **held** ✔ |
+| `version` | `BIGINT NOT NULL DEFAULT 0` — the optimistic-lock counter ✔ |
+| `updated_at` | `TIMESTAMPTZ` ✔ |
 
-**Check:** `credit_reserved >= 0` ✔.
+**The available credits are DERIVED, never stored:**
+
+```
+available = credit_purchased - credit_consumed - credit_reserved
+```
+
+**Checks:** `credit_purchased >= 0`, `credit_consumed >= 0` and `credit_reserved >= 0` ✔. **There is no negative-balance column and no debt column** ✔: the customer's spend never exceeds what they bought ✔, and a provider overrun is recorded **on the ledger** (§4.5 ✔), not as a debt on the account ✔.
 
 | `li.credit_reservations` | |
 |---|---|
 | `reservation_id` | `UUID PRIMARY KEY` |
 | `workspace_id` | `UUID NOT NULL` |
-| `invocation_id` | `UUID NOT NULL REFERENCES li.provider_ledger` — one reservation per invocation |
+| `invocation_id` | `UUID NOT NULL REFERENCES li.provider_ledger` — one reservation per invocation ✔ |
+| `job_id` | `UUID NOT NULL REFERENCES li.job_queue` — **the job the reservation belongs to** ✔, so the job-scoped policy of §5.6 has a column to test ✔ |
 | `amount` | `INTEGER NOT NULL` — the **held** amount; `CHECK (amount > 0)` |
 | `actual_credits` | `INTEGER` — what was consumed |
 | `overrun_credits` | `INTEGER NOT NULL DEFAULT 0` |
@@ -142,6 +171,12 @@ request with that key (§6).
 
 **Unique:** `invocation_id` ✔ (one reservation per invocation ✔) and
 `idempotency_key` ✔ (one settlement per logical settlement ✔).
+
+**The `job_id` and the `invocation_id` must agree.** The reservation is
+written by one function, in one transaction, from the **job's** row ✔, and
+a `BEFORE INSERT` trigger refuses a `job_id` that is not the invocation's
+job ✔ — so the two can never disagree, and the job-scoped policy cannot be
+bypassed by a mismatched pair ✔.
 
 ### 2.4 `li.job_events`
 
@@ -320,17 +355,22 @@ may not, once its outcome is uncertain.
 
 | Term | Meaning |
 |---|---|
-| `credit_balance` | the **total unspent** credits — the purchased credits minus what has been **settled**. It **includes** the credits that are currently held. It may be **negative**, and a negative balance is the **debt** a workspace owes |
-| `credit_reserved` | the portion currently **held** by a reservation. Never negative |
-| **`available`** | `credit_balance - credit_reserved` — what may still be spent |
+| `credit_purchased` | the total credits ever **bought** ✔ |
+| `credit_consumed` | the total **settled as the customer's spend** ✔ |
+| `credit_reserved` | the portion currently **held** by a reservation ✔; never negative ✔ |
+| **`available`** | `credit_purchased - credit_consumed - credit_reserved` — **derived, never stored** ✔ |
 
 The three operations:
 
-| Operation | `credit_balance` | `credit_reserved` | `available` |
+| Operation | `credit_purchased` | `credit_reserved` | `available` |
 |---|---|---|---|
-| **Reserve** `amount` | **unchanged** | **+ amount** | − amount |
-| **Settle** `actual` | **− actual** | **− held** | + (held − actual) |
-| **Release** `held` | **unchanged** | **− held** | + held |
+| **Reserve** `amount` | **unchanged** | **unchanged** | **+ amount** | − amount |
+| **Settle** `actual` (the chargeable part) | **unchanged** | **+ chargeable** | **− held** | + (held − chargeable) |
+| **Release** `held` | **unchanged** | **unchanged** | **− held** | + held |
+
+**The `credit_purchased` column is changed only when credits are bought** ✔ — a
+purchase is a commercial event, not a settlement ✔ — and never by a
+reservation, a settlement or a release ✔.
 
 **The reservation raises the hold and does not touch the balance.** The
 earlier double-count — reducing the balance *and* subtracting the reserve —
@@ -348,8 +388,8 @@ UPDATE li.credit_accounts
        version = version + 1,
        updated_at = now()
  WHERE workspace_id = $1
-   AND (credit_balance - credit_reserved) >= $2      -- the available check
-RETURNING credit_balance, credit_reserved;
+   AND (credit_purchased - credit_consumed - credit_reserved) >= $2   -- the derived available
+RETURNING credit_purchased, credit_reserved;
 ```
 
 **Zero rows returned means insufficient credit** → the job is `failed` with
@@ -361,12 +401,18 @@ available.
 **Settle** — idempotent, because the reservation's state guards it:
 
 ```sql
--- li.settle_credits(reservation_id, actual)
+-- li.settle_credits(reservation_id, actual, approved_maximum)
+--
+-- The CHARGEABLE part is bounded by what the customer has bought and by the
+-- approved maximum: the platform never charges the customer for an amount
+-- that was not approved, and never charges more than they bought.
+
 -- 1. the reservation, locked, and only while it is HELD
 UPDATE li.credit_reservations
    SET state = 'settled',
-       actual_credits = $2,
-       overrun_credits = GREATEST(0, $2 - amount),
+       actual_credits = $2,                       -- what the provider charged
+       approved_maximum = $3,                     -- the approved ceiling
+       overrun_credits = GREATEST(0, $2 - $3),    -- the platform absorbs it
        settled_at = now()
  WHERE reservation_id = $1 AND state = 'held'
 RETURNING workspace_id, amount;
@@ -375,12 +421,23 @@ RETURNING workspace_id, amount;
 
 -- 2. the account, only when the reservation was actually settled
 UPDATE li.credit_accounts
-   SET credit_balance = credit_balance - $2,     -- the ACTUAL cost
-       credit_reserved = credit_reserved - $3,   -- the whole hold is released
+   SET credit_consumed = credit_consumed + $2,    -- the CHARGEABLE part only
+       credit_reserved = credit_reserved - $3,    -- the whole hold is released
        version = version + 1,
        updated_at = now()
- WHERE workspace_id = $4;
+ WHERE workspace_id = $4
+   AND credit_purchased - credit_consumed >= $2; -- the customer has the credits
+-- zero rows: the customer does not have them -> nothing is charged to them,
+--            and the overrun is recorded on the ledger alone.
 ```
+
+**The chargeable amount is computed by the function, not by the caller** ✔:
+`chargeable = LEAST(actual, approved_maximum, credit_purchased - credit_consumed)`
+✔. The **accounting evidence is immutable** ✔: the ledger row keeps
+`actual_credits` (what the provider charged ✔), `approved_maximum` ✔ and
+`overrun_credits` ✔, and the reservation row is written **once** — the
+`state = 'held'` guard makes a repeated settlement a **no-op** ✔, and the
+unique `idempotency_key` makes a repeated *request* collide ✔.
 
 **Release** — idempotent, and it never charges the customer:
 
@@ -438,9 +495,10 @@ it** — and it must not silently impose a debt on the customer either.
 | 4 | **The provider overrun** | `li.provider_ledger.overrun_credits` — the cost above the **approved maximum** ✔ |
 | 5 | **A customer receivable** | `li.credit_receivables` — **only if U1 authorizes it** ✔ |
 
-**The balance model.** `credit_balance = credit_purchased - credit_consumed`
-✔ — it is the *unspent purchased* credits ✔ and it is **never** driven
-negative by an unapproved overrun ✔.
+**The model.** The customer's spend is `credit_consumed` ✔, and it is
+bounded by `credit_purchased` ✔ — the account **never** goes negative and
+there is **no debt** ✔. A provider overrun is recorded on the **ledger** ✔,
+not as a debt on the account ✔.
 
 **The safe default, in force until U1 is decided (U1 ✔).**
 
@@ -475,7 +533,7 @@ above the *reserved* amount) is recorded separately ✔.
 
 | | Treatment | What the customer sees | What the platform bears |
 |---|---|---|---|
-| **(a) — the safe default** | the platform absorbs the overrun | the customer is charged up to their purchased credits; the overrun is invisible to them | the overrun, as a cost ✔ |
+| **(a) — the safe default** | the platform absorbs the overrun | the customer is charged **at most** their purchased credits and **at most** the approved maximum ✔; the overrun is invisible to them ✔ | the overrun, as a cost ✔ |
 | **(b) — only if U1 authorizes it** | the overrun becomes a receivable | the customer is charged the overrun, which appears as a receivable and blocks further reservations until it is settled ✔ | nothing, but the customer is billed for something they did not approve ✔ — which is why it needs an approved term ✔ |
 
 **Until U1 is decided, (a) is in force** ✔ — the platform absorbs the
@@ -497,7 +555,7 @@ ever takes the account row first and the reservation row second ✔.
 
 ### 4.7 The worked example
 
-A workspace buys **100 credits**. `credit_balance = 100`,
+A workspace buys **100 credits**. `credit_purchased = 100`,
 `credit_reserved = 0`, `available = 100`.
 
 **A. Reserve 20** for a chargeable research call.
@@ -505,7 +563,7 @@ A workspace buys **100 credits**. `credit_balance = 100`,
 ```sql
 UPDATE li.credit_accounts
    SET credit_reserved = credit_reserved + 20, version = version + 1
- WHERE workspace_id = $1 AND (credit_balance - credit_reserved) >= 20;
+ WHERE workspace_id = $1 AND ((credit_purchased - credit_consumed - credit_reserved)) >= 20;
 ```
 
 | | balance | reserved | available |
@@ -545,9 +603,9 @@ the safe default (a ✔) the platform absorbs those four credits ✔ and the
 customer is never charged for them ✔; under (b) (U1 ✔) they become a
 receivable ✔.
 
-**E. The debt that may not exist yet.** Suppose the purchased credits are
-5, a 20-credit call is made with a 20-credit reservation, and the actual is
-20:
+**E. The case that used to be called a debt.** Suppose the purchased credits
+are 5, a 20-credit call is made with a 20-credit reservation, and the actual
+is 20:
 
 - the reservation's predicate (`available >= 20`) **refuses** it, because
   the available is 5 ✔ — so this state is unreachable through the normal
@@ -688,6 +746,20 @@ customer context ✔ (so a customer sees their whole workspace ✔) and `NULL`
 for an unknown context ✔ (so a worker without a job context sees nothing
 ✔ — fail closed ✔).
 
+**The reservation table carries the job** ✔ (§2.3 ✔ — `li.credit_reservations.job_id`
+✔, and a trigger guarantees it agrees with the invocation's job ✔), so the
+policy below has a column to test ✔ and a mismatched pair cannot be used
+to escape it ✔.
+
+**The customer-visible reads and the mutations are separated.** The customer
+may **read** their own balance and their own reservations through the
+service (a `SECURITY DEFINER` function that returns the derived available ✔)
+and **may not touch the tables at all** ✔: the tables are not granted to
+`ztech_app` ✔. Every **mutation** of the credits — the reserve, the settle
+and the release — is a `SECURITY DEFINER` function that only the worker role
+may execute ✔, and each one acts on the caller's **own** job ✔ and on the
+job's workspace ✔.
+
 **So a worker that holds one job cannot read, modify or delete the other
 jobs, the other reservations or the other ledger rows of the same
 workspace** ✔ ✔ — the isolation is **job-level** ✔, and it is enforced by
@@ -775,7 +847,7 @@ the duplicate visible ✔; whether the provider charges once is a property of
 | Moment | What is true | What the ledger says | What may be done next |
 |---|---|---|---|
 | **1. The reservation committed; the request has not been sent** | nothing was sent ✔ | `reserved` | the invocation may be dispatched ✔ — this is the only case where a dispatch is safe ✔ |
-| **2. The dispatch intent committed; the transmission may have happened** | it is unknown whether the provider received it ✔ | `dispatched` | **not** a re-dispatch ✔ → `uncertain` ✔ |
+| **2. The dispatch intent committed; the transmission may have happened** | it is unknown whether the provider received it ✔ | `dispatching` | **not** a re-dispatch ✔ → `uncertain` ✔ |
 | **3. The provider acknowledged the request** | the provider accepted it ✔ | `confirmed` | the work may proceed ✔; the credits are settled ✔ |
 | **4. The provider definitively rejected it, without charging** | it refused ✔ | `failed` | a re-dispatch is safe ✔ (nothing was charged ✔) — the retry policy applies ✔ |
 | **5. The provider may have charged, but the response was lost** | the charge may have happened ✔ | `uncertain` | **not** a re-dispatch ✔ → reconcile, or a human decides ✔ |
@@ -844,6 +916,10 @@ ledger says `reserved` ✔ → a requeue is safe ✔).
    the provider** and a `request_hash` ✔. The unique constraint makes a
    second prepare impossible ✔: a repeated job finds the existing row and
    continues it ✔. **Nothing has been sent** ✔.
+
+**The reservation and the ledger row are ONE transaction** ✔ — so a **failed
+reservation leaves no ledger row at all** ✔, and never a `reserved` row
+without a hold ✔. The two facts cannot come apart ✔.
 2. **T2 — the dispatch intent.** The worker commits the intent ✔ (the
    fencing token is checked ✔). From this moment the transmission cannot be
    disproved ✔.
@@ -1095,32 +1171,8 @@ exist yet** at that moment ✔, and the throttle must not pretend otherwise.
 | **The store** | `li.throttle_counters` ✔ — a table with **no** `workspace_id` ✔, because there is no workspace yet ✔ |
 | **The role** | a **dedicated, least-privileged role** — `ztech_throttle` ✔ — that may read and write **only** `li.throttle_counters` ✔, and **nothing else** ✔. It may not read the tenant tables ✔, the identity tables ✔, or the queue ✔ |
 | **The key** | the **email** and the **connection's address** ✔ — hashed ✔, so the table holds no email addresses ✔ |
-| **Two buckets** | one for `(email, address)` ✔ and one for `(email)` alone ✔ — so a spray from many addresses is still limited per account ✔, and a failure from one address does not lock the same person out from another ✔ |
-| **The atomic update** | one statement, in one transaction ✔:
-
-```sql
-INSERT INTO li.throttle_counters (bucket_key, window_started_at, attempt_count)
-VALUES ($1, now(), 1)
-ON CONFLICT (bucket_key) DO UPDATE
-   SET attempt_count = CASE
-           WHEN li.throttle_counters.window_started_at
-                < now() - $2::interval THEN 1          -- the window expired
-           ELSE li.throttle_counters.attempt_count + 1
-       END,
-       window_started_at = CASE
-           WHEN li.throttle_counters.window_started_at
-                < now() - $2::interval THEN now()
-           ELSE li.throttle_counters.window_started_at
-       END,
-       updated_at = now()
-WHERE li.throttle_counters.window_started_at < now() - $2::interval
-   OR li.throttle_counters.attempt_count < $3
-RETURNING attempt_count;
-```
-
-  Zero rows returned means **the limit is reached** ✔ → the attempt is
-  refused ✔. The check and the increment are **one atomic statement** ✔,
-  so N workers cannot each slip past the limit ✔.
+| **Two buckets** | one for `(email, address)` ✔ and one for `(email)` alone ✔ — the **secondary** limit, at a much higher threshold ✔ (§9.2.1 ✔) |
+| **The atomic update** | one statement, in one transaction ✔ — **both** buckets, in the **same** statement ✔ (§9.2.1 ✔) |
 | **The window** | 15 minutes ✔, and the counter row is **expiry-based** ✔: the row is reused when the window has passed ✔, so the table does not grow without bound ✔ |
 | **The address** | the **connection's** address ✔ — never a header ✔ (M3's C4 finding ✔). Behind a proxy, the deployment declares how many proxies it trusts ✔, and the address is taken from the rightmost **untrusted** hop ✔. A forged `X-Forwarded-For` cannot spread the failures ✔, because the throttle also counts per **email** ✔ |
 | **The data** | the bucket key is a **hash** ✔: the table holds no email address and no address ✔ |
@@ -1128,6 +1180,51 @@ RETURNING attempt_count;
 **RG-8 stays OPEN** until this is implemented **and** tested against a
 real PostgreSQL with a **pool of one** and with concurrent attempts from
 several connections ✔. The plan does not claim it is solved ✔.
+
+### 9.2.1 The two-bucket operation, atomically
+
+Both buckets move in **one statement**, inside **one transaction** ✔.
+
+```sql
+-- li.throttle_attempt(email_hash, address_hash, window, per_pair_limit, per_email_limit)
+-- 1. READ both counters, under their locks, in a FIXED order:
+--    the per-pair bucket first, then the per-email bucket.
+--    The order is fixed so two attempts cannot deadlock ✔.
+--    A refusal is DECIDED HERE, before anything is written ✔.
+-- 2. WRITE both counters, with the same statement.
+WITH pair AS (
+  SELECT attempt_count, window_started_at FROM li.throttle_counters
+   WHERE bucket_key = $1 FOR UPDATE
+), email AS (
+  SELECT attempt_count, window_started_at FROM li.throttle_counters
+   WHERE bucket_key = $2 FOR UPDATE
+), decided AS (
+  SELECT (GREATEST(0, EXTRACT(EPOCH FROM (now() - pair.window_started_at))::int
+              ) < $3 AS pair_ok,
+         (GREATEST(0, EXTRACT(EPOCH FROM (now() - email.window_started_at))::int
+              ) < $3 AS email_ok
+    FROM pair RIGHT JOIN email ON TRUE
+)
+-- the refusal is decided on the READ state, so a refused attempt mutates
+-- NOTHING ✔
+SELECT CASE
+         WHEN NOT decided.pair_ok OR NOT decided.email_ok THEN FALSE
+         ELSE TRUE
+       END AS allowed
+  FROM decided;
+-- 3. only when 'allowed', UPSERT both counters in ONE statement, each
+--    counting the attempt ✔
+```
+
+**The properties this gives.**
+
+| | |
+|---|---|
+| **A rejected request mutates nothing** | the refusal is decided on the read state ✔, before either write ✔ — so one bucket can never be counted while the other refuses ✔ |
+| **An accepted request updates both** | the two upserts are in one statement ✔ and one transaction ✔, so the accounting always agrees ✔ |
+| **The lock order is fixed** | the per-pair bucket, then the per-email bucket ✔, in every attempt ✔ — so two attempts cannot deadlock ✔ |
+| **The limits are independent** | the per-pair limit (5 ✔) bounds one address ✔; the per-email limit (25 ✔) bounds one account across addresses ✔; the global per-address limit bounds a spray ✔ |
+| **The windows expire** | a bucket whose window has passed starts again ✔, so the counters do not grow without bound ✔ |
 
 ### 9.3 The reconciliation is data, not an endpoint
 
@@ -1164,8 +1261,8 @@ function, and the UI that reads them is M6's ✔.
 | The reservation fails (insufficient credit) | `reserved`, never dispatched | nothing held | `failed` ✔ | **No** ✔ |
 | The lease expires while the worker works | `dispatching` | held | the recovery marks it `uncertain` ✔; the slow write is fenced out ✔ | **No** ✔ |
 | The same key with a **different** request | — | — | the job **fails loudly** ✔ | **No** ✔ |
-| The provider's price is higher than the estimate | `confirmed` | settled with the **actual** ✔; the overrun is recorded ✔ | `succeeded` ✔ | — |
-| The account's balance cannot cover the actual | `confirmed` | settled; the balance may go **negative** (the debt) ✔ | `succeeded` ✔ | — |
+| The provider's price is higher than the **approved maximum** | `confirmed` | settled with the **chargeable** part ✔; the overrun is recorded on the ledger ✔ and absorbed by the platform ✔ | `succeeded` ✔ | — |
+| The customer has fewer credits than the chargeable part | `confirmed` | the **chargeable** part is bounded by what they bought ✔; nothing beyond it is charged to them ✔ | `succeeded` ✔ | — |
 
 ---
 
@@ -1218,7 +1315,7 @@ them ✔.
 | **D1** | **The worker's authority** | (a) a job-scoped worker credential, issued by the control plane; (b) a borrowed customer session; (c) the migrator's `BYPASSRLS` credential | **(a)** ✔ — a credential bound to one job, one workspace, one worker, one lease and one fencing token ✔ (§5 ✔). (b) dies with the user's session ✔; (c) would put the `BYPASSRLS` credential in a runtime process ✔ — which M2 forbids ✔ |
 | **D2** | **The retry policy** | (a) one attempt, then `uncertain`; (b) up to five, with the ledger deduplicating; (c) unlimited | **A job's retry limit and an invocation's re-dispatch rule are different things** ✔: a job may be retried up to `max_attempts` ✔, but a **chargeable invocation** whose outcome is uncertain is **never automatically re-dispatched** ✔ (§6.2 ✔). The default is therefore "no automatic re-dispatch" ✔, and the job's own limit applies only to a *confirmed* failure ✔ |
 | **D3** | **The `uncertain` resolution** | (a) the provider's status API, automatically; (b) an operator, manually; (c) both, in that order | **(c)** ✔ — but the automatic path is only available where the provider's capability is **verified** ✔ (§6.5 ✔), and the manual path **awaits a properly authenticated operator mechanism** ✔, which is M6 ✔ (§9.3 ✔). M4 provides the data and the backend-safe recording function, and **no endpoint** ✔ |
-| **D4** | **The credit price** | (a) a fixed price per operation; (b) a platform-owned price table; (c) the provider's quote | **(b)** ✔ — a platform-owned price table, **snapshotted onto the reservation before the hold is taken** ✔, so the reservation's ceiling is the price at that moment ✔, with an explicit **cost-overrun policy** (§4.5 ✔): the actual is charged, the overrun is recorded, and the balance may go **negative** as a debt ✔ that blocks further reservations ✔. The commercial treatment of that debt is a product decision, and it is **not** settled here ✔ |
+| **D4** | **The credit price** — *proposed, not in force* | (a) a fixed price per operation; (b) a platform-owned price table; (c) the provider's quote | **(b)** ✔ — a platform-owned price table, **snapshotted onto the reservation before the hold is taken** ✔, so the reservation's ceiling is the price at that moment ✔, with an explicit **cost-overrun policy** (§4.5 ✔): the actual is charged, the overrun is recorded, and the balance may go **negative** as a debt ✔ that blocks further reservations ✔. The commercial treatment of that debt is a product decision, and it is **not** settled here ✔ |
 | **D5** | **The `team_id` default** | (a) `NULL` = the whole workspace; (b) a backfill into a "general" team | **(a)** ✔ — nullable general-scope team data ✔, with the **fail-closed** predicates of §7.3 ✔ and **no** migration guess ✔. A backfill would silently reinterpret history ✔ |
 | **D6** | **The retention of the results** | (a) forever; (b) a fixed window with a workspace override; (c) per workspace | **(b)** ✔ — defined defaults: a job's **result** 30 days ✔, the **ledger** 400 days ✔ (the accounting needs it ✔), the **job events** 90 days ✔, and the **credit reservations** 400 days ✔. A workspace may **shorten** a window ✔ and may not extend one beyond the default ✔ — the safeguard is that the ledger's retention is a **platform** obligation ✔ (an accounting record) ✔ and a workspace may not shorten **it** ✔, because the reconciliation needs it ✔ |
 | **D7** | **The shared throttle** | (a) the `li` schema's own tables, with a dedicated least-privileged role; (b) Redis; (c) one instance for the login path | **(a)** ✔ — a **pre-authentication** throttle with **its own** tables and **its own** role ✔, and **separate authorization boundaries** from the tenant data ✔ (§9 ✔). It is not the job queue's business ✔, and RG-8 stays open until it is implemented and tested ✔ |
@@ -1228,7 +1325,7 @@ them ✔.
 
 | | The question | Why it is not decided here |
 |---|---|---|
-| **U1** | The **commercial treatment of a credit debt** — a grace period, a service suspension, a write-off? | A product decision ✔: the engineering records the debt and blocks the spending ✔; what happens next is commercial ✔ |
+| **U1** | The **commercial treatment of a provider overrun** — the platform absorbs it, or it becomes a customer receivable? *Undecided; the safe default is in force.* | A product decision ✔: the engineering records the debt and blocks the spending ✔; what happens next is commercial ✔ |
 | **U2** | The **price of each operation** in ZTech's commercial terms, and the provider's own price per call | A commercial fact ✔, and it is an input to D4's table ✔ |
 | **U3** | Whether the **providers support an idempotency key** and a **status lookup**, per provider and per operation | A fact about the providers ✔ that P0 must establish ✔ — and the plan's default is the safe one ✔ (no automatic re-dispatch ✔) |
 | **U4** | The **team model** beyond the `team_id` column — teams as first-class entities, nested teams, cross-team sharing | A product model ✔; this plan proposes only the column and the predicates ✔ |
