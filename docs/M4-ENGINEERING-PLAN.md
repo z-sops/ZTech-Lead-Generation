@@ -28,7 +28,17 @@ pre-authentication throttle, and the owner decisions.
 
 ---
 
-## 1. The shape of the problem
+## 0a. The F1–F5 correction matrix (revision R2)
+
+| | What was wrong | What it says now | Where |
+|---|---|---|---|
+| **F1** | The same sentinel marked "no team" **and** "administrator", so a teamless member could be mistaken for an admin, and the `WITH CHECK` and the reassignment trigger both treated the sentinel as privileged | The **team identity** and the **administrative permission** are separate protected facts: `li.current_team()` answers the scope, `li.can_manage_team_scope()` answers the permission, and **no** administrative authority is derived from a sentinel's value. The viewer's write is refused by the policy (the RLS `WITH CHECK` is evaluated per session, so the shared `ztech_app` role does not give every customer write) | §7.3–7.6 |
+| **F2** | `workspace_id = current_workspace()` alone would let a worker reach every job, reservation and ledger row of its workspace | The **discovery** (claiming any job) and the **execution** (one claimed job) are separate: the lease owner is a **verified worker identity**, the execution context is **job-scoped**, and the RLS policies on the queue, the ledger and the reservations are job-scoped for a worker context | §5.5–5.9 |
+| **F3** | `reserved` was described as holding credits while another section moved the ledger to `dispatching` in the reservation's transaction — and `dispatching` was read as "the request was sent" | One authoritative sequence: **T1** reserve (`reserved` — the request has **not** been sent), **T2** commit the **dispatch intent** (`dispatching` — the transmission is now unproven), **T3** the network call outside any transaction, **T4** the outcome | §6.3, §10 |
+| **F4** | Letting the balance go negative was presented as an engineering decision, and it would silently impose a customer debt | The balance is **never** driven below zero by an unapproved overrun: an **approved maximum** is snapshotted before the dispatch, the **provider overrun** is recorded **separately** and reconciled, and a **receivable** exists only if U1 authorizes it. Both commercial treatments are laid out, and the safe default is in force until U1 is decided | §4.5, §4.7 |
+| **F5** | The email-only bucket could block a legitimate login from another address, the two buckets were not updated atomically, and `IF NOT EXISTS` was offered as the repair for an invalid concurrent index | The denial-of-service trade-off is stated, with layered limits; both buckets move in **one** statement, and the refusal is decided **before** either is written; the migration detects an **invalid** index and rebuilds it, because `IF NOT EXISTS` does not repair one | §9.2, §7.7 |
+
+---
 
 M4 turns a service that answers requests into one that does work
 **reliably, once, and in the background**: research jobs, enrichment, and
@@ -94,7 +104,7 @@ infrastructure.
 | `idempotency_key` | `TEXT NOT NULL` | **the key the provider is told** |
 | `request_hash` | `TEXT NOT NULL` | the hash of the request: the same key with a different request is a **conflict** |
 | `chargeable` | `BOOLEAN NOT NULL` | whether this call costs money |
-| `state` | `TEXT NOT NULL` | `prepared`, `dispatched`, `confirmed`, `failed`, `uncertain` |
+| `state` | `TEXT NOT NULL` | `reserved`, `dispatching`, `confirmed`, `failed`, `uncertain` |
 | `estimated_credits` | `INTEGER NOT NULL` | the reservation |
 | `actual_credits` | `INTEGER` | what the provider reported |
 | `overrun_credits` | `INTEGER NOT NULL DEFAULT 0` | the cost above the reservation |
@@ -240,8 +250,8 @@ looks at the **provider ledger** before it does anything else:
 | The ledger says | The dispatch | The recovery does | The credits |
 |---|---|---|---|
 | there is no invocation | none happened | **requeue** with a backoff, and increment `fencing_token` so the old worker's write is refused | nothing was held |
-| `prepared` | never dispatched | **requeue** with a backoff; the same invocation row is reused, with the same idempotency key | the hold is **kept** (the invocation is still coming) |
-| `dispatched` | **may have happened** | the job goes to **`uncertain`**; the fencing token is incremented | the hold is **kept** |
+| `reserved` | never dispatched - the intent is not yet durable | **requeue** with a backoff; the same invocation row is reused, with the same idempotency key | the hold is **kept** (the invocation is still coming) |
+| `dispatching` | **may have happened** - the intent is durable | the job goes to **`uncertain`**; the fencing token is incremented | the hold is **kept** |
 | `confirmed` | it happened and succeeded | the job goes to **`succeeded`**, with the ledger's outcome | the reservation is **settled** |
 | `failed` | it happened and definitively failed | the job goes to **`failed`**, and the retry policy applies | the reservation is **released** |
 | `uncertain` | unknown | the job **stays** `uncertain` | the hold is **kept** |
@@ -412,34 +422,80 @@ UPDATE li.credit_accounts
 | the settlement | the actual amount is rejected if it is negative ✔; a zero actual is allowed (a free call that cost nothing) ✔ and releases the whole hold ✔ |
 | the reservation | the amount is the **ceiling** of the hold; the actual may be lower (the difference is released) ✔ or higher (the difference is the overrun) ✔ |
 
-### 4.5 When the actual cost exceeds the reservation
+### 4.5 When the actual cost exceeds the reservation (F4)
 
-The provider's price can be higher than the estimate. The call has already
-happened, so the cost is real and the workspace owes it.
+The provider's price can be higher than the estimate. The call has
+happened, so the cost is real, and **the platform must not silently erase
+it** — and it must not silently impose a debt on the customer either.
 
-**The policy.**
+**The five quantities, kept apart.**
 
-1. The reservation is settled with the **actual** amount ✔.
-2. The account's balance is reduced by the actual amount ✔ — it **may go
-   negative**, and that negative balance **is the debt** ✔.
-3. The difference is recorded on the reservation as `overrun_credits` ✔, so
-   the overrun is visible and reconcilable ✔.
-4. The available is now negative, so the workspace **cannot reserve
-   anything else** until the debt is cleared ✔ — the next reservation's
-   predicate (`available >= amount`) refuses ✔.
+| # | Quantity | Where it lives |
+|---|---|---|
+| 1 | **Credits purchased** | `li.credit_accounts.credit_purchased` — the total ever bought, the ceiling of the commercial relationship |
+| 2 | **Credits reserved** | `li.credit_accounts.credit_reserved` — held right now |
+| 3 | **Credits consumed** | `li.credit_accounts.credit_consumed` — settled, the real spend |
+| 4 | **The provider overrun** | `li.provider_ledger.overrun_credits` — the cost above the **approved maximum** ✔ |
+| 5 | **A customer receivable** | `li.credit_receivables` — **only if U1 authorizes it** ✔ |
 
-**Why the balance may go negative rather than being floored at zero:** a
-floor at zero would silently forgive part of a real charge — the platform
-would absorb the difference and the workspace would never learn about it.
-The debt is honest, it is visible, and it blocks further spending ✔.
+**The balance model.** `credit_balance = credit_purchased - credit_consumed`
+✔ — it is the *unspent purchased* credits ✔ and it is **never** driven
+negative by an unapproved overrun ✔.
 
-**What the platform does with a debt** — a commercial decision, and the
-one D4 asks about: the debt is a receivable, and the platform's policy on
-it (a grace period, a service suspension) is **not** an engineering
-decision. It is recorded, and it blocks reservations; what happens next is
-D4's companion decision.
+**The safe default, in force until U1 is decided (U1 ✔).**
 
-### 4.6 The worked example
+1. **No new chargeable work** when `available < amount` ✔ — the reservation's
+   predicate refuses ✔.
+2. An **approved maximum** is snapshotted onto the ledger **before the
+   dispatch** ✔ (the platform's price for the operation ✔, D4 ✔), and the
+   reservation holds exactly that maximum ✔.
+3. The **provider overrun** — the part of the actual above the approved
+   maximum ✔ — is recorded **separately** ✔ on the ledger row ✔ and in the
+   reconciliation ✔. It is the **platform's** cost, until U1 says otherwise ✔.
+4. **No customer debt is imposed automatically** ✔: the customer's consumed
+   credits never exceed what they purchased ✔, and no receivable is created
+   without an approved term ✔.
+5. The provider's charge is **not silently erased** ✔: the overrun is
+   visible, reconciled, and attributed ✔.
+
+**Settlement is therefore bounded by the balance:**
+
+```sql
+-- the actual consumption that may be charged to the customer
+v_chargeable := LEAST($2, GREATEST(0, credit_purchased - credit_consumed));
+-- the part the platform absorbs for now
+v_overrun := $2 - v_chargeable;
+```
+
+`credit_consumed` rises by `v_chargeable` ✔; the ledger records
+`overrun_credits = v_overrun` ✔; and the reservation's overrun (the part
+above the *reserved* amount) is recorded separately ✔.
+
+**The two commercial treatments, and U1 (the owner's decision).**
+
+| | Treatment | What the customer sees | What the platform bears |
+|---|---|---|---|
+| **(a) — the safe default** | the platform absorbs the overrun | the customer is charged up to their purchased credits; the overrun is invisible to them | the overrun, as a cost ✔ |
+| **(b) — only if U1 authorizes it** | the overrun becomes a receivable | the customer is charged the overrun, which appears as a receivable and blocks further reservations until it is settled ✔ | nothing, but the customer is billed for something they did not approve ✔ — which is why it needs an approved term ✔ |
+
+**Until U1 is decided, (a) is in force** ✔ — the platform absorbs the
+overrun, and the customer is never charged for an unapproved amount ✔.
+
+### 4.6 The locking order
+
+Every multi-row money operation takes the locks in **one** order, so two
+of them can never deadlock:
+
+| The operation | The locks, in order |
+|---|---|
+| **reserve** | the **account** row only ✔ |
+| **settle** | the **reservation** row, then the **account** row ✔ |
+| **release** | the **reservation** row, then the **account** row ✔ |
+
+**The reservation row always precedes the account row** ✔, and no operation
+ever takes the account row first and the reservation row second ✔.
+
+### 4.7 The worked example
 
 A workspace buys **100 credits**. `credit_balance = 100`,
 `credit_reserved = 0`, `available = 100`.
@@ -475,31 +531,32 @@ charged.
 
 The customer is not charged ✔.
 
-**D. Settle 24** — the provider charged **more** than the estimate.
+**D. Settle 24 — the provider charged 24, and 20 were reserved.**
 
-| | balance | reserved | available |
-|---|---|---|---|
-| after the settlement | **76** (100 − 24) | **0** | **76** |
+| | purchased | consumed | reserved | available |
+|---|---|---|---|---|
+| after the reservation | 100 | 0 | 20 | 80 |
+| after the settlement | 100 | **20** | 0 | 80 |
 
-No overrun here, because the hold was 20 and the actual 24: the balance
-falls by the actual 24 ✔ and the hold falls by the 20 that was held ✔, so
-the workspace is charged the 4 extra ✔ and the `overrun_credits` column
-records 4 ✔.
+The customer is charged the **reserved** 20 ✔, the hold of 20 is released ✔,
+and the **four-credit overrun** — 24 charged against 20 reserved — is
+recorded on the ledger as `overrun_credits = 4` ✔ and reconciled ✔. Under
+the safe default (a ✔) the platform absorbs those four credits ✔ and the
+customer is never charged for them ✔; under (b) (U1 ✔) they become a
+receivable ✔.
 
-**E. The debt.** Now suppose the balance is 5 and a 20-credit call is
-made with a 20-credit reservation:
+**E. The debt that may not exist yet.** Suppose the purchased credits are
+5, a 20-credit call is made with a 20-credit reservation, and the actual is
+20:
 
-| | balance | reserved | available |
-|---|---|---|---|
-| before | 5 | 0 | 5 |
-| after the reservation | 5 | 20 | **−15** |
-
-The reservation's predicate (`available >= 20`) would have **refused** it —
-so this state is only reachable when the reservation was taken when the
-credits were available and the balance fell afterwards (for example by
-another settlement). If the actual cost is then 20, the balance becomes
-5 − 20 = **−15**, and the workspace **owes 15 credits** ✔ and cannot
-reserve anything else ✔.
+- the reservation's predicate (`available >= 20`) **refuses** it, because
+  the available is 5 ✔ — so this state is unreachable through the normal
+  path ✔;
+- if it were reached anyway (a price change between the snapshot and the
+  settlement ✔), the safe default charges the customer only what they have
+  (5 ✔) and records the remaining 15 as a **provider overrun** ✔ — the
+  customer's consumed credits never exceed their purchased ones ✔, and no
+  receivable appears without an approved term ✔.
 
 **F. The concurrent contention.** Two workers try to reserve 60 credits
 each, and the balance is 100:
@@ -528,26 +585,37 @@ hold.
 
 So the worker needs **its own credential**, with its own contract.
 
-### 5.2 The contract
+### 5.2 The contract (F2)
 
 | | |
 |---|---|
-| **Who discovers and claims the jobs** | the **worker process** — but only through `li.claim_job()`, a `SECURITY DEFINER` function owned by the migration role, executable by the worker role only |
-| **Who issues the execution credential** | the **control plane** (`ztech_control` ✔, or a dedicated issuer) — it signs a **job-scoped worker token** with the control-plane secret, the same secret the M2/M3 tokens use |
-| **What the token binds** | `workspace_id`, `job_id`, `worker_id`, the job's **fencing token**, the **lease expiry**, the **issued-at** and the **expiry** |
-| **How the worker opens a context** | `li.set_workspace_for_job(job_id, token)` — a `SECURITY DEFINER` function that verifies the token, checks the job, and writes the context **on the worker role's own connection**, so the RLS policies apply exactly as they do for a user ✔ |
-| **How the authority ends** | the token's expiry, the **lease** expiry, the **fencing token** (a re-claim increments it, so the old worker's token is stale ✔), and the job's **state** (a cancelled or completed job invalidates it ✔) |
-| **Who may execute each `SECURITY DEFINER` function** | the table in §5.6 ✔ |
-| **Why a caller cannot claim or execute another tenant's job** | the claim function is executable **only** by the worker role ✔; the tenant runtime role (`ztech_app`) cannot execute it ✔; and the token is bound to **one** job, so it cannot reach another tenant's rows ✔ |
+| **Who discovers the work** | the **worker process** — but only through `li.claim_job()`, a `SECURITY DEFINER` function owned by the migration role, executable by the worker role only |
+| **Who owns the lease** | a **verified worker identity** ✔ — never a caller-supplied string ✔ (see §5.3 ✔) |
+| **Who issues the execution credential** | the **control plane** — it signs a **job-scoped worker token** with the control-plane secret, the same secret the M2/M3 tokens use. **The secret is never in the worker** ✔ |
+| **How the worker opens a context** | `li.set_workspace_for_job(job_id, token)` — a `SECURITY DEFINER` function that verifies the token, checks the job, the lease and the fencing token, and writes the context on the worker's own connection, so the RLS policies apply exactly as they do for a user ✔ |
+| **The scope of that context** | the **job**, not merely the workspace ✔ — the RLS policies of the queue, the ledger and the reservations are **job-scoped** for a worker context ✔ (§5.6 ✔) |
+| **How the authority ends** | the token's expiry, the **lease** expiry, the **fencing token** (a re-claim increments it, so the old worker's token is stale ✔), and the job's **state** ✔ |
+| **Who may execute each `SECURITY DEFINER` function** | the table in §5.7 ✔ |
+| **Why a caller cannot claim or execute another tenant's job** | the claim function is executable **only** by the worker role ✔; the tenant runtime role (`ztech_app`) cannot execute it ✔; the execution token is bound to **one** job ✔; and the queue's RLS policies are **job-scoped** for a worker context ✔, so a worker that holds one job cannot read the others of its own workspace ✔ |
 
 **The migrator and the `BYPASSRLS` credential are never in a worker
-process.** The worker connects with `ztech_worker` ✔ (no `BYPASSRLS` ✔, no
+process** ✔. The worker connects with `ztech_worker` ✔ (no `BYPASSRLS` ✔, no
 ownership ✔), and every privileged operation it needs is a `SECURITY
 DEFINER` function with a narrow grant ✔.
 
-### 5.3 The token
+### 5.3 The worker's identity is verified, not asserted (F2)
 
-The payload, like the M3 session token:
+Every worker shares the role `ztech_worker` ✔, so the role cannot identify
+the worker ✔. The **identity** is therefore cryptographic ✔:
+
+| | |
+|---|---|
+| **The identity credential** | a **worker identity token**, signed by the control plane at start-up ✔, carrying the worker's own identity (`worker_id`) ✔ and its expiry ✔ — the same mechanism as the job token ✔, and the signing secret stays in the control plane ✔ |
+| **The claim** | `li.claim_job(identity_token, lease)` verifies the identity token ✔, extracts the **verified** `worker_id` ✔, and records **that** as the lease owner ✔ — a caller-supplied `worker_id` is never trusted ✔ |
+| **The lease owner is compared to the verified identity** | the worker's own writes require `lease_owner = <its verified identity>` ✔, so one worker cannot write under another worker's lease ✔ |
+| **A worker's identity is revoked** | the identity token's expiry ✔, and the control plane refuses to issue a new one ✔ |
+
+### 5.4 The token
 
 ```
 workspace_id | job_id | worker_id | fencing_token | issued_at | expires_at | kind='job'
@@ -556,48 +624,98 @@ workspace_id | job_id | worker_id | fencing_token | issued_at | expires_at | kin
 signed with the control-plane secret ✔ (HMAC-SHA256 ✔), hex-encoded ✔, and
 **bound to the job** ✔.
 
-### 5.4 The context
+### 5.5 The trusted flow, from the claim to the execution credential
+
+```
+  worker                        database                        control plane
+    |                                |                                  |
+    |-- li.claim_job(identity, lease) -->|                                 |
+    |   (SECURITY DEFINER: verifies     |                                 |
+    |    the identity, picks a job,     |                                 |
+    |    increments the fencing token,   |                                 |
+    |    returns job + fencing token)   |                                 |
+    |                                |                                 |
+    |-- li.request_job_token(job_id, fencing_token, identity) ----------->|
+    |                                |   verifies: the job is leased,    |
+    |                                |   the fencing token matches, the  |
+    |                                |   lease owner is the verified     |
+    |                                |   identity ---> SIGNS the token   |
+    |<-- the signed job-scoped token -------------------------------------|
+    |                                |                                  |
+    |-- li.set_workspace_for_job(job_id, token) -->|                       |
+    |   (SECURITY DEFINER: verifies the signature, the job, the lease,   |
+    |    the fencing token, and writes the JOB-SCOPED context)           |
+    |                                                                 |
+    |-- the work, on the job's rows only --->|                          |
+```
+
+**The signing secret is in the control plane only** ✔ — the worker asks for
+a token and never signs one ✔. The database verifies the lease and the
+fencing token at the moment of the request ✔, so a worker that has lost its
+lease cannot obtain a token ✔.
+
+### 5.6 The context, and the job-scoped predicates (F2)
 
 `li.workspace_context` gains two columns: `context_kind` (`'session'` or
 `'job'`) and `job_id`. A job context has **no** session and **no** user ✔ —
 the authority is the job ✔.
 
-`li.current_workspace()` then has two branches, and **both fail closed**:
+`li.current_workspace()` has two branches, and **both fail closed**:
 
 | The context kind | The entitlement, re-checked on every read |
 |---|---|
 | `session` | the session is alive, it belongs to the user, and the user is an active member of the workspace ✔ (M3's rule ✔) |
 | `job` | the job exists, it is `leased` or `running`, its `workspace_id` matches, **its `fencing_token` matches the context's**, and the lease has not expired ✔ |
 
-So a job context dies the moment the job is re-claimed (the fencing token
-moves ✔), the lease lapses ✔, the job is cancelled ✔ or completed ✔.
+**The queue's, the ledger's and the reservations' RLS policies are
+workspace-scoped for a customer context and JOB-SCOPED for a worker
+context** ✔:
 
-### 5.5 The failure modes, and what each one does
+```sql
+-- li.job_queue, li.provider_ledger, li.credit_reservations
+USING (
+  workspace_id = li.current_workspace()
+  AND (li.current_job() IS NULL OR job_id = li.current_job())
+)
+WITH CHECK (
+  workspace_id = li.current_workspace()
+  AND (li.current_job() IS NULL OR job_id = li.current_job())
+)
+```
 
-| | The worker's context | The worker's write of a result | The provider call |
-|---|---|---|---|
-| The worker crashes | the lease expires; the recovery decides (§3.4) | — | see §6 |
-| The worker is paused and comes back | its token's fencing token is **stale** ✔ | refused: the `WHERE fencing_token = $2` matches **zero rows** ✔ | it must not dispatch: the ledger's `prepared` row is reused ✔ |
-| The job is cancelled | the context is refused (the state is no longer `leased`/`running`) ✔ | refused ✔ | if the call is in flight, it becomes `uncertain` ✔ |
-| The lease expires | the context is refused (the lease check) ✔ | refused ✔ | the recovery decides ✔ |
+`li.current_job()` returns the job of a **job context** ✔ and `NULL` for a
+customer context ✔ (so a customer sees their whole workspace ✔) and `NULL`
+for an unknown context ✔ (so a worker without a job context sees nothing
+✔ — fail closed ✔).
 
-### 5.6 Who may execute what
+**So a worker that holds one job cannot read, modify or delete the other
+jobs, the other reservations or the other ledger rows of the same
+workspace** ✔ ✔ — the isolation is **job-level** ✔, and it is enforced by
+the policies, not by the code that calls them ✔.
+
+**The explicitly authorized service operations** — the credit reservation,
+the settlement and the release — are `SECURITY DEFINER` functions that take
+the **job's** workspace and the **job's** row ✔, so they act only on the
+caller's own job ✔. They are the only way to touch the credits ✔.
+
+### 5.7 Who may execute what
 
 | Function | `SECURITY DEFINER` | Executable by | Why |
 |---|---|---|---|
-| `li.claim_job(worker, lease)` | yes | **`ztech_worker`** only | it hands out jobs; the tenant roles may not call it |
-| `li.renew_lease(job, fencing_token, lease)` | yes | `ztech_worker` | it extends a lease |
-| `li.set_workspace_for_job(job, token)` | yes | `ztech_worker` | it opens a job-scoped context; it verifies the token, so it is safe to expose |
-| `li.current_workspace()` | yes | the runtime roles | the RLS policies call it |
-| `li.issue_worker_token(job, worker)` | yes | **`ztech_control`** | only the control plane signs worker credentials |
-| `li.reserve_credits(...)`, `li.settle_credits(...)`, `li.release_credits(...)` | yes | **`ztech_worker`** | the worker holds and settles the credits, scoped to the job's workspace |
-| `li.grant_workspace(workspace, role)` | yes | `ztech_identity` | the ceiling is the identity service's |
+| `li.claim_job(identity_token, lease)` | yes | **`ztech_worker`** only | it hands out jobs; the tenant roles may not call it ✔ |
+| `li.request_job_token(job, fencing_token, identity)` | yes | **`ztech_worker`** only | it is the **issuer's** side of the flow ✔ — the signature is made by the control plane ✔, and the database only **verifies** the request ✔ |
+| `li.renew_lease(job, fencing_token, lease)` | yes | `ztech_worker` | it extends a lease ✔ |
+| `li.set_workspace_for_job(job, token)` | yes | `ztech_worker` | it opens a job-scoped context; it verifies the token, so it is safe to expose ✔ |
+| `li.current_workspace()`, `li.current_job()` | yes | the runtime roles | the RLS policies call them ✔ |
+| `li.issue_worker_token(job, worker)` | yes | **`ztech_control`** | only the control plane signs worker credentials ✔ |
+| `li.reserve_credits(...)`, `li.settle_credits(...)`, `li.release_credits(...)` | yes | **`ztech_worker`** | the worker holds and settles the credits, scoped to the job's workspace ✔ |
+| `li.grant_workspace(workspace, role)` | yes | `ztech_identity` | the ceiling is the identity service's ✔ |
 
 **Nothing in that table is executable by `ztech_app`** except
-`li.current_workspace()` ✔, and `current_workspace()` only ever *reads* the
-context ✔.
+`li.current_workspace()` and `li.current_job()` ✔, and those only ever
+*read* the context ✔.
 
-### 5.7 Why a tenant cannot reach another tenant's job
+### 5.8 Why a tenant cannot reach another tenant's job
 
 1. `ztech_app` **cannot execute** `li.claim_job()` ✔ — the grant is to
    `ztech_worker` only ✔.
@@ -610,20 +728,27 @@ context ✔.
    forced** ✔ — so even a statement that names another workspace's
    `job_id` returns nothing ✔.
 
-### 5.8 The negative raw-SQL tests
+### 5.9 The negative raw-SQL tests
 
-Run as the **runtime role**, with raw SQL, not through the API:
+Run as the **runtime role** and as the **worker role**, with raw SQL, not
+through the API:
 
-| The attempt | The expected refusal |
-|---|---|
-| `SELECT li.claim_job('me', '5 minutes')` as `ztech_app` | **permission denied for function claim_job** ✔ |
-| `SELECT li.set_workspace_for_job('<uuid>', '<token>')` as `ztech_app` | **permission denied** ✔ |
-| `UPDATE li.job_queue SET state = 'succeeded' WHERE job_id = '<another workspace's job>'` as `ztech_app` | **zero rows** (the RLS policy) ✔ |
-| `SELECT * FROM li.job_queue WHERE workspace_id = '<another workspace>'` as `ztech_app` | **zero rows** ✔ |
-| `SELECT li.set_workspace('<another workspace>', '<forged context>')` as `ztech_app` | **no context**: the token is invalid, or the entitlement check fails ✔ |
-| `SELECT li.issue_worker_token('<job>', 'me')` as `ztech_app` | **permission denied** ✔ |
-| a worker using a token whose fencing token is stale | the context is refused ✔, and the result write affects **zero rows** ✔ |
-| `set_config('app.workspace_id', '<uuid>', false)` as any runtime role | **no effect**: the context is not a setting ✔ (M2's C1 finding) ✔ |
+| The attempt | The role | The expected refusal |
+|---|---|---|
+| `SELECT li.claim_job('forged', '5 minutes')` | `ztech_app` | **permission denied for function claim_job** ✔ |
+| `SELECT li.claim_job('forged-identity', '5 minutes')` | `ztech_worker` | **the identity token is invalid** — no job is claimed ✔ and the lease owner is never a caller-supplied string ✔ |
+| `SELECT li.set_workspace_for_job('<uuid>', '<token>')` | `ztech_app` | **permission denied** ✔ |
+| `SELECT li.set_workspace_for_job('<another job>', '<token>')` | `ztech_worker` | **the fencing token or the lease does not match** ✔ — no context ✔ |
+| `SELECT li.request_job_token('<job>', '<stale token>', '<identity>')` | `ztech_worker` | **the fencing token does not match** ✔ — no token is issued ✔ |
+| `UPDATE li.job_queue SET state = 'succeeded' WHERE job_id = '<another job of the same workspace>'` | `ztech_worker` with a job context | **zero rows** — the policy is **job-scoped** ✔ |
+| `SELECT * FROM li.provider_ledger WHERE workspace_id = '<the same workspace>'` | `ztech_worker` with a job context | **only the rows of its own job** ✔ |
+| `SELECT * FROM li.credit_reservations WHERE workspace_id = '<the same workspace>'` | `ztech_worker` with a job context | **only its own reservation** ✔ |
+| `UPDATE li.job_queue SET state = 'succeeded' WHERE job_id = '<another workspace's job>'` | `ztech_app` | **zero rows** (the RLS policy) ✔ |
+| `SELECT * FROM li.job_queue WHERE workspace_id = '<another workspace>'` | `ztech_app` | **zero rows** ✔ |
+| `SELECT li.set_workspace('<another workspace>', '<forged context>')` | `ztech_app` | **no context**: the token is invalid, or the entitlement check fails ✔ |
+| `SELECT li.issue_worker_token('<job>', 'me')` | `ztech_app` | **permission denied** ✔ |
+| a worker writing a result with a **stale** fencing token | `ztech_worker` | **zero rows** ✔ |
+| `set_config('app.workspace_id', '<uuid>', false)` | any runtime role | **no effect**: the context is not a setting ✔ (M2's C1 finding) ✔ |
 
 ---
 
@@ -649,8 +774,8 @@ the duplicate visible ✔; whether the provider charges once is a property of
 
 | Moment | What is true | What the ledger says | What may be done next |
 |---|---|---|---|
-| **1. The transaction committed, before the network request began** | nothing was sent ✔ | `prepared` | the invocation may be dispatched ✔ — this is the only case where a dispatch is safe ✔ |
-| **2. The request may have been sent** | it is unknown whether the provider received it ✔ | `dispatched` | **not** a re-dispatch ✔ → `uncertain` ✔ |
+| **1. The reservation committed; the request has not been sent** | nothing was sent ✔ | `reserved` | the invocation may be dispatched ✔ — this is the only case where a dispatch is safe ✔ |
+| **2. The dispatch intent committed; the transmission may have happened** | it is unknown whether the provider received it ✔ | `dispatched` | **not** a re-dispatch ✔ → `uncertain` ✔ |
 | **3. The provider acknowledged the request** | the provider accepted it ✔ | `confirmed` | the work may proceed ✔; the credits are settled ✔ |
 | **4. The provider definitively rejected it, without charging** | it refused ✔ | `failed` | a re-dispatch is safe ✔ (nothing was charged ✔) — the retry policy applies ✔ |
 | **5. The provider may have charged, but the response was lost** | the charge may have happened ✔ | `uncertain` | **not** a re-dispatch ✔ → reconcile, or a human decides ✔ |
@@ -660,27 +785,74 @@ the duplicate visible ✔; whether the provider charges once is a property of
 prohibited** — unless the provider's deduplication guarantee for that
 specific operation has been **verified** and recorded (§6.5) ✔.
 
-### 6.3 The invocation lifecycle
+### 6.3 The invocation lifecycle, and the transaction boundaries (F3)
+
+There is **one** authoritative sequence, and the durable **dispatch
+intent** is separated from the **actual transmission** ✔.
 
 ```
-prepare ──▶ dispatch ──▶ confirmed        (the provider acknowledged it)
-   │            │
-   │            ├──▶ failed              (the provider refused it; nothing charged)
-   │            └──▶ uncertain           (the outcome is unknown)
-   │
-   └──▶ (the reservation is HELD; the job is queued but nothing was sent)
+ T1  reserve the credits + insert the ledger row   -> state 'reserved'
+     (ONE transaction; the request has NOT been sent; the intent is durable)
+
+ T2  commit the DISPATCH INTENT                     -> state 'dispatching'
+     (ONE transaction; the fencing token is checked; from now on the
+      transmission CANNOT be disproved)
+
+ T3  the network request                            (NO transaction)
+     (the request may or may not have reached the provider)
+
+ T4  the outcome                                     -> 'confirmed' | 'failed' | 'uncertain'
+     (ONE transaction; the credits are settled, released, or held)
 ```
 
-1. **prepare** — the worker inserts a ledger row in state `prepared` with
-   the **idempotency key it will give the provider** and a
-   `request_hash` ✔. The unique constraint makes a second prepare
-   impossible ✔: a repeated job finds the existing row and continues it ✔.
-2. **reserve** — the credits are reserved (§4) and the row moves to
-   `dispatched` **in the same transaction as the reservation** ✔ — so a
-   reservation and a "we are about to dispatch" are one fact ✔.
-3. **dispatch** — the provider is called, with the idempotency key passed
-   through ✔.
-4. **confirm / fail / uncertain** — as §6.2 ✔.
+**The ledger's durable states, and what each one means.**
+
+| The state | The reservation exists | The balance is held | A dispatch is permitted | The request could already have reached the provider | What recovery may do | May it be attempted again automatically? |
+|---|---|---|---|---|---|---|
+| `reserved` | **yes** ✔ | **yes** ✔ | **yes** ✔ — nothing has been sent ✔ | **no** ✔ | **requeue** the job ✔ (the same invocation row and the same key are reused ✔) | **yes** ✔ — it is the same logical invocation, and nothing was sent ✔ |
+| `dispatching` | yes ✔ | yes ✔ | **no** — the intent is already durable ✔ | **yes** — the transmission cannot be disproved ✔ | the job goes to **`uncertain`** ✔ | **no** ✔ — unless the provider's deduplication is verified (§6.5 ✔) |
+| `confirmed` | yes (settled) ✔ | no ✔ | no ✔ | **yes** — it happened ✔ | the job is completed ✔ | no ✔ |
+| `failed` | yes (released) ✔ | no ✔ | no ✔ | **yes** — the provider refused it, and **nothing was charged** ✔ | the job is retried under the **job's** retry limit ✔ | **yes** ✔ — a confirmed failure is safe to retry ✔ |
+| `uncertain` | yes (held) ✔ | **yes** ✔ | no ✔ | **yes** — it may have charged ✔ | it waits for the reconciliation ✔ or an operator ✔ (M6 ✔) | **no** ✔ — unless the provider's deduplication is verified ✔ |
+
+**`dispatching` is the boundary.** Before it, a requeue is safe ✔; after
+it, the outcome may already be a charge ✔.
+
+**Where the workers are fenced.** At **T2** ✔ — the update that records
+the dispatch intent requires the job's **current** `fencing_token` ✔, so a
+stale worker cannot even record the intent ✔, and therefore cannot cause a
+duplicate ✔. The result write at **T4** is fenced the same way ✔.
+
+**Where the transactions begin and end.**
+
+| | Begins | Ends |
+|---|---|---|
+| **T1** | the reservation's `BEGIN` ✔ | after the ledger row and the hold are written ✔ |
+| **T2** | the dispatch intent's `BEGIN` ✔ | after the state is `dispatching` ✔ |
+| **T3** | **no transaction** ✔ — the network call is never inside one ✔ | — ✔ |
+| **T4** | the outcome's `BEGIN` ✔ | after the state and the credits are written ✔ |
+
+**T1 and T2 are two separate transactions, and there is a gap between
+them** ✔ — the gap is the window in which the worker could die ✔, and it is
+exactly the window in which the outcome is **still knowable** ✔ (the
+ledger says `reserved` ✔ → a requeue is safe ✔).
+
+### 6.4 The invocation lifecycle, in words
+
+1. **T1 — prepare.** The worker reserves the credits (§4) and inserts the
+   ledger row in state `reserved`, with the **idempotency key it will give
+   the provider** and a `request_hash` ✔. The unique constraint makes a
+   second prepare impossible ✔: a repeated job finds the existing row and
+   continues it ✔. **Nothing has been sent** ✔.
+2. **T2 — the dispatch intent.** The worker commits the intent ✔ (the
+   fencing token is checked ✔). From this moment the transmission cannot be
+   disproved ✔.
+3. **T3 — the dispatch.** The provider is called, with the idempotency key
+   passed through ✔ — **outside any transaction** ✔.
+4. **T4 — the outcome.** The provider acknowledged → `confirmed` ✔ and the
+   credits are settled ✔; the provider refused → `failed` ✔ and the credits
+   are released ✔; the provider did not answer → `uncertain` ✔ and the
+   credits are **held** ✔.
 
 ### 6.4 The idempotency key, and the request-hash conflict
 
@@ -721,16 +893,16 @@ is recorded, not assumed:
 
 | Failure | The ledger | The credits | The job | The provider called again? |
 |---|---|---|---|---|
-| The worker crashes **before** the dispatch | `prepared` | the hold is **kept** | the lease expires → the recovery sees `prepared` → **requeued** ✔ | **Yes** ✔ — nothing was sent, and the same key is presented ✔ |
-| The worker crashes **after** the dispatch, before the answer | `dispatched` | the hold is **kept** | the recovery sees `dispatched` → **`uncertain`** ✔ | **No** ✔ — unless the provider's deduplication is verified ✔ |
+| The worker crashes **before** the dispatch intent | `reserved` | the hold is **kept** | the lease expires → the recovery sees `reserved` → **requeued** ✔ | **Yes** ✔ — nothing was sent, and the same key is presented ✔ |
+| The worker crashes **after** the dispatch intent, before the answer | `dispatching` | the hold is **kept** | the recovery sees `dispatching` → **`uncertain`** ✔ | **No** ✔ — unless the provider's deduplication is verified ✔ |
 | The provider answers "no" | `failed` | the reservation is **released** ✔ | `failed` → backoff → `queued` (until the job's `max_attempts`) ✔ | **Yes** ✔ — a confirmed failure is safe to retry ✔ |
 | The provider times out | `uncertain` | the hold is **kept** | `uncertain` ✔ | **No** ✔ — reconciled, or a human decides ✔ |
 | The provider charged and the response was lost | `uncertain` | the hold is **kept** | `uncertain` ✔ | **No** ✔ |
 | The worker is paused and returns with a stale fencing token | unchanged | unchanged | its result write affects **zero rows** ✔ | **No** ✔ — the work is discarded ✔ |
 | The API creates the same job twice (the same idempotency key) | one row | one reservation | one job — the second request returns the first ✔ | **No** ✔ — the unique constraint is the guarantee ✔ |
 | Two workers claim the same job | one row, one fencing token | one reservation | the loser's write affects zero rows ✔ | **No** ✔ |
-| The reservation fails (insufficient credit) | `prepared`, never dispatched | nothing held | `failed` with a clear reason ✔ | **No** ✔ |
-| The lease expires while the worker is working | `dispatched` | held | the recovery marks it `uncertain` ✔; the slow worker's write is fenced out ✔ | **No** ✔ |
+| The reservation fails (insufficient credit) | `reserved`, never dispatched | nothing held | `failed` with a clear reason ✔ | **No** ✔ |
+| The lease expires while the worker is working | `dispatching` | held | the recovery marks it `uncertain` ✔; the slow worker's write is fenced out ✔ | **No** ✔ |
 | The same key is presented with a **different** request | — | — | the job **fails loudly** ✔ — a conflict, not a duplicate ✔ | **No** ✔ |
 
 ---
@@ -745,79 +917,110 @@ is recorded, not assumed:
 | **`team_id IS NULL`** | the **workspace's general scope**: visible to every member of the workspace ✔. **No existing row is rewritten**, and no migration guesses which team an old record belonged to ✔ |
 | **The team identity** | comes from the **protected authorization context** — the caller's membership — and **never** from a client-controlled session variable or a request parameter ✔ |
 
-### 7.2 The scope functions
+### 7.2 The scope functions, and the separate permission function (F1)
 
-`li.current_team()` is a `SECURITY DEFINER` function, and it returns three
-different things, so that "the member has no team" and "the context is
-unknown" are **not** confused:
+**The team identity and the administrative permission are two different
+facts, held in two different protected functions.** A sentinel value is
+never a permission ✔.
+
+`li.current_team()` — the **scope**: which teams the caller may *see*.
 
 | It returns | When |
 |---|---|
 | the team `UUID` | the caller is a member with a team ✔ |
-| the sentinel `'00000000-0000-0000-0000-000000000000'` | the caller is an **owner or an admin**, or a member whose membership carries **no** team ✔ |
-| **`NULL`** | the caller's context is **unknown** or **not entitled** ✔ — and `NULL` is the **fail-closed** answer ✔ |
+| the sentinel `'00000000-0000-0000-0000-000000000000'` | the caller is a member **with no team** ✔ — the scope is "the whole workspace" ✔ |
+| **`NULL`** | the context is **unknown** or **not entitled** ✔ — and `NULL` is the **fail-closed** answer ✔ |
 
-`li.current_write_team()` returns the team a caller may **write** into: the
-member's own team ✔, `NULL` for a caller who may not write a team-scoped
-row at all ✔ (a viewer ✔), and the sentinel for an owner or an admin ✔.
+`li.current_role()` — the caller's **role** in the workspace (`owner`,
+`admin`, `manager`, `member`, `viewer`), read from the **membership**, under
+the same protection as M3's `li.session_entitled()` ✔, and `NULL` when the
+caller is not a member ✔.
+
+`li.can_manage_team_scope()` — the **administrative permission**: may this
+caller administer the team scope of this workspace? It is `true` only for
+the roles that carry `member.role` (the owner and the admin ✔), read from
+the membership ✔.
+
+| It returns | When |
+|---|---|
+| `true` | the caller's **role** in the workspace carries `member.role` ✔ |
+| `false` | the caller is a member without that permission ✔ — **including a teamless member** ✔ |
+
+`li.can_write_team_scope()` — may this caller write team-scoped rows at
+all? It is `true` for every role that carries `workspace.write` (the
+owner, the admin, the manager and the member ✔) and **`false` for the
+viewer** ✔.
+
+**The viewer's write is refused by the policy, not by the grant.** Every
+customer session uses the same PostgreSQL role, `ztech_app` ✔, so a table
+grant cannot distinguish a viewer from a member ✔. The distinction is made
+by the **RLS `WITH CHECK`**, which is evaluated **per session** ✔ (the
+context is session-bound ✔) ✔ — so the viewer is refused by the policy ✔
+even though the role holds the table's INSERT privilege ✔.
 
 ### 7.3 The exact predicates
 
-Let `cw = li.current_workspace()` ✔ and `ct = li.current_team()` ✔.
+Let `cw = li.current_workspace()` ✔, `ct = li.current_team()` ✔,
+`cr = li.current_role()` ✔.
 
 | The actor | `USING` (read) | `WITH CHECK` (write) |
 |---|---|---|
-| **The organization / workspace owner** | `workspace_id = cw` ✔ | `workspace_id = cw` ✔, and any `team_id` ✔ |
-| **The admin** | `workspace_id = cw` ✔ | `workspace_id = cw` ✔, and any `team_id` ✔ |
-| **A member of team A** | `workspace_id = cw AND (ct = '<sentinel>' OR team_id IS NULL OR team_id = ct)` ✔ — so team A's rows and the general scope ✔ | `workspace_id = cw AND (ct = '<sentinel>' OR team_id IS NOT DISTINCT FROM ct)` ✔ — team A's own rows only ✔ |
-| **A member of team B** | the same predicate, with team B's own scope ✔ | the same, with team B's own scope ✔ |
-| **A member with no team** | `workspace_id = cw` ✔ — they see everything in the workspace ✔ (the sentinel ✔) | `workspace_id = cw AND (ct = '<sentinel>' OR team_id IS NULL)` ✔ — the general scope only ✔ |
-| **A viewer** | the same predicate as a member ✔ (a viewer's limit is a **permission**, not a row) ✔ | **no write at all** ✔ — enforced by the **table grant** ✔: the viewer's role holds no INSERT/UPDATE/DELETE on a team-scoped table ✔ |
-| **A worker with a job-scoped authority** | `workspace_id = cw` ✔ — its context is the job's workspace ✔ — and the team scope is the **job's** team ✔ (the sentinel when the job has none ✔) | the same ✔, plus the job's own scope ✔ |
+| **The owner / the admin** | `workspace_id = cw` ✔ | `workspace_id = cw AND li.can_write_team_scope() AND (li.can_manage_team_scope() OR team_id IS NOT DISTINCT FROM li.current_write_team())` ✔ — they may write any team's rows ✔ |
+| **A manager** | `workspace_id = cw AND (ct = '<sentinel>' OR team_id IS NULL OR team_id = ct)` ✔ | `workspace_id = cw AND li.can_write_team_scope() AND (li.can_manage_team_scope() OR team_id IS NOT DISTINCT FROM li.current_write_team())` ✔ — the manager writes **their own** team's rows ✔ |
+| **A member of team A** | `workspace_id = cw AND (ct = '<sentinel>' OR team_id IS NULL OR team_id = ct)` ✔ — team A's rows and the general scope ✔ | the same as the manager's ✔ — team A's own rows only ✔ |
+| **A member of team B** | the same, with team B's own scope ✔ | the same ✔ |
+| **A member with no team** | `workspace_id = cw` ✔ — the sentinel means "the whole workspace" ✔ | `workspace_id = cw AND li.can_write_team_scope() AND (li.can_manage_team_scope() OR team_id IS NULL)` ✔ — the **general scope** only ✔ |
+| **A viewer** | the same as a member ✔ (a viewer's limit is a permission, not a row) ✔ | `workspace_id = cw AND li.can_write_team_scope() AND …` — and `can_write_team_scope()` is **false** for a viewer ✔ → **no write at all** ✔ |
+| **A worker with a job-scoped authority** | `workspace_id = cw AND (li.current_job() IS NULL OR job_id = li.current_job())` ✔ — the job's rows only ✔ | the same, plus the job's own scope ✔ |
 
-**The fail-closed property.** When `ct` is `NULL` — the context is unknown,
-or the caller's entitlement failed — every predicate above is `NULL` or
-`false` ✔, and the policy reads **no rows** ✔ and **permits no write** ✔.
-The corrected predicate for a teamless member is the sentinel case ✔, which
-is what the earlier draft got wrong: it read as if a teamless member saw
-only the general scope, where the intended treatment is that they see the
-whole workspace ✔.
+**The fail-closed property, stated exactly.** When `ct` is `NULL` — the
+context is unknown, or the caller's entitlement failed — every predicate
+above is `NULL` or `false` ✔, so the policy reads **no rows** ✔ and permits
+**no write** ✔ — **even though `cw` may still resolve to a workspace** ✔.
+The workspace context alone never grants a team scope ✔.
+
+**The administrative permission is never derived from a sentinel.** The
+sentinel means "no team" ✔, and nothing else ✔: the owner's and the
+admin's authority comes from `li.can_manage_team_scope()` ✔ — which reads
+the **role** ✔ — and a teamless member, whose scope is the sentinel ✔, has
+`can_manage_team_scope() = false` ✔ because their **role** does not carry
+`member.role` ✔.
 
 ### 7.4 The protected membership check
 
-`li.current_team()` reads the caller's **membership**, under the same
-protection as M3's `li.session_entitled()` ✔: the function is
-`SECURITY DEFINER` ✔, the runtime role may not read the identity tables
-directly ✔, and the check is re-evaluated on every read ✔ — so a withdrawn
-membership takes effect at once ✔.
+`li.current_team()`, `li.current_role()` and the two permission functions
+read the caller's **membership**, under the same protection as M3's
+`li.session_entitled()` ✔: they are `SECURITY DEFINER` ✔, the runtime
+role may not read the identity tables directly ✔, and they are
+re-evaluated on every read ✔ — so a withdrawn membership, or a changed
+role, takes effect at once ✔.
 
-For a **job** context, the team comes from the **job's** row ✔ (the
-workspace's team scope that the job was created in ✔) and never from a
-request ✔.
+For a **job** context, the scope comes from the **job's** row ✔ and never
+from a request ✔.
 
 ### 7.5 The forbidden team reassignment
 
 The `WITH CHECK` above already prevents a team member from writing a row
 **into** another team ✔. It does not, by itself, prevent an `UPDATE` from
-**moving** a row from one team to another, because the `USING` clause sees
-the old row and the `WITH CHECK` the new one — and a row that is visible
-to team A and written into team B would be refused ✔, but a row that is
-**general scope** and moved **into** team A would be allowed by the
-predicate ✔ (team A may write team A's rows ✔).
+**moving** a row, because the `USING` clause sees the old row and the
+`WITH CHECK` the new one ✔.
 
-**The rule the design needs:** a member may not change a row's team at all;
-only an owner or an admin may. That is a **`BEFORE UPDATE` trigger** ✔,
-because a policy cannot see the old value:
+**The rule:** only a caller with the **administrative permission** may
+change a row's team ✔ — and that permission comes from
+`li.can_manage_team_scope()` ✔, **not** from the sentinel ✔.
 
 ```sql
 -- BEFORE UPDATE ON the team-scoped table
 IF NEW.team_id IS DISTINCT FROM OLD.team_id THEN
-  IF li.current_team() <> '<sentinel>' THEN    -- not an owner or an admin
+  IF NOT li.can_manage_team_scope() THEN
     RAISE EXCEPTION 'the team of a record may not be changed here'
       USING ERRCODE = '42501';
   END IF;
 END IF;
 ```
+
+**A teamless member is refused** ✔ — their scope is the sentinel ✔, but
+their role does not carry `member.role` ✔, so the permission is false ✔ ✔.
 
 ### 7.6 The cross-team exploit tests (raw SQL, as the runtime role)
 
@@ -827,12 +1030,15 @@ END IF;
 | a member of team A updates a row of team B | **zero rows** ✔ |
 | a member of team A deletes a row of team B | **zero rows** ✔ |
 | a member of team A inserts a row with `team_id` = team B's | **row-level security violation** ✔ |
-| a member of team A moves a general-scope row into team A | **refused by the trigger** ✔ (the team's may not be changed here ✔) |
+| **a teamless member moves a general-scope row into their team** | **refused by the trigger** ✔ — the sentinel is a *scope*, not a permission ✔, and their role does not carry `member.role` ✔ |
+| **a teamless member moves a row into another team** | **refused** ✔ |
 | a member of team A moves a row into team B | **refused** ✔ |
+| **a viewer inserts or updates any team-scoped row** | **row-level security violation** ✔ — `can_write_team_scope()` is false for a viewer ✔, even though the shared `ztech_app` role holds the table's INSERT privilege ✔ |
 | a member with no team reads a team-A row | **the row is visible** ✔ — that is the intended treatment ✔ |
 | a member of workspace B reads any row of workspace A | **zero rows** ✔ |
-| a client sends `team_id` in a request body | the value is **ignored** ✔ — the team's scope comes from the membership ✔; a write into another team is refused by the `WITH CHECK` ✔ |
+| a client sends `team_id` in a request body | the value is **ignored** ✔ — the scope comes from the membership ✔; a write into another team is refused by the `WITH CHECK` ✔ |
 | a client sets `team_id` through a session variable or a GUC | **no effect** ✔ — the scope comes from the protected function ✔ |
+| the team resolution returns `NULL` while a workspace context still resolves | **zero rows** ✔ and **no write** ✔ — the workspace context alone grants no team scope ✔ |
 
 ### 7.7 `CREATE INDEX CONCURRENTLY` with the transactional migration runner
 
@@ -846,7 +1052,8 @@ therefore needs a **declared** exception:
 | the rule | a non-transactional migration runs its statements **outside** a transaction ✔, one statement at a time ✔, and is **re-runnable** ✔ — which is why the index's creation is written to be idempotent ✔ (`IF NOT EXISTS` ✔) |
 | the `team_id` migration | the column is added in a **transactional** migration ✔ (`020a` ✔), the index is created in a **non-transactional** migration ✔ (`020b` ✔), and the policy is added in a **transactional** migration ✔ (`020c` ✔) — **after** the column and the index exist ✔ |
 | why the order matters | a policy that references a column that does not exist fails to be created ✔, and an index built before the column cannot be concurrent ✔ |
-| the safety | the index is built **concurrently**, so the table is never locked for the duration ✔, and the migration is **repeatable** ✔ — a second run finds the index and does nothing ✔ |
+| the safety | the index is built **concurrently**, so the table is never locked for the duration ✔, and the migration is **repeatable** ✔ — a second run finds the index and does nothing ✔  |
+| **An interrupted build** | a concurrent build that is killed leaves an **INVALID** index - and `IF NOT EXISTS` does **not** repair it: the index exists, so the statement is skipped and the invalid index stays. The non-transactional migration therefore **inspects** `pg_index.indisvalid` and, when it is false, **drops and rebuilds** the index - a drop is a no-op in the same statement, and the rebuild is idempotent. A migration interrupted by a crash is therefore repaired by the **next** run, and the operator is told. |
 | the visibility rule | until the policy is added, the table has **no** team restriction — which is the **pre-migration** behaviour ✔ (no visibility change) ✔ — and the whole sequence is applied in one deployment ✔ |
 
 ---
@@ -881,7 +1088,7 @@ could apply ✔. So the authenticated tenant model — the workspace-scoped
 policies, the session-bound token, the `current_workspace()` — **does not
 exist yet** at that moment ✔, and the throttle must not pretend otherwise.
 
-### 9.2 The design
+### 9.2 The design (F5)
 
 | | |
 |---|---|
@@ -946,16 +1153,16 @@ function, and the UI that reads them is M6's ✔.
 
 | Failure | The ledger | The credits | The job | The provider called again? |
 |---|---|---|---|---|
-| The worker crashes **before** the dispatch | `prepared` | held | the recovery sees `prepared` → **requeued** ✔ | **Yes** ✔ — nothing was sent ✔ |
-| The worker crashes **after** the dispatch, before the answer | `dispatched` | held | the recovery sees `dispatched` → **`uncertain`** ✔ | **No** ✔ — unless the provider's deduplication is verified ✔ |
+| The worker crashes **before** the dispatch intent | `reserved` | held | the recovery sees `reserved` → **requeued** ✔ | **Yes** ✔ — nothing was sent ✔ |
+| The worker crashes **after** the dispatch intent, before the answer | `dispatching` | held | the recovery sees `dispatching` → **`uncertain`** ✔ | **No** ✔ — unless the provider's deduplication is verified ✔ |
 | The provider acknowledged the request | `confirmed` | **settled** ✔ | `succeeded` ✔ | — |
 | The provider definitively refused it, without charging | `failed` | **released** ✔ | `failed` → backoff → `queued` ✔ | **Yes** ✔ — a confirmed failure is safe to retry ✔ |
 | The provider may have charged and the response was lost | `uncertain` | held | `uncertain` ✔ | **No** ✔ |
 | The worker is paused and returns with a stale fencing token | unchanged | unchanged | its result write affects **zero rows** ✔ | **No** ✔ |
 | The API creates the same job twice | one row | one reservation | one job ✔ | **No** ✔ |
 | Two workers claim the same job | one row, one token | one reservation | the loser's write affects zero rows ✔ | **No** ✔ |
-| The reservation fails (insufficient credit) | `prepared`, never dispatched | nothing held | `failed` ✔ | **No** ✔ |
-| The lease expires while the worker works | `dispatched` | held | the recovery marks it `uncertain` ✔; the slow write is fenced out ✔ | **No** ✔ |
+| The reservation fails (insufficient credit) | `reserved`, never dispatched | nothing held | `failed` ✔ | **No** ✔ |
+| The lease expires while the worker works | `dispatching` | held | the recovery marks it `uncertain` ✔; the slow write is fenced out ✔ | **No** ✔ |
 | The same key with a **different** request | — | — | the job **fails loudly** ✔ | **No** ✔ |
 | The provider's price is higher than the estimate | `confirmed` | settled with the **actual** ✔; the overrun is recorded ✔ | `succeeded` ✔ | — |
 | The account's balance cannot cover the actual | `confirmed` | settled; the balance may go **negative** (the debt) ✔ | `succeeded` ✔ | — |
@@ -978,7 +1185,7 @@ and a fake billing account ✔.
 | **Claiming** | ten workers claim ten different jobs (`SKIP LOCKED`) ✔; the fencing token increments on every claim ✔ |
 | **The fencing token** | a stale token writes **zero rows** ✔ |
 | **The lease** | a crashed worker's job is reclaimed after the lease ✔; a heartbeating worker keeps its lease ✔; a worker whose lease lapsed loses its context ✔ |
-| **The recovery** | the recovery of a `leased` job with no ledger row → requeued ✔; with `prepared` → requeued ✔; with `dispatched` → `uncertain` ✔; with `confirmed` → `succeeded` ✔; with `failed` → `failed` ✔ |
+| **The recovery** | the recovery of a `leased` job with no ledger row → requeued ✔; with `reserved` → requeued ✔; with `dispatching` → `uncertain` ✔; with `confirmed` → `succeeded` ✔; with `failed` → `failed` ✔ |
 | **The dispatch** | the five moments of §6.2 ✔; a timed-out call is **never** automatically re-dispatched ✔ (counted at the mock provider ✔); the reservation is retained ✔; the capability record decides ✔ |
 | **The worker credential** | a job-scoped token opens a context ✔; a token for another job is refused ✔; a stale fencing token is refused ✔; an expired lease is refused ✔; a cancelled job is refused ✔; a token issued for another workspace is refused ✔ |
 | **The raw SQL, as the runtime role** | the table of §5.8 ✔; and the team table of §7.6 ✔ |
@@ -1026,6 +1233,40 @@ them ✔.
 | **U3** | Whether the **providers support an idempotency key** and a **status lookup**, per provider and per operation | A fact about the providers ✔ that P0 must establish ✔ — and the plan's default is the safe one ✔ (no automatic re-dispatch ✔) |
 | **U4** | The **team model** beyond the `team_id` column — teams as first-class entities, nested teams, cross-team sharing | A product model ✔; this plan proposes only the column and the predicates ✔ |
 | **U5** | The **result retention** defaults (30/400/90/400 days) as commercial terms | The recommendation is stated ✔ (§D6 ✔); the numbers are the owner's ✔ |
+
+---
+
+## 12a. The owner-decision sheet (U1-U5), with the conservative defaults
+
+**These are technical recommendations, not commercial approvals.** Until the
+owner decides, the **conservative default** applies ✔ — the system does
+the safe thing, and the customer's balance is never affected by a decision
+that has not been made ✔.
+
+| | The question | The **conservative default**, in force now | What changes when it is decided |
+|---|---|---|---|
+| **U1** | The commercial treatment of a **provider overrun** — the platform absorbs it, or it becomes a customer receivable | **(a) the platform absorbs it** ✔: the customer's consumed credits never exceed their purchased credits ✔, the overrun is recorded **separately** ✔ and reconciled ✔, and **no receivable and no debt is created** ✔ | under **(b)**, the overrun is written to `li.credit_receivables` ✔, it appears on the workspace's statement ✔, and it **blocks further reservations** until it is settled ✔ |
+| **U2** | The **price of each operation** (the platform's price, and the provider's own price) | the **provider's own price is the only thing that is charged** ✔, and the platform's estimate is **not** used to charge anybody ✔ — the estimate only sizes the **reservation** ✔ | the platform's price table (D4 ✔) becomes the **approved maximum** ✔, snapshotted before the dispatch ✔ |
+| **U3** | Whether each provider supports an **idempotency key** and a **status lookup** | **no automatic re-dispatch** of any uncertain chargeable invocation ✔ — for every provider, until the capability is **verified and recorded** ✔ | a verified provider may have its uncertain invocations re-dispatched ✔ — and the capability row is the only thing that permits it ✔ |
+| **U4** | The **team model** beyond the `team_id` column | teams are a **membership attribute** and a **column** ✔; there are no nested teams and no cross-team sharing ✔ | a fuller model ✔ — and it would change the predicates of §7 ✔, so it is a **new** decision, not a refinement ✔ |
+| **U5** | The **retention** defaults (30/400/90/400 days) | the defaults **as recommended** ✔, with a workspace able to **shorten** a window ✔ and **never** to extend the ledger's ✔ | the numbers change ✔; the ledger's retention is a **platform** obligation ✔ and is not a workspace's to shorten ✔ |
+
+**The P1 acceptance criteria, corrected.** P1 is the queue and the worker's
+own credentials — **not** the provider, and **not** the credits (those are
+P2 and P3 ✔).
+
+| # | P1's criterion | What it does **not** claim |
+|---|---|---|
+| P1-a | The state machine's legal transitions hold, and the illegal ones are refused ✔ | — ✔ |
+| P1-b | Ten workers claim ten different jobs, never the same one ✔ | it does **not** claim that a job runs exactly once — a job may be **attempted** more than once ✔, and only its *result* is fenced ✔ |
+| P1-c | A worker with a stale fencing token writes **zero rows** ✔ | — ✔ |
+| P1-d | A crashed worker's job is reclaimed, and the recovery's four ledger-driven decisions hold ✔ | it does **not** claim that the provider was not called ✔ — that is P2's ledger ✔ |
+| P1-e | A worker cannot open a context for a job it does not hold, and a job context reaches **only its own job's** rows ✔ | it does **not** claim workspace-level isolation is job-level isolation ✔ — the job-scoped **policies** are what make it job-level ✔ (F2 ✔) |
+| P1-f | The lease, the heartbeat and the lease expiry behave as specified ✔ | — ✔ |
+| P1-g | The raw-SQL refusals of §5.9 hold, as `ztech_worker` **and** as `ztech_app` ✔ | it does **not** claim any provider, billing or credit behaviour ✔ |
+
+**No P1 criterion claims exactly-once execution, exactly-once charging, or
+job-level isolation that is not enforced by a policy.** ✔
 
 ---
 
