@@ -33,6 +33,7 @@ const TENANT_TABLES = Object.freeze([
   'li_contact_provenance', 'li_trust_events', 'li_recipient_refs', 'li_mailboxes',
   'li_mailbox_sent', 'li_reply_reviews', 'li_sequences', 'li_sequence_steps',
   'li_sequence_events', 'li_sequence_gaps', 'li_sequence_control', 'li_reply_routes',
+  'job_queue',
 ]);
 
 /**
@@ -63,10 +64,45 @@ const POLICY_NAME = 'tenant_isolation';
  * migration role, which is not a superuser.
  */
 const SECURITY_FUNCTIONS = Object.freeze([
-  { name: 'set_workspace', args: 'uuid,text' },
-  { name: 'current_workspace', args: '' },
-  { name: 'issue_workspace_token', args: 'uuid,text,uuid,uuid,integer' },
-  { name: 'is_suppressed', args: 'text,text' },
+  { name: 'set_workspace', args: 'uuid,text', grantees: ['ztech_app'] },
+  { name: 'current_workspace', args: '', grantees: ['ztech_app', 'ztech_platform', 'ztech_worker'] },
+  { name: 'issue_workspace_token', args: 'uuid,text,uuid,uuid,integer', grantees: ['ztech_control', 'ztech_identity'] },
+  { name: 'is_suppressed', args: 'text,text', grantees: ['ztech_app', 'ztech_worker'] },
+  { name: 'grant_workspace', args: 'uuid,text', grantees: ['ztech_identity'] },
+  { name: 'session_entitled', args: 'uuid,uuid,uuid', grantees: [] },
+  // M4 P1 — the job-scoped worker foundation.
+  { name: 'current_job', args: '', grantees: ['ztech_app', 'ztech_platform', 'ztech_worker'] },
+  { name: 'current_job_workspace', args: '', grantees: ['ztech_app', 'ztech_platform', 'ztech_worker'] },
+  { name: 'resolve_job_context', args: '', grantees: ['ztech_app', 'ztech_platform', 'ztech_worker'] },
+  { name: 'job_row_authorized', args: 'uuid,uuid,bigint', grantees: ['ztech_app', 'ztech_platform', 'ztech_worker'] },
+  { name: 'parse_identity_token', args: 'text', grantees: [] },
+  { name: 'parse_job_token', args: 'text', grantees: [] },
+  { name: 'issue_worker_identity', args: 'text,integer', grantees: ['ztech_control'] },
+  { name: 'issue_worker_token', args: 'uuid,text,integer', grantees: ['ztech_control'] },
+  { name: 'request_job_token', args: 'uuid,bigint,text,integer', grantees: ['ztech_worker'] },
+  { name: 'claim_job', args: 'text,integer', grantees: ['ztech_worker'] },
+  { name: 'renew_lease', args: 'uuid,bigint,text,integer', grantees: ['ztech_worker'] },
+  { name: 'set_workspace_for_job', args: 'uuid,text', grantees: ['ztech_worker'] },
+  { name: 'write_job_result', args: 'uuid,bigint,text,jsonb,text', grantees: ['ztech_worker'] },
+  { name: 'recover_expired_leases', args: 'integer', grantees: ['ztech_worker'] },
+]);
+
+/**
+ * The functions that are NOT SECURITY DEFINER: the helpers and the bounds.
+ *
+ * They carry no authority of their own, but their grantees are still an
+ * exact matrix: a helper the runtime role may execute is a helper the
+ * tenant can read the signing path through.
+ */
+const PLAIN_FUNCTIONS = Object.freeze([
+  { name: 'to_hex', args: 'bytea', grantees: [] },
+  { name: 'from_hex', args: 'text', grantees: [] },
+  { name: 'hmac_sha256', args: 'bytea,bytea', grantees: [] },
+  { name: 'constant_time_equals', args: 'bytea,bytea', grantees: [] },
+  { name: 'bytea_xor', args: 'bytea,bytea', grantees: [] },
+  { name: 'max_token_lifetime', args: '', grantees: [] },
+  { name: 'lease_bounds', args: '', grantees: ['ztech_worker'] },
+  { name: 'job_token_ttl_bounds', args: '', grantees: ['ztech_worker'] },
 ]);
 
 /** The role that owns the schema, the tables and the functions. */
@@ -74,6 +110,62 @@ const MIGRATOR_ROLE = 'ztech_migrator';
 
 /** The role that may issue a workspace token, and nothing else. */
 const CONTROL_ROLE = 'ztech_control';
+
+/**
+ * The role that may issue the WORKER credentials, and nothing else.
+ *
+ * The worker is the JOB-scoped role: it never holds a workspace-scoped
+ * context, so it never reaches a workspace's tenant data.
+ */
+const WORKER_ROLE = 'ztech_worker';
+
+/** The identity service: the ceiling for who may act for a workspace. */
+const IDENTITY_ROLE = 'ztech_identity';
+
+/**
+ * The workspace-token issuer, named EXPLICITLY.
+ *
+ * It used to be found by its position in SECURITY_FUNCTIONS, which broke
+ * the moment a function was added in front of it. A named signature is
+ * what a security assertion should depend on.
+ */
+const WORKSPACE_TOKEN_ISSUER = Object.freeze({
+  name: 'issue_workspace_token', args: 'uuid,text,uuid,uuid,integer',
+});
+
+/**
+ * The roles that may EXECUTE a function, from its access control list.
+ *
+ * The list is the authority: a function that may be executed by a role it
+ * was not approved for is a function with an extra door, and a function
+ * that may NOT be executed by an approved role is a function that does not
+ * work. Both are failures.
+ *
+ * @param {string[]|null} proacl the function's access control list
+ * @param {string} owner the function's owner, which always may execute it
+ * @returns {{exec: Set<string>, publicExec: boolean}}
+ */
+function aclExecutors(proacl, owner) {
+  const exec = new Set();
+  let publicExec = false;
+  // PostgreSQL's aclitem[] arrives as TEXT ('{role=X/owner,...}'), not as
+  // an array. An aclitem never contains a comma, so the list may be split
+  // on one.
+  const raw = Array.isArray(proacl)
+    ? proacl.map(String)
+    : (String(proacl || '').trim().replace(/^\{/, '').replace(/\}$/, '').split(',').filter(Boolean));
+  for (const entry of raw) {
+    const m = String(entry).match(/^([^=]*)=([^/]*)/);
+    if (!m) continue;
+    const grantee = m[1];
+    const privs = m[2] || '';
+    if (!privs.includes('X')) continue;
+    if (grantee === '') { publicExec = true; continue; }
+    if (grantee === owner) continue;   // the owner always may
+    exec.add(grantee);
+  }
+  return { exec, publicExec };
+}
 
 /**
  * Assert everything, against the live database.
@@ -229,6 +321,42 @@ async function assertRuntimeRoles(pool, opts = {}) {
     if (!String(found.proconfig || '').includes('search_path')) {
       problems.push(`${fn.name}(${fn.args}) does not pin its search_path`);
     }
+    // The EXACT grantees.
+    const acl = aclExecutors(found.proacl, found.owner);
+    if (acl.publicExec) {
+      problems.push(`${fn.name}(${fn.args}) may be executed by PUBLIC`);
+    }
+    for (const g of acl.exec) {
+      if (!fn.grantees.includes(g)) {
+        problems.push(`${fn.name}(${fn.args}) may be executed by ${g}, which is not approved`);
+      }
+    }
+    for (const g of fn.grantees) {
+      if (!acl.exec.has(g)) {
+        problems.push(`${fn.name}(${fn.args}) may NOT be executed by ${g}, which is approved`);
+      }
+    }
+  }
+  // The helpers and the bounds are not SECURITY DEFINER, but their grantees
+  // are still an exact matrix.
+  for (const fn of PLAIN_FUNCTIONS) {
+    const found = functionByName.get(`${fn.name}(${fn.args.replace(/\s+/g, '')})`);
+    if (!found) { problems.push(`${fn.name}(${fn.args}) does not exist`); continue; }
+    if (found.security_definer) {
+      problems.push(`${fn.name}(${fn.args}) is SECURITY DEFINER, which it must not be`);
+    }
+    const acl = aclExecutors(found.proacl, found.owner);
+    if (acl.publicExec) problems.push(`${fn.name}(${fn.args}) may be executed by PUBLIC`);
+    for (const g of acl.exec) {
+      if (!fn.grantees.includes(g)) {
+        problems.push(`${fn.name}(${fn.args}) may be executed by ${g}, which is not approved`);
+      }
+    }
+    for (const g of fn.grantees) {
+      if (!acl.exec.has(g)) {
+        problems.push(`${fn.name}(${fn.args}) may NOT be executed by ${g}, which is approved`);
+      }
+    }
   }
   const ownedFunctions = functions.filter((f) => f.owner === me.rolname).map((f) => f.proname);
   for (const name of ownedFunctions) problems.push(`${name} is owned by the runtime role`);
@@ -264,7 +392,9 @@ async function assertRuntimeRoles(pool, opts = {}) {
     )).rows.map((r) => r.relname);
     for (const t of controlOnTables) problems.push(`${CONTROL_ROLE} holds privileges on ${t}`);
     // It may execute the token issuer, and the issuer only.
-    const issuer = functionByName.get(`issue_workspace_token(${SECURITY_FUNCTIONS[2].args.replace(/\s+/g, '')})`);
+    const issuer = functionByName.get(
+      `${WORKSPACE_TOKEN_ISSUER.name}(${WORKSPACE_TOKEN_ISSUER.args.replace(/\s+/g, '')})`,
+    );
     if (issuer && !String(issuer.proacl || '').includes(`${CONTROL_ROLE}=X`)) {
       problems.push(`${CONTROL_ROLE} may not issue a workspace token`);
     }
@@ -313,6 +443,68 @@ async function assertRuntimeRoles(pool, opts = {}) {
     problems.push(`the maximum token lifetime is ${maximum.n} seconds, which is not a sane bound`);
   }
 
+  // 15. THE WORKER ROLE.
+  //
+  // The worker is the JOB-scoped role. It must never be able to hold a
+  // workspace-scoped authority, and it must not hold the legacy tenant
+  // business tables. These are checked as the WORKER, by name, from the
+  // catalogue: a runtime role cannot ask has_table_privilege() about
+  // another role, but it can read the access control lists.
+  const workerRows = (await pool.query(
+    'SELECT r.rolname, r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = $1',
+    [WORKER_ROLE],
+  )).rows;
+  if (!workerRows.length) {
+    problems.push(`the ${WORKER_ROLE} role does not exist`);
+  } else {
+    if (workerRows[0].rolsuper) problems.push(`${WORKER_ROLE} is a SUPERUSER`);
+    if (workerRows[0].rolbypassrls) problems.push(`${WORKER_ROLE} has BYPASSRLS`);
+
+    // H2 and H3: the worker may not mint a workspace token, and it may not
+    // execute the workspace-context function.
+    const workerMay = (await pool.query(
+      `SELECT has_function_privilege($1, 'li.issue_workspace_token(uuid,text,uuid,uuid,integer)', 'EXECUTE') AS may_issue,
+              has_function_privilege($1, 'li.set_workspace(uuid,text)', 'EXECUTE') AS may_set,
+              has_function_privilege($1, 'li.issue_worker_identity(text,integer)', 'EXECUTE') AS may_bootstrap,
+              has_function_privilege($1, 'li.issue_worker_token(uuid,text,integer)', 'EXECUTE') AS may_sign,
+              has_table_privilege($1, 'li.workspace_context', 'SELECT') AS may_read_context,
+              has_table_privilege($1, 'li.workspace_context', 'INSERT') AS may_write_context,
+              has_table_privilege($1, 'li.control_plane_secret', 'SELECT') AS may_read_secret`,
+      [WORKER_ROLE],
+    )).rows[0];
+    if (workerMay.may_issue) problems.push(`${WORKER_ROLE} may issue a workspace token`);
+    if (workerMay.may_set) problems.push(`${WORKER_ROLE} may open a workspace context`);
+    if (workerMay.may_bootstrap) problems.push(`${WORKER_ROLE} may issue a worker identity`);
+    if (workerMay.may_sign) problems.push(`${WORKER_ROLE} may sign a worker token`);
+    if (workerMay.may_read_context) problems.push(`${WORKER_ROLE} may read the workspace context`);
+    if (workerMay.may_write_context) problems.push(`${WORKER_ROLE} may write the workspace context`);
+    if (workerMay.may_read_secret) problems.push(`${WORKER_ROLE} may read the control plane secret`);
+
+    // H7: the worker holds no DML on the legacy tenant business tables.
+    // The queue and the platform's reference data are not legacy tenant
+    // business data, and they are excluded on purpose.
+    const legacyDml = (await pool.query(
+      `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relkind = 'r' AND c.relname <> ALL($2)
+          AND (c.relacl::TEXT LIKE ('%' || $3 || '=r/%') OR c.relacl::TEXT LIKE ('%' || $3 || '=a/%')
+               OR c.relacl::TEXT LIKE ('%' || $3 || '=w/%') OR c.relacl::TEXT LIKE ('%' || $3 || '=d/%'))`,
+      [schema, ['job_queue', 'li_market_rules'], WORKER_ROLE],
+    )).rows.map((r) => r.relname);
+    for (const t of legacyDml) {
+      problems.push(`${WORKER_ROLE} holds a privilege on the legacy tenant table ${t}`);
+    }
+
+    // The worker may not be a member of any other role: an inherited
+    // privilege is a privilege nobody audited.
+    const workerMemberships = (await pool.query(
+      'SELECT r.rolname FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = $1)',
+      [WORKER_ROLE],
+    )).rows.map((r) => r.rolname);
+    if (workerMemberships.length) {
+      problems.push(`${WORKER_ROLE} is a member of ${workerMemberships.join(', ')}`);
+    }
+  }
+
   return {
     ok: problems.length === 0,
     problems,
@@ -335,5 +527,7 @@ async function assertRuntimeRoles(pool, opts = {}) {
 }
 
 module.exports = {
-  TENANT_TABLES, GLOBAL_TABLES, POLICY_NAME, SECURITY_FUNCTIONS, MIGRATOR_ROLE, CONTROL_ROLE, assertRuntimeRoles,
+  TENANT_TABLES, GLOBAL_TABLES, POLICY_NAME, SECURITY_FUNCTIONS, PLAIN_FUNCTIONS,
+  MIGRATOR_ROLE, CONTROL_ROLE, WORKER_ROLE, IDENTITY_ROLE, WORKSPACE_TOKEN_ISSUER,
+  assertRuntimeRoles,
 };

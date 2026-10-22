@@ -198,12 +198,46 @@ if (!process.env.ZTECH_PG_URL) {
   });
 
   test('a token is bound to its role', async () => {
+    // The worker role may not open a WORKSPACE context at all: the
+    // privilege is revoked, and the function refuses the role in its own
+    // body as defence in depth. The refusal is therefore one layer
+    // STRONGER than it was, and the assertion accepts it - but the
+    // assertion still demands a refusal, and it now also proves WHY.
+    const may = await db.owner.query(
+      "SELECT has_function_privilege($1, 'li.set_workspace(uuid,text)', 'EXECUTE') AS may", [ROLES.worker],
+    );
+    assert.equal(may.rows[0].may, false, 'the worker role may not execute the workspace-context function');
+
     const tokenApp = await db.mintToken(A, ROLES.app);
     const client = await worker.connect();
     try {
       await client.query('BEGIN');
       await assert.rejects(
         client.query('SELECT li.set_workspace($1, $2)', [A, tokenApp]),
+        /permission denied|another role|not valid/i,
+        "another role may not use this role's token",
+      );
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+  });
+
+  test('a token is bound to its role, at the function level', async () => {
+    // The role binding lives INSIDE the function, and it is proved with a
+    // role that still holds the privilege: the platform role is granted
+    // the workspace, a token is minted for it, and it is presented as the
+    // customer role. The function must refuse it.
+    await db.owner.query(
+      'INSERT INTO li.workspace_grants (role_name, workspace_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [ROLES.platform, A],
+    );
+    const tokenPlatform = await db.mintToken(A, ROLES.platform);
+    const client = await app.connect();
+    try {
+      await client.query('BEGIN');
+      await assert.rejects(
+        client.query('SELECT li.set_workspace($1, $2)', [A, tokenPlatform]),
         /another role|not valid/i,
         "another role may not use this role's token",
       );
