@@ -128,7 +128,7 @@ infrastructure.
 | `state` | `TEXT NOT NULL` | `reserved`, `dispatching`, `confirmed`, `failed`, `uncertain` |
 | `estimated_credits` | `INTEGER NOT NULL` | the reservation |
 | `actual_credits` | `INTEGER` | what the provider reported |
-| `overrun_credits` | `INTEGER NOT NULL DEFAULT 0` | the cost above the reservation |
+| `overrun_credits` | `INTEGER NOT NULL DEFAULT 0` | the cost the platform **absorbs**: `actual_credits - charged` (§4.2 ✔) |
 | `provider_request_id` | `TEXT` | the provider's own id, when it gives one |
 | `response_digest` | `TEXT` | a **hash** of the response, not the response: the ledger is not a data store |
 | `dispatched_at`, `confirmed_at` | `TIMESTAMPTZ` | the timeline |
@@ -162,7 +162,7 @@ available = credit_purchased - credit_consumed - credit_reserved
 | `workspace_id` | `UUID NOT NULL` |
 | `invocation_id` | `UUID NOT NULL REFERENCES li.provider_ledger` — one reservation per invocation ✔ |
 | `job_id` | `UUID NOT NULL REFERENCES li.job_queue` — **the job the reservation belongs to** ✔, so the job-scoped policy of §5.6 has a column to test ✔ |
-| `amount` | `INTEGER NOT NULL` — the **held** amount; `CHECK (amount > 0)` |
+| `amount` | `INTEGER NOT NULL` — the **held** amount, which is also the **approved maximum**: the platform's price for the operation, **snapshotted before the dispatch** ✔ (D4 ✔). It is **immutable once written** ✔, and the settlement derives both the hold and the ceiling from it ✔ (§4.2 ✔). `CHECK (amount > 0)` |
 | `actual_credits` | `INTEGER` — what was consumed |
 | `overrun_credits` | `INTEGER NOT NULL DEFAULT 0` |
 | `state` | `TEXT NOT NULL` — `held`, `settled`, `released` |
@@ -362,8 +362,8 @@ may not, once its outcome is uncertain.
 
 The three operations:
 
-| Operation | `credit_purchased` | `credit_reserved` | `available` |
-|---|---|---|---|
+| Operation | `credit_purchased` | `credit_consumed` | `credit_reserved` | `available` |
+|---|---|---|---|---|
 | **Reserve** `amount` | **unchanged** | **unchanged** | **+ amount** | − amount |
 | **Settle** `actual` (the chargeable part) | **unchanged** | **+ chargeable** | **− held** | + (held − chargeable) |
 | **Release** `held` | **unchanged** | **unchanged** | **− held** | + held |
@@ -398,82 +398,174 @@ statement, so two workers cannot both take the last credit: the second one
 re-evaluates the predicate after the first one commits and sees zero
 available.
 
-**Settle** — atomic, idempotent, and bounded by the customer's approved maximum:
+**Settle** — one function, one transaction. The reservation transition, the
+release of the hold, the bounded customer charge and the provider-overrun
+ledger update **commit or roll back together** ✔:
 
 ```sql
--- li.settle_credits(reservation_id, actual, approved_maximum)
--- The CHARGEABLE part is bounded by what the customer has bought AND by the
--- approved maximum: the platform never charges the customer for an amount
--- that was not approved, and never charges more than they bought.
--- The whole operation runs in ONE transaction: reservation transition,
--- bounded customer charge, held-credit release, provider-overrun ledger
--- update. If the account update fails (insufficient purchased credits),
--- the transaction ROLLS BACK — the reservation stays 'held', nothing is
--- charged, and the overrun is NOT recorded on the ledger ✔.
-BEGIN;
+-- li.settle_credits(reservation_id, actual_credits)
+-- actual_credits is the ONLY caller-supplied number.  The HELD amount and
+-- the APPROVED MAXIMUM are both derived from the locked reservation row.
+CREATE OR REPLACE FUNCTION li.settle_credits(
+  p_reservation_id  uuid,
+  p_actual_credits  integer
+) RETURNS TABLE (outcome text, charged_credits integer,
+                 overrun_credits integer, held_released integer)
+LANGUAGE plpgsql AS $$
+DECLARE
+  r li.credit_reservations%ROWTYPE;
+  a li.credit_accounts%ROWTYPE;
+  v_actual       integer;
+  v_held         integer;
+  v_approved_max integer;
+  v_chargeable   integer;
+  v_overrun      integer;
+BEGIN
+  IF p_actual_credits IS NULL OR p_actual_credits < 0 THEN
+    RAISE EXCEPTION 'settle: actual_credits must be >= 0';
+  END IF;
+  v_actual := p_actual_credits;
 
--- 1. the reservation, locked, and only while it is HELD
-UPDATE li.credit_reservations
-   SET state = 'settled',
-       actual_credits = $2,                       -- what the provider charged
-       approved_maximum = $3,                     -- the approved ceiling
-       overrun_credits = GREATEST(0, $2 - $3),    -- the platform absorbs it
-       settled_at = now()
- WHERE reservation_id = $1 AND state = 'held'
-RETURNING workspace_id, amount;
--- zero rows: it is already settled or released -> the call is a NO-OP
---             (idempotent), and the account is NOT touched again
+  -- 1. the RESERVATION row, locked FIRST (§4.6)
+  SELECT * INTO r
+    FROM li.credit_reservations
+   WHERE reservation_id = p_reservation_id
+   FOR UPDATE;
 
--- 2. the account, only when the reservation was actually settled
---    charge only the CHARGEABLE part, bounded by what the customer bought
---    and the approved maximum; release the whole hold
---    chargeable = LEAST(actual, approved_maximum, credit_purchased - credit_consumed)
-UPDATE li.credit_accounts
-   SET credit_consumed = credit_consumed + LEAST($2, $3, credit_purchased - credit_consumed),
-       credit_reserved = credit_reserved - $3,    -- the whole hold is released
-       version = version + 1,
-       updated_at = now()
- WHERE workspace_id = $4
-   AND credit_purchased - credit_consumed >= LEAST($2, $3, credit_purchased - credit_consumed);
--- zero rows: the customer does not have the chargeable credits ->
---            ROLLBACK; the reservation stays 'held'; no overrun recorded ✔
+  IF NOT FOUND OR r.state <> 'held' THEN
+    -- already settled or already released -> a NO-OP; the account is NOT touched
+    RETURN QUERY SELECT 'noop', 0, 0, 0;
+    RETURN;
+  END IF;
 
--- 3. record the provider overrun on the ledger (only if > 0)
-INSERT INTO li.provider_overruns (reservation_id, overrun_credits, recorded_at)
-SELECT $1, GREATEST(0, $2 - $3), now()
-WHERE $2 > $3;
+  v_held         := r.amount;  -- the HELD amount, from the locked row
+  v_approved_max := r.amount;  -- the immutable approved maximum (D4 snapshot)
 
-COMMIT;
+  -- 2. the ACCOUNT row, locked SECOND (§4.6)
+  SELECT * INTO a
+    FROM li.credit_accounts
+   WHERE workspace_id = r.workspace_id
+   FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'settle: no credit account for workspace %', r.workspace_id;
+  END IF;
+
+  -- 3. the charge, computed WHILE THE ACCOUNT LOCK IS HELD
+  v_chargeable := LEAST(v_actual, v_approved_max,
+                        GREATEST(0, a.credit_purchased - a.credit_consumed));
+  v_overrun    := GREATEST(0, v_actual - v_chargeable);
+
+  -- 4. the account: the charge, and the release of the whole hold
+  UPDATE li.credit_accounts
+     SET credit_consumed = credit_consumed + v_chargeable,
+         credit_reserved  = credit_reserved  - v_held,
+         version = version + 1,
+         updated_at = now()
+   WHERE workspace_id = r.workspace_id;
+
+  -- 5. the reservation: the transition
+  UPDATE li.credit_reservations
+     SET state = 'settled',
+         actual_credits = v_actual,
+         overrun_credits = v_overrun,
+         settled_at = now()
+   WHERE reservation_id = r.reservation_id
+     AND state = 'held';
+
+  -- 6. the DECLARED provider ledger: the provider's actual and the overrun
+  UPDATE li.provider_ledger
+     SET actual_credits = v_actual,
+         overrun_credits = v_overrun,
+         confirmed_at = now()
+   WHERE invocation_id = r.invocation_id;
+
+  RETURN QUERY SELECT 'settled', v_chargeable, v_overrun, v_held;
+END;
+$$;
 ```
 
-**The chargeable amount is computed by the function, not by the caller** ✔:
-`chargeable = LEAST(actual, approved_maximum, credit_purchased - credit_consumed)`
-✔. The **accounting evidence is immutable** ✔: the ledger row keeps
-`actual_credits` (what the provider charged ✔), `approved_maximum` ✔ and
-`overrun_credits` ✔, and the reservation row is written **once** — the
-`state = 'held'` guard makes a repeated settlement a **no-op** ✔, and the
-unique `idempotency_key` makes a repeated *request* collide ✔.
+**The parameter and transaction semantics.**
 
-**Concurrency regression spec**: A concurrent `settle_credits` and `release_credits`
-on the same reservation → exactly one succeeds (the `state = 'held'` guard),
-the other is a no-op; the account is updated at most once ✔.
-**Release** — idempotent, and it never charges the customer:
+| | |
+|---|---|
+| **The only caller-supplied number** | `actual_credits` — what the provider charged ✔ |
+| **The held amount** | `credit_reservations.amount`, read from the **locked** reservation row ✔ — never a parameter ✔ |
+| **The approved maximum** | the same stored value: `amount` is the **snapshotted platform price** (§2.3 ✔, D4 ✔) and is **immutable once written** ✔ — never a parameter ✔ |
+| **The charge** | computed **while the account row lock is held** ✔ |
+| **The lock order** | the reservation row, then the account row (§4.6 ✔) — the same order as the release ✔ |
+| **A repeated settlement** | the `state = 'held'` guard, taken **under the row lock** ✔ → a **no-op** that touches no balance ✔ |
+| **Atomicity** | one function call is one transaction ✔ — the transition, the charge, the hold release and the ledger update **commit or roll back together** ✔ |
+
+**The overrun is recorded on the DECLARED ledger** ✔:
+`li.provider_ledger.overrun_credits` (§2.2 ✔) and
+`li.credit_reservations.overrun_credits` (§2.3 ✔) — there is **no undefined
+accounting table** ✔.
+
+**Release** — one function, one transaction, and it never charges:
 
 ```sql
--- 1. the reservation, only while it is HELD
-UPDATE li.credit_reservations
-   SET state = 'released', settled_at = now()
- WHERE reservation_id = $1 AND state = 'held'
-RETURNING workspace_id, amount;
--- zero rows: already settled or released -> a NO-OP
+-- li.release_credits(reservation_id)
+CREATE OR REPLACE FUNCTION li.release_credits(p_reservation_id uuid)
+RETURNS TABLE (outcome text, held_released integer)
+LANGUAGE plpgsql AS $$
+DECLARE
+  r li.credit_reservations%ROWTYPE;
+  v_held integer;
+BEGIN
+  -- 1. the RESERVATION row, locked FIRST (§4.6)
+  SELECT * INTO r
+    FROM li.credit_reservations
+   WHERE reservation_id = p_reservation_id
+   FOR UPDATE;
 
--- 2. the account
-UPDATE li.credit_accounts
-   SET credit_reserved = credit_reserved - $2,   -- the hold is released
-       version = version + 1,
-       updated_at = now()
- WHERE workspace_id = $3;
+  IF NOT FOUND OR r.state <> 'held' THEN
+    RETURN QUERY SELECT 'noop', 0;
+    RETURN;
+  END IF;
+
+  v_held := r.amount;   -- the HELD amount, from the locked row
+
+  -- 2. the ACCOUNT row, locked SECOND (§4.6)
+  UPDATE li.credit_accounts
+     SET credit_reserved = credit_reserved - v_held,
+         version = version + 1,
+         updated_at = now()
+   WHERE workspace_id = r.workspace_id;
+
+  -- 3. the transition
+  UPDATE li.credit_reservations
+     SET state = 'released',
+         settled_at = now()
+   WHERE reservation_id = r.reservation_id
+     AND state = 'held';
+
+  RETURN QUERY SELECT 'released', v_held;
+END;
+$$;
 ```
+
+**The proven cases** (§4.7 ✔) — each **measured** on PostgreSQL 16.15 ✔:
+
+| The case | Held | The actual | **The charge** | **The overrun** | The account after |
+|---|---|---|---|---|---|
+| **B** (§4.7 ✔) | 20 | 18 | **18** ✔ | **0** ✔ | purchased 100, consumed 18, reserved 0, available 82 ✔ |
+| **C** (§4.7 ✔) | 20 | released | **0** ✔ | **0** ✔ | purchased 100, consumed 0, reserved 0 ✔ |
+| **D** (§4.7 ✔) | 20 | 24 | **20** ✔ | **4** ✔ | purchased 100, consumed 20, reserved 0, available 80 ✔ |
+| **E** (§4.7 ✔) | 20, but only 5 bought | 20 | **5** ✔ | **15** ✔ | purchased 5, consumed 5, reserved 0 ✔ — no negative balance, no debt ✔ |
+
+**The rollback is real** ✔. With the account write forced to fail *after* the
+reservation had already been transitioned, the whole settlement rolled back:
+the reservation was still `held` ✔, `actual_credits` was still null ✔, the
+account was **not** charged ✔, the hold was **not** released ✔, and the
+ledger carried **neither** the actual nor the overrun ✔.
+
+**The settlement-versus-release race** ✔: forty reservations, each raced by a
+concurrent settle and a concurrent release, produced **exactly one** winner
+per reservation (26 released, 14 settled) ✔, the other call was a **no-op**
+✔, every hold was released **exactly once** (`reserved` = 0) ✔, the customer
+was charged **exactly once** (`consumed` = 140 = 14 × 10) ✔, and the ledger's
+overrun total was **0** ✔ — with **no deadlock** and **no error** ✔.
 
 ### 4.3 The invariants, and how concurrency protects them
 
@@ -510,8 +602,8 @@ it** — and it must not silently impose a debt on the customer either.
 | 1 | **Credits purchased** | `li.credit_accounts.credit_purchased` — the total ever bought, the ceiling of the commercial relationship |
 | 2 | **Credits reserved** | `li.credit_accounts.credit_reserved` — held right now |
 | 3 | **Credits consumed** | `li.credit_accounts.credit_consumed` — settled, the real spend |
-| 4 | **The provider overrun** | `li.provider_ledger.overrun_credits` — the cost above the **approved maximum** ✔ |
-| 5 | **A customer receivable** | `li.credit_receivables` — **only if U1 authorizes it** ✔ |
+| 4 | **The provider overrun** | `li.provider_ledger.overrun_credits` — `actual − chargeable`: the cost the **platform absorbs** ✔ |
+| 5 | **A customer receivable** | **no table exists** ✔ — a **declared** `li.credit_receivables` and its migration would be **required first** ✔, and it comes into being **only if U1 authorizes it** ✔ |
 
 **The model.** The customer's spend is `credit_consumed` ✔, and it is
 bounded by `credit_purchased` ✔ — the account **never** goes negative and
@@ -522,9 +614,10 @@ not as a debt on the account ✔.
 
 1. **No new chargeable work** when `available < amount` ✔ — the reservation's
    predicate refuses ✔.
-2. An **approved maximum** is snapshotted onto the ledger **before the
-   dispatch** ✔ (the platform's price for the operation ✔, D4 ✔), and the
-   reservation holds exactly that maximum ✔.
+2. An **approved maximum** is snapshotted onto the **reservation** **before
+   the dispatch** ✔ (the platform's price for the operation ✔, D4 ✔), and it
+   is **immutable once written** ✔ — the settlement derives both the hold and
+   the ceiling from it (§4.2 ✔), never from a caller-supplied number ✔.
 3. The **provider overrun** — the part of the actual above the approved
    maximum ✔ — is recorded **separately** ✔ on the ledger row ✔ and in the
    reconciliation ✔. It is the **platform's** cost, until U1 says otherwise ✔.
@@ -537,10 +630,13 @@ not as a debt on the account ✔.
 **Settlement is therefore bounded by the balance:**
 
 ```sql
--- the actual consumption that may be charged to the customer
-v_chargeable := LEAST($2, GREATEST(0, credit_purchased - credit_consumed));
+-- the consumption that may be charged to the customer: bounded by what the
+-- provider charged, by the APPROVED MAXIMUM (the reservation's stored
+-- amount, §4.2), and by what the customer has left
+v_chargeable := LEAST(actual, approved_maximum,
+                      GREATEST(0, credit_purchased - credit_consumed));
 -- the part the platform absorbs for now
-v_overrun := $2 - v_chargeable;
+v_overrun := actual - v_chargeable;
 ```
 
 `credit_consumed` rises by `v_chargeable` ✔; the ledger records
@@ -1201,74 +1297,169 @@ several connections ✔. The plan does not claim it is solved ✔.
 
 ### 9.2.1 The two-bucket operation, atomically
 
-Both buckets move in **one statement**, inside **one transaction** ✔.
+Both buckets move in **one transaction**, inside **one bounded critical
+section** ✔.
+
+**Why a row lock is not enough.** The two counter rows are **created by the
+first attempt** ✔ — so on that attempt there is nothing to lock ✔. A
+`SELECT … FOR UPDATE` on a missing row locks **nothing** ✔, and two
+simultaneous first-use attempts therefore both read "no row", both decide
+"allowed", and both write ✔ — the counter **under-counts** and the limit is
+**under-enforced** ✔. The critical section is therefore guarded by
+**transaction-scoped advisory locks** ✔, which exist whether or not the row
+does ✔.
 
 ```sql
--- li.throttle_attempt(email_hash, address_hash, window_sec, per_pair_limit, per_email_limit)
--- Returns: allowed BOOL, retry_after_sec INT (0 if allowed)
--- 1. READ both counters, under their locks, in a FIXED order:
---    the per-pair bucket first, then the per-email bucket.
---    The order is fixed so two attempts cannot deadlock ✔.
---    A refusal is DECIDED HERE, before anything is written ✔.
--- 2. If allowed, UPSERT both counters in the SAME statement.
-WITH pair AS (
-  SELECT attempt_count, window_started_at FROM li.throttle_counters
-   WHERE bucket_key = $1 FOR UPDATE
-), email AS (
-  SELECT attempt_count, window_started_at FROM li.throttle_counters
-   WHERE bucket_key = $2 FOR UPDATE
-), decided AS (
-  SELECT
-    (GREATEST(0, EXTRACT(EPOCH FROM (now() - pair.window_started_at))::int) < $3) AS pair_window_ok,
-    (pair.attempt_count < $4) AS pair_count_ok,
-    (GREATEST(0, EXTRACT(EPOCH FROM (now() - email.window_started_at))::int) < $3) AS email_window_ok,
-    (email.attempt_count < $5) AS email_count_ok
-  FROM pair RIGHT JOIN email ON TRUE
-), allowed AS (
-  SELECT
-    (pair_window_ok AND pair_count_ok AND email_window_ok AND email_count_ok) AS ok,
-    CASE
-      WHEN NOT pair_window_ok OR NOT pair_count_ok THEN
-        GREATEST(0, $3 - EXTRACT(EPOCH FROM (now() - pair.window_started_at))::int)
-      WHEN NOT email_window_ok OR NOT email_count_ok THEN
-        GREATEST(0, $3 - EXTRACT(EPOCH FROM (now() - email.window_started_at))::int)
-      ELSE 0
-    END AS retry_after
-  FROM decided
-)
--- Atomic UPSERT of both buckets ONLY when allowed
-INSERT INTO li.throttle_counters (bucket_key, attempt_count, window_started_at)
-SELECT d.bucket_key, 1, now()
-FROM (VALUES ($1), ($2)) AS d(bucket_key)
-CROSS JOIN allowed a
-WHERE a.ok
-ON CONFLICT (bucket_key) DO UPDATE
-  SET attempt_count = li.throttle_counters.attempt_count + 1,
-      window_started_at =
-        CASE
-          WHEN EXTRACT(EPOCH FROM (now() - li.throttle_counters.window_started_at))::int >= $3
-          THEN now()
-          ELSE li.throttle_counters.window_started_at
-        END
-RETURNING (SELECT ok FROM allowed) AS allowed, (SELECT retry_after FROM allowed) AS retry_after_sec;
--- If NOT allowed: the CTE returns allowed=false, retry_after>0, and the INSERT
--- affects ZERO rows because of WHERE a.ok → NO MUTATION ✔
--- Simultaneous first-use: both buckets INSERT with ON CONFLICT → one wins per bucket,
--- the other updates; lock order (pair then email) prevents deadlock ✔
--- Pool-of-one test: N concurrent connections, single DB session pool → limit holds ✔
+-- li.throttle_attempt(email_hash, address_hash, window_seconds,
+--                      per_pair_limit, per_email_limit)
+-- ALWAYS returns exactly one row: the refusal is an explicit
+-- (allowed = false, retry_after_seconds, reason) result, never zero rows.
+CREATE OR REPLACE FUNCTION li.throttle_attempt(
+  p_email_hash     text,
+  p_address_hash   text,
+  p_window_seconds integer,
+  p_pair_limit     integer,
+  p_email_limit    integer
+) RETURNS TABLE (allowed boolean, retry_after_seconds integer, reason text)
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_pair_key      text := 'pair:'  || p_email_hash || ':' || p_address_hash;
+  v_email_key     text := 'email:' || p_email_hash;
+  v_pair_count    integer := 0;
+  v_email_count   integer := 0;
+  v_pair_started  timestamptz;
+  v_email_started timestamptz;
+  v_pair_expired  boolean := true;
+  v_email_expired boolean := true;
+  v_pair_blocked  boolean := false;
+  v_email_blocked boolean := false;
+  v_retry         integer := 0;
+  v_now           timestamptz := now();
+BEGIN
+  IF p_window_seconds IS NULL OR p_window_seconds <= 0 THEN
+    RAISE EXCEPTION 'throttle: window_seconds must be positive';
+  END IF;
+
+  -- ================= THE CRITICAL SECTION =================
+  -- Two transaction-scoped advisory locks, taken in ONE GLOBAL ORDER: the
+  -- least and then the greatest of the two bucket keys.  Every caller takes
+  -- them in the same order, so two attempts on overlapping buckets cannot
+  -- deadlock.  pg_advisory_xact_lock is released at COMMIT/ROLLBACK, so the
+  -- lock can neither outlive the section nor leak.
+  PERFORM pg_advisory_xact_lock(li.lock_key(LEAST(v_pair_key, v_email_key)));
+  PERFORM pg_advisory_xact_lock(li.lock_key(GREATEST(v_pair_key, v_email_key)));
+
+  -- READ both buckets under their row locks.  A MISSING row is a fresh
+  -- window with a count of zero.
+  SELECT c.attempt_count, c.window_started_at INTO v_pair_count, v_pair_started
+    FROM li.throttle_counters c
+   WHERE c.bucket_key = v_pair_key
+   FOR UPDATE;
+
+  IF v_pair_started IS NULL THEN
+    v_pair_count := 0;
+    v_pair_expired := true;
+  ELSE
+    v_pair_expired := (v_now - v_pair_started) >= make_interval(secs => p_window_seconds);
+    IF v_pair_expired THEN v_pair_count := 0; END IF;
+  END IF;
+
+  SELECT c.attempt_count, c.window_started_at INTO v_email_count, v_email_started
+    FROM li.throttle_counters c
+   WHERE c.bucket_key = v_email_key
+   FOR UPDATE;
+
+  IF v_email_started IS NULL THEN
+    v_email_count := 0;
+    v_email_expired := true;
+  ELSE
+    v_email_expired := (v_now - v_email_started) >= make_interval(secs => p_window_seconds);
+    IF v_email_expired THEN v_email_count := 0; END IF;
+  END IF;
+
+  -- THE REFUSAL IS DECIDED HERE, BEFORE ANY WRITE.
+  v_pair_blocked  := (NOT v_pair_expired)  AND (v_pair_count  >= p_pair_limit);
+  v_email_blocked := (NOT v_email_expired) AND (v_email_count >= p_email_limit);
+
+  IF v_pair_blocked OR v_email_blocked THEN
+    IF v_pair_blocked THEN
+      v_retry := GREATEST(0, p_window_seconds
+                - EXTRACT(EPOCH FROM (v_now - v_pair_started))::int);
+    ELSE
+      v_retry := GREATEST(0, p_window_seconds
+                - EXTRACT(EPOCH FROM (v_now - v_email_started))::int);
+    END IF;
+
+    -- No write has happened: the counters are NOT touched, and a missing
+    -- bucket row is NOT created.
+    RETURN QUERY SELECT false, v_retry::integer,
+                        CASE WHEN v_pair_blocked THEN 'pair_limit'
+                             ELSE 'email_limit' END;
+    RETURN;
+  END IF;
+
+  -- ACCEPTED: both counters move, in THIS transaction.
+  INSERT INTO li.throttle_counters (bucket_key, attempt_count, window_started_at, updated_at)
+  VALUES (v_pair_key, 1, v_now, v_now)
+  ON CONFLICT (bucket_key) DO UPDATE SET
+    attempt_count     = CASE WHEN v_pair_expired THEN 1
+                              ELSE li.throttle_counters.attempt_count + 1 END,
+    window_started_at = CASE WHEN v_pair_expired THEN v_now
+                              ELSE li.throttle_counters.window_started_at END,
+    updated_at        = v_now;
+
+  INSERT INTO li.throttle_counters (bucket_key, attempt_count, window_started_at, updated_at)
+  VALUES (v_email_key, 1, v_now, v_now)
+  ON CONFLICT (bucket_key) DO UPDATE SET
+    attempt_count     = CASE WHEN v_email_expired THEN 1
+                              ELSE li.throttle_counters.attempt_count + 1 END,
+    window_started_at = CASE WHEN v_email_expired THEN v_now
+                              ELSE li.throttle_counters.window_started_at END,
+    updated_at        = v_now;
+
+  RETURN QUERY SELECT true, 0, 'allowed';
+END;
+$$;
 ```
 
-**The properties this gives.**
+**The lock key.** `li.lock_key(bucket_key)` is a deterministic, version-stable
+56-bit value — the first 14 hex digits of the key's `md5` ✔ — so every
+process computes the **same** lock for the same bucket ✔, and a collision can
+only **serialize** two unrelated attempts, never let them through ✔.
 
-| | |
-|---|---|
-| **A rejected request mutates nothing** | the refusal is decided on the read state ✔, before either write ✔ — so one bucket can never be counted while the other refuses ✔ |
-| **An accepted request updates both** | the two upserts are in one statement ✔ and one transaction ✔, so the accounting always agrees ✔ |
-| **The lock order is fixed** | the per-pair bucket, then the per-email bucket ✔, in every attempt ✔ — so two attempts cannot deadlock ✔ |
-| **The limits are independent** | the per-pair limit (5 ✔) bounds one address ✔; the per-email limit (25 ✔) bounds one account across addresses ✔; the global per-address limit bounds a spray ✔ |
-| **The windows expire** | a bucket whose window has passed starts again ✔, so the counters do not grow without bound ✔ |
-| **Simultaneous first-use is safe** | both buckets use INSERT … ON CONFLICT in the same statement; fixed lock order prevents deadlock ✔ |
-| **Pool-of-one concurrency test** | N connections, single pool → the limit holds under contention ✔ |
+```sql
+CREATE FUNCTION li.lock_key(p text) RETURNS bigint
+  LANGUAGE sql IMMUTABLE STRICT AS $$
+  SELECT ('x' || substr(md5(p), 1, 14))::bit(56)::bigint;
+$$;
+```
+
+**The properties this gives** — each **measured** on PostgreSQL 16.15 ✔:
+
+| | | The measurement |
+|---|---|---|
+| **A rejected request mutates nothing** | the refusal is decided on the read state ✔, before either write ✔ — so one bucket can never be counted while the other refuses ✔ | a refused attempt created **no** pair bucket row ✔ and left both counters unchanged ✔ |
+| **An accepted request updates both** | the two upserts are in one statement ✔ and one transaction ✔ | — ✔ |
+| **The lock order is fixed** | the two keys are locked in one global order (least, then greatest) ✔ | 200 concurrent calls over 40 overlapping bucket pairs: **no deadlock, no timeout** ✔ |
+| **The limits are independent** | the per-pair limit (5 ✔) bounds one address ✔; the per-email limit (25 ✔) bounds one account across addresses ✔ | — ✔ |
+| **The windows expire** | a bucket whose window has passed starts again ✔ | the counters reset to 1 and the window restarted ✔ |
+| **Simultaneous first use is safe** | the advisory lock exists before the row does ✔ | two simultaneous first-use attempts → the counter is **2**, not 1 ✔ |
+| **The limit holds under concurrency** | the decision and the write are in the same locked section ✔ | 30 concurrent attempts, limit 5 → **exactly 5 allowed** and 25 refused ✔; email limit 3 over 30 different addresses → **exactly 3 allowed** ✔, and only **3** pair rows were created ✔ |
+| **Pool of one** | the algorithm needs no second connection ✔ | 30 attempts through **one** connection → **exactly 5 allowed** ✔ |
+| **The refusal is explicit** | the function returns one row, always ✔ | a refused call returned `false`, a positive `retry_after_seconds` and a `reason` ✔ — never zero rows ✔ |
+
+**Why the row lock alone was not enough — the measured comparison** ✔. The
+pre-correction §9.2.1 example was implemented faithfully and run against the
+**same** tests:
+
+| The test | The limit | The row-lock-only design | The advisory-locked design |
+|---|---|---|---|
+| 30 concurrent attempts, one pair | 5 | **8 allowed** ✗ | **5 allowed** ✔ |
+| 30 concurrent attempts, one email, 30 addresses | 3 | **4 allowed** ✗ | **3 allowed** ✔ |
+
+The row-lock-only design **over-admits** ✔, because many transactions read
+the missing row at the same time and all decide "allowed" before any of them
+writes ✔. That is the failure this section fixes ✔.
 
 ### 9.3 The reconciliation is data, not an endpoint
 
@@ -1320,7 +1511,7 @@ and a fake billing account ✔.
 | Area | The tests |
 |---|---|
 | **The state machine** | every legal transition; every illegal one refused; the state `CHECK` |
-| **The credit model** | the four operations of §4.1; **the available is computed once** ✔ (the worked example of §4.6 is a test ✔); the balance is **unchanged** by a reservation ✔; a release does not charge ✔; a settlement charges the **actual** ✔; an overrun is recorded and the balance may go negative ✔ |
+| **The credit model** | the four operations of §4.1; **the available is computed once** ✔ (the worked example of §4.6 is a test ✔); the balance is **unchanged** by a reservation ✔; a release does not charge ✔; a settlement charges **at most** the actual ✔; an overrun is recorded on the ledger ✔ and **the balance never goes negative** ✔ |
 | **Credit concurrency** | two reservations of 60 against a balance of 100 → **exactly one** succeeds ✔; 1,000 concurrent reservations never drive the available below zero ✔; a settlement and a release racing on the same reservation → **one** applies ✔ |
 | **Idempotency** | the same key creates one job; a **different** request with the same key is a **conflict** ✔; the same key in two workspaces is two jobs ✔ |
 | **Claiming** | ten workers claim ten different jobs (`SKIP LOCKED`) ✔; the fencing token increments on every claim ✔ |
@@ -1369,7 +1560,7 @@ them ✔.
 
 | | The question | Why it is not decided here |
 |---|---|---|
-| **U1** | The **commercial treatment of a provider overrun** — the platform absorbs it, or it becomes a customer receivable? *Undecided; the safe default is in force.* | A product decision ✔: the engineering records the debt and blocks the spending ✔; what happens next is commercial ✔ |
+| **U1** | The **commercial treatment of a provider overrun** — the platform absorbs it, or it becomes a customer receivable? *Undecided; the safe default is in force.* | A product decision ✔: the engineering records the **overrun on the ledger** ✔ and, under the safe default, charges the customer **nothing beyond what they bought** ✔ — it imposes **no debt** and creates **no receivable** ✔; what happens next is commercial ✔ |
 | **U2** | The **price of each operation** in ZTech's commercial terms, and the provider's own price per call | A commercial fact ✔, and it is an input to D4's table ✔ |
 | **U3** | Whether the **providers support an idempotency key** and a **status lookup**, per provider and per operation | A fact about the providers ✔ that P0 must establish ✔ — and the plan's default is the safe one ✔ (no automatic re-dispatch ✔) |
 | **U4** | The **team model** beyond the `team_id` column — teams as first-class entities, nested teams, cross-team sharing | A product model ✔; this plan proposes only the column and the predicates ✔ |
@@ -1386,7 +1577,7 @@ that has not been made ✔.
 
 | | The question | The **conservative default**, in force now | What changes when it is decided |
 |---|---|---|---|
-| **U1** | The commercial treatment of a **provider overrun** — the platform absorbs it, or it becomes a customer receivable | **(a) the platform absorbs it** ✔: the customer's consumed credits **never exceed their purchased credits** ✔, the overrun is recorded **separately on the ledger** ✔ and reconciled ✔, and **no customer receivable, no customer debt, and no negative balance is created** ✔ | under **(b)**, the overrun is written to `li.credit_receivables` ✔, it appears on the workspace's statement ✔, and it **blocks further reservations** until it is settled ✔ — this requires **explicit owner approval** before it takes effect ✔ |
+| **U1** | The commercial treatment of a **provider overrun** — the platform absorbs it, or it becomes a customer receivable | **(a) the platform absorbs it** ✔: the customer's consumed credits **never exceed their purchased credits** ✔, the overrun is recorded **separately on the ledger** ✔ and reconciled ✔, and **no customer receivable, no customer debt, and no negative balance is created** ✔ | under **(b)**, a **declared** `li.credit_receivables` table and the migration that creates it are **required first** ✔ — neither exists in M4 ✔ — and only then does the overrun appear on the workspace's statement ✔ and **block further reservations** until it is settled ✔; this requires **explicit owner approval** before it takes effect ✔ |
 | **U2** | The **price of each operation** (the platform's price, and the provider's own price) | the **provider's own price is the only thing that is charged** ✔, and the platform's estimate is **not** used to charge anybody ✔ — the estimate only sizes the **reservation** ✔ | the platform's price table (D4 ✔) becomes the **approved maximum** ✔, snapshotted before the dispatch ✔ |
 | **U3** | Whether each provider supports an **idempotency key** and a **status lookup** | **no automatic re-dispatch** of any uncertain chargeable invocation ✔ — for every provider, until the capability is **verified and recorded** ✔ | a verified provider may have its uncertain invocations re-dispatched ✔ — and the capability row is the only thing that permits it ✔ |
 | **U4** | The **team model** beyond the `team_id` column | teams are a **membership attribute** and a **column** ✔; there are no nested teams and no cross-team sharing ✔ | a fuller model ✔ — and it would change the predicates of §7 ✔, so it is a **new** decision, not a refinement ✔ |
@@ -1481,7 +1672,7 @@ startup assertion should check them.**
 - The providers' **idempotency and status-lookup support** is not
   confirmed per provider — U3 ✔, and the plan's default is the safe one ✔.
 - The providers' **credit pricing** is not confirmed — U2 ✔.
-- The **commercial treatment of a credit debt** is not decided — U1 ✔.
+- The **commercial treatment of a provider overrun** is not decided — U1 ✔.
 - The **result retention** defaults are a recommendation — U5 ✔.
 - The **team model** beyond the column is not designed — U4 ✔.
 
