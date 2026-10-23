@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ZuniTech">
+  <title>ZuniTech</title>
+  <defs>
+    <linearGradient id="zuniTechGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1F4FD8"/>
+      <stop offset="1" stop-color="#1639A6"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="url(#zuniTechGradient)"/>
+  <g fill="#FFFFFF">
+    <rect x="17.92" y="19.84" width="28.16" height="4.8" rx="1.2"/>
+    <rect x="17.92" y="39.36" width="28.16" height="4.8" rx="1.2"/>
+    <path d="M44.48 21.44 L38.4 21.44 L19.52 41.76 L25.6 41.76 Z"/>
+  </g>
+</svg>

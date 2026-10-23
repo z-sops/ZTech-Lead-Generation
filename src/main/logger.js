@@ -3,7 +3,9 @@
 const path = require('path');
 const fs = require('fs');
 
-const LOG_DIR = path.join(require('electron').app.getPath('userData'), 'logs');
+// F1: the log directory follows the resolved product data directory, so the
+// logs move with the rest of the data when the product identity changes.
+const LOG_DIR = require('./appPaths').getAppPaths().logPath;
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB per file
 const MAX_FILES = 10;
 

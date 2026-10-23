@@ -1,5 +1,10 @@
 node_modules/
 dist/
+dist-renderer/
 *.log
 .DS_Store
 Thumbs.db
+lint-report.json
+
+# the result file of the packaged-application check (CI)
+packaged-package-check.json

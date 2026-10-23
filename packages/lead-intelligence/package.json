@@ -1,0 +1,25 @@
+{
+  "name": "@zunitech/lead-intelligence",
+  "version": "0.3.0",
+  "description": "ZTech Lead Generation - the shared, environment-free Lead Intelligence core: evidence contracts, ICP rules, the outreach gate, trust and consent policies, research, sequences and the ZuniSEO integration.",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json",
+    "./*.js": "./src/*.js",
+    "./*": "./src/*.js"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "scripts": {
+    "test": "node ../../tests/lead-intelligence/package-boundaries.test.js"
+  }
+}

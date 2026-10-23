@@ -1,0 +1,141 @@
+'use strict';
+
+/**
+ * F26.6 - the minimal Gmail REST client. MAIN PROCESS ONLY.
+ *
+ * Exactly the calls Step 1A proved under gmail.send + gmail.metadata, and nothing else:
+ *   users.getProfile          (gmail.metadata)  address + current historyId
+ *   users.messages.send       (gmail.send)      one raw message
+ *   users.messages.get        (gmail.metadata)  format=metadata, named headers only - never a body
+ *   users.history.list        (gmail.metadata)  messageAdded since a cursor
+ *
+ * The access token comes from an injected function per request and is never stored here,
+ * returned or put into an error. Errors carry ZTech's own code and text only - never Google's.
+ */
+
+const { LiError } = require('../../core/errors');
+const { GOOGLE } = require('./GoogleOAuth');
+
+const LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded', 'dailyLimitExceeded', 'quotaExceeded']);
+const MAX_ID = 200;
+const REQUEST_TIMEOUT_MS = 60 * 1000;
+
+function idOk(id) { return typeof id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(id); }
+
+class GmailApi {
+  /** @param {{fetch?: Function, getAccessToken: () => Promise<string>, onAuthFailure?: () => Promise<void>}} deps */
+  constructor({ fetch: fetchImpl = globalThis.fetch, getAccessToken, onAuthFailure = null, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+    if (typeof getAccessToken !== 'function') throw new TypeError('GmailApi needs getAccessToken');
+    this.fetch = fetchImpl;
+    this.timeoutMs = Number.isInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : REQUEST_TIMEOUT_MS;
+    this.getAccessToken = getAccessToken;
+    this.onAuthFailure = typeof onAuthFailure === 'function' ? onAuthFailure : null;
+  }
+
+  async _authFailed(message) {
+    if (this.onAuthFailure) { try { await this.onAuthFailure(); } catch { /* the refusal still reaches the caller */ } }
+    throw new LiError('MAILBOX_RECONNECT_NEEDED', message);
+  }
+
+  async _call(method, path, body = undefined) {
+    // F28: every call is bounded. A request that never answers would otherwise hold the mailbox
+    // lock and the follow-up scheduler forever. A SEND that times out may still have gone out, so
+    // it is reported as unconfirmed (a human decides), never as refused.
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer = null;
+    const timeout = new Promise((_, reject) => { timer = setTimeout(() => { if (controller) controller.abort(); reject(new Error('timeout')); }, this.timeoutMs); });
+    const isSend = method === 'POST' && path === '/messages/send';
+    let token;
+    try {
+      // The token refresh is bounded too; it happens before anything is sent.
+      token = await Promise.race([this.getAccessToken(), timeout]);
+    } catch (err) {
+      clearTimeout(timer);
+      if (err instanceof LiError) throw err;
+      throw new LiError('MAILBOX_TOKEN_UNAVAILABLE', 'Google could not be reached to sign in to the mailbox. Nothing was sent.');
+    }
+    let res;
+    let json = {};
+    try {
+      res = await Promise.race([this.fetch(`${GOOGLE.GMAIL_API}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(controller ? { signal: controller.signal } : {}),
+      }), timeout]);
+      try { json = await Promise.race([res.json(), timeout]); } catch { json = {}; }
+    } catch {
+      if (isSend) throw new LiError('MAILBOX_SEND_UNCONFIRMED', 'Gmail did not answer in time, so ZTech cannot tell whether it was sent. Nothing was retried.');
+      throw new LiError('MAILBOX_PROVIDER_UNAVAILABLE', 'Gmail could not be reached. Nothing was retried.');
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.ok) return json || {};
+    const reason = json && json.error && Array.isArray(json.error.errors) && json.error.errors[0] ? json.error.errors[0].reason : null;
+    if (res.status === 401) return this._authFailed('This mailbox needs to be reconnected.');
+    if (res.status === 429 || (res.status === 403 && LIMIT_REASONS.has(reason))) throw new LiError('MAILBOX_PROVIDER_LIMIT', 'Gmail refused because a sending or usage limit was reached. Nothing was retried.');
+    if (res.status === 403) return this._authFailed('Gmail refused this permission. Reconnect the mailbox and grant both permissions.');
+    if (res.status === 404) throw new LiError('MAILBOX_REMOTE_NOT_FOUND', 'Gmail did not find what ZTech asked for.');
+    if (res.status === 400) throw new LiError('MAILBOX_PROVIDER_REJECTED', 'Gmail rejected the request.');
+    throw new LiError('MAILBOX_PROVIDER_UNAVAILABLE', 'Gmail could not process the request right now. Nothing was retried.');
+  }
+
+  async profile() {
+    const j = await this._call('GET', '/profile');
+    return { emailAddress: typeof j.emailAddress === 'string' ? j.emailAddress : null, historyId: j.historyId != null ? String(j.historyId) : null };
+  }
+
+  /**
+   * Send one raw (base64url) message. Returns Gmail's own ids only. F28: `threadId` (a thread
+   * Gmail gave an earlier send of the same sequence) puts a follow-up into that thread.
+   */
+  async sendRaw(rawBase64Url, { threadId = null } = {}) {
+    if (threadId !== null && !idOk(threadId)) throw new LiError('MAILBOX_PROVIDER_REJECTED', 'Invalid Gmail thread id.');
+    const j = await this._call('POST', '/messages/send', threadId ? { raw: rawBase64Url, threadId } : { raw: rawBase64Url });
+    // A 2xx without an id: Gmail may well have sent it. That is an UNKNOWN outcome, never "refused".
+    if (!idOk(j.id)) throw new LiError('MAILBOX_SEND_UNCONFIRMED', 'Gmail answered without a message id, so ZTech cannot tell whether it was sent. Nothing was retried.');
+    return { id: j.id, threadId: idOk(j.threadId) ? j.threadId : null, labelIds: Array.isArray(j.labelIds) ? j.labelIds.slice(0, 20).map(String) : [] };
+  }
+
+  /** Named headers of one message (format=metadata). Never the body. */
+  async metadata(id, names) {
+    if (!idOk(id)) throw new LiError('MAILBOX_PROVIDER_REJECTED', 'Invalid Gmail message id.');
+    const q = names.map((n) => `metadataHeaders=${encodeURIComponent(n)}`).join('&');
+    const j = await this._call('GET', `/messages/${id}?format=metadata&${q}`);
+    const headers = {};
+    for (const h of ((j.payload && j.payload.headers) || []).slice(0, 200)) {
+      if (!h || typeof h.name !== 'string' || typeof h.value !== 'string') continue;
+      const k = h.name.toLowerCase();
+      if (!(k in headers)) headers[k] = h.value.slice(0, 2000);
+    }
+    return {
+      id: j.id, threadId: idOk(j.threadId) ? j.threadId : null,
+      labelIds: Array.isArray(j.labelIds) ? j.labelIds.slice(0, 50).map(String) : [], headers,
+    };
+  }
+
+  /** One page of history (messageAdded, INBOX) since a cursor. */
+  async history({ startHistoryId, pageToken = null }) {
+    if (!/^\d{1,30}$/.test(String(startHistoryId))) throw new LiError('MAILBOX_PROVIDER_REJECTED', 'Invalid history cursor.');
+    const q = new URLSearchParams({ startHistoryId: String(startHistoryId), historyTypes: 'messageAdded', labelId: 'INBOX', maxResults: '100' });
+    if (pageToken) q.set('pageToken', String(pageToken).slice(0, MAX_ID));
+    const j = await this._call('GET', `/history?${q}`);
+    const added = [];
+    let lastRecordId = null;
+    for (const h of Array.isArray(j.history) ? j.history : []) {
+      if (h && h.id != null && /^\d{1,30}$/.test(String(h.id))) lastRecordId = String(h.id);
+      for (const a of Array.isArray(h.messagesAdded) ? h.messagesAdded : []) {
+        const m = a && a.message;
+        if (m && idOk(m.id)) added.push({ id: m.id, labelIds: Array.isArray(m.labelIds) ? m.labelIds.map(String) : [] });
+      }
+    }
+    return {
+      added,
+      lastRecordId,
+      historyId: j.historyId != null && /^\d{1,30}$/.test(String(j.historyId)) ? String(j.historyId) : null,
+      nextPageToken: typeof j.nextPageToken === 'string' ? j.nextPageToken : null,
+    };
+  }
+}
+
+module.exports = { GmailApi };

@@ -1,0 +1,239 @@
+name: CI
+
+# ZTech Lead Generation - continuous integration.
+#
+# Added in F0 (audit gap G-06). Before this workflow existed there was NO CI in
+# any ZTech repository: the 115+ test files, the dependency posture, the
+# migration behaviour and the Windows packaging were all verified by hand.
+#
+# The suite is dependency-free by design, so CI adds no toolchain: it installs
+# from the lockfile, runs the same runner a developer runs, and gates on the
+# same checks.
+#
+# No step in this workflow contacts a paid provider, sends mail, or triggers
+# outreach. The provider integrations are exercised against fakes.
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `npm ci` installs exactly what the lockfile pins. Before F0 the committed
+      # lockfile was out of sync with package.json and `npm ci` FAILED with 32
+      # missing entries - see audit gap G-08. This step is the canary.
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Repository hygiene check
+        run: npm run check:repo
+
+      # Incremental ESLint (audit gap G-07). The error tier is what the
+      # codebase already satisfies, so it must stay at 0. The warning tier is
+      # visible debt; it is reported and its count is printed, but it does not
+      # fail the build.
+      #
+      # It is a Node script rather than a shell pipeline: a shell redirection
+      # into a JSON file is not portable (PowerShell writes UTF-16, which
+      # JSON.parse rejects) and the failure then looks like a lint error.
+      - name: Lint
+        run: node scripts/lint-report.js
+
+      - name: Test suite
+        run: npm test
+
+      - name: Production dependency audit
+        run: npm run audit:prod
+
+  # M1 and M2: the persistence contract, run against a REAL PostgreSQL 16.
+  #
+  # The same contract suite that runs against the desktop's sql.js store runs
+  # here against a real PostgreSQL 16 service container, and the two must
+  # produce identical results. The PostgreSQL schema, the column mapping and
+  # the migration idempotency are proved against the live database too.
+  #
+  # Since M2 the suite also runs with the RUNTIME roles - the app, worker and
+  # platform roles - so the row-level security, the role separation and the
+  # cross-tenant denial are exercised as they are in a deployment.
+  #
+  # The service container is a plain PostgreSQL 16 with no data in it: no
+  # customer data, no provider credentials, no outreach.
+  postgres:
+    name: postgres persistence contract
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ztech
+          POSTGRES_PASSWORD: ztech
+          POSTGRES_DB: ztech
+        ports:
+          - '5432:5432'
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # A SECOND, ISOLATED cluster. The production provisioning path
+      # creates the roles and sets their credentials, so it needs a cluster
+      # of its own: the one above is shared by the suites, and a test must
+      # never change the credentials it is using.
+      postgres-provision:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ztech
+          POSTGRES_PASSWORD: ztech
+          POSTGRES_DB: ztech
+        ports:
+          - '5433:5432'
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: The persistence contract, against both backends
+        run: npm test -- --filter persistence-contract
+        env:
+          ZTECH_PG_URL: postgres://ztech:ztech@127.0.0.1:5432/ztech
+          # The workspace is a uuid: the F2 architecture scopes every tenant
+          # table by one, and the store refuses anything else.
+          ZTECH_PG_WORKSPACE: 11111111-1111-4111-8111-111111111111
+          # The isolated cluster, for the production provisioning path.
+          ZTECH_PG_PROVISION_URL: postgres://ztech:ztech@127.0.0.1:5433/ztech
+
+      - name: The production provisioning path, on an isolated cluster
+        # The real script, with its real default role list, on a cluster of
+        # its own. It proves that the five roles are configured, that the
+        # migrator can create the schema and apply the migrations, that a
+        # runtime role can do neither, and that a missing or an invalid
+        # credential fails before anything is changed.
+        run: node --test tests/persistence-contract/provisioning.test.js
+        env:
+          ZTECH_PG_PROVISION_URL: postgres://ztech:ztech@127.0.0.1:5433/ztech
+
+  contract:
+    name: zuni-seo contract drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The research contract is owned by the separate zuni-seo product. ZTech
+      # vendors it so it can validate a real envelope offline; this job proves
+      # the vendored copy is still identical to the source. The zuni-seo
+      # repository is READ ONLY here - it is never modified.
+      #
+      # The zuni-seo repository is private, so the job's own GITHUB_TOKEN
+      # cannot read it. A token with access (ZUNI_SEO_READ_TOKEN) turns the
+      # comparison on; without it the job reports that it could not run, and
+      # the ALWAYS-ON gate - the SHA-256 manifest test in
+      # tests/lead-intelligence/zuniseo-envelope.test.js - still proves the
+      # vendored files are unmodified.
+      - name: Check out zuni-seo (read only)
+        id: zuniseo
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: z-sops/zuni-seo
+          ref: feature/geo-growth-intelligence
+          path: zuni-seo
+          token: ${{ secrets.ZUNI_SEO_READ_TOKEN }}
+
+      - name: The vendored contract is identical to zuni-seo
+        if: steps.zuniseo.outcome == 'success'
+        run: node scripts/sync-zuniseo-contract.js --from zuni-seo --check
+
+      - name: The cross-repository comparison needs a token for the private zuni-seo repository
+        if: steps.zuniseo.outcome != 'success'
+        run: |
+          echo "::notice::zuni-seo could not be checked out: the repository is private and this job has no token for it."
+          echo "::notice::THE CROSS-REPOSITORY COMPARISON DID NOT RUN. This job proves that the vendored contract in THIS repository is unmodified; it does NOT prove that the vendored copy still matches zuni-seo. External parity is NOT verified."
+          echo "::notice::Add the ZUNI_SEO_READ_TOKEN secret to turn the cross-repository comparison on."
+          echo "::notice::The always-on gate is tests/lead-intelligence/zuniseo-envelope.test.js, which verifies the vendored contract and fixtures against their recorded SHA-256 manifest."
+          echo "::notice::See docs/ZUNISEO-CONTRACT-DRIFT.md for the difference between the two checks."
+
+  package:
+    name: windows package smoke test
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      # The directory package is used because the default target needs Windows
+      # symlink privileges that a CI runner does not have; see README.md and
+      # audit gap G-15.
+      - name: Build (directory package)
+        run: npm run build:win
+      - name: The artifact exists and contains the renderer
+        shell: pwsh
+        run: |
+          $unpacked = 'dist\win-unpacked'
+          if (-not (Test-Path $unpacked)) { throw "no build output in $unpacked" }
+          $exe = Get-ChildItem $unpacked -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw 'no executable was produced' }
+          Write-Host "artifact: $($exe.Name) $([math]::Round($exe.Length/1MB,1))MB"
+
+      # The shared Lead Intelligence package must be reachable from the PACKAGED
+      # application. The check runs the packaged Electron itself, so the asar is
+      # mounted exactly as it is at runtime, and it asserts that a compatibility
+      # shim and the package are the same module instance.
+      #
+      # The packaged executable is a GUI-subsystem application: a shell that
+      # invokes it directly does not get its exit code, so the process is
+      # started and waited for explicitly, and the check also writes a result
+      # file that is read back.
+      - name: The packaged application can load the shared package
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $env:PACKAGED_PACKAGE_CHECK_OUT = "$PWD\packaged-package-check.json"
+          if (Test-Path $env:PACKAGED_PACKAGE_CHECK_OUT) { Remove-Item $env:PACKAGED_PACKAGE_CHECK_OUT }
+          $exe = (Get-ChildItem 'dist\win-unpacked' -Filter *.exe | Select-Object -First 1).FullName
+          $p = Start-Process -FilePath $exe -ArgumentList 'scripts\check-packaged-package.js' -WorkingDirectory $PWD -Wait -PassThru
+          if (-not (Test-Path $env:PACKAGED_PACKAGE_CHECK_OUT)) { throw "the packaged application did not run the check (exit $($p.ExitCode))" }
+          $result = Get-Content $env:PACKAGED_PACKAGE_CHECK_OUT -Raw | ConvertFrom-Json
+          if (-not $result.ok) { throw 'the packaged application could not load the shared package' }
+          Write-Host "packaged application: the shared package loads from $($result.packageRoot)"

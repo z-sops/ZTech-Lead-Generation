@@ -1,5 +1,18 @@
+const { logger } = require('./logger');
+
 const BASE_URL = 'https://openapi.coreclaw.com';
 const DEFAULT_WORKER = 'coreclaw~google-maps-scraper';
+const REQUEST_TIMEOUT_MS = 30000;
+
+let netFetch = null;
+try {
+  const electron = require('electron');
+  if (electron && electron.net && typeof electron.net.fetch === 'function') {
+    netFetch = electron.net.fetch.bind(electron.net);
+  }
+} catch {
+  netFetch = null;
+}
 
 class CoreClawClient {
   constructor() {
@@ -11,10 +24,6 @@ class CoreClawClient {
     this.apiKey = key;
   }
 
-  setWorkerId(id) {
-    this.workerId = id || DEFAULT_WORKER;
-  }
-
   async request(method, path, body = null) {
     if (!this.apiKey) {
       return { success: false, error: '未设置 API Key' };
@@ -23,16 +32,45 @@ class CoreClawClient {
     const url = `${BASE_URL}${path}`;
 
     try {
-      const response = await fetch(url, {
+      const response = await (netFetch || fetch)(url, {
         method,
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
         },
-        body: body ? JSON.stringify(body) : undefined
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       });
 
-      const data = await response.json();
+      let data = null;
+      let jsonError = false;
+      try {
+        data = await response.json();
+      } catch {
+        jsonError = true;
+      }
+
+      if (!response.ok) {
+        const statusText = typeof response.statusText === 'string' && response.statusText
+          ? ` ${response.statusText}`
+          : '';
+        const httpFallback = `HTTP ${response.status}${statusText}`;
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          const message = typeof data.message === 'string' && data.message ? data.message : '';
+          const code = Number.isInteger(data.code) ? data.code : undefined;
+          return {
+            success: false,
+            error: message || httpFallback,
+            httpStatus: response.status,
+            ...(code !== undefined ? { code } : {})
+          };
+        }
+        return { success: false, error: httpFallback, httpStatus: response.status };
+      }
+
+      if (jsonError) {
+        return { success: false, error: '响应不是有效的 JSON', httpStatus: response.status };
+      }
 
       if (data.code !== 0) {
         return { success: false, error: data.message || '请求失败', raw: data };
@@ -45,11 +83,16 @@ class CoreClawClient {
   }
 
   async getStore() {
-    return this.request('GET', '/api/v2/store');
+    const res = await this.request('GET', '/api/v2/store');
+    if (!res.success) {
+      logger.warn('coreclaw', 'store fetch failed', { error: res.error });
+    }
+    return res;
   }
 
   async getWorkerInputSchema(workerId) {
-    return this.request('GET', `/api/v2/workers/${workerId || this.workerId}/input-schema`);
+    const id = workerId || this.workerId;
+    return this.request('GET', `/api/v2/workers/${encodeURIComponent(id)}/input-schema`);
   }
 
   async runGoogleMaps(params) {
@@ -106,31 +149,41 @@ class CoreClawClient {
       },
       is_async: true
     };
-    return this.request('POST', `/api/v2/workers/${this.workerId}/runs`, body);
+    const res = await this.request('POST', `/api/v2/workers/${encodeURIComponent(this.workerId)}/runs`, body);
+    if (res.success) {
+      logger.info('coreclaw', 'run submitted', { runSlug: res.data && res.data.run_slug, workerId: this.workerId });
+    } else {
+      logger.error('coreclaw', 'run submit failed', { error: res.error });
+    }
+    return res;
   }
 
   async getRunStatus(runSlug) {
-    return this.request('GET', `/api/v2/worker-runs/${runSlug}`);
+    const res = await this.request('GET', `/api/v2/worker-runs/${encodeURIComponent(runSlug)}`);
+    if (!res.success) {
+      logger.warn('coreclaw', 'run status query failed', { runSlug, error: res.error });
+    }
+    return res;
   }
 
   async getRunResult(runSlug, offset = 0, limit = 100) {
-    return this.request('GET', `/api/v2/worker-runs/${runSlug}/result?offset=${offset}&limit=${limit}`);
-  }
-
-  async abortRun(runSlug) {
-    return this.request('POST', `/api/v2/worker-runs/${runSlug}/abort`);
+    const res = await this.request('GET', `/api/v2/worker-runs/${encodeURIComponent(runSlug)}/result?offset=${offset}&limit=${limit}`);
+    if (res.success) {
+      logger.info('coreclaw', 'run result fetched', { runSlug, offset, limit });
+    } else {
+      logger.warn('coreclaw', 'run result fetch failed', { runSlug, error: res.error });
+    }
+    return res;
   }
 
   async getRunHistory(limit = 20, offset = 0) {
-    return this.request('GET', `/api/v2/worker-runs?limit=${limit}&offset=${offset}`);
-  }
-
-  isRunComplete(status) {
-    return status === 'succeeded' || status === 'completed' || status === 'success';
-  }
-
-  isRunFailed(status) {
-    return status === 'failed' || status === 'error';
+    const res = await this.request('GET', `/api/v2/worker-runs?limit=${limit}&offset=${offset}`);
+    if (res.success) {
+      logger.info('coreclaw', 'run history fetched', { limit, offset });
+    } else {
+      logger.warn('coreclaw', 'run history fetch failed', { limit, offset, error: res.error });
+    }
+    return res;
   }
 }
 

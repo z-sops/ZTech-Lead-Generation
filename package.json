@@ -1,41 +1,71 @@
 {
-  "name": "phone-global-leads",
+  "name": "ztech-lead-generation",
   "version": "1.0.0",
-  "description": "phone全球获客",
-  "author": "",
+  "description": "ZTech Lead Generation - AI-powered business lead discovery and opportunity intelligence, by ZuniTech (Zuni Enterprise).",
+  "author": "ZuniTech",
   "main": "main.js",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "build:win": "electron-builder --dir --config.win.signAndEditExecutable=false",
+    "build:brand": "node scripts/build-brand-assets.js",
+    "test": "node tests/run-all.js",
+    "test:list": "node tests/run-all.js --list",
+    "lint": "eslint . --max-warnings 100000",
+    "lint:strict": "eslint . --max-warnings 0",
+    "lint:report": "eslint . --format json",
+    "lint:gate": "node scripts/lint-report.js",
+    "check:repo": "node scripts/check-repo.js",
+    "check:contract": "node scripts/sync-zuniseo-contract.js --check",
+    "sync:contract": "node scripts/sync-zuniseo-contract.js --from",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "audit:all": "npm audit --audit-level=moderate",
+    "verify": "npm run check:repo && npm run lint:gate && npm test && npm run audit:prod"
+  },
+  "engines": {
+    "node": ">=20.19.0"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "33.4.11",
-    "electron-builder": "25.1.8",
+    "electron-builder": "^26.15.3",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
     "vite": "^5.4.0",
     "wait-on": "^7.2.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "^2.1.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "electron-store": "^8.0.1",
     "sql.js": "^1.10.3"
   },
   "build": {
-    "appId": "com.whatsapp.automation",
-    "productName": "phone全球获客",
+    "appId": "com.zunitech.ztech-lead-generation",
+    "productName": "ZTech Lead Generation",
     "files": [
       "index.html",
       "main.js",
       "preload.js",
       "package.json",
-      "src/**/*"
+      "src/**/*",
+      "packages/lead-intelligence/**",
+      "!packages/lead-intelligence-postgres/**",
+      "!node_modules/pg/**"
     ],
     "win": {
       "target": [
         {
           "target": "dir",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

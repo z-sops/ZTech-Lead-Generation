@@ -3,151 +3,549 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'">
   <title>ZTech Lead Generation</title>
+  <link rel="icon" type="image/png" href="./src/renderer/brand/icon-64.png">
+  <!-- F1: the ZuniTech brand tokens. They are loaded FIRST so the existing
+       stylesheet can still override anything it needs to. -->
+  <link rel="stylesheet" href="./src/renderer/brand/tokens.css">
   <link rel="stylesheet" href="./src/renderer/styles.css">
 </head>
 <body>
   <div class="toast-container" id="toast-container"></div>
   <div class="app-layout">
-    <!-- Left sidebar -->
-    <aside class="sidebar">
+    <!-- Left sidebar — Frontend 2.0 F2 workspace chrome.
+         Routes are the six existing views, mapped into the product navigation.
+         Items with no implemented view yet are rendered DISABLED with a "Soon"
+         marker. They are not links, carry no data-view, and invent no data. -->
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <h1 class="brand">ZTech Lead Generation</h1>
+        <span class="brand">
+          <span class="brand-row">
+            <img class="brand-mark" src="./src/renderer/brand/zunitech-mark.svg" width="22" height="22" alt="" aria-hidden="true">
+            <span class="brand-name">ZuniTech</span>
+          </span>
+          <span class="brand-product">ZTech Lead Generation</span>
+        </span>
         <span class="version">v1.0.0</span>
+        <button class="btn btn-icon btn-ghost sidebar-toggle" id="btn-collapse-sidebar"
+                type="button" aria-expanded="true" aria-controls="sidebar" title="Collapse sidebar">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1.5"></rect>
+            <line x1="6" y1="2.5" x2="6" y2="13.5"></line>
+          </svg>
+        </button>
       </div>
 
-      <nav class="sidebar-nav">
-        <button class="nav-item active" data-view="collector">
-          <span class="nav-icon">🔍</span>
-          <span class="nav-label">Keyword Collection</span>
-        </button>
-        <button class="nav-item" data-view="history">
-          <span class="nav-icon">📊</span>
-          <span class="nav-label">Collection History</span>
-        </button>
-        <button class="nav-item" data-view="numbers">
-          <span class="nav-icon">📋</span>
-          <span class="nav-label">Lead Management</span>
-        </button>
-        <button class="nav-item" data-view="settings">
-          <span class="nav-icon">⚙️</span>
-          <span class="nav-label">Settings</span>
-        </button>
+      <nav class="sidebar-nav" id="sidebar-nav" aria-label="Primary">
+        <div class="nav-group nav-group-root">
+          <button class="nav-item" data-view="dashboard" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M2.5 7.5 8 2.5l5.5 5"></path><path d="M4 7v6h8V7"></path>
+            </svg>
+            <span class="nav-label">Home</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-label">Leads</div>
+          <button class="nav-item" data-view="numbers" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <line x1="2.5" y1="4" x2="13.5" y2="4"></line><line x1="2.5" y1="8" x2="13.5" y2="8"></line>
+              <line x1="2.5" y1="12" x2="13.5" y2="12"></line>
+            </svg>
+            <span class="nav-label">All Leads</span>
+          </button>
+          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <line x1="8" y1="3" x2="8" y2="8"></line><line x1="8" y1="11" x2="8" y2="11.5"></line>
+            </svg>
+            <span class="nav-label">New</span>
+            <span class="nav-soon" aria-hidden="true">Soon</span>
+          </button>
+          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="5.5"></circle><path d="M8 5v3.2l2 1.3"></path>
+            </svg>
+            <span class="nav-label">Recently Viewed</span>
+            <span class="nav-soon" aria-hidden="true">Soon</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-label">Discovery</div>
+          <button class="nav-item active" data-view="collector" type="button" aria-current="page">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="7" cy="7" r="4.5"></circle><line x1="10.4" y1="10.4" x2="13.5" y2="13.5"></line>
+            </svg>
+            <span class="nav-label">Collection</span>
+          </button>
+          <button class="nav-item" data-view="history" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M2.5 8a5.5 5.5 0 1 0 1.7-4"></path><path d="M2.5 2.5V6H6"></path>
+            </svg>
+            <span class="nav-label">Collection History</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-label">Lists</div>
+          <!-- Lists: Saved Searches and Segments are live routes. -->
+          <button class="nav-item" data-view="searches" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M3 2.5h7l3 3v8H3z"></path><line x1="5.5" y1="8" x2="10.5" y2="8"></line>
+            </svg>
+            <span class="nav-label">Saved Searches</span>
+          </button>
+          <button class="nav-item" data-view="segments" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M8 2.5 14 6l-6 3.5L2 6z"></path><line x1="2" y1="10" x2="14" y2="10"></line>
+            </svg>
+            <span class="nav-label">Segments</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-label">Research</div>
+          <!-- Research: the Queue and Completed workspaces over the existing
+               Round-one research engine are live routes. -->
+          <button class="nav-item" data-view="queue" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="5.5"></circle><path d="M8 4.8V8l2.2 1.4"></path>
+            </svg>
+            <span class="nav-label">Research Queue</span>
+          </button>
+          <button class="nav-item" data-view="completed" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M3 8.4 6.2 11.6 13 4.8"></path>
+            </svg>
+            <span class="nav-label">Completed</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-label">Intelligence</div>
+          <!-- Intelligence: ICP evaluates stored targets; Signals and Opportunities
+               state honestly what the Lead Intelligence contracts can supply. -->
+          <button class="nav-item" data-view="opportunities" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M9 2.5 3.5 9H7l-1 4.5L12.5 7H9z"></path>
+            </svg>
+            <span class="nav-label">Opportunities</span>
+          </button>
+          <button class="nav-item" data-view="icp" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="5.5"></circle><circle cx="8" cy="8" r="2.2"></circle>
+            </svg>
+            <span class="nav-label">ICP</span>
+          </button>
+          <button class="nav-item" data-view="signals" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <polyline points="2,11 5.5,7 8,9.5 11,4 14,6.5"></polyline>
+            </svg>
+            <span class="nav-label">Signals</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-label">Outreach</div>
+          <!-- The read-only Outreach workspace. This is the real workspace, not a
+               placeholder: it lists the stored pitch drafts with their real status and
+               the real Outreach Gate result. It is READ ONLY - no send, approve,
+               generate or campaign action is reachable from it. Campaigns and Activity
+               below stay disabled placeholders. -->
+          <button class="nav-item" data-view="outreach" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M2.5 3.5h11v9h-11z"></path><path d="M2.5 4 8 8.5 13.5 4"></path>
+            </svg>
+            <span class="nav-label">Outreach</span>
+          </button>
+          <!-- The derived Ready queue: prospects the existing backend OutreachGate
+               currently ALLOWS. Readiness is computed by that gate on every read and is
+               never stored as a status or a flag, so a pitch that later goes stale or
+               changes simply stops appearing here. This workspace only reads and opens a
+               lead: there is no compose, no scheduling and no outbound action here, and
+               nothing in this build sends anything. Campaigns stays disabled below. -->
+          <button class="nav-item" data-view="ready" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="5.5"></circle><path d="M5.5 8.2l1.7 1.7 3.4-3.6"></path>
+            </svg>
+            <span class="nav-label">Ready</span>
+          </button>
+          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M3 10.5V13h3l7-7-3-3z"></path>
+            </svg>
+            <span class="nav-label">Campaigns</span>
+            <span class="nav-soon" aria-hidden="true">Soon</span>
+          </button>
+          <!-- The Outreach activity history: a READ of the persisted ledger the backend
+               writes when an outreach transition actually happens. There is no compose,
+               no send and no campaign here, and nothing in this build sends anything.
+               Campaigns stays a disabled placeholder below. -->
+          <button class="nav-item" data-view="activity" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <line x1="2.5" y1="4" x2="13.5" y2="4"></line><line x1="2.5" y1="8" x2="13.5" y2="8"></line>
+              <line x1="2.5" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span class="nav-label">Activity</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-label">Analytics</div>
+          <button class="nav-item nav-item-soon" type="button" disabled aria-disabled="true" title="Available in a later release">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <line x1="3" y1="13" x2="3" y2="8"></line><line x1="8" y1="13" x2="8" y2="3.5"></line>
+              <line x1="13" y1="13" x2="13" y2="6"></line>
+            </svg>
+            <span class="nav-label">Analytics</span>
+            <span class="nav-soon" aria-hidden="true">Soon</span>
+          </button>
+        </div>
+
+        <div class="nav-group nav-group-last">
+          <div class="nav-group-label">Setup</div>
+          <button class="nav-item" data-view="targets" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="5.5"></circle><circle cx="8" cy="8" r="2.4"></circle>
+            </svg>
+            <span class="nav-label">Targets</span>
+          </button>
+          <button class="nav-item" data-view="settings" type="button">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="2"></circle>
+              <path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6"></path>
+            </svg>
+            <span class="nav-label">Settings</span>
+          </button>
+        </div>
       </nav>
     </aside>
 
     <!-- Main content area -->
     <main class="main-content">
-      <!-- Top status bar -->
+      <!-- Top bar — Frontend 2.0 F2 workspace chrome.
+           Left: workspace context (group / current view).
+           Center: search affordance. It is a SHELL only — it navigates to the
+                  existing Lead Library search box and focuses it. There is no
+                  global search engine and none is invented here.
+           Right: existing collected count and clock (unchanged elements), the
+                  F1 density control, and Settings access.
+           The search shell deliberately has no placeholder shortcut key: the
+           real one arrives with the command palette in a later batch. -->
       <header class="top-bar">
-        <div class="top-bar-title" id="page-title">Keyword Collection</div>
-        <div class="top-bar-stats">
-          <span class="stat-item">Collected: <strong id="stat-collected">0</strong></span>
+        <div class="top-bar-left">
+          <span class="top-bar-context" id="page-context">Discovery</span>
+          <span class="top-bar-sep" aria-hidden="true">/</span>
+          <h1 class="top-bar-title" id="page-title">Collection</h1>
         </div>
-        <div class="top-bar-time" id="clock"></div>
+
+        <div class="top-bar-center">
+          <button class="command-trigger" id="btn-global-search" type="button"
+                  title="Search the Lead Library">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="7" cy="7" r="4.5"></circle><line x1="10.4" y1="10.4" x2="13.5" y2="13.5"></line>
+            </svg>
+            <span class="command-trigger-text">Search leads</span>
+          </button>
+        </div>
+
+        <div class="top-bar-right">
+          <span class="top-bar-stats">Collected: <strong id="stat-collected">0</strong></span>
+
+          <!-- F1 density preference, exposed here. Same localStorage key, no
+               second mechanism; renderer.js only calls window.ztechUI.density. -->
+          <div class="density-toggle" role="group" aria-label="Table row density">
+            <button class="density-btn" type="button" data-density-value="compact" aria-pressed="true">Compact</button>
+            <button class="density-btn" type="button" data-density-value="comfortable" aria-pressed="false">Comfortable</button>
+          </div>
+
+          <time class="top-bar-time" id="clock"></time>
+
+          <button class="btn btn-icon btn-ghost" id="btn-topbar-settings" type="button"
+                  title="Settings" aria-label="Settings">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="2"></circle>
+              <path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6"></path>
+            </svg>
+          </button>
+        </div>
       </header>
 
-      <!-- 视图容器 -->
+      <!-- Storage warning banner -->
+      <div id="storage-warning" class="storage-warning" style="display:none;" role="alert"></div>
+
+      <!-- view container -->
       <div class="view-container">
         <!-- Collection view -->
         <section class="view active" id="view-collector">
           <div class="view-top">
-            <div class="form-item">
-              <label>Keywords</label>
-              <input type="text" id="collect-keywords" placeholder="多个用逗号分隔，如: HVAC Contractors, Plumber">
-            </div>
-            <div class="form-item">
-              <label>Region</label>
-              <input type="text" id="collect-region" placeholder="如: New York,USA">
-            </div>
-            <div class="form-item">
-              <label>Language</label>
-              <select id="collect-lang">
-                <option value="en">English</option>
-                <option value="zh">Chinese</option>
-                <option value="es">Español</option>
-                <option value="fr">Français</option>
-                <option value="de">Deutsch</option>
-                <option value="ar">العربية</option>
-                <option value="pt">Português</option>
-                <option value="ja">日本語</option>
-                <option value="ko">한국어</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Maximum Quantity</label>
-              <input type="number" id="collect-max" value="20" min="1" max="500">
-            </div>
-            <div class="form-item">
-              <label>Title Matching</label>
-              <select id="collect-title-match">
-                <option value="all">Match All</option>
-                <option value="exact">Exact Match</option>
-                <option value="contains">包含Keywords</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Lowest Rating</label>
-              <select id="collect-min-rating">
-                <option value="all">Any</option>
-                <option value="4.5">4.5+</option>
-                <option value="4.0">4.0+</option>
-                <option value="3.5">3.5+</option>
-                <option value="3.0">3.0+</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>Website Filter</label>
-              <select id="collect-website-filter">
-                <option value="all">All</option>
-                <option value="has_website">Has Website</option>
-                <option value="no_website">No Website</option>
-              </select>
+            <!-- F4: page header. The shell already shows Discovery / Collection
+                 in the top bar; this repeats the hierarchy inside the page so
+                 the screen reads as one step of the pipeline, not the product. -->
+            <div class="collect-header">
+              <nav class="collect-breadcrumb" aria-label="Breadcrumb">
+                <span class="bc-item">Discovery</span>
+                <span class="bc-sep" aria-hidden="true">/</span>
+                <span class="bc-item bc-current" aria-current="page">Collection</span>
+              </nav>
+              <div class="collect-header-row">
+                <div class="collect-header-copy">
+                  <h1 class="collect-h1">Collection</h1>
+                  <p class="collect-lede">Find businesses for the prospecting pipeline. Say what you are
+                    looking for and where, then start a run.</p>
+                </div>
+                <button class="btn btn-secondary collect-history-btn" id="btn-collection-history" type="button">Collection History</button>
+              </div>
             </div>
 
-            <div class="form-divider"></div>
-            <div class="switch-grid">
-              <label class="switch-label"><input type="checkbox" id="collect-skip-closed" checked> Skip Permanently Closed</label>
-              <label class="switch-label"><input type="checkbox" id="collect-social" checked> Social Information</label>
-              <label class="switch-label"><input type="checkbox" id="collect-facebook"> Facebook</label>
-              <label class="switch-label"><input type="checkbox" id="collect-instagram"> Instagram</label>
-              <label class="switch-label"><input type="checkbox" id="collect-youtube"> YouTube</label>
-              <label class="switch-label"><input type="checkbox" id="collect-tiktok"> TikTok</label>
-              <label class="switch-label"><input type="checkbox" id="collect-linkedin"> LinkedIn</label>
-              <label class="switch-label"><input type="checkbox" id="collect-place-details"> Detailed Information</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reservation"> Booking Information</label>
-              <label class="switch-label"><input type="checkbox" id="collect-online-order"> Online Ordering</label>
-              <label class="switch-label"><input type="checkbox" id="collect-web-result"> Web Search</label>
-              <label class="switch-label"><input type="checkbox" id="collect-email-verify"> Email Verification</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reviews"> Scrape Reviews</label>
-              <label class="switch-label"><input type="checkbox" id="collect-reviewer-info"> Reviewer Information</label>
-              <label class="switch-label"><input type="checkbox" id="collect-mobile-only"> <span style="color:red;font-weight:bold;">Mobile Numbers Only</span></label>
+            <div class="collect-grid">
+              <div class="collect-main">
+
+                <!-- STEP 1 -->
+                <div class="collect-step">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">1</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">What to find</h2>
+                      <p class="collect-step-hint">One or more business types, separated by commas.</p>
+                    </div>
+                  </div>
+                  <div class="collect-step-body">
+                    <div class="form-item">
+                      <label for="collect-keywords">Keywords</label>
+                      <input type="text" id="collect-keywords" placeholder="Comma separated, e.g. HVAC Contractors, Plumber">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- STEP 2 -->
+                <div class="collect-step">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">2</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">Where to search</h2>
+                      <p class="collect-step-hint">Region is the location the collector sends.</p>
+                    </div>
+                  </div>
+                  <div class="collect-step-body">
+                    <div class="collect-fields">
+                      <div class="form-item">
+                        <label for="collect-region">Region</label>
+                        <input type="text" id="collect-region" placeholder="e.g. New York, USA"
+                               aria-describedby="collect-region-note">
+                      </div>
+                    </div>
+                    <!-- F4: the disabled secondary location field is gone from the
+                         primary workflow. A disabled control still reads as a form
+                         option, so the location scope is stated once, honestly,
+                         instead. -->
+                    <p class="collect-note" id="collect-region-note">Location is currently controlled by the
+                      Region field.</p>
+                  </div>
+                </div>
+
+                <!-- STEP 3 -->
+                <div class="collect-step">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">3</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">Basic options</h2>
+                      <p class="collect-step-hint">Language of the results and how many to collect.</p>
+                    </div>
+                  </div>
+                  <div class="collect-step-body">
+                    <div class="collect-fields collect-fields-2">
+                      <div class="form-item">
+                        <label for="collect-lang">Language</label>
+                        <select id="collect-lang">
+                          <option value="en">English</option>
+                          <option value="zh">Chinese</option>
+                          <option value="es">Español</option>
+                          <option value="fr">Français</option>
+                          <option value="de">Deutsch</option>
+                          <option value="ar">العربية</option>
+                          <option value="pt">Português</option>
+                          <option value="ja">Japanese</option>
+                          <option value="ko">한국어</option>
+                        </select>
+                      </div>
+                      <div class="form-item">
+                        <label for="collect-max">Maximum Quantity</label>
+                        <input type="number" id="collect-max" value="20" min="1" max="500">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- STEP 4 -->
+                <div class="collect-step">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">4</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">Advanced filters</h2>
+                      <p class="collect-step-hint">Optional rules for matching, profiles and reviews.</p>
+                    </div>
+                    <button class="collect-adv-toggle" id="btn-advanced-filters" type="button"
+                            aria-expanded="false" aria-controls="collect-advanced-panel">
+                      <span class="collect-adv-label" id="collect-adv-label">Show filters</span>
+                      <span class="collect-adv-count" id="collect-advanced-count" hidden></span>
+                      <svg class="icon collect-adv-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                        <path d="M4 6l4 4 4-4"></path>
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="collect-step-body collect-adv-panel" id="collect-advanced-panel" hidden>
+
+                    <div class="collect-group">
+                      <h3 class="collect-group-title">Matching</h3>
+                      <div class="collect-fields collect-fields-3">
+                        <div class="form-item">
+                          <label for="collect-title-match">Title Matching</label>
+                          <select id="collect-title-match">
+                            <option value="all">Match All</option>
+                            <option value="exact">Exact Match</option>
+                            <option value="contains">Contains keywords</option>
+                          </select>
+                        </div>
+                        <div class="form-item">
+                          <label for="collect-min-rating">Lowest Rating</label>
+                          <select id="collect-min-rating">
+                            <option value="all">Any</option>
+                            <option value="4.5">4.5+</option>
+                            <option value="4.0">4.0+</option>
+                            <option value="3.5">3.5+</option>
+                            <option value="3.0">3.0+</option>
+                          </select>
+                        </div>
+                        <div class="form-item">
+                          <label for="collect-website-filter">Website Filter</label>
+                          <select id="collect-website-filter">
+                            <option value="all">All</option>
+                            <option value="has_website">Has Website</option>
+                            <option value="no_website">No Website</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="switch-grid">
+                        <label class="switch-label"><input type="checkbox" id="collect-skip-closed" checked> Skip Permanently Closed</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-mobile-only"> <span class="switch-warn">Mobile Numbers Only</span></label>
+                      </div>
+                    </div>
+
+                    <div class="collect-group">
+                      <h3 class="collect-group-title">Business details</h3>
+                      <div class="switch-grid">
+                        <label class="switch-label"><input type="checkbox" id="collect-place-details"> Detailed Information</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-social" checked> Social Information</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-reservation"> Booking Information</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-online-order"> Online Ordering</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-web-result"> Web Search</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-email-verify"> Email Verification</label>
+                      </div>
+                    </div>
+
+                    <div class="collect-group">
+                      <h3 class="collect-group-title">Social networks</h3>
+                      <div class="switch-grid">
+                        <label class="switch-label"><input type="checkbox" id="collect-facebook"> Facebook</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-instagram"> Instagram</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-youtube"> YouTube</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-tiktok"> TikTok</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-linkedin"> LinkedIn</label>
+                      </div>
+                    </div>
+
+                    <div class="collect-group">
+                      <h3 class="collect-group-title">Reviews</h3>
+                      <div class="switch-grid">
+                        <label class="switch-label"><input type="checkbox" id="collect-reviews"> Scrape Reviews</label>
+                        <label class="switch-label"><input type="checkbox" id="collect-reviewer-info"> Reviewer Information</label>
+                      </div>
+                      <div class="collect-fields collect-fields-3">
+                        <div class="form-item">
+                          <label for="collect-max-reviews">Max Reviews per Business</label>
+                          <input type="number" id="collect-max-reviews" value="5" min="1" max="50">
+                        </div>
+                        <div class="form-item">
+                          <label for="collect-review-sort">Review Sort</label>
+                          <select id="collect-review-sort">
+                            <option value="newest">Newest</option>
+                            <option value="highest">Highest Rating</option>
+                            <option value="lowest">Lowest Rating</option>
+                            <option value="most_relevant">Most Relevant</option>
+                          </select>
+                        </div>
+                        <div class="form-item">
+                          <label for="collect-review-keyword">Review Keywords</label>
+                          <input type="text" id="collect-review-keyword" placeholder="Filter reviews containing these keywords">
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
+                <!-- STEP 5 -->
+                <div class="collect-step collect-step-review">
+                  <div class="collect-step-head">
+                    <span class="collect-step-num" aria-hidden="true">5</span>
+                    <div class="collect-step-text">
+                      <h2 class="collect-step-title">Review and collect</h2>
+                      <p class="collect-step-hint">Exactly what will be sent for this run.</p>
+                    </div>
+                  </div>
+                  <div class="collect-step-body">
+                    <dl class="collect-summary" id="collect-summary">
+                      <div class="cs-row"><dt>Keywords</dt><dd id="cs-keywords">Not set</dd></div>
+                      <div class="cs-row"><dt>Location</dt><dd id="cs-location">Not set</dd></div>
+                      <div class="cs-row"><dt>Language</dt><dd id="cs-language">English</dd></div>
+                      <div class="cs-row"><dt>Max</dt><dd id="cs-max">20</dd></div>
+                      <div class="cs-row"><dt>Filters</dt><dd id="cs-filters">0 active</dd></div>
+                    </dl>
+                    <div class="collect-actions">
+                      <button class="btn btn-primary collect-cta" id="btn-start-collect">Start Collection</button>
+                      <button class="btn btn-secondary" id="btn-check-status">Check Status</button>
+                    </div>
+                    <div class="status-bar" id="collect-status" style="display:none;"></div>
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- Right-hand contextual panels -->
+              <aside class="collect-aside" aria-label="Collection context">
+                <section class="collect-panel">
+                  <h2 class="collect-panel-title">Search Preview</h2>
+                  <div class="collect-panel-body" id="collect-search-preview"></div>
+                </section>
+                <section class="collect-panel">
+                  <h2 class="collect-panel-title">Recent Searches</h2>
+                  <div class="collect-panel-body" id="collect-recent-searches"></div>
+                </section>
+                <section class="collect-panel">
+                  <h2 class="collect-panel-title">Tips for better results</h2>
+                  <div class="collect-panel-body">
+                    <ul class="collect-tips">
+                      <li>Pair a trade with a place, for example <strong>plumbers</strong> and <strong>Baku</strong>.</li>
+                      <li>Keep one specific keyword per run so results stay reviewable.</li>
+                      <li>Start with a small quantity until the keyword looks right.</li>
+                      <li>Open advanced filters only when you need a rating or website rule.</li>
+                      <li>Save results to the Lead Library before starting the next run.</li>
+                    </ul>
+                  </div>
+                </section>
+              </aside>
             </div>
 
-            <div class="form-divider"></div>
-            <div class="form-item">
-              <label>Max Reviews per Business</label>
-              <input type="number" id="collect-max-reviews" value="5" min="1" max="50">
+            <!-- Recent Collection Runs: the local job ledger, nothing invented -->
+            <div class="collect-runs">
+              <div class="collect-runs-head">
+                <h2 class="collect-runs-title">Recent Collection Runs</h2>
+              </div>
+              <div class="collect-runs-body" id="collect-recent-runs"></div>
             </div>
-            <div class="form-item">
-              <label>Review Sort</label>
-              <select id="collect-review-sort">
-                <option value="newest">Newest</option>
-                <option value="highest">Highest Rating</option>
-                <option value="lowest">Lowest Rating</option>
-                <option value="most_relevant">Most Relevant</option>
-              </select>
-            </div>
-            <div class="form-item">
-              <label>评论Keywords</label>
-              <input type="text" id="collect-review-keyword" placeholder="筛选包含Keywords的评论">
-            </div>
-
-            <div class="form-actions">
-              <button class="btn btn-primary" id="btn-start-collect">Start Collection</button>
-              <button class="btn btn-secondary" id="btn-check-status">Check Status</button>
-            </div>
-            <div class="status-bar" id="collect-status" style="display:none;"></div>
 
             <div id="collect-result-card" style="display:none; margin-top:16px;">
               <div class="form-divider"></div>
@@ -171,11 +569,26 @@
                 </thead>
                 <tbody id="collect-result-body"></tbody>
               </table>
+              <!-- P1-G: Collection Quality. Read-only, and every number is
+                   derived from data already stored on this device: the job's own
+                   save counters and the leads of this run. It is not a score, a
+                   rank or a probability. -->
+              <div class="collect-quality" id="collect-quality" hidden>
+                <div class="collect-quality-header">
+                  <span class="collect-quality-title">Collection Quality</span>
+                  <span class="lead-detail-badge">From stored data</span>
+                </div>
+                <div class="collect-quality-body" id="collect-quality-body"></div>
+                <div class="collect-quality-body" id="collect-quality-target-body"></div>
+                <p class="lead-detail-quality-note">
+                  Counts come from this run's saved leads and its own save counters. Nothing here is externally verified.
+                </p>
+              </div>
             </div>
           </div>
         </section>
 
-        <!-- Collection History视图 -->
+        <!-- Collection History view -->
         <section class="view" id="view-history">
           <div class="view-top">
             <div class="form-actions">
@@ -202,81 +615,1873 @@
           </div>
         </section>
 
-        <!-- Lead Management视图 -->
+        <!-- Lead Management view -->
         <section class="view" id="view-numbers">
-          <div class="view-top">
-            <div class="form-item">
-              <label>Search</label>
-              <input type="text" id="number-search" placeholder="输入PhoneSearch...">
+          <!-- Frontend 2.0 F3 — Leads workspace.
+               Reuses the F2 shell and the EXISTING lead query contract
+               (collector:get-numbers). Nothing here adds a channel, a query
+               or a second data path.
+
+               Hierarchy: controls -> active filter chips -> dense table ->
+               selection bar -> pagination.
+
+               The filter controls are the SAME <select> elements the pre-F3
+               form used, with the same ids and the same option values, now
+               presented inside compact popovers. The payload builder and every
+               filter-value allowlist are therefore untouched: F3 changes how
+               the filters are presented, never which values are legal. -->
+          <div class="leads-workspace">
+            <!-- 1. search / filter controls -->
+            <div class="leads-controls" id="leads-controls" role="search" aria-label="Lead search and filters">
+              <div class="leads-search">
+                <label class="visually-hidden" for="number-search">Search leads</label>
+                <input type="search" id="number-search" autocomplete="off"
+                       placeholder="Search phone, title, website, email, address, source, keyword">
+              </div>
+
+              <div class="leads-filters" role="group" aria-label="Lead filters">
+                <div class="filter-group" data-filter="status">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-status">
+                    <span class="filter-trigger-label">Status</span>
+                    <span class="filter-trigger-value" data-filter-value-for="status">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-status" hidden>
+                    <label for="number-filter-status">Status</label>
+                    <select id="number-filter-status">
+                      <option value="all">All</option>
+                      <option value="pending">Pending</option>
+                      <option value="sent">Sent</option>
+                      <option value="success">Success</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="qualification">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-qualification">
+                    <span class="filter-trigger-label">Qualification</span>
+                    <span class="filter-trigger-value" data-filter-value-for="qualification">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-qualification" hidden>
+                    <label for="number-filter-qualification">Qualification</label>
+                    <select id="number-filter-qualification">
+                      <option value="all">All</option>
+                      <option value="unqualified">Unqualified</option>
+                      <option value="qualified">Qualified</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- P1-B: derived data-quality filters. Values are computed from
+                     stored lead data on demand; nothing is persisted. -->
+                <div class="filter-group" data-filter="phoneQuality">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-phone">
+                    <span class="filter-trigger-label">Phone</span>
+                    <span class="filter-trigger-value" data-filter-value-for="phoneQuality">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-phone" hidden>
+                    <label for="number-filter-phone-quality">Phone quality</label>
+                    <select id="number-filter-phone-quality">
+                      <option value="all">All</option>
+                      <option value="valid">Valid</option>
+                      <option value="invalid">Invalid</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="emailQuality">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-email">
+                    <span class="filter-trigger-label">Email</span>
+                    <span class="filter-trigger-value" data-filter-value-for="emailQuality">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-email" hidden>
+                    <label for="number-filter-email-quality">Email quality</label>
+                    <select id="number-filter-email-quality">
+                      <option value="all">All</option>
+                      <option value="valid">Valid</option>
+                      <option value="invalid">Invalid</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="websiteQuality">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-website">
+                    <span class="filter-trigger-label">Website</span>
+                    <span class="filter-trigger-value" data-filter-value-for="websiteQuality">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-website" hidden>
+                    <label for="number-filter-website-quality">Website quality</label>
+                    <select id="number-filter-website-quality">
+                      <option value="all">All</option>
+                      <option value="valid">Valid</option>
+                      <option value="invalid">Invalid</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="businessQuality">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-business">
+                    <span class="filter-trigger-label">Business</span>
+                    <span class="filter-trigger-value" data-filter-value-for="businessQuality">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-business" hidden>
+                    <label for="number-filter-business-quality">Business quality</label>
+                    <select id="number-filter-business-quality">
+                      <option value="all">All</option>
+                      <option value="active">Active</option>
+                      <option value="closed">Closed</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="filter-group" data-filter="completeness">
+                  <button class="filter-trigger" type="button" aria-expanded="false" aria-controls="fg-complete">
+                    <span class="filter-trigger-label">Completeness</span>
+                    <span class="filter-trigger-value" data-filter-value-for="completeness">All</span>
+                  </button>
+                  <div class="filter-popover" id="fg-complete" hidden>
+                    <label for="number-filter-completeness">Completeness</label>
+                    <select id="number-filter-completeness">
+                      <option value="all">All</option>
+                      <option value="5">5 of 5</option>
+                      <option value="4">4 of 5</option>
+                      <option value="3">3 of 5</option>
+                      <option value="2">2 of 5</option>
+                      <option value="1">1 of 5</option>
+                      <option value="0">0 of 5</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Intelligence (Research / ICP) belongs to the future
+                     intelligence integration. It is shown so the vocabulary is
+                     visible, and it is GENUINELY disabled: the trigger cannot
+                     be activated, nothing is sent, and the lead row carries no
+                     research or ICP value to filter on. -->
+                <div class="filter-group filter-group-intel" data-filter="intelligence">
+                  <button class="filter-trigger filter-trigger-disabled" type="button" disabled
+                          aria-disabled="true" title="Research and ICP filters are not available yet">
+                    <span class="filter-trigger-label">Intelligence</span>
+                    <span class="filter-trigger-value">Not available</span>
+                  </button>
+                </div>
+
+                <div class="filter-group" data-filter="columns">
+                  <button class="filter-trigger" type="button" id="btn-leads-columns"
+                          aria-expanded="false" aria-controls="fg-columns">
+                    <span class="filter-trigger-label">Columns</span>
+                  </button>
+                  <div class="filter-popover filter-popover-wide" id="fg-columns" hidden>
+                    <div class="filter-popover-title" id="leads-columns-label">Visible columns</div>
+                    <div class="column-toggles" role="group" aria-labelledby="leads-columns-label"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="leads-toolbar">
+                <button class="btn btn-sm" id="btn-save-search" type="button">Save search</button>
+                <button class="btn btn-sm" id="btn-import-numbers">Import Leads</button>
+                <button class="btn btn-sm" id="btn-export-csv">Export CSV</button>
+              </div>
             </div>
-            <div class="form-item">
-              <label>Status筛选</label>
-              <select id="number-filter-status">
-                <option value="all">All</option>
-                <option value="pending">Pending</option>
-                <option value="sent">Sent</option>
-                <option value="success">Success</option>
-                <option value="failed">Failed</option>
-              </select>
+
+            <!-- F6: the list this view was opened from (a saved search or a
+                 segment). Empty and hidden for the plain library. -->
+            <div class="leads-scope" id="leads-scope" role="status" aria-live="polite" hidden></div>
+
+            <!-- 2. active filter chips -->
+            <div class="leads-chips" id="leads-chips" role="status" aria-live="polite" hidden></div>
+
+            <!-- 3. dense lead table -->
+            <div class="leads-table-wrap" id="leads-table-wrap">
+              <table class="data-table leads-table" id="leads-table">
+                <caption class="visually-hidden">Leads. Sorted rows of stored leads with their real stored fields.</caption>
+                <thead>
+                  <tr>
+                    <th class="col-select" scope="col">
+                      <input type="checkbox" id="select-all-numbers" aria-label="Select all leads on this page">
+                    </th>
+                    <th class="col-lead" scope="col" data-sort="title" aria-sort="none">
+                      <button class="th-sort" type="button">Lead</button>
+                    </th>
+                    <th class="col-phone" scope="col" data-sort="phone" aria-sort="none" data-column="phone">
+                      <button class="th-sort" type="button">Phone</button>
+                    </th>
+                    <th class="col-domain" scope="col" data-column="domain">
+                      <button class="th-sort th-sort-none" type="button" disabled>Domain</button>
+                    </th>
+                    <th class="col-email" scope="col" data-column="email">
+                      <button class="th-sort th-sort-none" type="button" disabled>Email</button>
+                    </th>
+                    <th class="col-status" scope="col" data-column="status">
+                      <button class="th-sort th-sort-none" type="button" disabled>Status</button>
+                    </th>
+                    <th class="col-qual" scope="col" data-column="qualification">
+                      <button class="th-sort th-sort-none" type="button" disabled>Qualification</button>
+                    </th>
+                    <th class="col-quality" scope="col" data-column="quality">
+                      <button class="th-sort th-sort-none" type="button" disabled>Data quality</button>
+                    </th>
+                    <th class="col-intel" scope="col" data-column="research">
+                      <button class="th-sort th-sort-none" type="button" disabled>Research</button>
+                    </th>
+                    <th class="col-intel" scope="col" data-column="icp">
+                      <button class="th-sort th-sort-none" type="button" disabled>ICP fit</button>
+                    </th>
+                    <th class="col-source" scope="col" data-sort="source" aria-sort="none" data-column="source">
+                      <button class="th-sort" type="button">Source</button>
+                    </th>
+                    <th class="col-keyword" scope="col" data-sort="keyword" aria-sort="none" data-column="keyword">
+                      <button class="th-sort" type="button">Keywords</button>
+                    </th>
+                    <th class="col-collected" scope="col" data-sort="collectedAt" aria-sort="none" data-column="collected">
+                      <button class="th-sort" type="button">Collected</button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="numbers-table-body"></tbody>
+              </table>
             </div>
-            <div class="form-actions">
-              <button class="btn btn-sm" id="btn-import-numbers">Import Leads</button>
-              <button class="btn btn-sm" id="btn-export-csv">Export CSV</button>
-              <button class="btn btn-sm btn-danger" id="btn-delete-selected">Delete Selected</button>
+
+            <!-- 4. selection / bulk bar. Only actions that already have a real
+                 backend contract appear here: deleting selected leads. -->
+            <div class="leads-selection" id="leads-selection" role="region" aria-label="Selected leads" hidden>
+              <span class="leads-selection-count" id="leads-selection-count">0 selected</span>
+              <div class="leads-selection-actions">
+                <button class="btn btn-sm" id="btn-add-to-segment" type="button">Add to segment</button>
+                <button class="btn btn-sm" id="btn-remove-from-segment" type="button" hidden>Remove from segment</button>
+                <button class="btn btn-sm btn-danger" id="btn-delete-selected">Delete Selected</button>
+                <button class="btn btn-sm btn-secondary" id="btn-clear-selection">Clear selection</button>
+              </div>
+            </div>
+
+            <!-- 5. pagination -->
+            <div class="leads-footer">
+              <div class="pagination" id="numbers-pagination"></div>
+              <div class="leads-range" id="leads-range"></div>
             </div>
           </div>
-          <div class="view-bottom">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th><input type="checkbox" id="select-all-numbers"></th>
-                  <th>Phone</th>
-                  <th>Source</th>
-                  <th>Keywords</th>
-                  <th>Status</th>
-                  <th>采集Time</th>
-                </tr>
-              </thead>
-              <tbody id="numbers-table-body"></tbody>
-            </table>
-            <div class="pagination" id="numbers-pagination"></div>
+          <!-- P1-E: duplicate REVIEW. Read-only: the panel only displays the
+               deterministic classification the main process derived. There is
+               no merge action, no survivor choice and no write of any kind. -->
+          <div class="dup-review" id="dup-review" hidden>
+            <div class="dup-review-header">
+              <span class="dup-review-title">Duplicate review</span>
+              <span class="lead-detail-badge">Read-only</span>
+            </div>
+            <div class="dup-review-controls">
+              <label for="dup-review-rule">Rule</label>
+              <select id="dup-review-rule">
+                <option value="all">All rules</option>
+                <option value="canonicalPhone">Same phone (EXACT)</option>
+                <option value="website-host">Same website host (LIKELY)</option>
+                <option value="email">Same email (LIKELY)</option>
+                <option value="title+address">Same title + address (POSSIBLE)</option>
+              </select>
+              <button type="button" class="btn btn-sm" id="btn-dup-review-open">Review</button>
+              <button type="button" class="btn btn-sm btn-secondary" id="btn-dup-review-close">Close</button>
+            </div>
+            <div class="dup-review-body" id="dup-review-body"></div>
+            <div class="pagination" id="dup-review-pagination"></div>
+            <p class="lead-detail-quality-note">
+              Candidates share one exact key with the lead. Missing data never matches. Nothing is combined here.
+            </p>
+          </div>
+          <!-- Lead Detail (B3) - F5: rendered as a right-side Lead Detail Drawer.
+               The element ids, the single-lead read, the detailLoadSeq race guard and
+               every save path are the same ones the centred modal used; F5 only moves
+               the existing regions into tabs. The old centred modal remains available
+               as a renderer-local fallback (localStorage "ztech.leadDetail.layout" =
+               "modal"). 11 field slots are still rendered by leadDetailTemplate. -->
+          <div class="lead-detail-overlay" id="lead-detail-overlay" hidden data-layout="drawer">
+            <div class="lead-detail-panel lead-drawer" id="lead-drawer" role="dialog" aria-modal="false"
+                 aria-labelledby="lead-drawer-name" aria-describedby="lead-drawer-subtitle" tabindex="-1">
+              <div class="lead-detail-header lead-drawer-header">
+                <div class="lead-drawer-toolbar">
+                  <div class="lead-drawer-nav" role="group" aria-label="Lead navigation">
+                    <button type="button" class="lead-drawer-icon-btn" id="btn-lead-drawer-prev" aria-label="Previous lead on this page" title="Previous lead on this page" disabled>&#8249;</button>
+                    <button type="button" class="lead-drawer-icon-btn" id="btn-lead-drawer-next" aria-label="Next lead on this page" title="Next lead on this page" disabled>&#8250;</button>
+                    <span class="lead-drawer-position" id="lead-drawer-position" aria-live="polite"></span>
+                  </div>
+                  <span class="lead-detail-title">Lead Detail</span>
+                  <button type="button" class="lead-drawer-icon-btn lead-drawer-close" id="btn-close-lead-detail" aria-label="Close lead detail" title="Close (Esc)">&#215;</button>
+                </div>
+                <h2 class="lead-drawer-name" id="lead-drawer-name">Lead</h2>
+                <p class="lead-drawer-subtitle" id="lead-drawer-subtitle"></p>
+                <!-- Header contact line: only values the stored lead actually has get an
+                     action. Website opening goes through renderWebsite (http/https only,
+                     target=_blank rel=noopener -> main's setWindowOpenHandler). -->
+                <div class="lead-drawer-contact" id="lead-drawer-contact"></div>
+                <div class="lead-drawer-badges" id="lead-drawer-badges"></div>
+                <div class="lead-drawer-tabs" role="tablist" aria-label="Lead sections" id="lead-drawer-tabs">
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-overview" data-tab="overview" aria-controls="lead-panel-overview" aria-selected="true" tabindex="0">Overview</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-research" data-tab="research" aria-controls="lead-panel-research" aria-selected="false" tabindex="-1">Research</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-opportunity" data-tab="opportunity" aria-controls="lead-panel-opportunity" aria-selected="false" tabindex="-1">Opportunity Intelligence</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-evidence" data-tab="evidence" aria-controls="lead-panel-evidence" aria-selected="false" tabindex="-1">Evidence</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-icp" data-tab="icp" aria-controls="lead-panel-icp" aria-selected="false" tabindex="-1">ICP</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-pitch" data-tab="pitch" aria-controls="lead-panel-pitch" aria-selected="false" tabindex="-1">Pitch</button>
+                  <button type="button" role="tab" class="lead-drawer-tab" id="lead-tab-timeline" data-tab="timeline" aria-controls="lead-panel-timeline" aria-selected="false" tabindex="-1">Timeline</button>
+                </div>
+              </div>
+              <div class="lead-drawer-scroll" id="lead-drawer-scroll">
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-overview" aria-labelledby="lead-tab-overview" tabindex="0">
+                  <!-- Prospecting progress: each step reports its real state only. -->
+                  <div class="lead-drawer-section">
+                    <h3 class="lead-drawer-section-title">Prospecting progress</h3>
+                    <ol class="lead-drawer-pipeline" id="lead-drawer-pipeline"></ol>
+                  </div>
+                  <div class="lead-drawer-section">
+                    <h3 class="lead-drawer-section-title">Contact</h3>
+                    <div class="lead-drawer-fields" id="lead-drawer-contact-fields"></div>
+                  </div>
+                  <div class="lead-drawer-section">
+                    <h3 class="lead-drawer-section-title">Business</h3>
+                    <div class="lead-drawer-fields" id="lead-drawer-business-fields"></div>
+                  </div>
+                  <div class="lead-drawer-section lead-drawer-section-edit">
+                    <h3 class="lead-drawer-section-title">Qualification</h3>
+
+                    <!-- B6 user-owned fields. Never written by collection, import or a
+                         provider: the Lead Profile Save button is the only writer, via
+                         collector:update-lead. No autosave. -->
+                    <div class="lead-detail-b6" id="lead-detail-b6" hidden>
+                      <div class="form-group">
+                        <label for="lead-detail-qualification">Qualification</label>
+                        <select id="lead-detail-qualification">
+                          <option value="unqualified">Unqualified</option>
+                          <option value="qualified">Qualified</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label for="lead-detail-tag-input">Tags</label>
+                        <div class="lead-tag-list" id="lead-detail-tag-list"></div>
+                        <div class="lead-tag-add">
+                          <input type="text" id="lead-detail-tag-input" maxlength="50" placeholder="Add a tag">
+                          <button type="button" class="btn btn-sm" id="btn-lead-detail-add-tag">Add tag</button>
+                        </div>
+                      </div>
+                      <div class="form-group">
+                        <label for="lead-detail-notes">Notes</label>
+                        <textarea id="lead-detail-notes" rows="4" maxlength="5000" placeholder="Notes"></textarea>
+                      </div>
+                      <div class="form-actions">
+                        <button type="button" class="btn btn-sm" id="btn-save-lead-detail">Save</button>
+                      </div>
+                    </div>
+                    <p class="lead-drawer-save-state" id="lead-drawer-save-state" role="status" aria-live="polite"></p>
+                  </div>
+                  <div class="lead-drawer-section lead-drawer-section-edit">
+                    <!-- P1-A: read-only data-quality signals derived on this device.
+                         No value here is persisted, and none of it is a third-party
+                         verification claim. -->
+                    <div class="lead-detail-quality" id="lead-detail-quality" hidden>
+                      <div class="lead-detail-quality-header">
+                        <span class="lead-detail-quality-title">Data Quality</span>
+                        <span class="lead-detail-badge">Derived locally</span>
+                      </div>
+                      <div class="lead-detail-quality-body" id="lead-detail-quality-body"></div>
+                      <!-- P1-C: user-provided statuses. A user assertion about this
+                           lead, never a third-party verification. -->
+                      <div class="lead-user-status" id="lead-user-status" hidden>
+                        <div class="lead-detail-quality-header">
+                          <span class="lead-detail-quality-title">Your status</span>
+                          <span class="lead-detail-badge">User-provided</span>
+                        </div>
+                        <div class="form-group">
+                          <label for="lead-status-phone">Phone</label>
+                          <select id="lead-status-phone" data-status-field="phoneStatus">
+                            <option value="unknown">Unknown</option>
+                            <option value="verified">Verified</option>
+                            <option value="unverified">Unverified</option>
+                            <option value="invalid">Invalid</option>
+                          </select>
+                        </div>
+                        <div class="form-group">
+                          <label for="lead-status-email">Email</label>
+                          <select id="lead-status-email" data-status-field="emailStatus">
+                            <option value="unknown">Unknown</option>
+                            <option value="verified">Verified</option>
+                            <option value="unverified">Unverified</option>
+                            <option value="risky">Risky</option>
+                          </select>
+                        </div>
+                        <div class="form-group">
+                          <label for="lead-status-website">Website</label>
+                          <select id="lead-status-website" data-status-field="websiteStatus">
+                            <option value="unknown">Unknown</option>
+                            <option value="live">Live</option>
+                            <option value="dead">Dead</option>
+                            <option value="redirect">Redirect</option>
+                          </select>
+                        </div>
+                        <div class="form-group">
+                          <label for="lead-status-business">Business</label>
+                          <select id="lead-status-business" data-status-field="businessStatus">
+                            <option value="unknown">Unknown</option>
+                            <option value="active">Active</option>
+                            <option value="closed">Closed</option>
+                          </select>
+                        </div>
+                        <div class="form-actions">
+                          <button type="button" class="btn btn-sm" id="btn-save-lead-status">Save status</button>
+                        </div>
+                        <p class="lead-detail-quality-note">
+                          Your status is a note you make about this lead. It is not checked against any external service.
+                        </p>
+                      </div>
+                      <p class="lead-detail-quality-note">
+                        Signals are computed on this device from the stored lead data. They are not third-party verification.
+                      </p>
+                    </div>
+                    <p class="lead-drawer-save-state" id="lead-drawer-status-save-state" role="status" aria-live="polite"></p>
+                  </div>
+                  <div class="lead-drawer-section">
+                    <!-- P1-D: the company foundation, read-only. companyKey is a
+                         deterministic grouping key derived on read (website host,
+                         else title + address); companyId is a nullable system pointer.
+                         No company entity, no merge action, no company search. -->
+                    <div class="lead-detail-company" id="lead-detail-company" hidden>
+                      <div class="lead-detail-quality-header">
+                        <span class="lead-detail-quality-title">Company</span>
+                        <span class="lead-detail-badge">Derived locally</span>
+                      </div>
+                      <div class="lead-detail-quality-body" id="lead-detail-company-body"></div>
+                      <p class="lead-detail-quality-note">
+                        Leads sharing a company key belong to the same website host. Nothing is merged or verified here.
+                      </p>
+                    </div>
+                  </div>
+                  <!-- F26.5: consent, do-not-contact and where the contact details came from.
+                       Filled by the F26.5 renderer block with textContent only. -->
+                  <div class="lead-drawer-section lead-trust" id="lead-drawer-trust" aria-live="polite"></div>
+                  <!-- F29: the suggested category of the lead's newest verified reply (subject/headers only).
+                       Filled by the F29 renderer block with textContent only. -->
+                  <div class="lead-drawer-section f29-reply-route" id="lead-drawer-reply-route" aria-live="polite"></div>
+                  <!-- F28: the lead's follow-up sequence. Filled by the F28 renderer block with textContent only. -->
+                  <div class="lead-drawer-section f28-sequence" id="lead-drawer-sequence" aria-live="polite"></div>
+                  <!-- The complete stored record, rendered by the unchanged B3 template. -->
+                  <details class="lead-drawer-section lead-drawer-record">
+                    <summary class="lead-drawer-section-title">All stored fields</summary>
+                    <div class="lead-detail-body" id="lead-detail-body"></div>
+                  </details>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-research" aria-labelledby="lead-tab-research" tabindex="0" hidden>
+                  <div class="lead-drawer-section">
+                    <h3 class="lead-drawer-section-title">Research summary</h3>
+                    <div class="lead-drawer-fields" id="lead-drawer-research-summary"></div>
+                  </div>
+                  <div class="lead-drawer-section">
+                    <!-- Zuni-SEO website research. Availability is one of nine distinct
+                         states; every value shown here is third-party text and is
+                         rendered as untrusted text, never as instructions. Refresh forces a
+                         new run; Import opens a file dialog owned by main. -->
+                    <div class="lead-detail-research" id="lead-detail-research" hidden>
+                      <div class="lead-detail-research-header">
+                        <span class="lead-detail-research-title">Website Research</span>
+                        <span class="lead-detail-badge">Zuni-SEO</span>
+                      </div>
+                      <div class="lead-detail-research-body" id="lead-detail-research-body">
+                        <p class="lead-detail-research-empty">Not checked yet.</p>
+                      </div>
+                      <div class="lead-detail-research-actions">
+                        <button type="button" class="btn btn-sm" id="btn-research-refresh">Refresh research</button>
+                        <button type="button" class="btn btn-sm btn-secondary" id="btn-research-import">Import Zuni-SEO file</button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-opportunity" aria-labelledby="lead-tab-opportunity" tabindex="0" hidden>
+                  <!-- Phase I2: Opportunity Intelligence. A SEPARATE intelligence
+                       system from Zuni-SEO. It answers a different question
+                       (multi-entity, opportunities, competitors, ads, social, timeline)
+                       and has its own channels, store and contract (IntelligenceReport).
+                       The renderer CANNOT supply a URL, host, endpoint or credential.
+                       The renderer CANNOT trigger a send, approve, schedule or campaign.
+                       The only write is REQUEST: asking main to run OI for a lead,
+                       where identity comes from the main store, never the renderer. -->
+                  <div class="lead-drawer-section" id="lead-drawer-opportunity" aria-live="polite"></div>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-evidence" aria-labelledby="lead-tab-evidence" tabindex="0" hidden>
+                  <div class="lead-drawer-section" id="lead-drawer-evidence" aria-live="polite"></div>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-icp" aria-labelledby="lead-tab-icp" tabindex="0" hidden>
+                  <div class="lead-drawer-section" id="lead-drawer-icp"></div>
+                </section>
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-pitch" aria-labelledby="lead-tab-pitch" tabindex="0" hidden>
+                  <!-- F11 Outreach: the real A10 pitch draft, its evidence-backed
+                       observations, unsupported-claim warnings, the Outreach Gate
+                       result and the human approval state. Rendered by the F11
+                       block in renderer.js over window.ztechLeadIntel. This panel
+                       is read/edit/approve only: no outbound action of any kind
+                       is reachable from it. -->
+                  <div class="lead-drawer-section" id="lead-drawer-pitch" aria-live="polite"></div>
+                  <!-- I7: Opportunity context, review only. Collapsed by default and loaded only
+                       when expanded. Built by the I7 block in renderer.js with textContent only.
+                       Nothing in it is stored, approved or delivered. -->
+                  <div class="lead-drawer-section" id="lead-drawer-oi-context" aria-live="polite"></div>
+                </section>
+                <!-- I6 Timeline: a read-only, newest-first list built in main from ZTech's own
+                     records. Rendered by the I6 block in renderer.js with textContent only. It
+                     writes nothing and contacts no provider. -->
+                <section class="lead-drawer-panel" role="tabpanel" id="lead-panel-timeline" aria-labelledby="lead-tab-timeline" tabindex="0" hidden>
+                  <div class="lead-drawer-section" id="lead-drawer-timeline" aria-live="polite"></div>
+                </section>
+              </div>
+            </div>
           </div>
         </section>
 
-        <!-- Settings视图 -->
-        <section class="view" id="view-settings">
-          <div class="view-top">
-            <div class="form-item">
-              <label>CoreClaw API Key</label>
-              <div class="input-with-btn">
-                <input type="password" id="settings-apikey" placeholder="如: scraper_api_xxxxx">
-                <button class="btn btn-secondary btn-sm" id="btn-test-apikey">Test Connection</button>
+        <!-- F6 Lists: Saved Searches. A saved search stores a supported Leads
+             query definition (search, filters, sort) and no leads; running it
+             re-evaluates it against the current library in the Leads view. -->
+        <section class="view" id="view-searches">
+          <div class="lists-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Saved Searches</h2>
+                <p class="lists-subtitle">Saved Leads filters. Running one re-evaluates it against the current lead library; no leads are stored in it.</p>
+              </div>
+              <div class="lists-actions">
+                <label class="visually-hidden" for="saved-search-filter">Search saved searches</label>
+                <input type="search" id="saved-search-filter" autocomplete="off" placeholder="Search saved searches">
+                <button class="btn btn-sm btn-primary" id="btn-new-saved-search" type="button">New saved search</button>
               </div>
             </div>
-            <div class="form-item">
-              <label>Task Flow Key</label>
-              <div class="input-with-btn">
-                <input type="text" id="settings-task-key" placeholder="如: 01KWA7xxxx">
-                <button class="btn btn-secondary btn-sm" id="btn-test-taskkey">Test Connection</button>
-              </div>
-            </div>
-            <div class="form-item">
-              <label>Network Proxy</label>
-              <div class="input-with-btn">
-                <input type="text" id="settings-proxy-url" placeholder="如: http://127.0.0.1:7890 或留空Auto Detect">
-                <button class="btn btn-secondary btn-sm" id="btn-detect-proxy">Auto Detect</button>
-              </div>
-            </div>
-            <div class="form-actions">
-              <button class="btn btn-primary" id="btn-save-settings">保存Settings</button>
-              <button class="btn btn-secondary" id="btn-export-logs">Export Logs</button>
+            <div class="lists-count" id="saved-search-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table" id="saved-search-table">
+                <caption class="visually-hidden">Saved searches with their stored definition.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Name</th>
+                    <th scope="col">Definition</th>
+                    <th scope="col" class="lists-col-sort">Sort</th>
+                    <th scope="col" class="lists-col-updated">Updated</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="saved-search-body"></tbody>
+              </table>
             </div>
           </div>
-          <div class="view-bottom"></div>
+        </section>
+
+        <!-- F6 Lists: Segments. Static segments store explicit lead ids;
+             dynamic segments store rules evaluated by the Leads query layer. -->
+        <section class="view" id="view-segments">
+          <div class="lists-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Segments</h2>
+                <p class="lists-subtitle">Static segments hold the leads you add to them. Dynamic segments hold rules and match the current lead library.</p>
+              </div>
+              <div class="lists-actions">
+                <label class="visually-hidden" for="segment-filter">Search segments</label>
+                <input type="search" id="segment-filter" autocomplete="off" placeholder="Search segments">
+                <button class="btn btn-sm btn-primary" id="btn-new-segment" type="button">New segment</button>
+              </div>
+            </div>
+            <div class="lists-count" id="segment-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table" id="segment-table">
+                <caption class="visually-hidden">Segments with their type and current member count.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Name</th>
+                    <th scope="col" class="lists-col-type">Type</th>
+                    <th scope="col" class="lists-col-members">Members</th>
+                    <th scope="col">Definition</th>
+                    <th scope="col" class="lists-col-updated">Updated</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="segment-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- F7 Research: Research Queue. Rows are the existing research engine's own
+             per-lead view (prospect-research:list); nothing here is a second
+             research state, queue or scheduler. -->
+        <section class="view" id="view-queue">
+          <div class="lists-workspace research-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Research</h2>
+                <p class="lists-subtitle">Leads whose research has not run, is running, needs another run, or is older than the freshness policy.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Research workspaces">
+                <button type="button" class="research-tab" data-research-tab="queue" aria-current="page">Queue</button>
+                <button type="button" class="research-tab" data-research-tab="completed">Completed</button>
+              </div>
+            </div>
+            <div class="research-provider" id="research-queue-provider" role="status" aria-live="polite"></div>
+            <div class="research-controls" role="search" aria-label="Research Queue search and filters">
+              <label class="visually-hidden" for="research-queue-search">Search research queue</label>
+              <input type="search" id="research-queue-search" autocomplete="off" placeholder="Search lead, phone or website">
+              <label class="visually-hidden" for="research-queue-state">Research state</label>
+              <select id="research-queue-state">
+                <option value="all">All states</option>
+                <option value="not_checked">Not checked</option>
+                <option value="pending">Pending</option>
+                <option value="failed">Failed</option>
+                <option value="site_unreachable">Site unreachable</option>
+                <option value="stale">Stale</option>
+              </select>
+              <label class="visually-hidden" for="research-queue-evidence">Evidence</label>
+              <select id="research-queue-evidence">
+                <option value="all">Any evidence</option>
+                <option value="absent">No evidence</option>
+                <option value="partial">Partial evidence</option>
+                <option value="complete">Complete evidence</option>
+                <option value="stale">Stale evidence</option>
+              </select>
+              <label class="lists-check research-toggle" for="research-queue-nowebsite">
+                <input type="checkbox" id="research-queue-nowebsite"> Show leads without a website
+              </label>
+              <button type="button" class="btn btn-sm btn-secondary" id="research-queue-refresh">Refresh</button>
+            </div>
+            <div class="lists-count" id="research-queue-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table research-table" id="research-queue-table">
+                <caption class="visually-hidden">Research Queue: leads with their research state and evidence.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Lead</th>
+                    <th scope="col">Website</th>
+                    <th scope="col">Research state</th>
+                    <th scope="col">Evidence</th>
+                    <th scope="col" class="lists-col-updated">Updated</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="research-queue-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- F7 Research: Completed. Rows are the existing research engine's own
+             per-lead view (prospect-research:list); nothing here is a second
+             research state, queue or scheduler. -->
+        <section class="view" id="view-completed">
+          <div class="lists-workspace research-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Research</h2>
+                <p class="lists-subtitle">Research that reached a recorded result. Freshness and evidence come from the stored research record.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Research workspaces">
+                <button type="button" class="research-tab" data-research-tab="queue">Queue</button>
+                <button type="button" class="research-tab" data-research-tab="completed" aria-current="page">Completed</button>
+              </div>
+            </div>
+            <div class="research-provider" id="research-completed-provider" role="status" aria-live="polite"></div>
+            <div class="research-controls" role="search" aria-label="Completed search and filters">
+              <label class="visually-hidden" for="research-completed-search">Search completed</label>
+              <input type="search" id="research-completed-search" autocomplete="off" placeholder="Search lead, phone or website">
+              <label class="visually-hidden" for="research-completed-state">Research state</label>
+              <select id="research-completed-state">
+                <option value="all">All states</option>
+                <option value="complete">Complete</option>
+                <option value="partial">Partial</option>
+                <option value="no_crawlable_content">No crawlable content</option>
+                <option value="no_website">Website not available</option>
+              </select>
+              <label class="visually-hidden" for="research-completed-evidence">Evidence</label>
+              <select id="research-completed-evidence">
+                <option value="all">Any evidence</option>
+                <option value="absent">No evidence</option>
+                <option value="partial">Partial evidence</option>
+                <option value="complete">Complete evidence</option>
+                <option value="stale">Stale evidence</option>
+              </select>
+              <button type="button" class="btn btn-sm btn-secondary" id="research-completed-refresh">Refresh</button>
+            </div>
+            <div class="lists-count" id="research-completed-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table research-table" id="research-completed-table">
+                <caption class="visually-hidden">Completed: leads with their research state and evidence.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Lead</th>
+                    <th scope="col">Website</th>
+                    <th scope="col">Research state</th>
+                    <th scope="col">Evidence</th>
+                    <th scope="col">Freshness</th>
+                    <th scope="col" class="lists-col-updated">Updated</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="research-completed-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- F8 Intelligence: ICP. Rows come from intelligence:icp, which runs the
+             Lead Intelligence ICP contract (targetToIcp + evaluateIcpFit) over a
+             stored Target and the stored leads. fit / not_fit / unknown only. -->
+        <section class="view" id="view-icp">
+          <div class="lists-workspace intel-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Intelligence</h2>
+                <p class="lists-subtitle">ICP fit of each lead against one of your Targets: fit, not fit or unknown, with the reason for every criterion. There is no score.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Intelligence workspaces">
+                <button type="button" class="research-tab intel-tab" data-intel-tab="icp" aria-current="page">ICP</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="signals">Signals</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="opportunities">Opportunities</button>
+              </div>
+            </div>
+            <div class="research-controls" role="search" aria-label="ICP fit filters">
+              <label class="visually-hidden" for="icp-target">Target</label>
+              <select id="icp-target"></select>
+              <label class="visually-hidden" for="icp-fit">Fit</label>
+              <select id="icp-fit">
+                <option value="all">Any fit</option>
+                <option value="fit">Fit</option>
+                <option value="not_fit">Not fit</option>
+                <option value="unknown">Unknown</option>
+              </select>
+              <label class="visually-hidden" for="icp-search">Search leads</label>
+              <input type="search" id="icp-search" autocomplete="off" placeholder="Search lead, phone or website">
+              <button type="button" class="btn btn-sm btn-secondary" id="icp-refresh">Refresh</button>
+            </div>
+            <div class="intel-definition" id="icp-definition" role="status" aria-live="polite"></div>
+            <div class="lists-count" id="icp-count" role="status" aria-live="polite"></div>
+            <div class="lists-table-wrap">
+              <table class="data-table lists-table intel-table" id="icp-table">
+                <caption class="visually-hidden">ICP fit of each lead against the selected Target.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="lists-col-name">Lead</th>
+                    <th scope="col">Fit</th>
+                    <th scope="col">Criteria</th>
+                    <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="icp-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- F8 Intelligence: Signals. The Lead Intelligence contract defines four
+             signal types derived from two measured research runs; none can be
+             derived from this build's research data (see the panel text). -->
+        <section class="view" id="view-signals">
+          <div class="lists-workspace intel-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Intelligence</h2>
+                <p class="lists-subtitle">Signals are changes observed between two measured research runs of the same lead.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Intelligence workspaces">
+                <button type="button" class="research-tab intel-tab" data-intel-tab="icp">ICP</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="signals" aria-current="page">Signals</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="opportunities">Opportunities</button>
+              </div>
+            </div>
+            <div class="intel-panel" id="signals-panel"></div>
+          </div>
+        </section>
+
+        <!-- F8 Intelligence: Opportunities. No opportunity contract exists in this
+             build; the panel says so and points to the real audit findings. -->
+        <section class="view" id="view-opportunities">
+          <div class="lists-workspace intel-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Intelligence</h2>
+                <p class="lists-subtitle">Opportunities must be backed by research evidence.</p>
+              </div>
+              <div class="research-tabs" role="group" aria-label="Intelligence workspaces">
+                <button type="button" class="research-tab intel-tab" data-intel-tab="icp">ICP</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="signals">Signals</button>
+                <button type="button" class="research-tab intel-tab" data-intel-tab="opportunities" aria-current="page">Opportunities</button>
+              </div>
+            </div>
+            <div class="intel-panel" id="opportunities-panel"></div>
+          </div>
+        </section>
+
+        <!-- P1-F Target Builder - F10 Targets workspace: user-owned, reusable ICP
+             definitions over the existing targets:list / targets:save /
+             targets:set-status contract. Required and optional fields are
+             PROSPECTING CRITERIA, not save gates: no lead is ever rejected from
+             storage because one of them is missing. "Use for collection" only
+             pre-fills existing collector inputs. There is no delete, no match
+             count and no score. -->
+        <!-- F16 ready-workspace-view: the derived Ready queue.
+
+             It lists exactly what window.ztechLeadIntel.outreach.ready returns: the pitches
+             whose OutreachGate verdict is `allowed` at the moment of this read. Nothing is
+             recomputed here, no rule is duplicated, and nothing is invented: if the gate
+             blocks a pitch it simply is not in the list.
+
+             The envelope has no total, because an exact count would need every persisted
+             pitch gate-evaluated. The footer therefore says what is actually true - how
+             many candidates were scanned, and whether any remain - and navigates by the
+             cursor the backend returned.
+
+             Channel-neutral: the delivery line reports the capability the backend reports,
+             whatever channel it names. There is no send, schedule, queue or retry here. -->
+        <section class="view" id="view-ready">
+          <div class="lists-workspace ready-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Ready</h2>
+                <p class="lists-subtitle">Prospects the Outreach Gate allows right now. Attempting a send needs your confirmation and a configured provider; no live provider is configured, so nothing has left this machine.</p>
+              </div>
+              <div class="lists-actions">
+                <button class="btn btn-sm" id="ready-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="ready-table-wrap">
+              <table class="data-table ready-table">
+                <thead>
+                  <tr>
+                    <th class="col-lead">Lead</th>
+                    <th class="col-readiness">Readiness</th>
+                    <th class="col-contact">Contact</th>
+                    <th class="col-pitch">Pitch</th>
+                    <th class="col-research">Research</th>
+                    <th class="col-icp">ICP</th>
+                    <th class="col-delivery">Delivery</th>
+                    <th class="col-updated">Updated</th>
+                    <th class="col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="ready-body"></tbody>
+              </table>
+            </div>
+            <div class="lists-footer ready-footer">
+              <div class="ready-range" id="ready-range"></div>
+              <div class="ready-pager">
+                <button class="btn btn-sm" id="ready-prev" type="button">Previous</button>
+                <button class="btn btn-sm" id="ready-next" type="button">Next</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- F15 activity-workspace-view: the read-only outreach activity history.
+
+             It lists window.ztechLeadIntel.outreach.activity - the canonical persisted
+             ledger - newest first, with honest loading, empty and error states. There is
+             no create, edit, send, campaign or metric control anywhere in it: the renderer
+             cannot write activity at all, because no such channel exists.
+
+             Every row is a fact the backend recorded at a real transition. An event type
+             it does not recognise is never silently relabelled into something that
+             sounds like communication; it renders as an unrecognised type, because
+             hiding a row would be less honest than showing a raw label. -->
+        <section class="view" id="view-activity">
+          <div class="lists-workspace activity-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Activity</h2>
+                <p class="lists-subtitle">Outreach actions recorded by the app, newest first. Attempting a send needs your confirmation and a configured provider; no live email or WhatsApp provider is configured, so every attempt so far was refused before anything left this machine.</p>
+              </div>
+              <div class="lists-actions">
+                <button class="btn btn-sm" id="activity-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="activity-table-wrap">
+              <table class="data-table activity-table">
+                <thead>
+                  <tr>
+                    <th class="col-when">When</th>
+                    <th class="col-lead">Lead</th>
+                    <th class="col-event">Event</th>
+                    <th class="col-pitch">Pitch</th>
+                    <th class="col-detail">Detail</th>
+                  </tr>
+                </thead>
+                <tbody id="activity-body"></tbody>
+              </table>
+            </div>
+            <div class="lists-footer activity-footer">
+              <div class="activity-range" id="activity-range"></div>
+              <div class="activity-pager">
+                <button class="btn btn-sm" id="activity-prev" type="button">Previous</button>
+                <button class="btn btn-sm" id="activity-next" type="button">Next</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- F12 outreach-workspace-view: the read-only Outreach workspace.
+
+             It lists the PERSISTED pitch drafts through window.ztechLeadIntel.outreach.list
+             and shows each pitch's real status plus the real Outreach Gate result returned
+             by window.ztechLeadIntel.outreach.gate. Nothing here is recomputed in the
+             renderer, no value is invented, and there is no send, approve, generate, save,
+             campaign or activity control: the workspace is an operational READ of existing
+             state. Opening a lead reuses the existing F5 drawer.
+
+             A "gate" filter is client-side over the loaded page only, because a gate
+             decision is computed by OutreachGate and is never persisted, so it cannot be
+             filtered in the store. The range line says so explicitly. -->
+        <section class="view" id="view-outreach">
+          <div class="lists-workspace outreach-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Outreach</h2>
+                <p class="lists-subtitle">Every stored pitch draft with its real status and the real Outreach Gate result. Read only: nothing here can send, approve or generate.</p>
+              </div>
+              <div class="lists-actions">
+                <label class="visually-hidden" for="outreach-status-filter">Filter by pitch status</label>
+                <select id="outreach-status-filter" class="outreach-select">
+                  <option value="">All pitch statuses</option>
+                  <option value="draft">Draft</option>
+                  <option value="insufficient_evidence">Insufficient evidence</option>
+                  <option value="needs_revision">Needs revision</option>
+                </select>
+                <label class="visually-hidden" for="outreach-gate-filter">Filter by gate decision</label>
+                <select id="outreach-gate-filter" class="outreach-select">
+                  <option value="">All gate decisions</option>
+                  <option value="allowed">Allowed</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+                <button class="btn btn-sm" id="outreach-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="outreach-notice" id="outreach-notice" hidden></div>
+            <div class="outreach-table-wrap">
+              <table class="data-table outreach-table">
+                <thead>
+                  <tr>
+                    <th class="col-lead">Lead</th>
+                    <th class="col-status">Pitch status</th>
+                    <th class="col-gate">Gate</th>
+                    <th class="col-readiness">Readiness</th>
+                    <th class="col-subject">Subject</th>
+                    <th class="col-research">Research</th>
+                    <th class="col-icp">ICP</th>
+                    <th class="col-updated">Updated</th>
+                    <th class="col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="outreach-body"></tbody>
+              </table>
+            </div>
+            <div class="lists-footer outreach-footer">
+              <div class="outreach-range" id="outreach-range"></div>
+              <div class="outreach-pager">
+                <button class="btn btn-sm" id="outreach-prev" type="button">Previous</button>
+                <button class="btn btn-sm" id="outreach-next" type="button">Next</button>
+              </div>
+            </div>
+            <!-- F28: open follow-up sequences and the "Pause all follow-ups" switch. Filled by the F28
+                 renderer block (textContent only); the pitch table above stays read-only. -->
+            <div class="f28-followups" id="f28-followups" aria-live="polite"></div>
+            <!-- F29: verified replies waiting for a review, with a suggested category. Filled by the F29
+                 renderer block (textContent only); no static control is added here. -->
+            <div class="f29-replies" id="f29-replies" aria-live="polite"></div>
+          </div>
+        </section>
+
+
+        <section class="view" id="view-targets">
+          <div class="lists-workspace targets-workspace">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Targets</h2>
+                <p class="lists-subtitle">Reusable ICP definitions</p>
+              </div>
+              <div class="lists-actions">
+                <label class="visually-hidden" for="target-search">Search targets</label>
+                <input type="search" id="target-search" autocomplete="off" placeholder="Search name, industry, type or location">
+                <button type="button" class="btn btn-sm btn-primary" id="btn-target-new">New Target</button>
+              </div>
+            </div>
+            <div class="targets-feedback" id="target-feedback" role="status" aria-live="polite" hidden>
+              <span id="target-feedback-text"></span>
+              <button type="button" class="btn btn-sm btn-ghost" id="btn-target-feedback-dismiss" aria-label="Dismiss confirmation">Dismiss</button>
+            </div>
+            <div class="targets-layout">
+              <div class="targets-main">
+                <div class="lists-count" id="target-count" role="status" aria-live="polite"></div>
+                <div class="lists-table-wrap">
+                  <table class="data-table lists-table targets-table" id="target-table">
+                    <caption class="visually-hidden">Saved Targets: name, criteria, status and last update.</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" class="lists-col-name">Name</th>
+                        <th scope="col">Criteria</th>
+                        <th scope="col">Status</th>
+                        <th scope="col" class="lists-col-updated">Updated</th>
+                        <th scope="col" class="lists-col-actions"><span class="visually-hidden">Actions</span></th>
+                      </tr>
+                    </thead>
+                    <tbody id="target-list"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <aside class="targets-editor" id="target-editor" aria-labelledby="target-editor-title" hidden>
+                <div class="targets-editor-head">
+                  <h3 class="targets-editor-title" id="target-editor-title">New Target</h3>
+                </div>
+                <div class="targets-editor-body">
+                  <div class="targets-field">
+                    <label for="target-name">Name</label>
+                    <input type="text" id="target-name" maxlength="120" autocomplete="off" placeholder="e.g. Baku dental clinics" aria-describedby="target-name-hint">
+                    <p class="targets-hint" id="target-name-hint">Required. Up to 120 characters.</p>
+                  </div>
+                  <div class="targets-field">
+                    <label for="target-industry">Industry</label>
+                    <input type="text" id="target-industry" maxlength="120" autocomplete="off" placeholder="e.g. Dental" aria-describedby="target-industry-hint">
+                    <p class="targets-hint" id="target-industry-hint">Up to 120 characters.</p>
+                    <p class="targets-note" data-note="industry">Recorded; ICP reports this as Unknown because leads currently do not carry industry data.</p>
+                  </div>
+                  <div class="targets-field">
+                    <label for="target-business-types">Business types</label>
+                    <input type="text" id="target-business-types" autocomplete="off" placeholder="Comma separated, e.g. Dentist, Dental clinic" aria-describedby="target-business-types-hint">
+                    <p class="targets-hint" id="target-business-types-hint" data-terms-for="target-business-types">Comma separated. Up to 20 terms, 50 characters each.</p>
+                    <p class="targets-note" data-note="businessTypes">Recorded; ICP reports this as Unknown because leads currently do not carry business-type data.</p>
+                  </div>
+                  <div class="targets-field">
+                    <label for="target-locations">Locations</label>
+                    <input type="text" id="target-locations" autocomplete="off" placeholder="Comma separated, e.g. Baku, Azerbaijan" aria-describedby="target-locations-hint">
+                    <p class="targets-hint" id="target-locations-hint" data-terms-for="target-locations">Comma separated. Up to 20 terms, 50 characters each.</p>
+                    <p class="targets-note" data-note="locations">Recorded; ICP reports this as Unknown because leads currently do not carry city/country data.</p>
+                  </div>
+                  <fieldset class="targets-field targets-fieldset">
+                    <legend>Required fields</legend>
+                    <div class="target-checks" id="target-required-fields">
+                      <label class="targets-check"><input type="checkbox" value="phone"> Phone</label>
+                      <label class="targets-check"><input type="checkbox" value="title"> Business name</label>
+                      <label class="targets-check"><input type="checkbox" value="website"> Website</label>
+                      <label class="targets-check"><input type="checkbox" value="email"> Email</label>
+                      <label class="targets-check" id="target-required-address-label"><input type="checkbox" value="address" id="target-required-address" disabled aria-describedby="target-address-note"> Address</label>
+                    </div>
+                    <p class="targets-hint">Evaluated by ICP: a lead missing a required field is Not fit.</p>
+                    <p class="targets-note targets-note-warn" id="target-address-note">Address is unavailable as a required ICP field in this build: ICP evaluation cannot use it.</p>
+                  </fieldset>
+                  <fieldset class="targets-field targets-fieldset">
+                    <legend>Optional fields</legend>
+                    <div class="target-checks" id="target-optional-fields">
+                      <label class="targets-check"><input type="checkbox" value="phone"> Phone</label>
+                      <label class="targets-check"><input type="checkbox" value="title"> Business name</label>
+                      <label class="targets-check"><input type="checkbox" value="website"> Website</label>
+                      <label class="targets-check"><input type="checkbox" value="email"> Email</label>
+                      <label class="targets-check"><input type="checkbox" value="address"> Address</label>
+                    </div>
+                    <p class="targets-note" data-note="optionalFields">Not used by ICP.</p>
+                  </fieldset>
+                  <div class="targets-field">
+                    <label for="target-exclusions">Exclusions</label>
+                    <input type="text" id="target-exclusions" autocomplete="off" placeholder="Comma separated terms" aria-describedby="target-exclusions-hint">
+                    <p class="targets-hint" id="target-exclusions-hint" data-terms-for="target-exclusions">Comma separated. Up to 20 terms, 50 characters each.</p>
+                    <p class="targets-note" data-note="exclusions">Recorded; not evaluated in this build.</p>
+                  </div>
+                  <div class="targets-field">
+                    <label for="target-status">Status</label>
+                    <select id="target-status">
+                      <option value="active">Active</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                  </div>
+                  <p class="targets-hint" id="target-editor-note">Required fields are prospecting criteria only. A lead is never rejected from storage because one is missing.</p>
+                  <div class="targets-errors" id="target-status-bar" role="alert" hidden></div>
+                </div>
+                <div class="targets-editor-actions">
+                  <button type="button" class="btn btn-sm btn-secondary" id="btn-target-cancel">Cancel</button>
+                  <button type="button" class="btn btn-sm btn-primary" id="btn-target-save">Save Target</button>
+                </div>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <!-- Dashboard view (B5) - F9 Home: an operational overview of the local
+             lead library, the collection-job ledger and storage health. Every
+             figure is read from existing local records when the view opens and
+             is shown as stored; nothing is derived beyond a count. -->
+        <section class="view" id="view-dashboard">
+          <div class="view-top home-top">
+            <div class="lists-header">
+              <div class="lists-heading">
+                <h2 class="lists-title">Home</h2>
+                <p class="lists-subtitle">Lead library, collection runs and storage on this device. Every figure is read from local records when this page opens.</p>
+              </div>
+              <div class="lists-actions">
+                <button type="button" class="btn btn-sm btn-secondary" data-goto-view="collector">New collection</button>
+                <button type="button" class="btn btn-sm btn-secondary" id="home-refresh">Refresh</button>
+              </div>
+            </div>
+            <div class="dashboard-stats home-kpis" role="group" aria-label="Library and run totals">
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Total Leads</div>
+                <div class="dashboard-stat-value" id="dashboard-total-leads">-</div>
+                <div class="home-kpi-meta" id="home-leads-meta"></div>
+              </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Storage Health</div>
+                <div class="dashboard-stat-value home-kpi-text" id="dashboard-storage-state">-</div>
+                <div class="home-kpi-meta" id="home-storage-meta"></div>
+              </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Total Runs</div>
+                <div class="dashboard-stat-value" id="dashboard-total-runs">-</div>
+                <div class="home-kpi-meta" id="home-runs-meta"></div>
+              </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Running</div>
+                <div class="dashboard-stat-value" id="dashboard-runs-running">-</div>
+              </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Succeeded</div>
+                <div class="dashboard-stat-value" id="dashboard-runs-succeeded">-</div>
+              </div>
+              <div class="home-kpi">
+                <div class="dashboard-stat-label">Failed</div>
+                <div class="dashboard-stat-value" id="dashboard-runs-failed">-</div>
+              </div>
+            </div>
+            <div class="dashboard-note" id="dashboard-counts-window" hidden></div>
+          </div>
+          <div class="view-bottom home-bottom">
+            <div class="home-grid">
+              <section class="home-panel home-runs" aria-labelledby="home-runs-title">
+                <div class="home-panel-head">
+                  <h3 class="home-panel-title" id="home-runs-title">Recent runs</h3>
+                  <button type="button" class="btn btn-sm btn-ghost" data-goto-view="history">Collection History</button>
+                </div>
+                <div class="lists-table-wrap home-runs-wrap">
+                  <table class="data-table lists-table home-runs-table">
+                    <caption class="visually-hidden">Collection runs recorded in the local job ledger, newest first.</caption>
+                    <thead>
+                      <tr>
+                        <th>Run Slug</th>
+                        <th>Provider</th>
+                        <th>Status</th>
+                        <th>Started</th>
+                        <th>Completed</th>
+                        <th>Results</th>
+                        <th>Error</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dashboard-jobs-body"></tbody>
+                  </table>
+                </div>
+                <div class="pagination" id="dashboard-jobs-pagination"></div>
+              </section>
+              <div class="home-side">
+                <section class="home-panel" aria-labelledby="home-actions-title">
+                  <h3 class="home-panel-title" id="home-actions-title">Go to</h3>
+                  <div class="home-actions">
+                    <button type="button" class="home-action" data-goto-view="collector"><span class="home-action-label">Collection</span><span class="home-action-hint">Start a keyword collection run</span></button>
+                    <button type="button" class="home-action" data-goto-view="history"><span class="home-action-label">Collection History</span><span class="home-action-hint">Every run and its saved results</span></button>
+                    <button type="button" class="home-action" data-goto-view="numbers"><span class="home-action-label">All Leads</span><span class="home-action-hint">Browse, filter and export the library</span></button>
+                    <button type="button" class="home-action" data-goto-view="queue"><span class="home-action-label">Research Queue</span><span class="home-action-hint">Leads waiting for website research</span></button>
+                    <button type="button" class="home-action" data-goto-view="completed"><span class="home-action-label">Completed Research</span><span class="home-action-hint">Finished website research</span></button>
+                    <button type="button" class="home-action" data-goto-view="searches"><span class="home-action-label">Saved Searches</span><span class="home-action-hint">Re-run saved Leads filters</span></button>
+                    <button type="button" class="home-action" data-goto-view="segments"><span class="home-action-label">Segments</span><span class="home-action-hint">Static and dynamic lead lists</span></button>
+                    <button type="button" class="home-action" data-goto-view="icp"><span class="home-action-label">ICP</span><span class="home-action-hint">Fit of each lead against a Target</span></button>
+                  </div>
+                </section>
+                <section class="home-panel" aria-labelledby="home-workspace-title">
+                  <h3 class="home-panel-title" id="home-workspace-title">Workspace</h3>
+                  <dl class="home-facts">
+                    <div class="home-fact"><dt>Saved searches</dt><dd id="home-saved-searches">-</dd></div>
+                    <div class="home-fact"><dt>Segments</dt><dd id="home-segments">-</dd></div>
+                    <div class="home-fact"><dt>Active targets</dt><dd id="home-targets">-</dd></div>
+                  </dl>
+                </section>
+                <section class="home-panel" aria-labelledby="home-storage-title">
+                  <h3 class="home-panel-title" id="home-storage-title">Storage</h3>
+                  <dl class="home-facts">
+                    <div class="home-fact"><dt>Engine</dt><dd id="home-storage-engine">-</dd></div>
+                    <div class="home-fact"><dt>Integrity</dt><dd id="home-storage-integrity">-</dd></div>
+                  </dl>
+                </section>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Settings view - F9: grouped settings workspace. Every control is an
+             existing one with its original id and handler: settings:load /
+             settings:save, the provider connection test, proxy detection, the
+             write-only Zuni-SEO key channels and log export. Keys are never
+             loaded back into this form; only whether one is stored is shown. -->
+        <section class="view" id="view-settings">
+          <div class="view-top settings-top">
+            <div class="settings-workspace">
+              <div class="lists-header settings-header">
+                <div class="lists-heading">
+                  <h2 class="lists-title">Settings</h2>
+                  <p class="lists-subtitle">Collection credentials, website research, network and application. Keys are encrypted on this device and never shown again after you save them.</p>
+                </div>
+              </div>
+              <nav class="settings-index" aria-label="Settings sections">
+                <button type="button" class="settings-index-item" data-settings-jump="collection">Collection provider</button>
+                <button type="button" class="settings-index-item" data-settings-jump="research">Website research</button>
+                <button type="button" class="settings-index-item" data-settings-jump="intelligence">Opportunity Intelligence</button>
+                <button type="button" class="settings-index-item" data-settings-jump="business">Business profile</button>
+                <button type="button" class="settings-index-item" data-settings-jump="email">Email</button>
+                <button type="button" class="settings-index-item" data-settings-jump="mailboxes">Mailboxes</button>
+                <button type="button" class="settings-index-item" data-settings-jump="whatsapp">WhatsApp</button>
+                <button type="button" class="settings-index-item" data-settings-jump="network">Network</button>
+                <button type="button" class="settings-index-item" data-settings-jump="security">Security</button>
+                <button type="button" class="settings-index-item" data-settings-jump="application">Application</button>
+              </nav>
+              <div class="settings-groups">
+                <section class="settings-group" id="settings-group-collection" aria-labelledby="settings-title-collection">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-collection">Collection provider</h3>
+                    <p class="settings-group-desc">Credentials for the active collection provider. Leave a field empty to keep the stored key. Test Connection with an empty field tests the stored key.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-apikey">API Key</label>
+                      <span class="settings-key-state" id="settings-state-apikey" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="settings-apikey" placeholder="Enter API key" autocomplete="off">
+                        <button class="btn btn-secondary btn-sm" id="btn-test-apikey">Test Connection</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-clear-apikey" disabled>Clear</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-task-key">Task Flow Key</label>
+                      <span class="settings-key-state" id="settings-state-taskkey" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="settings-task-key" placeholder="e.g. 01KWA7xxxx" autocomplete="off">
+                        <button class="btn btn-secondary btn-sm" id="btn-test-taskkey">Test Connection</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-clear-taskkey" disabled>Clear</button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Zuni-SEO website research. The base URL and transport are the
+                     only editable research settings; timeouts, retry, breaker,
+                     freshness and the scheduler tick stay code defaults. The key
+                     is write-only: it is never loaded back into this form. -->
+                <section class="settings-group" id="settings-group-research" aria-labelledby="settings-title-research">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-research">Website research</h3>
+                    <p class="settings-group-desc">The Zuni-SEO endpoint used by the Research workspace. Timeouts, retries and freshness keep their built-in values.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-research-baseurl">Zuni-SEO Base URL</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="text" id="settings-research-baseurl" placeholder="https://api.your-zunitech-domain">
+                        <label class="visually-hidden" for="settings-research-transport">Transport</label>
+                        <select id="settings-research-transport">
+                          <option value="mcp">MCP</option>
+                          <option value="rest">REST</option>
+                        </select>
+                      </div>
+                      <p class="form-hint" id="settings-research-hint">HTTPS required, except localhost for development.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-research-key">Zuni-SEO API Key</label>
+                      <span class="settings-key-state" id="settings-state-researchkey" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="settings-research-key" placeholder="zsk_..." autocomplete="off">
+                        <button class="btn btn-secondary btn-sm" id="btn-research-clear-key" disabled>Clear</button>
+                      </div>
+                      <p class="form-hint" id="settings-research-key-status">No key stored.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Research Provider</span>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="settings-research-health" role="status" aria-live="polite">Not checked yet.</p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-research-health">Check status</button>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- I3/I4 Opportunity Intelligence. The local OI service and its provider keys.
+                     Keys are write-only: only stored / loaded-by-OI booleans come back. The
+                     folder is chosen in a native dialog opened by main; no path, port, URL or
+                     token ever reaches this page. Rows are built in renderer.js with
+                     textContent only. -->
+                <section class="settings-group" id="settings-group-intelligence" aria-labelledby="settings-title-intelligence">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-intelligence">Opportunity Intelligence</h3>
+                    <p class="settings-group-desc">Competitor, ads, content and social research for a lead. ZTech runs the local OI service for you. Keys stay on this computer, encrypted by the operating system, and are passed only to the local OI service.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Service</span>
+                      <span class="settings-key-state" id="oi-service-state" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint" id="oi-service-message" role="status" aria-live="polite">Checking the Opportunity Intelligence service.</p>
+                      <p class="form-hint" id="oi-service-folder"></p>
+                      <div class="oi-service-actions">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-choose-folder">Choose OI folder</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-start">Start</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-stop">Stop</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-restart">Restart</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-copy-log">Copy log</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-service-mode">Mode</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <select id="oi-service-mode">
+                        <option value="managed">Managed by ZTech</option>
+                        <option value="external">External (developer)</option>
+                        <option value="off">Off</option>
+                      </select>
+                      <p class="form-hint" id="oi-keys-note">Keys apply when ZTech manages the OI service.</p>
+                    </div>
+                  </div>
+                  <div id="oi-provider-rows"></div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">LinkedIn</span>
+                      <span class="settings-key-state" data-state="unknown">Unsupported</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint">Unsupported by design. LinkedIn does not allow scraping or automation.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-setting-search_provider">Search provider</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <select id="oi-setting-search_provider">
+                        <option value="">Automatic</option>
+                        <option value="brave">Brave</option>
+                        <option value="serper">Serper</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-setting-meta_countries">Meta ad countries</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="oi-setting-meta_countries" placeholder="Not set" autocomplete="off" maxlength="200">
+                      <p class="form-hint">Two-letter country codes, comma separated (for example PK,AE). Empty uses the OI default.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-setting-llm_base_url">LLM base URL</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="oi-setting-llm_base_url" placeholder="Not set" autocomplete="off" maxlength="300">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="oi-setting-llm_model">LLM model</label>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <input type="text" id="oi-setting-llm_model" placeholder="Not set" autocomplete="off" maxlength="100">
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-oi-save-settings">Save OI settings</button>
+                    </div>
+                  </div>
+                  <p class="form-hint" id="oi-settings-status" role="status" aria-live="polite"></p>
+                </section>
+
+                <!-- F26 Outreach Settings. Business profile, Email (Resend) and WhatsApp (Meta).
+                     Keys are write-only: only stored / readable booleans come back. Verification
+                     is a user-triggered check; only status and the time of the last check are
+                     shown. Values are set in renderer.js with textContent / value only. -->
+                <section class="settings-group" id="settings-group-business" aria-labelledby="settings-title-business">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-business">Business profile</h3>
+                    <p class="settings-group-desc">Who the pitch comes from. Left empty, pitches carry no sender identity instead of an invented one.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-representativeName">Your name</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-business-representativeName" placeholder="Not set" autocomplete="off" maxlength="80">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-companyName">Company name</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-business-companyName" placeholder="Not set" autocomplete="off" maxlength="120">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-valueProposition">Value proposition</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <textarea id="outreach-business-valueProposition" rows="3" placeholder="Not set" maxlength="1200"></textarea>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-callToAction">Call to action</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <textarea id="outreach-business-callToAction" rows="3" placeholder="Not set" maxlength="400"></textarea>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-business-postalAddress">Postal address</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <textarea id="outreach-business-postalAddress" rows="2" placeholder="Not set" maxlength="300"></textarea>
+                      <p class="form-hint">Required before sending. It appears in every email footer.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label"></div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-business-status" role="status" aria-live="polite"></p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-save-business">Save business profile</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-email" aria-labelledby="settings-title-email">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-email">Email</h3>
+                    <p class="settings-group-desc">Sends one approved pitch at a time through Resend, from an address on your own verified domain. Changes apply right away; no restart is needed.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Sending</span>
+                      <span class="settings-key-state" id="outreach-email-capability" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint" id="outreach-email-capability-message" role="status" aria-live="polite"></p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-enabled">Email sending on</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="checkbox" id="outreach-email-enabled">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-fromName">From name</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-email-fromName" placeholder="Not set" autocomplete="off" maxlength="120">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-domain">Sending domain</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-email-domain" placeholder="Not set" autocomplete="off" maxlength="253">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-fromAddress">From address</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-email-fromAddress" placeholder="Not set" autocomplete="off" maxlength="320">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-replyTo">Reply-to address</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-email-replyTo" placeholder="Optional" autocomplete="off" maxlength="320">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-signature">Signature</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <textarea id="outreach-email-signature" rows="3" placeholder="Not set" maxlength="500"></textarea>
+                      <p class="form-hint">Optional. Plain text, added below the pitch.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label"></div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-email-status" role="status" aria-live="polite"></p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-save-email">Save email settings</button>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-email-key">Resend API key</label>
+                      <span class="settings-key-state" id="outreach-email-key-state" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="outreach-email-key" placeholder="Enter key to replace" autocomplete="off" maxlength="2048">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-email-save-key">Save key</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-email-clear-key" disabled>Clear</button>
+                      </div>
+                      <p class="form-hint">Stored encrypted on this computer. It is never shown again.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Domain verification</span>
+                      <span class="settings-key-state" id="outreach-email-verify-state" data-state="unknown">Not checked</span>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-email-verify-checked" role="status" aria-live="polite">Never checked.</p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-email-verify">Check domain</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-mailboxes" aria-labelledby="settings-title-mailboxes">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-mailboxes">Mailboxes</h3>
+                    <p class="settings-group-desc">Connect your own Gmail / Google Workspace mailbox so an approved pitch can later be sent from it, one message per click, within the limits you set here. ZTech does not do bulk mailbox sending, and one-message-per-click with conservative pacing does not by itself give permission to contact anyone.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Providers</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div id="mailbox-provider-rows" class="f266-provider-rows" role="list"></div>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="mailbox-google-client-id">Google OAuth client ID</label>
+                      <span class="settings-key-state" id="mailbox-client-state" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="mailbox-google-client-id" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" maxlength="240">
+                      <div class="input-with-btn">
+                        <input type="password" id="mailbox-google-client-secret" placeholder="Client secret" autocomplete="off" maxlength="200">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-mailbox-save-client">Save client</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-mailbox-clear-client" disabled>Clear</button>
+                      </div>
+                      <p class="form-hint">Your own "Desktop app" OAuth client from Google Cloud: paste the whole Client ID (ending in .apps.googleusercontent.com) and its Client secret. Google Workspace: an Internal app. Personal Gmail: an External app in Testing, with your own address added as a test user. The secret is stored encrypted on this computer and is never shown again.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Connected mailboxes</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div id="mailbox-rows" class="f266-mailbox-rows" role="list"></div>
+                      <p class="form-hint" id="mailbox-status" role="status" aria-live="polite"></p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Market rules</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint">Without a recorded consent or a verified reply, an email to a contact is allowed only where you have reviewed that country's rules and recorded "opt-out allowed". No rule, or an unknown country, means consent is required.</p>
+                      <div id="market-rule-rows" class="f266-market-rows" role="list"></div>
+                      <div class="f266-market-form">
+                        <input type="text" id="market-rule-country" placeholder="Country code, e.g. US" autocomplete="off" maxlength="2">
+                        <select id="market-rule-rule">
+                          <option value="consent_required">Consent required</option>
+                          <option value="opt_out_allowed">Opt-out allowed</option>
+                        </select>
+                        <input type="text" id="market-rule-note" placeholder="What you reviewed (required)" autocomplete="off" maxlength="500">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-market-rule-save">Save rule</button>
+                      </div>
+                      <p class="form-hint" id="market-rule-status" role="status" aria-live="polite"></p>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-whatsapp" aria-labelledby="settings-title-whatsapp">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-whatsapp">WhatsApp</h3>
+                    <p class="settings-group-desc">Sends one approved pitch at a time through the Meta WhatsApp Cloud API, from your connected business number. Changes apply right away; no restart is needed.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Sending</span>
+                      <span class="settings-key-state" id="outreach-whatsapp-capability" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint" id="outreach-whatsapp-capability-message" role="status" aria-live="polite"></p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-enabled">WhatsApp sending on</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="checkbox" id="outreach-whatsapp-enabled">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-fromNumber">Sending number</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-whatsapp-fromNumber" placeholder="International format, e.g. +1..." autocomplete="off" maxlength="40">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-phoneNumberId">Phone number ID</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-whatsapp-phoneNumberId" placeholder="Not set" autocomplete="off" maxlength="120">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-businessAccountId">Business account ID</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <input type="text" id="outreach-whatsapp-businessAccountId" placeholder="Not set" autocomplete="off" maxlength="120">
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label"></div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-whatsapp-status" role="status" aria-live="polite"></p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-save-whatsapp">Save WhatsApp settings</button>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="outreach-whatsapp-key">Meta access token</label>
+                      <span class="settings-key-state" id="outreach-whatsapp-key-state" data-state="unknown">Checking</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="password" id="outreach-whatsapp-key" placeholder="Enter key to replace" autocomplete="off" maxlength="2048">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-whatsapp-save-key">Save key</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-whatsapp-clear-key" disabled>Clear</button>
+                      </div>
+                      <p class="form-hint">Stored encrypted on this computer. It is never shown again.</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Number verification</span>
+                      <span class="settings-key-state" id="outreach-whatsapp-verify-state" data-state="unknown">Not checked</span>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint" id="outreach-whatsapp-verify-checked" role="status" aria-live="polite">Never checked.</p>
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-outreach-whatsapp-verify">Check number</button>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Message templates</span>
+                      <span class="settings-key-state" id="outreach-whatsapp-templates" data-state="unknown">Not supported yet</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="form-hint">WhatsApp accepts free-form text only inside a 24-hour window the customer opened. A first message to a new lead needs a Meta-approved template, which this version cannot send yet, so Meta will usually refuse it.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-network" aria-labelledby="settings-title-network">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-network">Network</h3>
+                    <p class="settings-group-desc">Applied to the app's network session when you save. The proxy URL is stored encrypted.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <label for="settings-proxy-url">Network Proxy</label>
+                    </div>
+                    <div class="settings-row-control">
+                      <div class="input-with-btn">
+                        <input type="text" id="settings-proxy-url" placeholder="e.g. http://127.0.0.1:7890">
+                        <button class="btn btn-secondary btn-sm" id="btn-detect-proxy">Auto Detect</button>
+                      </div>
+                      <p class="form-hint">Leave empty to connect directly. Auto Detect fills in the system proxy; it takes effect when you save.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-group" id="settings-group-security" aria-labelledby="settings-title-security">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-security">Security</h3>
+                    <p class="settings-group-desc">Keys are write-only. This window only learns whether a key is stored, never its value. If this system cannot encrypt, saving fails instead of writing a key in plain text.</p>
+                  </div>
+                  <dl class="settings-facts">
+                    <div class="settings-fact"><dt>Collection API key</dt><dd><span class="settings-key-state" id="settings-security-apikey" data-state="unknown">Checking</span></dd></div>
+                    <div class="settings-fact"><dt>Task Flow key</dt><dd><span class="settings-key-state" id="settings-security-taskkey" data-state="unknown">Checking</span></dd></div>
+                    <div class="settings-fact"><dt>Zuni-SEO API key</dt><dd><span class="settings-key-state" id="settings-security-researchkey" data-state="unknown">Checking</span></dd></div>
+                    <div class="settings-fact"><dt>Network proxy</dt><dd><span class="settings-key-state" id="settings-security-proxy" data-state="unknown">Checking</span></dd></div>
+                  </dl>
+                </section>
+
+                <section class="settings-group" id="settings-group-application" aria-labelledby="settings-title-application">
+                  <div class="settings-group-head">
+                    <h3 class="settings-group-title" id="settings-title-application">Application</h3>
+                    <p class="settings-group-desc">Local storage and diagnostics.</p>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Lead storage</span>
+                    </div>
+                    <div class="settings-row-control">
+                      <p class="settings-value" id="settings-storage-engine">-</p>
+                    </div>
+                  </div>
+                  <div class="settings-row">
+                    <div class="settings-row-label">
+                      <span class="settings-row-name">Logs</span>
+                    </div>
+                    <div class="settings-row-control settings-row-inline">
+                      <p class="form-hint">Export the application log for troubleshooting.</p>
+                      <button class="btn btn-secondary btn-sm" id="btn-export-logs">Export Logs</button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+            <div class="settings-footer">
+              <p class="settings-footer-note">Save applies the collection keys, the proxy, the research endpoint and a new research key.</p>
+              <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+            </div>
+          </div>
         </section>
       </div>
     </main>
   </div>
+
+  <!-- F6 Lists dialogs. Native <dialog> elements: focus is contained while
+       open and Escape closes them. Every value is set with textContent. -->
+  <dialog class="lists-dialog" id="saved-search-dialog" aria-labelledby="saved-search-dialog-title">
+    <div class="lists-dialog-form" id="saved-search-form">
+      <h2 class="lists-dialog-title" id="saved-search-dialog-title">Save search</h2>
+      <div class="form-group">
+        <label for="saved-search-name">Name</label>
+        <input type="text" id="saved-search-name" maxlength="120" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="saved-search-description">Description (optional)</label>
+        <textarea id="saved-search-description" rows="2" maxlength="500"></textarea>
+      </div>
+      <div class="lists-dialog-block">
+        <div class="lists-dialog-label">Definition</div>
+        <div class="lists-definition" id="saved-search-definition"></div>
+        <label class="lists-check" id="saved-search-replace-row" hidden>
+          <input type="checkbox" id="saved-search-replace"> Replace with the current Leads filters and sort
+        </label>
+      </div>
+      <p class="lists-dialog-error" id="saved-search-error" role="alert"></p>
+      <div class="lists-dialog-actions">
+        <button type="button" class="btn btn-sm btn-secondary" id="btn-saved-search-cancel">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-saved-search-submit">Save</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="lists-dialog" id="segment-dialog" aria-labelledby="segment-dialog-title">
+    <div class="lists-dialog-form" id="segment-form">
+      <h2 class="lists-dialog-title" id="segment-dialog-title">New segment</h2>
+      <div class="form-group">
+        <label for="segment-name">Name</label>
+        <input type="text" id="segment-name" maxlength="120" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="segment-description">Description (optional)</label>
+        <textarea id="segment-description" rows="2" maxlength="500"></textarea>
+      </div>
+      <fieldset class="lists-type" id="segment-type-group">
+        <legend>Type</legend>
+        <label class="lists-radio"><input type="radio" name="segment-type" id="segment-type-static" value="static" checked>
+          <span><strong>Static</strong> - leads you add explicitly, from a Leads selection</span></label>
+        <label class="lists-radio"><input type="radio" name="segment-type" id="segment-type-dynamic" value="dynamic">
+          <span><strong>Dynamic</strong> - rules that match the current lead library</span></label>
+      </fieldset>
+      <fieldset class="lists-rules" id="segment-rules" hidden>
+        <legend>Rules</legend>
+        <p class="lists-hint">All rules must match. Only fields the Leads query can evaluate are offered.</p>
+        <div class="lists-rules-grid">
+          <div class="form-group lists-rules-wide">
+            <label for="segment-rule-search">Text contains</label>
+            <input type="text" id="segment-rule-search" maxlength="200" autocomplete="off"
+                   placeholder="Phone, title, website, email, address, source or keyword">
+          </div>
+          <div class="form-group"><label for="segment-rule-status">Status</label><select id="segment-rule-status" data-source="number-filter-status" data-rule="status"></select></div>
+          <div class="form-group"><label for="segment-rule-qualification">Qualification</label><select id="segment-rule-qualification" data-source="number-filter-qualification" data-rule="qualification"></select></div>
+          <div class="form-group"><label for="segment-rule-phone">Phone quality</label><select id="segment-rule-phone" data-source="number-filter-phone-quality" data-rule="phoneQuality"></select></div>
+          <div class="form-group"><label for="segment-rule-email">Email quality</label><select id="segment-rule-email" data-source="number-filter-email-quality" data-rule="emailQuality"></select></div>
+          <div class="form-group"><label for="segment-rule-website">Website quality</label><select id="segment-rule-website" data-source="number-filter-website-quality" data-rule="websiteQuality"></select></div>
+          <div class="form-group"><label for="segment-rule-business">Business quality</label><select id="segment-rule-business" data-source="number-filter-business-quality" data-rule="businessQuality"></select></div>
+          <div class="form-group"><label for="segment-rule-completeness">Completeness</label><select id="segment-rule-completeness" data-source="number-filter-completeness" data-rule="completeness"></select></div>
+          <div class="form-group"><label for="segment-rule-source">Source is exactly</label><input type="text" id="segment-rule-source" maxlength="200" autocomplete="off"></div>
+          <div class="form-group"><label for="segment-rule-keyword">Keyword is exactly</label><input type="text" id="segment-rule-keyword" maxlength="200" autocomplete="off"></div>
+        </div>
+        <div class="lists-rules-footer">
+          <button type="button" class="btn btn-sm btn-secondary" id="btn-segment-use-leads">Use current Leads filters</button>
+          <span class="lists-preview" id="segment-rule-preview" role="status" aria-live="polite"></span>
+        </div>
+      </fieldset>
+      <p class="lists-dialog-error" id="segment-error" role="alert"></p>
+      <div class="lists-dialog-actions">
+        <button type="button" class="btn btn-sm btn-secondary" id="btn-segment-cancel">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-segment-submit">Save</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="lists-dialog" id="add-to-segment-dialog" aria-labelledby="add-to-segment-title">
+    <div class="lists-dialog-form" id="add-to-segment-form">
+      <h2 class="lists-dialog-title" id="add-to-segment-title">Add to segment</h2>
+      <p class="lists-hint" id="add-to-segment-summary"></p>
+      <fieldset class="lists-type">
+        <legend>Static segment</legend>
+        <label class="lists-radio"><input type="radio" name="add-to-segment-mode" id="add-to-segment-existing" value="existing" checked>
+          <span>Existing static segment</span></label>
+        <div class="form-group lists-indent">
+          <label class="visually-hidden" for="add-to-segment-select">Static segment</label>
+          <select id="add-to-segment-select"></select>
+        </div>
+        <label class="lists-radio"><input type="radio" name="add-to-segment-mode" id="add-to-segment-new" value="new">
+          <span>New static segment</span></label>
+        <div class="form-group lists-indent">
+          <label class="visually-hidden" for="add-to-segment-name">New segment name</label>
+          <input type="text" id="add-to-segment-name" maxlength="120" autocomplete="off" placeholder="Segment name">
+        </div>
+      </fieldset>
+      <p class="lists-dialog-error" id="add-to-segment-error" role="alert"></p>
+      <div class="lists-dialog-actions">
+        <button type="button" class="btn btn-sm btn-secondary" id="btn-add-to-segment-cancel">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-add-to-segment-submit">Add</button>
+      </div>
+    </div>
+  </dialog>
 
   <script type="module" src="./src/renderer/renderer.js"></script>
 </body>

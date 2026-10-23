@@ -1,0 +1,94 @@
+'use strict';
+
+const { EMAIL } = require('../../contracts/leadView');
+const { isValidUnsubscribeHeader } = require('../../trust/unsubscribe');
+const { LiError } = require('../../core/errors');
+
+/**
+ * EmailProvider — abstraction only. No Gmail/SMTP/API provider is connected in this
+ * phase. A real provider implements the same three methods later, after it is verified.
+ *
+ * interface EmailProvider {
+ *   id: string
+ *   live: boolean   // does this provider actually reach a real mail service?
+ *   validate(message): { valid: boolean, errors: {field, message}[] }
+ *   send(message): Promise<{ messageId: string, status: 'queued'|'sent' }>
+ *   getStatus(messageId): Promise<{ messageId, status: 'queued'|'sent'|'delivered'|'bounced'|'failed'|'unknown' }>
+ * }
+ *
+ * `live` is F19's safety interlock. It is FALSE on this base class and on every in-memory
+ * double, so a test or simulated provider cannot be wired into the send boundary by
+ * accident: evaluateSendCapability() refuses anything that is not live. A real adapter must
+ * opt in deliberately, by overriding `live`, and its `id` then appears in the activity
+ * ledger - so every send row names the provider that actually accepted it.
+ *
+ * `send()` returning only `messageId` + `status` is deliberate and load-bearing: a provider
+ * acknowledgement is NOT a delivery receipt. Adapters must never translate their own
+ * acceptance into delivered / opened / clicked, and ZTech never infers it.
+ *
+ * message: { to, from, subject, text, headers? }  — plain text only (no HTML rendering).
+ */
+
+function validateEmailMessage(m) {
+  const errors = [];
+  const bad = (field, message) => errors.push({ field, message });
+  if (!m || typeof m !== 'object') return { valid: false, errors: [{ field: 'message', message: 'is required' }] };
+  for (const f of ['to', 'from', 'subject', 'text']) if (typeof m[f] !== 'string' || !m[f].trim()) bad(f, 'is required');
+  for (const f of ['to', 'from', 'subject']) {
+    if (typeof m[f] === 'string' && /[\r\n]/.test(m[f])) bad(f, 'must not contain line breaks');
+  }
+  if (typeof m.to === 'string' && !EMAIL.test(m.to.trim())) bad('to', 'is not a valid single email address');
+  if (typeof m.from === 'string' && !EMAIL.test(m.from.trim())) bad('from', 'is not a valid email address');
+  // F23: the optional sender-profile fields. Bounded plain text only - a From Name can
+  // never carry a line break or control character (header injection), and a Reply-To must
+  // be one valid address when it is present at all. Both are absent by default.
+  if (m.fromName !== undefined && m.fromName !== null && m.fromName !== '') {
+    if (typeof m.fromName !== 'string') bad('fromName', 'must be a string');
+    else if (m.fromName.length > 120) bad('fromName', 'is too long');
+    else if (/[\r\n]/.test(m.fromName) || /[\u0000-\u001f\u007f]/.test(m.fromName)) {
+      bad('fromName', 'must be plain text without line breaks or control characters');
+    }
+  }
+  if (m.replyTo !== undefined && m.replyTo !== null && m.replyTo !== '') {
+    if (typeof m.replyTo !== 'string' || /[\r\n]/.test(m.replyTo) || !EMAIL.test(m.replyTo.trim())) {
+      bad('replyTo', 'is not a valid single email address');
+    }
+  }
+  if (typeof m.subject === 'string' && m.subject.length > 200) bad('subject', 'is too long');
+  if (typeof m.text === 'string' && m.text.length > 20000) bad('text', 'is too long');
+  if (m.html !== undefined) bad('html', 'HTML email is not supported');
+  if (m.headers !== undefined) {
+    if (!m.headers || typeof m.headers !== 'object' || Array.isArray(m.headers)) bad('headers', 'must be an object');
+    else {
+      for (const [k, v] of Object.entries(m.headers)) {
+        // F26.5: exactly two standard headers are admitted besides simple X- headers - the
+        // RFC 2369 / RFC 8058 unsubscribe pair - and only in their strict, ZTech-built shape.
+        if (k === 'List-Unsubscribe' || k === 'List-Unsubscribe-Post') {
+          if (!isValidUnsubscribeHeader(k, v)) bad(`headers.${k}`, 'is not a valid unsubscribe header');
+          continue;
+        }
+        if (!/^X-[A-Za-z0-9-]{1,60}$/.test(k) || typeof v !== 'string' || /[\r\n]/.test(v) || v.length > 200) bad(`headers.${k}`, 'only simple X- headers are allowed');
+      }
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+class EmailProvider {
+  get id() { return 'abstract'; }
+  /** F19: false by default, so nothing becomes sendable without an explicit override. */
+  get live() { return false; }
+
+  /**
+   * F26.5: what this TRANSPORT's own terms allow. The send boundary reads it; the product never
+   * hard-codes one provider's rule for all of them. The base class is the strict default: a
+   * transport that has not declared otherwise may only write to people with a recorded
+   * consent or a verified reply, and must carry the unsubscribe headers.
+   */
+  get transportPolicy() { return Object.freeze({ requiresPriorRelationship: true, enforcesUnsubscribeHeaders: true }); }
+  validate(message) { return validateEmailMessage(message); }
+  async send() { throw new LiError('EMAIL_PROVIDER_NOT_CONFIGURED', 'No email provider is configured'); }
+  async getStatus(messageId) { return { messageId, status: 'unknown' }; }
+}
+
+module.exports = { EmailProvider, validateEmailMessage };

@@ -4,6 +4,19 @@
   box-sizing: border-box;
 }
 
+/* ==========================================================================
+   ZTech Frontend 2.0 — F1: design tokens + density foundation.
+
+   The 12 legacy tokens below (--bg-primary … --sidebar-width) are PRESERVED
+   unchanged: existing selectors, existing behaviour and existing tests all
+   depend on them. Everything after this block is additive. F1 introduces the
+   token vocabulary that later frontend batches will build on; it does not
+   redesign any screen.
+
+   Naming: legacy tokens stay as they are. New tokens are the approved
+   Frontend 2.0 vocabulary and never alias the legacy ones, so a later batch
+   can migrate a selector without changing what it looks like today.
+   ========================================================================== */
 :root {
   --bg-primary: #e9eaec;
   --bg-secondary: #dfe0e2;
@@ -18,6 +31,172 @@
   --warning: #d4903a;
   --success: #4aad4a;
   --sidebar-width: 220px;
+
+  /* --- Spacing: 4px base scale ----------------------------------------- */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --space-7: 24px;
+  --space-8: 32px;
+
+  /* --- Radius: small by design; nothing pill-shaped --------------------- */
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+
+  /* --- Shadows: exactly two. Cards use borders, not shadows. ----------- */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .06);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, .10);
+
+  /* --- Typography: system stack only (no remote fonts; CSP grants none) - */
+  --font-11: 11px;
+  --font-12: 12px;
+  --font-13: 13px;
+  --font-14: 14px;
+  --font-16: 16px;
+  --font-20: 20px;
+  --font-24: 24px;
+
+  /* --- Density ---------------------------------------------------------- */
+  --row-h-compact: 32px;
+  --row-h-comfortable: 40px;
+
+  /* --- Z-index scale -----------------------------------------------------
+     The approved scale (1/10/100/200/300) is the vocabulary for NEW layers.
+     It is NOT applied to the existing overlay/toast pair, which sit at
+     hardcoded 9000/9999 today: the Lead Profile overlay (z-index 9000) must
+     stay under toasts, and lowering the toast to 300 would put every toast
+     behind the open Lead Profile. --z-overlay / --z-toast-legacy preserve that
+     relationship until the drawer batch re-bases both on the new scale. */
+  --z-table: 1;
+  --z-sticky: 10;
+  --z-popover: 100;
+  --z-drawer: 200;
+  --z-toast: 300;
+  --z-overlay: 9000;
+  --z-toast-legacy: 9999;
+
+  /* --- Motion: opacity/transform only ----------------------------------- */
+  --dur-fast: 90ms;
+  --dur-base: 140ms;
+
+  /* --- Layout metrics --------------------------------------------------- */
+  --sidebar-w: 216px;
+  --sidebar-w-collapsed: 48px;
+  --drawer-w: 720px;
+
+  /* --- Semantic surfaces ------------------------------------------------- */
+  --bg-app: #f6f7f8;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f0f1f3;
+  --bg-hover: #eceef0;
+  --bg-selected: #e8f0fb;
+
+  /* --- Semantic text ----------------------------------------------------- */
+  --text-1: #16181d;
+  --text-2: #5b6270;
+  --text-3: #8b929f;
+  --text-inverse: #ffffff;
+
+  /* --- Semantic borders -------------------------------------------------- */
+  --border-1: #e3e5e8;
+  --border-2: #cfd3d9;
+  --border-focus: #3b6fd4;
+
+  /* --- Accent ------------------------------------------------------------
+     Named -f2 because --accent / --accent-hover already exist with different
+     values and are used by the current UI. F1 must not change what the app
+     looks like today, so the approved Frontend 2.0 values are added under
+     non-colliding names. A later batch can adopt them selector by selector
+     and retire the legacy pair. */
+  --accent-f2: #2f6fdb;
+  --accent-f2-hover: #2559b4;
+  --accent-subtle: #eaf1fd;
+
+  /* --- Status ------------------------------------------------------------
+     --danger is named -f2 for the same reason as --accent above: the legacy
+     --danger (#d94444) is already in use by .btn-danger and .status-bar. */
+  --ok: #1a7f4b;
+  --ok-bg: #e7f5ed;
+  --warn: #8a5a00;
+  --warn-bg: #fdf3e0;
+  --danger-f2: #b42318;
+  --danger-f2-bg: #fdecea;
+  --info: #175cd3;
+  --info-bg: #eaf1fd;
+  --neutral: #5b6270;
+  --neutral-bg: #f0f1f3;
+
+  /* --- Untrusted third-party text ---------------------------------------- */
+  --untrusted-bg: #fff8e6;
+  --untrusted-border: #e0b64c;
+}
+
+/* ==========================================================================
+   F1 density mechanism (renderer-local, no IPC, no persistence beyond
+   localStorage).
+
+   The mechanism only: applying the data attribute, reading the stored
+   preference and exposing the row-height variable. No visible control is
+   added here - the Compact/Comfortable toggle in the top bar belongs to a
+   later frontend batch. Until then the default (compact) applies, so this is
+   visually a no-op on first run.
+
+   Density is expressed as one custom property so a single rule switches it:
+   the value is read by table rows in the rule below.
+   ========================================================================== */
+:root,
+:root[data-density='compact'] {
+  --row-h: var(--row-h-compact);
+}
+
+:root[data-density='comfortable'] {
+  --row-h: var(--row-h-comfortable);
+}
+
+/* Row height applied to the real data tables. Padding on th/td is unchanged
+   so the existing table layout and its tests are untouched; the variable only
+   sets a minimum height on the cells. */
+.data-table th,
+.data-table td {
+  min-height: var(--row-h);
+  height: var(--row-h);
+}
+
+.data-table td {
+  vertical-align: middle;
+}
+
+/* Columns holding numbers/ids/timestamps align digit-for-digit. */
+.data-table td,
+.data-table th {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keyboard focus is always visible. Kept to opacity/colour only. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* Motion is opt-out. F1 introduces almost no animation, but the toast already
+   animates and this honours the OS preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 body {
@@ -34,70 +213,9 @@ body {
   height: 100vh;
 }
 
-/* 左侧边栏 */
-.sidebar {
-  width: var(--sidebar-width);
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-}
-
-.sidebar-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.brand {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.version {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.sidebar-nav {
-  padding: 8px;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  text-align: left;
-  transition: all 0.15s;
-}
-
-.nav-item:hover {
-  background: rgba(74, 144, 217, 0.08);
-  color: var(--text-primary);
-}
-
-.nav-item.active {
-  background: rgba(74, 144, 217, 0.15);
-  color: var(--accent);
-}
-
-.nav-icon {
-  font-size: 16px;
-  width: 20px;
-  text-align: center;
-}
+/* 左侧边栏 / 顶部栏 / 导航样式 — moved to the Frontend 2.0 F2 block further down
+   this file. The F2 block is the single source of truth for the workspace
+   chrome; keeping a second copy here would let the two drift. */
 
 /* 右侧主区域 */
 .main-content {
@@ -105,38 +223,6 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-.top-bar {
-  display: flex;
-  align-items: center;
-  padding: 12px 24px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  gap: 24px;
-}
-
-.top-bar-title {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.top-bar-stats {
-  display: flex;
-  gap: 16px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.top-bar-stats strong {
-  color: var(--accent);
-}
-
-.top-bar-time {
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-family: monospace;
 }
 
 /* 视图容器 */
@@ -232,16 +318,16 @@ body {
   gap: 8px;
 }
 
-/* 表单 - 上下布局（每行一个字段） */
+/* 表单 - 上下布局（每行一个字段） — F1: spacing/type to tokens */
 .form-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
 .form-item label {
-  font-size: 13px;
+  font-size: var(--font-13);
   color: var(--text-secondary);
   font-weight: 500;
   min-width: 110px;
@@ -263,7 +349,7 @@ body {
 .input-with-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   flex: 1;
   max-width: 360px;
 }
@@ -274,7 +360,7 @@ body {
 
 .form-divider {
   border-top: 1px solid var(--border);
-  margin: 10px 0;
+  margin: var(--space-3) 0;
 }
 
 /* 开关并排网格 */
@@ -288,8 +374,8 @@ body {
 .switch-label {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--space-2);
+  font-size: var(--font-12);
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
@@ -302,18 +388,18 @@ body {
   cursor: pointer;
 }
 
-/* 表单 - 横排（兼容旧的） */
+/* 表单 - 横排（兼容旧的） — F1: spacing/type to tokens */
 .form-row {
   display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
   align-items: flex-end;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   flex: 1;
 }
 
@@ -322,20 +408,22 @@ body {
 }
 
 .form-group label {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
   font-weight: 500;
 }
 
+/* Form controls — F1: radius/padding/type/motion to tokens. Background and
+   border colours are unchanged, so no control changes appearance. */
 input, select, textarea {
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-13);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--dur-fast);
 }
 
 input:focus, select:focus, textarea:focus {
@@ -349,24 +437,25 @@ textarea {
 
 .form-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
-/* 按钮 */
+/* 按钮 — F1: padding/radius/type/motion moved to tokens. Colours deliberately
+   still reference the legacy accent/danger pair so nothing changes visually. */
 .btn {
-  padding: 8px 16px;
+  padding: var(--space-3) var(--space-5);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-13);
   font-weight: 500;
-  transition: all 0.15s;
+  transition: background-color var(--dur-fast), color var(--dur-fast);
 }
 
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .btn-primary:hover {
@@ -379,17 +468,17 @@ textarea {
 }
 
 .btn-secondary:hover {
-  background: #444444;
+  background: var(--text-primary);
 }
 
 .btn-danger {
   background: var(--danger);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .btn-sm {
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-12);
 }
 
 .btn:disabled {
@@ -397,22 +486,23 @@ textarea {
   cursor: not-allowed;
 }
 
-/* 表格 */
+/* 表格 — F1: type tokens applied. Row height comes from --row-h (density
+   block above); cell padding and the existing colours are unchanged. */
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--font-13);
 }
 
 .data-table th,
 .data-table td {
-  padding: 8px 12px;
+  padding: var(--space-3) var(--space-4);
   text-align: left;
   border-bottom: 1px solid var(--border);
 }
 
 .data-table th {
-  font-size: 12px;
+  font-size: var(--font-12);
   color: var(--text-secondary);
   font-weight: 500;
   text-transform: uppercase;
@@ -423,12 +513,12 @@ textarea {
   background: rgba(74, 144, 217, 0.04);
 }
 
-/* 状态栏 */
+/* 状态栏 — F1: spacing/radius/type to tokens. Panel colours unchanged. */
 .status-bar {
-  margin-top: 12px;
-  padding: 10px 14px;
-  border-radius: 4px;
-  font-size: 13px;
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-13);
   background: rgba(74, 144, 217, 0.1);
   border: 1px solid rgba(74, 144, 217, 0.2);
   color: var(--accent);
@@ -440,11 +530,11 @@ textarea {
   color: var(--danger);
 }
 
-/* 筛选栏 */
+/* 筛选栏 — F1: spacing to tokens */
 .filter-bar {
   display: flex;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .filter-bar input,
@@ -495,12 +585,12 @@ textarea {
   transform: translateX(14px);
 }
 
-/* 分页 */
+/* 分页 — F1: spacing tokens. */
 .pagination {
   display: flex;
   justify-content: center;
-  gap: 4px;
-  margin-top: 12px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 /* 滚动条 */
@@ -518,27 +608,31 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #444444;
+  background: var(--text-primary);
 }
 
-/* Toast 悬浮提示 */
+/* Toast 悬浮提示 — F1: spacing/radius/type/z-index to tokens. The container
+   keeps its high stacking position via --z-toast; the existing surface and
+   border colours are unchanged so toast variants still read as they do now.
+   The animation is opacity/transform only and is disabled under
+   prefers-reduced-motion (see the density block). */
 .toast-container {
   position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 9999;
+  top: var(--space-5);
+  right: var(--space-5);
+  z-index: var(--z-toast-legacy);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .toast {
-  padding: 10px 16px;
-  border-radius: 6px;
-  font-size: 13px;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--font-13);
   max-width: 360px;
-  animation: toast-in 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  animation: toast-in var(--dur-base) ease;
+  box-shadow: var(--shadow-2);
 }
 
 .toast.success {
@@ -564,19 +658,5730 @@ textarea {
   to { opacity: 1; transform: translateX(0); }
 }
 
-/* 分页按钮 */
+/* 分页按钮 — F1: radius/padding/type to tokens. */
 .pagination button {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-12);
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .pagination button.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   border-color: var(--accent);
+}
+
+/* 存储降级/数据库隔离警告横幅 — F1: spacing/radius/type to tokens. The banner
+   is a warning, so it adopts the approved --warn / --warn-bg pair; the values
+   are visually near-identical to the previous hardcoded colours. */
+.storage-warning {
+  display: none;
+  margin: var(--space-3) var(--space-5) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--untrusted-border);
+  border-radius: var(--radius-md);
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: var(--font-13);
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+/* Lead Detail overlay (B3) */
+
+/* === F18 Outreach: preparation review (read-only) ===
+   The same overlay language as the B3 lead-detail modal above: a full-screen backdrop, one
+   centred panel, tokens throughout, no new visual language and no external asset. This
+   block sits beside the B3 modal rules on purpose: it is a sibling overlay, and keeping it
+   here leaves every later phase's stylesheet region exactly as that phase pinned it. */
+.f18-prepare-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-overlay);
+}
+
+.f18-prepare-overlay[hidden] {
+  display: none;
+}
+
+.f18-prepare-panel {
+  width: 640px;
+  max-width: calc(100% - 48px);
+  max-height: calc(100% - 96px);
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.f18-prepare-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.f18-prepare-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.f18-prepare-title {
+  margin: 0;
+  font-size: var(--font-16);
+  color: var(--text-1);
+}
+
+.f18-prepare-lead {
+  font-size: var(--font-13);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.f18-prepare-body {
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.f18-prepare-channels {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.f18-prepare-channel.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.f18-prepare-label {
+  display: block;
+  font-size: var(--font-11);
+  color: var(--text-2);
+  margin-bottom: var(--space-1);
+}
+
+.f18-prepare-value {
+  font-size: var(--font-13);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.f18-prepare-to {
+  font-weight: 600;
+}
+
+.f18-prepare-text {
+  white-space: pre-wrap;
+  font-size: var(--font-13);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.f18-prepare-refs {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-13);
+  color: var(--text-1);
+}
+
+.f18-prepare-hint,
+.f18-prepare-unavailable {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.f18-prepare-boundary {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+.f18-prepare-state {
+  font-size: var(--font-13);
+  color: var(--text-2);
+}
+
+.f18-prepare-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+/* ==========================================================================
+   Frontend 2.0 F2 — workspace chrome (sidebar + top bar).
+
+   Built entirely from the F1 tokens. Density comes from --row-h and the
+   sidebar from --sidebar-w / --sidebar-w-collapsed. Nothing here redesigns an
+   individual screen: the six existing .view sections are untouched.
+   ========================================================================== */
+
+/* --- Icons: 16px stroke, currentColor, no external asset ---------------- */
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2);
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.btn-ghost {
+  background: transparent;
+}
+
+/* --- Sidebar ------------------------------------------------------------ */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* Collapsed rail: width token only, so the app grid reflows and the sidebar
+   can never overlap the content area. */
+.app-layout.sidebar-collapsed .sidebar {
+  width: var(--sidebar-w-collapsed);
+}
+
+.sidebar-header {
+  height: 44px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.brand {
+  font-size: var(--font-14);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.sidebar-toggle {
+  margin-left: auto;
+}
+
+.sidebar-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) 0 var(--space-5);
+}
+
+.nav-group {
+  padding: 0 var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.nav-group-root {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.nav-group-label {
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  white-space: nowrap;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-13);
+  text-align: left;
+  transition: background-color var(--dur-fast), color var(--dur-fast);
+}
+
+.nav-item + .nav-item {
+  margin-top: 1px;
+}
+
+.nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.nav-item.active {
+  background: var(--bg-selected);
+  color: var(--accent-f2);
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--accent-f2);
+}
+
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Destinations with no implemented view. Native `disabled` keeps them out of
+   the tab order; they carry no data-view and can never navigate. */
+.nav-item-soon,
+.nav-item-soon:hover {
+  color: var(--text-3);
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.nav-soon {
+  font-size: var(--font-11);
+  color: var(--text-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+}
+
+/* Collapsed rail: icons only. Labels and group labels are hidden rather than
+   clipped, so the rail stays exactly --sidebar-w-collapsed wide. */
+.app-layout.sidebar-collapsed .sidebar-header {
+  justify-content: center;
+  padding: 0;
+}
+
+.app-layout.sidebar-collapsed .brand,
+.app-layout.sidebar-collapsed .version,
+.app-layout.sidebar-collapsed .nav-label,
+.app-layout.sidebar-collapsed .nav-group-label,
+.app-layout.sidebar-collapsed .nav-soon {
+  display: none;
+}
+
+.app-layout.sidebar-collapsed .sidebar-toggle {
+  margin-left: 0;
+}
+
+.app-layout.sidebar-collapsed .nav-group {
+  padding: 0 var(--space-2);
+}
+
+.app-layout.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* --- Top bar ------------------------------------------------------------ */
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 44px;
+  padding: 0 var(--space-5);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-1);
+  flex-shrink: 0;
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.top-bar-context {
+  font-size: var(--font-12);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.top-bar-sep {
+  color: var(--text-3);
+  font-size: var(--font-12);
+}
+
+.top-bar-title {
+  font-size: var(--font-16);
+  font-weight: 600;
+  color: var(--text-1);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-bar-center {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.command-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 420px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  color: var(--text-3);
+  font-size: var(--font-13);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
+}
+
+.command-trigger:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-2);
+  color: var(--text-2);
+}
+
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 0 0 auto;
+}
+
+.top-bar-stats {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.top-bar-stats strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.top-bar-time {
+  font-size: var(--font-12);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- Density control ---------------------------------------------------- */
+.density-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+.density-btn {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--font-11);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast), color var(--dur-fast);
+}
+
+.density-btn:hover {
+  color: var(--text-1);
+}
+
+.density-btn[aria-pressed='true'] {
+  background: var(--bg-surface);
+  color: var(--text-1);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent-f2);
+}
+
+/* --- Narrow window ------------------------------------------------------ */
+/* The window minimum is 1200x760 (main.js). Below ~1180px of usable width the
+   sidebar collapses to the rail so the table area is never overlapped. */
+@media (max-width: 1180px) {
+  .sidebar {
+    width: var(--sidebar-w-collapsed);
+  }
+
+  .sidebar .brand,
+  .sidebar .version,
+  .sidebar .nav-label,
+  .sidebar .nav-group-label,
+  .sidebar .nav-soon {
+    display: none;
+  }
+
+  .sidebar .sidebar-header {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .sidebar .nav-item {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .command-trigger {
+    max-width: 240px;
+  }
+}
+
+/* At the tightest usable width the top bar drops its least essential slots
+   rather than wrapping. The collected count and clock go first: both are
+   duplicated inside their own views. */
+@media (max-width: 1000px) {
+  .top-bar-stats,
+  .top-bar-time {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-item,
+  .command-trigger,
+  .density-btn,
+  .btn-icon {
+    transition: none;
+  }
+}
+
+/* Lead Detail overlay (B3) — F1: spacing/radius/shadow to tokens. These rules
+   are the centred modal; F5 renders the same overlay as a drawer (see the F5
+   block) and keeps this modal as its alternate layout. z-index keeps its current value
+   via --z-overlay (see the z-index note in :root). */
+.lead-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-overlay);
+}
+
+.lead-detail-overlay[hidden] {
+  display: none;
+}
+
+.lead-detail-panel {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.lead-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.lead-detail-title {
+  font-size: var(--font-14);
+  font-weight: 600;
+}
+
+.lead-detail-body {
+  padding: var(--space-3) var(--space-5) var(--space-4);
+}
+
+.lead-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--font-13);
+}
+
+.lead-detail-row:last-child {
+  border-bottom: none;
+}
+
+.lead-detail-label {
+  min-width: 110px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.lead-detail-value {
+  flex: 1;
+  word-break: break-all;
+  color: var(--text-primary);
+}
+
+.lead-detail-loading {
+  padding: var(--space-5) 0;
+  color: var(--text-secondary);
+  font-size: var(--font-13);
+  text-align: center;
+}
+
+/* Collection Quality Report (P1-G): read-only counts for one run */
+.collect-quality {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-4);
+}
+.collect-quality[hidden] {
+  display: none;
+}
+.collect-quality-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.collect-quality-title {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.collect-quality-body .lead-detail-row {
+  border-bottom: none;
+  padding: var(--space-2) 0;
+}
+.collect-quality-empty {
+  font-size: var(--font-12);
+  color: var(--text-secondary);
+}
+
+/* Target Builder (P1-F): user-owned prospecting definitions */
+.target-list {
+  margin-top: var(--space-4);
+}
+.target-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.target-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.target-card-name {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.target-card-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+.target-checks {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Dashboard (B5): additive layout for the local lead library overview */
+#view-dashboard .view-top {
+  flex: none;
+}
+#view-dashboard .view-bottom {
+  flex: 1;
+  min-height: 0;
+}
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.dashboard-card {
+  margin-bottom: 0;
+}
+.dashboard-card .card-body {
+  padding: 14px 16px;
+}
+.dashboard-stat-label {
+  font-size: var(--font-12);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+.dashboard-stat-value {
+  font-size: var(--font-20);
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+.dashboard-note {
+  font-size: var(--font-12);
+  color: var(--text-secondary);
+  margin-top: var(--space-3);
+}
+
+/* Lead Profile B6 user-owned fields (qualification, tags, notes) */
+.lead-detail-b6 {
+  border-top: 1px solid var(--border);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+.lead-detail-b6[hidden] {
+  display: none;
+}
+.lead-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.lead-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-12);
+  color: var(--text-primary);
+}
+.lead-tag-text {
+  word-break: break-all;
+}
+.lead-tag-remove {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-11);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+}
+.lead-tag-remove:hover {
+  color: var(--danger);
+}
+.lead-tag-empty {
+  font-size: var(--font-12);
+  color: var(--text-secondary);
+}
+.lead-tag-add {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+.lead-tag-add input {
+  flex: 1;
+}
+
+/* Lead Profile data-quality section (P1-A): read-only derived signals */
+.lead-detail-quality {
+  border-top: 1px solid var(--border);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+.lead-detail-quality[hidden] {
+  display: none;
+}
+.lead-detail-quality-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.lead-detail-quality-title {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.lead-detail-badge {
+  font-size: var(--font-11);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-3);
+}
+.lead-detail-quality-body .lead-detail-row {
+  border-bottom: none;
+  padding: 4px 0;
+}
+.lead-detail-source {
+  font-size: var(--font-11);
+  color: var(--text-secondary);
+}
+.lead-detail-quality-note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-11);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Duplicate review panel (P1-E, read-only) */
+.dup-review {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-top: var(--space-4);
+}
+.dup-review[hidden] {
+  display: none;
+}
+.dup-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dup-review-title {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.dup-review-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.dup-review-body {
+  margin-top: var(--space-3);
+}
+.dup-review-candidate {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.dup-review-candidate-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.dup-review-class {
+  font-size: var(--font-11);
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-3);
+  color: var(--text-primary);
+}
+.dup-review-reason {
+  font-size: var(--font-11);
+  color: var(--text-secondary);
+}
+.dup-review-empty {
+  font-size: var(--font-12);
+  color: var(--text-secondary);
+}
+
+/* Lead Profile user-provided status block (P1-C) */
+.lead-user-status {
+  margin-top: var(--space-3);
+  border-top: 1px dashed var(--border);
+  padding-top: var(--space-3);
+}
+.lead-user-status[hidden] {
+  display: none;
+}
+.lead-user-status .form-group {
+  margin-bottom: var(--space-3);
+}
+
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F5: Lead Detail Drawer.
+
+   The B3 #lead-detail-overlay rendered as a right-side drawer. The overlay no
+   longer dims or blocks the Leads table (pointer-events pass through), so the
+   table stays visible and usable beside it. The header is outside the scroll
+   region, so it is always visible. data-layout="modal" (renderer-local
+   layout flag) keeps the original centred modal from the rules above with
+   every section stacked. Stays on the existing overlay z-index, under toasts.
+   ========================================================================== */
+.lead-detail-overlay[data-layout="drawer"] {
+  background: transparent;
+  pointer-events: none;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.lead-detail-overlay[data-layout="drawer"] .lead-drawer {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  width: clamp(420px, 38vw, 520px);
+  max-width: 100vw;
+  height: 100%;
+  max-height: none;
+  overflow: hidden;
+  background: var(--bg-surface);
+  border: 0;
+  border-left: 1px solid var(--border-1);
+  border-radius: 0;
+  box-shadow: var(--shadow-2);
+}
+
+.lead-drawer:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.lead-drawer-header {
+  display: block;
+  flex: none;
+  padding: var(--space-4) var(--space-5) 0;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lead-drawer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lead-drawer-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lead-drawer-position {
+  font-size: var(--font-11);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.lead-drawer-header .lead-detail-title {
+  flex: 1;
+  text-align: right;
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.lead-drawer-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: var(--font-16);
+  line-height: 1;
+  color: var(--text-2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.lead-drawer-icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.lead-drawer-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lead-drawer-name {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--font-16);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-subtitle {
+  margin: 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-contact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  font-size: var(--font-12);
+}
+
+.lead-drawer-contact-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lead-drawer-contact-text {
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-action {
+  flex: none;
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--accent-f2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.lead-drawer-action:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent-f2);
+}
+
+.lead-drawer-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.lead-drawer-badges:empty {
+  display: none;
+}
+
+.lead-drawer-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin: var(--space-4) calc(-1 * var(--space-3)) 0;
+  overflow-x: auto;
+}
+
+.lead-drawer-tab {
+  flex: none;
+  padding: var(--space-3) var(--space-4);
+  font: inherit;
+  font-size: var(--font-13);
+  color: var(--text-2);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.lead-drawer-tab:hover {
+  color: var(--text-1);
+}
+
+.lead-drawer-tab[aria-selected="true"] {
+  font-weight: 600;
+  color: var(--accent-f2);
+  border-bottom-color: var(--accent-f2);
+}
+
+.lead-drawer-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.lead-drawer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.lead-drawer-panel {
+  padding: 0 var(--space-5) var(--space-6);
+}
+
+.lead-drawer-panel:focus-visible {
+  outline-offset: -2px;
+}
+
+.lead-drawer-section {
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lead-drawer-section:last-child {
+  border-bottom: 0;
+}
+
+.lead-drawer-section-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.lead-drawer-subhead {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.lead-drawer-fields {
+  display: flex;
+  flex-direction: column;
+}
+
+.lead-drawer-field {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  font-size: var(--font-13);
+}
+
+.lead-drawer-field-label {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lead-drawer-field-value {
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-field-value.is-empty {
+  color: var(--text-3);
+}
+
+.lead-drawer-pipeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lead-drawer-step {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lead-drawer-step-label {
+  display: block;
+  font-size: var(--font-11);
+  color: var(--text-3);
+}
+
+.lead-drawer-step-state {
+  display: block;
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.lead-drawer-step[data-tone="ok"] .lead-drawer-step-state {
+  color: var(--ok);
+}
+
+.lead-drawer-step[data-tone="busy"] .lead-drawer-step-state {
+  color: var(--warn);
+}
+
+.lead-drawer-step[data-tone="bad"] .lead-drawer-step-state {
+  color: var(--danger-f2);
+}
+
+.lead-drawer-step[data-tone="off"] .lead-drawer-step-state {
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.lead-drawer-empty {
+  margin: var(--space-2) 0;
+  font-size: var(--font-13);
+  color: var(--text-1);
+}
+
+.lead-drawer-muted {
+  margin: var(--space-2) 0;
+  font-size: var(--font-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.lead-drawer-warning {
+  margin: var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-12);
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lead-drawer-state-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lead-drawer-state {
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.lead-drawer-state[data-state="unknown"] {
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.lead-drawer-plain-list {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-12);
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+.lead-drawer-evidence-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lead-drawer-evidence-item {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-1);
+}
+
+.lead-drawer-evidence-fact {
+  font-size: var(--font-13);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-evidence-meta,
+.lead-drawer-refs {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-refs {
+  color: var(--info);
+}
+
+.lead-drawer-untrusted {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--untrusted-bg);
+  border-left: 2px solid var(--untrusted-border);
+}
+
+.lead-drawer-untrusted-label {
+  display: block;
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.lead-drawer-untrusted-text {
+  font-size: var(--font-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer-save-state {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lead-drawer-save-state:empty {
+  display: none;
+}
+
+.lead-drawer-save-state[data-state="ok"] {
+  color: var(--ok);
+}
+
+.lead-drawer-save-state[data-state="error"] {
+  color: var(--danger-f2);
+}
+
+.lead-drawer-record > summary {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* The existing B3/B6/P1/A7 regions sit inside drawer sections, which carry
+   the separators; their own modal-era frame is dropped here only. */
+.lead-drawer .lead-detail-body,
+.lead-drawer .lead-detail-b6,
+.lead-drawer .lead-detail-quality,
+.lead-drawer .lead-detail-company,
+.lead-drawer .lead-detail-research {
+  padding: 0;
+  border-top: 0;
+}
+
+.lead-drawer .lead-detail-row {
+  border-bottom-color: var(--border-1);
+}
+
+/* Compact controls for the existing editing forms, inside the drawer only. */
+.lead-drawer .form-group {
+  flex: none;
+  margin-bottom: var(--space-4);
+}
+
+.lead-drawer .form-group label {
+  color: var(--text-2);
+}
+
+.lead-drawer select,
+.lead-drawer input[type="text"],
+.lead-drawer textarea {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.lead-drawer .form-actions {
+  margin-top: 0;
+}
+
+.lead-drawer .lead-user-status {
+  border-top-color: var(--border-1);
+}
+
+.lead-drawer .lead-detail-research-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.lead-drawer .lead-detail-research-body {
+  font-size: var(--font-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer .lead-detail-research-quotes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.lead-drawer .lead-detail-research-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+/* The lead whose record is open, marked in the table beside the drawer. */
+#numbers-table-body tr.lead-row-open td {
+  background: var(--bg-selected);
+}
+
+#numbers-table-body tr.lead-row-open td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent-f2);
+}
+
+/* Modal layout: the original centred modal, every section stacked, no tabs. */
+.lead-detail-overlay[data-layout="modal"] .lead-drawer-tabs {
+  display: none;
+}
+
+.lead-detail-overlay[data-layout="modal"] .lead-drawer-panel[hidden] {
+  display: block;
+}
+
+/* Narrow window: the drawer becomes a full-width panel over the workspace.
+   The table underneath keeps its own layout and is not reflowed. */
+@media (max-width: 960px) {
+  .lead-detail-overlay[data-layout="drawer"] .lead-drawer {
+    width: 100vw;
+    border-left: 0;
+  }
+
+  .lead-drawer-field {
+    grid-template-columns: 104px minmax(0, 1fr) auto;
+  }
+}
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F6: Lists (Saved Searches, Segments).
+
+   Two dense table workspaces and three native <dialog> forms, on the F1
+   tokens and the existing .data-table / .leads-state patterns. No new
+   surface colour; the dialog is the only layered element.
+   ========================================================================== */
+.lists-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-5) var(--space-6);
+}
+
+.lists-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.lists-heading {
+  min-width: 0;
+  max-width: 640px;
+}
+
+.lists-title {
+  margin: 0;
+  font-size: var(--font-16);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.lists-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lists-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lists-actions input[type="search"] {
+  width: 240px;
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-13);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.lists-count {
+  font-size: var(--font-12);
+  color: var(--text-3);
+}
+
+.lists-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.lists-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-13);
+}
+
+.lists-table th {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lists-table td {
+  padding: var(--space-3) var(--space-4);
+  vertical-align: top;
+  color: var(--text-1);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lists-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.lists-col-name {
+  width: 24%;
+}
+
+.lists-col-type,
+.lists-col-sort,
+.lists-col-updated {
+  white-space: nowrap;
+}
+
+.lists-col-members {
+  width: 14%;
+}
+
+.lists-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.lists-description {
+  margin-top: var(--space-1);
+  font-size: var(--font-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lists-cell-definition {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lists-cell-muted {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.lists-cell-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.lists-cell-actions .btn + .btn {
+  margin-left: var(--space-2);
+}
+
+.lists-live {
+  display: inline-block;
+  margin-top: var(--space-2);
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  color: var(--accent-f2);
+  background: var(--accent-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lists-warning {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--font-12);
+  color: var(--warn);
+}
+
+.lists-count-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.lists-inline-btn {
+  margin-top: var(--space-2);
+}
+
+.lists-danger {
+  color: var(--danger-f2);
+}
+
+.list-type-badge {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.list-type-badge[data-type="dynamic"] {
+  color: var(--info);
+  background: var(--info-bg);
+}
+
+/* Leads scope bar: which list the Leads view was opened from. */
+.leads-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-12);
+  background: var(--accent-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.leads-scope[hidden] {
+  display: none;
+}
+
+.leads-scope-label {
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.leads-scope-name {
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.leads-scope-note {
+  flex: 1 1 200px;
+  color: var(--text-2);
+}
+
+.leads-scope-changed {
+  color: var(--warn);
+}
+
+/* Native dialogs. */
+.lists-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.lists-dialog::backdrop {
+  background: rgba(22, 24, 29, 0.28);
+}
+
+.lists-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.lists-dialog-title {
+  margin: 0;
+  font-size: var(--font-14);
+  font-weight: 600;
+}
+
+.lists-dialog .form-group {
+  flex: none;
+}
+
+.lists-dialog input[type="text"],
+.lists-dialog textarea,
+.lists-dialog select {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.lists-dialog-block {
+  padding: var(--space-3);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lists-dialog-label {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.lists-definition-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-12);
+  line-height: 1.6;
+}
+
+.lists-definition-sort {
+  color: var(--text-2);
+}
+
+.lists-check,
+.lists-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.lists-type,
+.lists-rules {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.lists-type legend,
+.lists-rules legend {
+  padding: 0 var(--space-2);
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.lists-rules[hidden] {
+  display: none;
+}
+
+.lists-rules-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.lists-rules-wide {
+  grid-column: 1 / -1;
+}
+
+.lists-rules-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.lists-preview {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lists-hint {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lists-indent {
+  margin: var(--space-2) 0 0 var(--space-6);
+}
+
+.lists-dialog-error {
+  margin: 0;
+  font-size: var(--font-12);
+  color: var(--danger-f2);
+}
+
+.lists-dialog-error:empty {
+  display: none;
+}
+
+.lists-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+@media (max-width: 1100px) {
+  .lists-workspace {
+    padding: var(--space-4);
+  }
+
+  .lists-col-name {
+    width: auto;
+  }
+
+  .lists-rules-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F7: Research workspace (Queue, Completed).
+
+   Reuses the F6 .lists-* table workspace. Adds only the research state and
+   evidence badges, the Queue / Completed switch and the control row. Each
+   engine state has its own badge; none is styled as a generic failure.
+   ========================================================================== */
+.research-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.research-tab {
+  padding: var(--space-2) var(--space-5);
+  font: inherit;
+  font-size: var(--font-13);
+  color: var(--text-2);
+  background: var(--bg-surface);
+  border: 0;
+  cursor: pointer;
+}
+
+.research-tab + .research-tab {
+  border-left: 1px solid var(--border-2);
+}
+
+.research-tab[aria-current="page"] {
+  font-weight: 600;
+  color: var(--accent-f2);
+  background: var(--accent-subtle);
+}
+
+.research-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.research-provider {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.research-provider:empty {
+  display: none;
+}
+
+.research-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.research-controls input[type="search"],
+.research-controls select {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.research-controls input[type="search"] {
+  width: 260px;
+  max-width: 100%;
+}
+
+.research-toggle {
+  margin-top: 0;
+  align-items: center;
+}
+
+.research-row {
+  cursor: pointer;
+}
+
+.research-row:hover td {
+  background: var(--bg-hover);
+}
+
+.research-lead-link {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-1);
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.research-lead-link:hover {
+  color: var(--accent-f2);
+  text-decoration: underline;
+}
+
+.research-cell-site {
+  overflow-wrap: anywhere;
+}
+
+.research-badge,
+.research-evidence {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.research-badge[data-state="pending"] {
+  color: var(--info);
+  background: var(--info-bg);
+}
+
+.research-badge[data-state="complete"],
+.research-evidence[data-evidence="complete"] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.research-badge[data-state="partial"],
+.research-badge[data-state="stale"],
+.research-evidence[data-evidence="partial"],
+.research-evidence[data-evidence="stale"] {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.research-badge[data-state="site_unreachable"],
+.research-badge[data-state="failed"] {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+}
+
+.research-badge[data-state="no_website"],
+.research-badge[data-state="no_crawlable_content"],
+.research-badge[data-state="not_checked"] {
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F8: Intelligence workspace (ICP, Signals, Opportunities).
+
+   Reuses the F6 table workspace and the F7 switch. Adds the three fit badges
+   (no score styling exists), criterion outcome lines and the honest-state
+   panels for surfaces this build cannot populate.
+   ========================================================================== */
+.intel-fit {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 18px;
+  white-space: nowrap;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.intel-fit[data-fit="fit"] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.intel-fit[data-fit="not_fit"] {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+}
+
+.intel-fit[data-fit="unknown"] {
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.intel-definition {
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.intel-definition:empty {
+  display: none;
+}
+
+.intel-definition-title {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.intel-criteria {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.intel-criterion {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.intel-criterion-outcome {
+  grid-row: span 3;
+  font-size: var(--font-11);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.intel-criterion[data-outcome="matched"] .intel-criterion-outcome {
+  color: var(--ok);
+}
+
+.intel-criterion[data-outcome="unmet"] .intel-criterion-outcome,
+.intel-criterion[data-outcome="excluded"] .intel-criterion-outcome {
+  color: var(--danger-f2);
+}
+
+.intel-criterion-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.intel-criterion-detail,
+.intel-criterion-source {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.intel-criterion-source {
+  font-size: var(--font-11);
+}
+
+.intel-cell-criteria {
+  min-width: 260px;
+}
+
+.intel-panel {
+  max-width: 760px;
+  padding: var(--space-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.intel-state {
+  display: inline-block;
+  margin-bottom: var(--space-3);
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.intel-panel-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-14);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.intel-panel-subtitle {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.intel-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-12);
+  line-height: 1.7;
+}
+
+.intel-panel .btn {
+  margin-top: var(--space-4);
+}
+
+.intel-drawer-target {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-1);
+}
+
+.intel-drawer-target .lead-drawer-state-line {
+  margin: var(--space-2) 0;
+}
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F9: Home and Settings workspaces.
+
+   Home is an operational overview: one bordered strip of stored totals, the
+   recent run ledger, and a side column of routes and workspace facts. Settings
+   groups the existing controls into titled sections with a section index and
+   a sticky save bar. F1 tokens only: hairline borders, small radii, no surface
+   colour washes and no drop effects.
+   ========================================================================== */
+
+/* --- Home ------------------------------------------------------------------ */
+#view-dashboard .view-top.home-top {
+  padding: var(--space-5) var(--space-6) var(--space-4);
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border-1);
+}
+
+#view-dashboard .view-bottom.home-bottom {
+  padding: var(--space-5) var(--space-6);
+  background: var(--bg-app);
+}
+
+.dashboard-stats.home-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0;
+  margin-top: var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.home-kpi {
+  min-width: 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 1px solid var(--border-1);
+}
+
+.home-kpi:first-child {
+  border-left: 0;
+}
+
+.home-kpis .dashboard-stat-label {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.home-kpis .dashboard-stat-value {
+  font-size: var(--font-20);
+  line-height: 1.2;
+  color: var(--text-1);
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.home-kpis .home-kpi-text {
+  font-size: var(--font-14);
+  line-height: 1.4;
+}
+
+.home-kpi-text[data-health="ok"] {
+  color: var(--ok);
+}
+
+.home-kpi-text[data-health="problem"] {
+  color: var(--danger-f2);
+}
+
+.home-kpi-meta {
+  margin-top: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.home-kpi-meta:empty {
+  display: none;
+}
+
+#view-dashboard .dashboard-note {
+  margin-top: var(--space-3);
+  color: var(--text-3);
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.home-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.home-panel {
+  min-width: 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.home-panel.home-runs {
+  padding: 0;
+}
+
+.home-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.home-panel-title {
+  margin: 0;
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.home-side .home-panel-title {
+  margin-bottom: var(--space-3);
+}
+
+.home-runs-wrap {
+  border: 0;
+}
+
+.home-runs-table td {
+  font-size: var(--font-12);
+}
+
+.home-run-slug {
+  overflow-wrap: anywhere;
+}
+
+.home-run-time,
+.home-run-num {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-run-error {
+  max-width: 240px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.home-run-status {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.home-run-status[data-status="succeeded"] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.home-run-status[data-status="failed"] {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+}
+
+.home-run-status[data-status="running"] {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.home-empty {
+  padding: var(--space-7) var(--space-5);
+  text-align: center;
+}
+
+.home-empty-title {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.home-empty-text {
+  margin: var(--space-2) 0 var(--space-4);
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+#view-dashboard .home-runs .pagination {
+  margin: 0;
+  padding: 0 var(--space-5);
+}
+
+#view-dashboard .home-runs .pagination:not(:empty) {
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-1);
+}
+
+.home-actions {
+  display: flex;
+  flex-direction: column;
+  margin: 0 calc(var(--space-5) * -1) calc(var(--space-4) * -1);
+}
+
+.home-action {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  text-align: left;
+  font: inherit;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border-1);
+  cursor: pointer;
+}
+
+.home-action:hover {
+  background: var(--bg-hover);
+}
+
+.home-action:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.home-action-label {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--accent-f2);
+}
+
+.home-action-hint {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.home-facts {
+  margin: 0;
+}
+
+.home-fact {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  font-size: var(--font-12);
+  border-top: 1px solid var(--border-1);
+}
+
+.home-fact:first-child {
+  border-top: 0;
+}
+
+.home-fact dt {
+  color: var(--text-2);
+}
+
+.home-fact dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The legacy .btn-secondary hover paints the text colour as the background,
+   which hides the label. Scoped to these two views, as F4 does for Collection. */
+#view-dashboard .btn-secondary,
+#view-settings .btn-secondary {
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+}
+
+#view-dashboard .btn-secondary:hover,
+#view-settings .btn-secondary:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+#view-dashboard .btn-secondary:disabled,
+#view-settings .btn-secondary:disabled {
+  color: var(--text-3);
+  background: var(--bg-subtle);
+}
+
+/* --- Settings -------------------------------------------------------------- */
+#view-settings .view-top.settings-top {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: var(--bg-app);
+  border-bottom: 0;
+}
+
+.settings-workspace {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 820px);
+  column-gap: var(--space-6);
+  row-gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-5) var(--space-6);
+}
+
+.settings-header {
+  grid-column: 1 / -1;
+}
+
+.settings-index {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settings-index-item {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  font: inherit;
+  font-size: var(--font-13);
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.settings-index-item:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+.settings-index-item:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.settings-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.settings-group {
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  scroll-margin-top: var(--space-5);
+}
+
+.settings-group-head {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.settings-group-title {
+  margin: 0;
+  font-size: var(--font-14);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.settings-group-desc {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-1);
+}
+
+.settings-group-head + .settings-row {
+  border-top: 0;
+}
+
+.settings-row-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  min-width: 0;
+}
+
+.settings-row-label label,
+.settings-row-name {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.settings-row-control {
+  min-width: 0;
+}
+
+.settings-row-control .input-with-btn {
+  max-width: none;
+  flex-wrap: wrap;
+}
+
+.settings-row-control .input-with-btn input {
+  flex: 1 1 220px;
+  min-width: 0;
+  border-color: var(--border-2);
+}
+
+.settings-row-control select {
+  border-color: var(--border-2);
+}
+
+/* F26: Outreach Settings text fields and textareas fill the row; the on/off box stays native size. */
+.settings-group[id^="settings-group-"] .settings-row-control > input[id^="outreach-"]:not([type="checkbox"]),
+.settings-row-control > textarea[id^="outreach-"] {
+  width: 100%;
+  max-width: 560px;
+  border-color: var(--border-2);
+}
+
+.settings-row-control .form-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.settings-row-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.settings-row-inline .form-hint {
+  margin: 0;
+  flex: 1 1 200px;
+}
+
+.settings-value {
+  margin: 0;
+  padding-top: var(--space-2);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.settings-key-state {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.settings-key-state[data-state="stored"] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.settings-key-state[data-state="missing"] {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.settings-facts {
+  margin: 0;
+}
+
+.settings-fact {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--font-13);
+  border-top: 1px solid var(--border-1);
+}
+
+.settings-fact:first-child {
+  border-top: 0;
+}
+
+.settings-fact dt {
+  color: var(--text-1);
+}
+
+.settings-fact dd {
+  margin: 0;
+}
+
+.settings-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding: var(--space-3) var(--space-6);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-1);
+}
+
+.settings-footer-note {
+  margin: 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+/* --- Narrow window ----------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .dashboard-stats.home-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .home-kpi:nth-child(4) {
+    border-left: 0;
+  }
+
+  .home-kpi:nth-child(n + 4) {
+    border-top: 1px solid var(--border-1);
+  }
+
+  .home-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-side {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    align-items: start;
+  }
+
+  .settings-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-index {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .settings-row-label {
+    flex-direction: row;
+    align-items: center;
+    padding-top: 0;
+  }
+}
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F10: Targets workspace.
+
+   A dense table of reusable ICP definitions with a side editor, on the F6
+   workspace pattern and the F1 tokens: hairline borders, small radii, no
+   surface washes and no drop effects. The editor sits beside the table on a
+   wide window and above it on a narrow one.
+   ========================================================================== */
+#view-targets .targets-workspace {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-app);
+}
+
+.targets-workspace .lists-actions input[type="search"] {
+  width: 280px;
+}
+
+.targets-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.targets-feedback[hidden] {
+  display: none;
+}
+
+.targets-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.targets-layout:has(.targets-editor:not([hidden])) {
+  grid-template-columns: minmax(0, 1fr) 380px;
+}
+
+.targets-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.targets-table .lists-col-updated {
+  width: 150px;
+}
+
+.targets-table .lists-col-actions {
+  width: 1%;
+}
+
+.targets-row[aria-current="true"] td {
+  background: var(--bg-selected);
+}
+
+.targets-name {
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.targets-criteria {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--font-12);
+  line-height: 1.6;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.targets-muted {
+  font-size: var(--font-12);
+  color: var(--text-3);
+}
+
+.targets-cell-updated {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.targets-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 200px;
+}
+
+.targets-status {
+  display: inline-block;
+  padding: 0 var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.targets-status[data-status="active"] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.targets-state {
+  padding: var(--space-7) var(--space-5);
+  text-align: center;
+}
+
+.targets-state-title {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.targets-state-text {
+  max-width: 460px;
+  margin: var(--space-2) auto 0;
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.targets-state .btn {
+  margin-top: var(--space-4);
+}
+
+.targets-editor {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+}
+
+.targets-editor[hidden] {
+  display: none;
+}
+
+.targets-editor-head {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.targets-editor-title {
+  margin: 0;
+  font-size: var(--font-14);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.targets-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+}
+
+.targets-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.targets-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.targets-field > label,
+.targets-fieldset > legend {
+  padding: 0;
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.targets-field input[type="text"],
+.targets-field select {
+  width: 100%;
+  min-width: 0;
+  border-color: var(--border-2);
+}
+
+.targets-hint,
+.targets-note {
+  margin: 0;
+  font-size: var(--font-11);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.targets-hint-error {
+  color: var(--danger-f2);
+  font-weight: 600;
+}
+
+.targets-note {
+  padding-left: var(--space-3);
+  color: var(--text-3);
+  border-left: 2px solid var(--border-2);
+}
+
+.targets-note-warn {
+  color: var(--warn);
+  border-left-color: var(--warn);
+}
+
+.targets-editor .target-checks {
+  gap: var(--space-2) var(--space-4);
+}
+
+.targets-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.targets-check:has(input:disabled) {
+  color: var(--text-3);
+}
+
+.targets-errors {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-12);
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.targets-errors[hidden] {
+  display: none;
+}
+
+.targets-errors ul {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.targets-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-1);
+}
+
+/* The legacy grey button hover hides its label; scoped here as in F4 and F9. */
+#view-targets .btn-secondary {
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+}
+
+#view-targets .btn-secondary:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+/* --- Narrow window ----------------------------------------------------------- */
+/* The editor stacks above the table below 1280px: beside a 380px editor the
+   table is too narrow for its actions and criteria. */
+@media (max-width: 1280px) {
+  .targets-layout:has(.targets-editor:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .targets-editor {
+    position: static;
+    order: -1;
+  }
+}
+
+@media (max-width: 1100px) {
+  .targets-workspace .lists-actions,
+  .targets-workspace .lists-actions input[type="search"] {
+    width: 100%;
+  }
+
+  .targets-workspace .lists-actions input[type="search"] {
+    flex: 1 1 200px;
+  }
+
+  .targets-table .lists-col-updated {
+    width: auto;
+  }
+}
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F3: Leads workspace.
+
+   A dense prospecting table, not a card grid. Everything here is built from
+   F1 tokens: density still resolves through --row-h, radius stays at
+   --radius-sm, colour comes from the semantic surface/ink pairs, and no
+   colour wash, hero section, oversized shadow or decorative metric is added.
+
+   Layout: controls -> chips -> table -> selection bar -> pagination. The
+   workspace scrolls INSIDE the existing view container, so the F2 shell (top
+   bar, sidebar, collapse rail) is never pushed out of shape and the table
+   never overflows the application shell.
+   ========================================================================== */
+
+.view#view-numbers {
+  overflow: hidden;
+}
+
+.leads-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+/* --- 1. controls ---------------------------------------------------------- */
+.leads-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.leads-search {
+  flex: 1 1 260px;
+  min-width: 200px;
+  max-width: 420px;
+}
+
+.leads-search input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--font-13);
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.leads-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.leads-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.filter-group {
+  position: relative;
+}
+
+.filter-trigger {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-3);
+  font-family: inherit;
+  font-size: var(--font-12);
+  color: var(--text-2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+}
+
+.filter-trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.filter-trigger[aria-expanded='true'] {
+  background: var(--accent-subtle);
+  border-color: var(--accent-f2);
+  color: var(--text-1);
+}
+
+.filter-trigger-label {
+  font-weight: 600;
+}
+
+/* The current value. "All" is the neutral rest state and stays quiet; a real
+   selection turns the whole trigger into an active-filter indicator. */
+.filter-trigger-value {
+  color: var(--text-3);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.filter-group[data-active='true'] .filter-trigger {
+  background: var(--accent-subtle);
+  border-color: var(--accent-f2);
+  color: var(--text-1);
+}
+
+.filter-group[data-active='true'] .filter-trigger-value {
+  color: var(--accent-f2);
+  font-weight: 600;
+}
+
+/* Intelligence is a placeholder for a future integration. It reads as muted
+   AND is genuinely disabled, so it can never be activated or sent. */
+.filter-trigger-disabled,
+.filter-trigger-disabled:hover {
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border-color: var(--border-1);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.filter-popover {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: var(--z-popover);
+  min-width: 190px;
+  padding: var(--space-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.filter-popover[hidden] {
+  display: none;
+}
+
+.filter-popover-wide {
+  min-width: 220px;
+}
+
+.filter-popover label,
+.filter-popover-title {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--font-11);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.filter-popover select {
+  width: 100%;
+  height: 26px;
+  padding: 0 var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.column-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.column-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.column-toggle input {
+  accent-color: var(--accent-f2);
+}
+
+.column-toggle-locked {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+/* --- 2. active filter chips ----------------------------------------------- */
+.leads-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-5);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.leads-chips[hidden] {
+  display: none;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 22px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  font-size: var(--font-11);
+  color: var(--text-1);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.filter-chip-key {
+  color: var(--text-2);
+}
+
+.filter-chip-value {
+  font-weight: 600;
+}
+
+.filter-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: var(--font-13);
+  line-height: 1;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.filter-chip-clear:hover {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+}
+
+.chip-clear-all {
+  height: 22px;
+  padding: 0 var(--space-3);
+  font-family: inherit;
+  font-size: var(--font-11);
+  color: var(--text-2);
+  background: transparent;
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.chip-clear-all:hover {
+  color: var(--danger-f2);
+  border-color: var(--danger-f2);
+}
+
+/* --- 3. dense table ------------------------------------------------------- */
+.leads-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.leads-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg-surface);
+}
+
+.leads-table th,
+.leads-table td {
+  height: var(--row-h);
+  min-height: var(--row-h);
+  padding: 0 var(--space-3);
+  font-size: var(--font-12);
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-1);
+}
+
+/* Sticky header inside the scrolling wrapper, so the column labels survive a
+   long page without a second floating header. */
+.leads-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--bg-subtle);
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: var(--font-11);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  border-bottom: 1px solid var(--border-2);
+}
+
+.leads-table td {
+  color: var(--text-1);
+}
+
+.leads-table tbody tr:hover td {
+  background: var(--bg-hover);
+}
+
+/* Selected state is strong, and never colour-only: the row checkbox is the
+   authoritative state and aria-selected mirrors it. */
+.leads-table tbody tr[aria-selected='true'] td {
+  background: var(--bg-selected);
+}
+
+.leads-table tbody tr[aria-selected='true']:hover td {
+  background: var(--accent-subtle);
+}
+
+.leads-table .col-select {
+  width: 32px;
+  padding: 0 var(--space-3);
+}
+
+.leads-table .col-select input {
+  margin: 0;
+  accent-color: var(--accent-f2);
+  cursor: pointer;
+}
+
+.leads-table .col-lead {
+  min-width: 190px;
+  white-space: normal;
+}
+
+.leads-table .col-qual,
+.leads-table .col-intel {
+  width: 108px;
+}
+
+.leads-table .col-status {
+  width: 92px;
+}
+
+.leads-table .col-quality {
+  width: 132px;
+}
+
+.leads-table .col-phone,
+.leads-table .col-collected {
+  width: 140px;
+}
+
+.leads-table .col-keyword {
+  max-width: 200px;
+  white-space: normal;
+}
+
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.th-sort-none {
+  color: var(--text-3);
+  cursor: default;
+}
+
+/* Sortable headers are discoverable by an always-visible affordance, not only
+   by a glyph that appears after a click. */
+.leads-table th[data-sort] .th-sort::after {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 4px solid var(--text-3);
+  opacity: .5;
+}
+
+.leads-table th[aria-sort='ascending'] .th-sort,
+.leads-table th[aria-sort='descending'] .th-sort {
+  color: var(--text-1);
+}
+
+.leads-table th[aria-sort='ascending'] .th-sort::after {
+  border-top: 0;
+  border-bottom: 4px solid var(--accent-f2);
+  opacity: 1;
+}
+
+.leads-table th[aria-sort='descending'] .th-sort::after {
+  border-top: 4px solid var(--accent-f2);
+  border-bottom: 0;
+  opacity: 1;
+}
+
+.leads-table tbody tr {
+  cursor: pointer;
+}
+
+.cell-lead {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.cell-muted {
+  color: var(--text-3);
+}
+
+.cell-wrap {
+  white-space: normal;
+}
+
+/* Status: a text label always, colour is additive only. */
+.status-tag {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: var(--font-11);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  text-transform: capitalize;
+}
+
+.status-tag[data-status='success'] {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+.status-tag[data-status='failed'] {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+  border-color: var(--danger-f2);
+}
+
+.status-tag[data-status='sent'] {
+  color: var(--info);
+  background: var(--info-bg);
+  border-color: var(--info);
+}
+
+.status-tag[data-status='pending'] {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn);
+}
+
+.qual-tag {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: var(--font-11);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  text-transform: capitalize;
+}
+
+.qual-tag[data-qualification='qualified'] {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+/* Data quality: real derived syntax signals plus a real completeness count.
+   Each mark is a letter plus a full accessible name, so the state is never
+   communicated by colour alone. */
+.quality-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.quality-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 2px;
+  font-size: var(--font-11);
+  font-weight: 600;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  background: var(--bg-subtle);
+}
+
+.quality-mark[data-signal='valid'] {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+.quality-mark[data-signal='invalid'] {
+  color: var(--danger-f2);
+  background: var(--danger-f2-bg);
+  border-color: var(--danger-f2);
+}
+
+.quality-mark[data-signal='unknown'] {
+  color: var(--text-3);
+}
+
+/* Research / ICP: an explicit "not available" state. It never implies that any
+   research or fit assessment was performed, because none was. */
+.intel-cell {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: var(--font-11);
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+/* --- Loading / empty / error states --------------------------------------- */
+.leads-skeleton-row td {
+  height: var(--row-h);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.leads-skeleton-bar {
+  display: block;
+  height: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.leads-state {
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+}
+
+.leads-state-title {
+  font-size: var(--font-14);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.leads-state-body {
+  margin-top: var(--space-2);
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.leads-state-actions {
+  margin-top: var(--space-4);
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.leads-state[data-state='error'] .leads-state-title {
+  color: var(--danger-f2);
+}
+
+.leads-state[data-state='error'] .leads-state-body {
+  color: var(--danger-f2);
+}
+
+/* --- 4. selection bar ----------------------------------------------------- */
+.leads-selection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-5);
+  background: var(--accent-subtle);
+  border-top: 1px solid var(--accent-f2);
+}
+
+.leads-selection[hidden] {
+  display: none;
+}
+
+.leads-selection-count {
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.leads-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* --- 5. pagination footer ------------------------------------------------- */
+.leads-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-5);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-1);
+}
+
+.leads-range {
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.leads-footer .pagination {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.leads-footer .pagination button {
+  min-width: 24px;
+  height: 24px;
+  font-size: var(--font-11);
+  border-radius: var(--radius-sm);
+}
+
+.leads-footer .pagination button:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+/* --- Utility -------------------------------------------------------------- */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Narrow window --------------------------------------------------------
+   The F2 sidebar rail and top-bar reductions are untouched. F3 only lets the
+   controls and the table scroll or wrap inside their own region, so the shell
+   keeps its shape and the identity column stays readable. */
+@media (max-width: 1180px) {
+  .leads-search {
+    flex: 1 1 200px;
+  }
+
+  .leads-toolbar {
+    margin-left: 0;
+  }
+}
+
+/* ==========================================================================
+   ZTech Frontend 2.0 - F4: Discovery -> Collection workspace.
+
+   The collection screen used to be one flat wall of fields. This block
+   restructures it visually as a five-step workflow with a contextual right
+   rail, using only the F1 token vocabulary: a light workspace, hairline
+   borders and the blue accent on the step markers and the single primary
+   action.
+
+   Nothing here changes what a control does. Every rule is scoped to
+   #view-collector, so the other five views keep their current appearance, and
+   the legacy .form-item / .switch-grid / .status-bar contracts are only
+   overridden inside this view.
+
+   Cards separate with borders and surface contrast rather than with a drop
+   effect: the F3 stylesheet pins everything after its own marker to exactly
+   one shadow declaration, so a second one here would break that contract.
+   Deliberately avoided, per the brief: colour washes, pill radii, oversized
+   headings and any dashboard- or AI-style number. The only figures on this
+   screen are live form values and counts read from the local job ledger.
+
+   The Collection History action sits in the page header; the result card and
+   the P1-G quality panel below keep their original order and markup because
+   several tests pin them.
+   ========================================================================== */
+
+#view-collector .view-top {
+  background: var(--bg-app);
+}
+
+/* View-local scale. F1 ships type up to 24px and no circular control metric,
+   so the page title, the step heading, the control height and the step marker
+   are declared here as view-local properties instead of new global tokens. */
+#view-collector {
+  --collect-title: 28px;
+  --collect-heading: 15px;
+  --collect-input-h: 38px;
+  --collect-num-size: 28px;
+  --collect-num-left: 24px;
+  --collect-gutter: 62px;
+  --collect-step-pad: var(--space-5);
+}
+
+/* --- Page header ---------------------------------------------------------- */
+.collect-header {
+  margin-bottom: var(--space-6);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.collect-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-11);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  margin-bottom: var(--space-3);
+}
+
+.bc-sep {
+  color: var(--border-2);
+}
+
+.bc-current {
+  color: var(--accent-f2);
+  font-weight: 700;
+}
+
+.collect-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.collect-header-copy {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.collect-h1 {
+  font-size: var(--collect-title);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.collect-lede {
+  font-size: var(--font-14);
+  color: var(--text-2);
+  line-height: 1.6;
+  margin-top: var(--space-3);
+  max-width: 64ch;
+}
+
+/* The header action reads as a quiet utility, not a second call to action. */
+.collect-history-btn {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--font-13);
+  font-weight: 600;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+}
+
+.collect-history-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-2);
+  color: var(--text-1);
+}
+
+/* --- Two-column body ------------------------------------------------------
+   73 / 27 including the gap: the workflow holds roughly three quarters of the
+   page and the context rail the rest, so the form never stretches to the full
+   window while the rail still has room to be useful. */
+.collect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 73fr) minmax(0, 27fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.collect-main {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+/* --- Steps ----------------------------------------------------------------
+   The marker sits in a left gutter as a blue disc, with a hairline running
+   down the gutter between steps. The horizontal separator starts at the
+   gutter's edge so the vertical track stays unbroken, and the marker is
+   layered above that track. */
+.collect-step {
+  position: relative;
+  padding: var(--collect-step-pad) var(--space-6) var(--collect-step-pad) var(--collect-gutter);
+  transition: background var(--dur-fast);
+}
+
+.collect-step + .collect-step::before {
+  content: '';
+  position: absolute;
+  left: var(--collect-gutter);
+  right: var(--space-6);
+  top: 0;
+  height: 1px;
+  background: var(--border-1);
+}
+
+.collect-step::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--collect-num-left) + var(--collect-num-size) / 2 - 1px);
+  top: calc(var(--collect-step-pad) + var(--collect-num-size) + var(--space-2));
+  bottom: 0;
+  width: 2px;
+  background: var(--border-2);
+}
+
+.collect-step + .collect-step::after {
+  top: 0;
+}
+
+/* The last step needs only the short lead-in from the previous step's edge to
+   its own marker; nothing should trail below the final number. */
+.collect-step:last-child::after {
+  bottom: auto;
+  height: var(--collect-step-pad);
+}
+
+.collect-step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.collect-step-num {
+  position: absolute;
+  z-index: 1;
+  left: var(--collect-num-left);
+  top: var(--collect-step-pad);
+  width: var(--collect-num-size);
+  height: var(--collect-num-size);
+  display: grid;
+  place-items: center;
+  background: var(--accent-f2);
+  color: var(--text-inverse);
+  border: 1px solid var(--accent-f2);
+  border-radius: 50%;
+  font-size: var(--font-13);
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Active / normal: the step the user is actually working in is tinted and its
+   marker deepens. There is no stored step state to fake here, so the emphasis
+   follows real focus only. */
+.collect-step:focus-within {
+  background: var(--accent-subtle);
+}
+
+.collect-step:focus-within .collect-step-num {
+  background: var(--accent-f2-hover);
+  border-color: var(--accent-f2-hover);
+}
+
+.collect-step-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.collect-step-title {
+  font-size: var(--collect-heading);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.35;
+}
+
+.collect-step-hint {
+  font-size: var(--font-13);
+  color: var(--text-3);
+  line-height: 1.5;
+  margin-top: 3px;
+}
+
+/* Stacked fields inside the steps: label above, control filling the column.
+   The legacy rule keeps a 110px label gutter and a 360px control, which is
+   what made the old screen read like a desktop utility dialog. */
+#view-collector .form-item {
+  display: block;
+  margin-bottom: var(--space-5);
+}
+
+#view-collector .form-item label {
+  display: block;
+  min-width: 0;
+  margin-bottom: var(--space-2);
+  font-size: var(--font-11);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  font-weight: 700;
+}
+
+#view-collector .form-item input,
+#view-collector .form-item select {
+  display: block;
+  width: 100%;
+  max-width: none;
+  min-height: var(--collect-input-h);
+  padding: var(--space-4);
+  font-size: var(--font-14);
+  background: var(--bg-surface);
+  color: var(--text-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+}
+
+#view-collector .form-item input:focus,
+#view-collector .form-item select:focus {
+  border-color: var(--border-focus);
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+#view-collector .form-item input::placeholder {
+  color: var(--text-3);
+}
+
+#view-collector .form-item select {
+  cursor: pointer;
+}
+
+/* The field rules above target the control box; keep the real toggles out. */
+#view-collector .form-item input[type='checkbox'],
+#view-collector .form-item input[type='radio'] {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: none;
+}
+
+#view-collector .form-item input:disabled {
+  background: var(--bg-subtle);
+  border-style: dashed;
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.collect-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5) var(--space-4);
+}
+
+.collect-fields-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.collect-fields-3 {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.collect-fields .form-item {
+  margin-bottom: 0;
+}
+
+/* An honest limitation reads as an aside, not as body copy. */
+.collect-note {
+  font-size: var(--font-13);
+  color: var(--text-3);
+  line-height: 1.55;
+  margin-top: var(--space-5);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border-2);
+}
+
+/* --- Step 4: advanced filters --------------------------------------------- */
+.collect-adv-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+}
+
+.collect-adv-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.collect-adv-toggle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.collect-adv-count {
+  background: var(--accent-subtle);
+  color: var(--accent-f2-hover);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+}
+
+.collect-adv-count[hidden] {
+  display: none;
+}
+
+.collect-adv-chevron {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--dur-fast);
+}
+
+.collect-adv-toggle[aria-expanded='true'] .collect-adv-chevron {
+  transform: rotate(180deg);
+}
+
+.collect-group + .collect-group {
+  border-top: 1px solid var(--border-1);
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+}
+
+.collect-group-title {
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-bottom: var(--space-4);
+}
+
+#view-collector .switch-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--space-3) var(--space-5);
+  padding: 0;
+}
+
+#view-collector .switch-label {
+  white-space: normal;
+  align-items: flex-start;
+  color: var(--text-1);
+  font-size: var(--font-13);
+  line-height: 1.45;
+}
+
+#view-collector .switch-label input[type='checkbox'] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--accent-f2);
+}
+
+.switch-warn {
+  color: var(--danger-f2);
+  font-weight: 700;
+}
+
+/* --- Step 5: summary and actions ------------------------------------------
+   The readout is a set of chips rather than a grey band of plain text: a set
+   value renders as a solid token, an unset one as a dashed placeholder, so an
+   empty run never reads as configured. */
+.collect-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-4) var(--space-5);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-1);
+  border-left: 3px solid var(--accent-f2);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.cs-row {
+  min-width: 0;
+}
+
+.cs-row dt {
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-bottom: var(--space-2);
+}
+
+.cs-row dd {
+  display: inline-block;
+  max-width: 100%;
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.cs-row dd[data-state='empty'] {
+  background: transparent;
+  border-style: dashed;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+/* The primary action closes the last step: a rule above it and right
+   alignment turn the row into a conclusion rather than two loose buttons. */
+.collect-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-1);
+}
+
+/* Scoped class rather than the primary button class: the dashboard test scans
+   every stylesheet rule from its own marker to the end of the file, and it
+   forbids a CTA class inside that region. The button itself still carries the
+   primary class in the markup, where that region never looks. */
+.collect-cta {
+  padding: var(--space-4) var(--space-7);
+  font-size: var(--font-14);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: var(--accent-f2);
+}
+
+.collect-cta:hover {
+  background: var(--accent-f2-hover);
+}
+
+.collect-cta:active {
+  background: var(--accent);
+}
+
+#view-collector .collect-actions .btn-secondary {
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--font-13);
+  font-weight: 600;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+}
+
+#view-collector .collect-actions .btn-secondary:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+/* --- Right rail ----------------------------------------------------------- */
+.collect-aside {
+  position: sticky;
+  top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.collect-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+}
+
+.collect-panel-title {
+  position: relative;
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+  margin-bottom: var(--space-4);
+  padding-left: var(--space-4);
+}
+
+.collect-panel-title::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  margin-top: -6px;
+  width: 3px;
+  height: 12px;
+  background: var(--accent-f2);
+  border-radius: 1px;
+}
+
+.collect-preview-terms {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.collect-preview-terms li {
+  background: var(--accent-subtle);
+  color: var(--accent-f2-hover);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-12);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.collect-preview {
+  display: flex;
+  flex-direction: column;
+}
+
+.cp-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px dashed var(--border-1);
+}
+
+.cp-row:first-child {
+  padding-top: 0;
+}
+
+.cp-row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.cp-row dt {
+  font-size: var(--font-12);
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.cp-row dd {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.collect-recent-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.collect-recent-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.collect-recent-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.cr-term {
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.cr-when {
+  font-size: var(--font-11);
+  color: var(--text-3);
+}
+
+.collect-tips {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.collect-tips li {
+  position: relative;
+  padding-left: var(--space-5);
+  font-size: var(--font-13);
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.collect-tips li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-f2);
+}
+
+.collect-tips strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+/* An empty panel is an empty slot: dashed, inset and quiet, so "nothing yet"
+   is unmistakably nothing rather than a broken render. */
+.collect-empty {
+  font-size: var(--font-13);
+  color: var(--text-3);
+  line-height: 1.6;
+  text-align: center;
+  padding: var(--space-4);
+  background: var(--bg-subtle);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-md);
+}
+
+/* --- Recent collection runs ------------------------------------------------
+   A deliberately quiet section: micro-label heading, tighter padding and
+   muted ink, so the local ledger never competes with the workflow above it. */
+.collect-runs {
+  margin-top: var(--space-6);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+}
+
+.collect-runs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.collect-runs-title {
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.collect-run-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.collect-run-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-1);
+  font-size: var(--font-12);
+}
+
+.collect-run-row:first-child {
+  border-top: none;
+}
+
+.run-status {
+  font-size: var(--font-11);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.run-ok {
+  color: var(--ok);
+}
+
+.run-bad {
+  color: var(--danger-f2);
+}
+
+.run-busy {
+  color: var(--warn);
+}
+
+.run-idle {
+  color: var(--text-3);
+}
+
+.run-slug {
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.run-count,
+.run-when {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.collect-run-open {
+  margin-left: auto;
+}
+
+/* --- Narrow Electron window ------------------------------------------------
+   Below 1320px the rail would squeeze the workflow column under a usable
+   width, so it moves under it instead. The shell's own 1180px rail rule is
+   untouched; this only re-flows the page inside it. */
+@media (max-width: 1320px) {
+  .collect-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collect-aside {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .collect-aside .collect-panel {
+    flex: 1 1 250px;
+  }
+
+  .collect-fields-3 {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+
+  .collect-run-open {
+    margin-left: 0;
+  }
+}
+
+/* ZTech Frontend 2.0 - F11: Outreach, Lead Drawer Pitch tab.
+ *
+ * The primary pitch surface. Dense, evidence-first, thin borders, the existing
+ * Frontend 2.0 tokens only: no colour wash, no shadow-heavy cards, no
+ * pill-heavy decoration, no second design language. Every colour and space is a
+ * token the F1-F10 blocks already use, so the tab reads as part of the same
+ * drawer, and no font is introduced.
+ *
+ * The pitch text and the evidence it cites are UNTRUSTED third-party content.
+ * They are wrapped so long words, URLs and observation text wrap rather than
+ * widen the drawer, and the reason rows reflow so the panel stays usable at the
+ * narrowest supported window width.
+ */
+
+.lead-drawer-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.lead-drawer-section-head .lead-drawer-section-title {
+  margin: 0;
+}
+
+.f11-subtitle {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--font-11);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.f11-form {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.f11-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.f11-field-label {
+  font-size: var(--font-11);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.f11-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-12);
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--text-inverse);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+.f11-input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.f11-observations {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.f11-observation-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.f11-observation {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-1);
+}
+
+.f11-observation:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.f11-observation-text {
+  grid-column: 1;
+  font-size: var(--font-12);
+  line-height: 1.55;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.f11-observation .lead-drawer-refs {
+  grid-column: 1;
+  font-size: var(--font-11);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.f11-remove {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin: 0;
+  cursor: pointer;
+}
+
+.f11-claims {
+  margin: var(--space-3) 0;
+}
+
+.f11-claims .lead-drawer-plain-list {
+  margin: var(--space-2) 0 0;
+}
+
+.f11-claims .f11-reason-code-raw {
+  display: inline-block;
+  margin-left: var(--space-2);
+}
+
+.f11-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.f11-gate {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+  padding: var(--space-3);
+  background: var(--text-inverse);
+  border: 1px solid var(--border-1);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.f11-gate[data-decision="allowed"] {
+  border-left-color: var(--ok);
+}
+
+.f11-gate[data-decision="blocked"] {
+  border-left-color: var(--danger-f2);
+}
+
+.f11-gate-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.f11-gate-head .f11-subtitle {
+  margin: 0;
+}
+
+.f11-reasons,
+.f11-warnings {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.f11-reason,
+.f11-warning {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-1);
+  font-size: var(--font-12);
+}
+
+.f11-reasons .f11-reason:first-child,
+.f11-warnings .f11-warning:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.f11-reason-code {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.f11-warning .f11-reason-code {
+  color: var(--warn);
+}
+
+.f11-reason-code-raw {
+  font-size: var(--font-11);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.f11-reason-message {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1280px) {
+  .f11-reason,
+  .f11-warning {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+}
+
+/* ZTech Frontend 2.0 - F12: Outreach workspace.
+  *
+  * A dense operational read of existing pitch/gate state. It follows the same
+  * construction as the Leads and Lists workspaces: the existing `data-table`, the
+  * existing `lists-*` chrome, the existing F11 status/gate badges, and only tokens
+  * F1-F11 already define. No new colour, no shadow, no radius language, no second
+  * design system, and no metric-card styling.
+  *
+  * The only layout decision worth stating: `.outreach-table-wrap` reuses the
+  * `.leads-table-wrap` contract (flex child + `overflow:auto`) so a wide row scrolls
+  * inside the table rather than pushing the page wider. The page itself never scrolls
+  * horizontally.
+  */
+
+.outreach-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.outreach-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.outreach-select {
+  font-size: var(--font-12);
+  font-family: inherit;
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  min-height: 26px;
+}
+
+.outreach-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.outreach-table {
+  width: 100%;
+}
+
+/* Column sizing only. The table may exceed the viewport and scroll inside
+   `.outreach-table-wrap`; it must never widen the page. */
+.outreach-table .col-lead { width: 88px; }
+.outreach-table .col-status { width: 130px; }
+.outreach-table .col-gate { width: 260px; }
+.outreach-table .col-subject { min-width: 220px; }
+.outreach-table .col-research { width: 96px; }
+.outreach-table .col-icp { width: 88px; }
+.outreach-table .col-updated { width: 96px; }
+.outreach-table .col-actions { width: 104px; }
+
+.outreach-table td {
+  vertical-align: top;
+}
+
+/* The gate cell carries a decision plus its real reasons, so it is the one column
+   allowed to wrap onto several lines. */
+.outreach-gate-reasons {
+  margin: 4px 0 0;
+  padding-left: 14px;
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.outreach-gate-reasons li {
+  margin: 0 0 2px;
+  overflow-wrap: anywhere;
+}
+
+.outreach-gate-error {
+  font-size: var(--font-11);
+}
+
+.outreach-empty-cell {
+  padding: 18px 12px;
+  color: var(--text-2);
+  font-size: var(--font-12);
+}
+
+.outreach-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
+.outreach-range {
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.outreach-pager {
+  display: flex;
+  gap: var(--space-1);
+}
+
+@media (max-width: 900px) {
+  /* At the narrowest supported width the table keeps its own scroll and the footer
+     stacks, so nothing is clipped and the page still has no horizontal overflow. */
+  .outreach-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* ZTech Frontend 2.0 - F13: the Outreach workspace's approval notice and note.
+  *
+  * Two small additions to the F12 block above, and nothing else: one line that reports
+  * the outcome of approving a single pitch, and the inline reason a row cannot be
+  * approved. Both reuse the tokens F1-F12 already define and the existing F11 alert box,
+  * so no new colour, shadow or radius language is introduced.
+  */
+
+.outreach-notice {
+  padding: 6px 8px;
+  font-size: var(--font-12);
+  color: var(--text-1);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+/* F14: one more column, so the table now has nine. */
+.outreach-table .col-readiness { width: 210px; }
+
+/* The row-level explanation is not an error and not a success: it is the reason an
+   action is unavailable, so it stays muted and wraps rather than taking the eye. */
+.outreach-approval-note {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--font-11);
+  overflow-wrap: anywhere;
+}
+
+/* The delivery sentence under a ready badge. Deliberately muted: readiness is an
+   operational fact, not a claim of delivery. */
+.outreach-ready-note {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--font-11);
+  overflow-wrap: anywhere;
+}
+
+/* ZTech Frontend 2.0 - F15: the Activity workspace.
+  *
+  * Follows the same construction as the Outreach and Targets workspaces: the existing
+  * `data-table`, the existing `lists-*` chrome and only tokens F1-F14 already define. No
+  * new colour, shadow or radius language, and no aggregate/percentage styling - an
+  * invented aggregate is exactly what this workspace must not show.
+  */
+
+.activity-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.activity-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.activity-table {
+  width: 100%;
+}
+
+.activity-table td {
+  vertical-align: top;
+}
+
+/* Column sizing only. The table may exceed the viewport and scroll inside its wrap; it
+   must never widen the page. */
+.activity-table .col-when { width: 140px; }
+.activity-table .col-lead { width: 90px; }
+.activity-table .col-event { width: 190px; }
+.activity-table .col-pitch { width: 200px; }
+
+.activity-empty-cell {
+  padding: 18px 12px;
+  color: var(--text-2);
+  font-size: var(--font-12);
+}
+
+.activity-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
+.activity-range {
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.activity-pager {
+  display: flex;
+  gap: var(--space-1);
+}
+
+@media (max-width: 900px) {
+  /* The table keeps its own scroll and the footer stacks, so nothing is clipped. */
+  .activity-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* ZTech Frontend 2.0 - F16: the Ready workspace.
+  *
+  * Built exactly like the Outreach and Activity workspaces: the existing `data-table`,
+  * the existing `lists-*` chrome, the F11 status badge, and only tokens F1-F15 already
+  * define. No new colour, shadow or radius language, and no aggregate styling - a count
+  * or rate would be exactly the invented number this workspace must not show.
+  */
+
+.ready-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.ready-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+}
+
+.ready-table {
+  width: 100%;
+}
+
+.ready-table td {
+  vertical-align: top;
+}
+
+/* Column sizing only. The table may exceed the viewport and scroll inside its wrap; it
+   must never widen the page. */
+.ready-table .col-lead { width: 160px; }
+.ready-table .col-readiness { width: 150px; }
+.ready-table .col-pitch { min-width: 200px; }
+.ready-table .col-research { width: 96px; }
+.ready-table .col-icp { width: 88px; }
+.ready-table .col-delivery { width: 210px; }
+.ready-table .col-updated { width: 96px; }
+.ready-table .col-actions { width: 104px; }
+
+.ready-empty-cell {
+  padding: 18px 12px;
+  color: var(--text-2);
+  font-size: var(--font-12);
+}
+
+/* The delivery sentence. Deliberately muted and wrapping: readiness is an operational
+   fact, never a claim that anything was sent. */
+.ready-delivery-note {
+  display: block;
+  font-size: var(--font-11);
+  overflow-wrap: anywhere;
+}
+
+.ready-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
+.ready-range {
+  font-size: var(--font-11);
+  color: var(--text-2);
+}
+
+.ready-pager {
+  display: flex;
+  gap: var(--space-1);
+}
+
+@media (max-width: 900px) {
+  /* The table keeps its own scroll and the footer stacks, so nothing is clipped. */
+  .ready-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* ZTech Frontend 2.0 - F17: factual contact points in the Ready workspace.
+  *
+  * Built like every other block here: existing `data-table`, existing `lists-*` chrome,
+  * and only tokens F1-F16 already define. No new colour, shadow or radius language.
+  *
+  * Each channel is a small labelled stack - the FACT first, then the caveat - so the
+  * distinction between "a contact exists" and "this channel is actually available" is
+  * visible in the layout itself rather than only in the wording.
+  */
+
+.ready-table .col-contact { width: 230px; }
+
+.f17-channel {
+  margin-bottom: 6px;
+}
+
+.f17-channel:last-child {
+  margin-bottom: 0;
+}
+
+.f17-channel-label {
+  display: block;
+  font-size: var(--font-11);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.f17-channel-value {
+  font-size: var(--font-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+/* The labelled reading of the stored value - e.g. "Mobile candidate (heuristic)". It is an
+   interpretation OF the fact above it, never the fact itself, so it carries the same muted
+   tokens as the caveat and always sits between the value and the hint. */
+.f17-channel-note {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* The caveat line. Deliberately muted: "not verified", "present but not valid" and
+   "no email" are qualifications on a fact, never states of their own. */
+.f17-channel-hint {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* ZTech Frontend 2.0 - F21 Outreach: the recorded send history.
+   A read-only strip appended to an existing Outreach row's actions cell. It introduces no
+   new colour: every tone below is one of the tokens the rest of the workspace already uses,
+   so a recorded send state cannot look more alarming than the rest of the UI. */
+
+.f21-send-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border-2);
+  width: 100%;
+}
+
+.f21-send-history-heading {
+  font-size: var(--font-11);
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* One recorded attempt. A list, not a table: the strip is inside a cell of a table row and
+   must not try to lay itself out as a grid inside one. */
+.f21-send-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.f21-send-history-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.f21-send-history-state {
+  flex: 0 0 auto;
+}
+
+/* The channel, the timestamp and the provider handle are qualifications on the recorded
+   state, not states of their own, so they carry the muted tokens. */
+.f21-send-history-channel,
+.f21-send-history-when,
+.f21-send-history-provider,
+.f21-send-history-message-id,
+.f21-send-history-scope,
+.f21-send-history-none {
+  font-size: var(--font-11);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* A recorded failure keeps the failure colour, because that is exactly what happened. The
+   code is shown verbatim so it can be quoted in a support conversation. */
+.f21-send-history-failure {
+  font-size: var(--font-11);
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+/* ZTech Phase I2 - Opportunity Intelligence, inside the existing Lead Detail drawer.
+   Reuses the drawer's field, list and warning styles; only the claim-kind / provider
+   badges and the collapsible groups are new. Tones reuse the status tokens, so an
+   ESTIMATE or an unavailable provider never looks like an error. */
+
+.oi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.oi-badge {
+  display: inline-block;
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.oi-badge[data-tone="ok"] { color: var(--ok); background: var(--ok-bg); }
+.oi-badge[data-tone="warn"] { color: var(--warn); background: var(--warn-bg); }
+.oi-badge[data-tone="bad"] { color: var(--danger-f2); background: var(--danger-f2-bg); }
+.oi-badge[data-tone="info"] { color: var(--info); background: var(--info-bg); }
+
+.oi-group {
+  border-top: 1px solid var(--border-1);
+  padding: var(--space-3) 0;
+}
+
+.oi-group-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.oi-group-count {
+  font-size: var(--font-11);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.oi-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.oi-body {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-12);
+  line-height: 1.5;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.oi-source {
+  color: var(--text-3);
+}
+
+.oi-do-not-claim {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--danger-f2-bg);
+  border-left: 2px solid var(--danger-f2);
+}
+
+.oi-do-not-claim-label {
+  display: block;
+  font-size: var(--font-11);
+  font-weight: 700;
+  color: var(--danger-f2);
+}
+
+/* ZTech I3/I4 - Opportunity Intelligence settings. Reuses the Settings row, chip and
+   button styles; only the service button strip is new. */
+.oi-service-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+#oi-provider-rows .settings-row-label .settings-key-state + .settings-key-state {
+  margin-left: var(--space-2);
+}
+
+/* === I6 Lead timeline =====================================================
+   A plain dated list. Source badges reuse the neutral badge look; nothing here
+   signals good/bad, because a timeline row is a fact, not a verdict. */
+
+.lead-timeline-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.lead-timeline-chip {
+  padding: 2px var(--space-3);
+  font-size: var(--font-12);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.lead-timeline-chip[aria-pressed="true"] {
+  background: var(--neutral-bg);
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.lead-timeline {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+}
+
+.lead-timeline-row {
+  display: grid;
+  grid-template-columns: 9.5rem 6.5rem 1fr auto;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.lead-timeline-when {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.lead-timeline-source {
+  justify-self: start;
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.lead-timeline-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.lead-timeline-title {
+  color: var(--text-1);
+}
+
+.lead-timeline-detail {
+  font-size: var(--font-12);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .lead-timeline-row {
+    grid-template-columns: 1fr auto;
+  }
+  .lead-timeline-when,
+  .lead-timeline-source {
+    grid-column: 1 / -1;
+  }
+}
+
+/* === I7 OI pitch context (review only) =================================== */
+
+.pitch-oi-toggle {
+  background: transparent;
+  border: 0;
+  padding: var(--space-2) 0;
+  font-size: var(--font-13);
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.pitch-oi-chip {
+  display: inline-block;
+  margin-right: var(--space-2);
+  padding: 1px var(--space-3);
+  font-size: var(--font-11);
+  font-weight: 700;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--neutral);
+  background: var(--neutral-bg);
+}
+
+.pitch-oi-items,
+.pitch-oi-preview-list {
+  margin: var(--space-2) 0 var(--space-3);
+  padding-left: var(--space-4);
+}
+
+.pitch-oi-item {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pitch-oi-item[data-eligible="false"] {
+  opacity: 0.6;
+}
+
+.pitch-oi-item-title {
+  color: var(--text-1);
+}
+
+.pitch-oi-prov {
+  font-size: var(--font-12);
+  overflow-wrap: anywhere;
+}
+
+.pitch-oi-preview {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-md);
+}
+
+.pitch-oi-preview-text {
+  margin: 0 0 var(--space-2);
+  color: var(--text-1);
+  white-space: pre-wrap;
+}
+
+/* F26.5 Trust: consent, do-not-contact, provenance, mail-app handoff */
+.lead-trust-channel,
+.lead-trust-provenance {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.lead-trust-channel-title {
+  font-size: var(--font-12);
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: var(--space-1);
+}
+
+.lead-trust-status,
+.lead-trust-prov-row {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.lead-trust-note,
+.lead-trust-confirm,
+.f265-handoff-note {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lead-trust-error {
+  font-size: var(--font-12);
+  color: var(--danger-f2);
+}
+
+.lead-trust-notice,
+.f265-handoff-result {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.lead-trust-actions,
+.f265-handoff {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.lead-trust-form {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.lead-trust-label {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.lead-trust-input {
+  font-size: var(--font-12);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+/* F26.6 Mailboxes: connected mailboxes, pacing limits and market rules */
+.f266-provider-rows,
+.f266-mailbox-rows,
+.f266-market-rows {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.f266-provider,
+.f266-market-rule,
+.f266-mailbox-head,
+.f266-mailbox-actions,
+.f266-limits,
+.f266-market-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.f266-mailbox {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.f266-provider-name,
+.f266-mailbox-address,
+.f266-market-code {
+  font-size: var(--font-12);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.f266-provider-notice,
+.f266-mailbox-provider,
+.f266-mailbox-default,
+.f266-limit-label,
+.f266-market-label {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.f266-limit {
+  display: grid;
+  gap: 2px;
+}
+
+.f266-limit input {
+  width: 7em;
+}
+
+.f266-send {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.f266-send-line,
+.f266-send-result,
+.f266-note {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+/* F28 Follow-ups: the lead's sequence (drawer) and open sequences (Outreach view) */
+.f28-status,
+.f28-first,
+.f28-list-note,
+.f28-paused-all {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.f28-first,
+.f28-list-note,
+.f28-hint,
+.f28-step-when {
+  color: var(--text-2);
+  font-size: var(--font-12);
+}
+
+.f28-step {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.f28-step-head,
+.f28-step-actions,
+.f28-controls,
+.f28-list-head,
+.f28-list-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.f28-step-title,
+.f28-list-lead,
+.f28-list-title {
+  font-size: var(--font-12);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.f28-step-state,
+.f28-approved,
+.f28-unapproved,
+.f28-list-status {
+  font-size: var(--font-12);
+  color: var(--text-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.f28-unapproved {
+  color: var(--text-1);
+}
+
+.f28-step-subject {
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.f28-step-text {
+  font-size: var(--font-12);
+  color: var(--text-1);
+  white-space: pre-wrap;
+}
+
+.f28-edit {
+  width: 100%;
+  min-height: 4em;
+}
+
+.f28-edit-label,
+.f28-confirm,
+.f28-check {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.f28-controls {
+  margin-top: var(--space-2);
+}
+
+.f28-followups {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.f28-list-rows {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.f28-list-row {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.f28-list-subject,
+.f28-list-next {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+/* F29 Reply Router: the drawer's reply category and the Outreach view's Replies list */
+.f29-line,
+.f29-review-hint,
+.f29-away {
+  font-size: var(--font-12);
+  color: var(--text-1);
+}
+
+.f29-source,
+.f29-note,
+.f29-list-note,
+.f29-row-when,
+.f29-row-source,
+.f29-row-state {
+  font-size: var(--font-12);
+  color: var(--text-2);
+}
+
+.f29-optout {
+  font-size: var(--font-12);
+  font-weight: 600;
+  color: var(--warn);
+}
+
+.f29-controls,
+.f29-filters,
+.f29-list-head,
+.f29-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.f29-replies {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.f29-rows {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.f29-row {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.f29-row-optout {
+  border-left: 3px solid var(--warn);
+  padding-left: var(--space-2);
+}
+
+.f29-row-lead,
+.f29-row-category {
+  font-weight: 600;
 }

@@ -3,6 +3,17 @@
 
 **ZTech Lead Generation** is a desktop tool developed and licensed by **ZuniTech** for global business lead discovery and organization. It is designed for foreign trade, cross-border services, local services, B2B sales, market research, and channel development scenarios.
 
+| | |
+|---|---|
+| **Parent company** | Zuni Enterprise |
+| **Technology brand** | ZuniTech |
+| **Product** | ZTech Lead Generation |
+
+> The registered entity name, registration number and registered address are
+> **not confirmed** and are therefore not stated. The published legal
+> documents carry a clearly flagged placeholder for them. See the
+> `ztech-legal` repository.
+
 By combining keywords, regions, languages, and filter conditions, users can discover business information worldwide — including landline numbers, mobile numbers, addresses, websites, emails, social profiles, and other publicly available business information — and store results in a lead library for filtering, organizing, and exporting.
 
 ## Core Capabilities
@@ -52,6 +63,26 @@ By combining keywords, regions, languages, and filter conditions, users can disc
 * Export lead data to CSV for sales teams, support teams, or CRM workflows.
 
 ## Deployment & Running
+
+### Where the data lives
+
+On Windows the product keeps everything in one directory:
+
+```
+%APPDATA%\ZTech Lead Generation\
+  data\         the lead library, the job ledger and the Lead Intelligence tables
+  logs\         the application logs
+  config.json   the settings and the sealed credentials
+```
+
+**Compatibility.** The product used to be shipped as `phone全球获客` (package
+name `phone-global-leads`, appId `com.whatsapp.automation`), so older
+installations keep their data in one of those directories. On the first start
+after the rename the product **moves** that directory to the new one, so no
+lead, credential, mailbox token, consent record or setting is lost. If the
+move cannot be completed - a locked file, for example - the product keeps
+using the old directory instead of starting empty. The resolution lives in
+`src/main/paths.js` and is covered by `tests/product-identity.test.js`.
 
 ### Environment Requirements
 

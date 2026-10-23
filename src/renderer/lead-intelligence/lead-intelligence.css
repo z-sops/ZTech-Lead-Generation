@@ -1,0 +1,31 @@
+/* Lead-intelligence styles. Scoped with the li- prefix.
+ * INTEGRATION POINT: map the fallback values to the existing ZTech CSS variables if the
+ * app defines them (e.g. --color-text). Load as a stylesheet file (CSP-safe), not inline.
+ */
+.li-research, .li-panel { display: grid; gap: 12px; }
+.li-section { border: 1px solid var(--li-border, rgba(127,127,127,.3)); border-radius: 8px; padding: 12px; }
+.li-section-title { margin: 0 0 8px; font-size: 1rem; }
+.li-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.li-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; background: var(--li-accent, #2563eb); color: #fff; }
+.li-btn[disabled] { opacity: .5; cursor: not-allowed; }
+.li-btn-secondary { background: transparent; color: inherit; border-color: var(--li-border, rgba(127,127,127,.4)); }
+.li-btn-danger { background: transparent; color: var(--li-danger, #b42318); border-color: currentColor; }
+.li-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .8rem; border: 1px solid currentColor; }
+.li-badge[data-state="fit"], .li-badge[data-state="complete"], .li-badge[data-state="allowed"], .li-badge[data-state="DIGITAL_FOOTPRINT_FOUND"], .li-badge[data-state="draft"] { color: var(--li-ok, #067647); }
+.li-badge[data-state="not_fit"], .li-badge[data-state="failed"], .li-badge[data-state="blocked"], .li-badge[data-state="high"], .li-badge[data-state="critical"], .li-badge[data-state="SITE_UNREACHABLE"], .li-badge[data-state="RESEARCH_FAILED"] { color: var(--li-danger, #b42318); }
+.li-badge[data-state="unknown"], .li-badge[data-state="partial"], .li-badge[data-state="stale"], .li-badge[data-state="pending"], .li-badge[data-state="medium"], .li-badge[data-state="needs_revision"], .li-badge[data-state="RESEARCH_PARTIAL"] { color: var(--li-warn, #b54708); }
+.li-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.li-kv dt { opacity: .7; }
+.li-kv dd { margin: 0; overflow-wrap: anywhere; }
+.li-list { margin: 4px 0; padding-left: 18px; }
+.li-list li { margin: 4px 0; overflow-wrap: anywhere; }
+.li-muted { opacity: .7; }
+.li-refs { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.li-ref { font-size: .72rem; padding: 0 4px; border-radius: 4px; background: var(--li-code-bg, rgba(127,127,127,.15)); }
+.li-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.li-table th, .li-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--li-border, rgba(127,127,127,.2)); vertical-align: top; overflow-wrap: anywhere; }
+.li-error, .li-warning { padding: 8px 12px; border-radius: 6px; border: 1px solid currentColor; }
+.li-error { color: var(--li-danger, #b42318); }
+.li-warning { color: var(--li-warn, #b54708); }
+.li-gate { padding: 8px 12px; border-radius: 6px; border: 1px dashed var(--li-border, rgba(127,127,127,.4)); }
+.li-panel input[type="text"], .li-panel textarea { width: 100%; box-sizing: border-box; }
