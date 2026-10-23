@@ -826,44 +826,57 @@ a token and never signs one ✔. The database verifies the lease and the
 fencing token at the moment of the request ✔, so a worker that has lost its
 lease cannot obtain a token ✔.
 
-### 5.6 The context, and the job-scoped predicates (F2)
+### 5.6 The context, and the job-scoped predicates (F2) — as implemented in P1
 
-`li.workspace_context` gains two columns: `context_kind` (`'session'` or
-`'job'`) and `job_id`. A job context has **no** session and **no** user ✔ —
-the authority is the job ✔.
+**`li.current_workspace()` is NOT changed.** It keeps M3's meaning exactly: a
+**session** context is entitled by a live session, an active membership and an
+unexpired credential, and every check is re-run on every read ✔. A **job**
+context carries **no session and no user** — its authority is the job — so
+`li.current_workspace()` returns `NULL` for it ✔, and the legacy
+workspace-scoped policies therefore **deny** it ✔. That is the property the
+whole design rests on: a worker never holds a workspace authority, so it
+never reaches workspace-wide tenant data ✔.
 
-`li.current_workspace()` has two branches, and **both fail closed**:
+`li.workspace_context` gains four **additive** columns ✔:
 
-| The context kind | The entitlement, re-checked on every read |
+| Column | Why |
 |---|---|
-| `session` | the session is alive, it belongs to the user, and the user is an active member of the workspace ✔ (M3's rule ✔) |
-| `job` | the job exists, it is `leased` or `running`, its `workspace_id` matches, **its `fencing_token` matches the context's**, and the lease has not expired ✔ |
+| `context_kind` | `'session'` or `'job'` — the two contexts never mix ✔; a `NULL` is a pre-P1 row and keeps its M3 meaning ✔ |
+| `job_id` | the job the context is bound to ✔ |
+| `worker_id` | the **verified** worker that holds the lease ✔ — never a caller-supplied string ✔ |
+| `fencing_token` | the fencing token the context was opened with ✔ |
 
-**The queue's, the ledger's and the reservations' RLS policies are
-workspace-scoped for a customer context and JOB-SCOPED for a worker
-context** ✔:
+The context is still keyed by the **backend** and the **transaction** ✔, so it
+belongs to ONE transaction ✔ and a pooled connection can never carry one
+job's authority into another transaction's work ✔.
+
+**The job context is re-validated on EVERY read** ✔, by the protected
+readers `li.resolve_job_context()`, `li.current_job()` and
+`li.current_job_workspace()` ✔. A job context is valid only when the job
+still exists, is still `leased` or `running`, still belongs to that workspace,
+still carries **that** fencing token, is still held by **that** worker, and
+its lease has not lapsed ✔. A re-claim advances the fencing token, so the
+previous holder's authority dies the moment the job is taken over ✔.
+
+**The queue's policy requires an EXACT authorized job.** There is no
+"no context means everything" branch ✔:
 
 ```sql
--- li.job_queue, li.provider_ledger, li.credit_reservations
-USING (
-  workspace_id = li.current_workspace()
-  AND (li.current_job() IS NULL OR job_id = li.current_job())
-)
-WITH CHECK (
-  workspace_id = li.current_workspace()
-  AND (li.current_job() IS NULL OR job_id = li.current_job())
-)
+-- li.job_queue
+USING (li.job_row_authorized(job_id, workspace_id, fencing_token))
+WITH CHECK (li.job_row_authorized(job_id, workspace_id, fencing_token))
 ```
 
-`li.current_job()` returns the job of a **job context** ✔ and `NULL` for a
-customer context ✔ (so a customer sees their whole workspace ✔) and `NULL`
-for an unknown context ✔ (so a worker without a job context sees nothing
-✔ — fail closed ✔).
+`li.job_row_authorized()` compares the row's job, workspace **and fencing
+token** against the validated context ✔, so a stale worker — one whose lease
+was reclaimed and whose fencing token has advanced — matches **nothing** ✔
+and its writes affect **zero rows** ✔. The predicate takes the row's values
+rather than referencing the table, because a policy that referenced its own
+table would be an infinite recursion ✔.
 
-**The reservation table carries the job** ✔ (§2.3 ✔ — `li.credit_reservations.job_id`
-✔, and a trigger guarantees it agrees with the invocation's job ✔), so the
-policy below has a column to test ✔ and a mismatched pair cannot be used
-to escape it ✔.
+`li.current_job()` returns the job of a **job context** ✔ and `NULL`
+otherwise ✔, and `li.current_job_workspace()` the workspace of that job ✔.
+A `NULL` from either is a **refusal**, never a widening ✔.
 
 **The customer-visible reads and the mutations are separated.** The customer
 may **read** their own balance and their own reservations through the
@@ -884,16 +897,72 @@ the settlement and the release — are `SECURITY DEFINER` functions that take
 the **job's** workspace and the **job's** row ✔, so they act only on the
 caller's own job ✔. They are the only way to touch the credits ✔.
 
+**The authoritative grant matrix is not this document** — it is
+`assertRoles.js` ✔, which asserts every `SECURITY DEFINER` function's owner,
+its pinned search path and its **exact** set of grantees, and which is
+itself proved against a real PostgreSQL by the test suite ✔. A signature
+here that drifts from the code is corrected here; the **matrix** is the
+code's ✔.
+
+### 5.6a The worker may not hold a workspace authority at all
+
+The job-scoped design is only safe if the worker role cannot reach the
+**workspace-scoped** path that M3 gave it ✔. P1 closes that path in three
+independent layers ✔, so that closing one does not open another ✔:
+
+| | The protection | The consequence |
+|---|---|---|
+| **H1** | `li.grant_workspace()` refuses the worker role ✔, **before** any row is created or changed ✔ | no new workspace grant may exist ✔ |
+| **H2** | `li.issue_workspace_token()` refuses the worker role ✔, **before** the entitlement check, the grant check and the signing ✔ | no workspace token may be minted for the worker ✔ |
+| **H3** | the worker's `EXECUTE` on `li.set_workspace()` is revoked ✔ **and** the function refuses the worker role in its own body ✔ | no workspace context may be opened ✔ |
+
+**A historical grant is harmless** ✔: it may still be in
+`li.workspace_grants` ✔, but no token may be minted from it ✔ (H2), no
+context may be opened with one ✔ (H3), and the worker's own job-scoped
+functions never consult it ✔.
+
+**The worker may READ the queue, and may not CHANGE it** ✔. The
+`SELECT` privilege is all it holds on `li.job_queue` ✔: there is no
+`UPDATE`, no `INSERT` and no `DELETE` ✔. A row-level policy limits **which
+job** the worker may see ✔, but it does not limit **which columns** it may
+write ✔ — and a direct `UPDATE` could set a job's state, payload, result,
+attempt counters, lease owner or class without any of the checks the
+authorised functions make ✔. **Every mutation of a job therefore goes
+through a `SECURITY DEFINER` function** — the claim ✔, the renewal ✔, the
+recovery ✔, the result write ✔ — each of which verifies the worker's
+identity, the lease, the fencing token and the job's state itself ✔. The
+startup assertion proves the privilege is not there ✔.
+
+**H7: the worker no longer holds the legacy tenant business tables** ✔. The
+worker role was granted them in migration 014, before there was a worker ✔,
+and it never needed them ✔ — a job context cannot reach the workspace-wide
+tenant data at all ✔. The `SELECT`, `INSERT`, `UPDATE` and `DELETE`
+privileges are revoked explicitly, one auditable statement per group ✔. The
+schema `USAGE` ✔, the sequence privileges ✔, the platform's reference data
+(`li_market_rules`, read-only ✔) and the new queue's own privileges are
+**retained** ✔.
+
+### 5.6b What P1 does NOT cover, and what depends on P2
+
+| | The gap | Who closes it |
+|---|---|---|
+| **The provider-ledger-aware recovery** | P1's recovery requeues **verified no-op jobs only** ✔. A **chargeable** job whose lease lapses is **not** requeued and is **not** given an outcome ✔: whether the provider was called is unknown until the ledger exists ✔, and an outcome may not be invented ✔. Such a job is reported as `deferred_to_p2` ✔ and left untouched ✔ | **P2** ✔ — `li.provider_ledger` (migration 017) and the ledger-driven recovery of §10 ✔ |
+| **The job-event audit trail** | P1 records the state machine's transitions in `li.job_queue` itself and in `last_error` ✔, but there is **no append-only event log** ✔ — `li.job_events` is migration 019 ✔. **P1's transitions are not fully audited** ✔ | **P2+** ✔ — `019_job_events.sql` ✔ |
+| **The real provider work** | P1 executes **no-op jobs only** ✔. The no-op executor refuses a chargeable job loudly ✔ | **P2** ✔ |
+| **The `uncertain` state** | The state exists in the schema ✔, but **P1 refuses to write it** ✔: `uncertain` means the provider's outcome is unknown ✔, and P1 has no provider and no provider ledger to know it ✔. Writing it would also break the queue's own lease-state constraint ✔ — a state that is not `leased` or `running` may hold no lease owner ✔ — so the refusal is explicit and reasoned rather than a late constraint violation ✔ | **P2** ✔ — with the provider ledger, where the outcome is observable ✔ |
+| **The customer API for jobs** | P1 gives the customer role **no** privilege on `li.job_queue` ✔; the job endpoints, the listing and the cancellation are P4 ✔ | **P4** ✔ |
+| **The out-of-repository worker consumers** | The compatibility review of the worker role was **repository-level only** ✔: no application code in this repository uses the worker role ✔, the only `set_workspace()` caller is the `ztech_app` tenant path ✔, and no workflow requiring workspace-scoped worker access was identified ✔. **Any consumer OUTSIDE this repository** — an operator script, a deployment manifest, a service in another repository — has **not** been independently inventoried ✔, and H1–H3 plus H7 would break it ✔ | **The owner** ✔ — a release blocker until confirmed ✔ |
+
 ### 5.7 Who may execute what
 
 | Function | `SECURITY DEFINER` | Executable by | Why |
 |---|---|---|---|
 | `li.claim_job(identity_token, lease)` | yes | **`ztech_worker`** only | it hands out jobs; the tenant roles may not call it ✔ |
 | `li.request_job_token(job, fencing_token, identity)` | yes | **`ztech_worker`** only | it is the **issuer's** side of the flow ✔ — the signature is made by the control plane ✔, and the database only **verifies** the request ✔ |
-| `li.renew_lease(job, fencing_token, lease)` | yes | `ztech_worker` | it extends a lease ✔ |
+| `li.renew_lease(job, fencing_token, identity, lease)` | yes | `ztech_worker` | it extends a lease; the worker proves its identity, so a caller-supplied worker id is never proof ✔ |
 | `li.set_workspace_for_job(job, token)` | yes | `ztech_worker` | it opens a job-scoped context; it verifies the token, so it is safe to expose ✔ |
 | `li.current_workspace()`, `li.current_job()` | yes | the runtime roles | the RLS policies call them ✔ |
-| `li.issue_worker_token(job, worker)` | yes | **`ztech_control`** | only the control plane signs worker credentials ✔ |
+| `li.issue_worker_token(job, worker, ttl)` | yes | **`ztech_control`** | only the control plane signs worker credentials ✔ |
 | `li.reserve_credits(...)`, `li.settle_credits(...)`, `li.release_credits(...)` | yes | **`ztech_worker`** | the worker holds and settles the credits, scoped to the job's workspace ✔ |
 | `li.grant_workspace(workspace, role)` | yes | `ztech_identity` | the ceiling is the identity service's ✔ |
 

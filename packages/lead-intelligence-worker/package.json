@@ -1,0 +1,17 @@
+{
+  "name": "@zunitech/lead-intelligence-worker",
+  "version": "0.1.0",
+  "description": "The M4 P1 background worker. It claims jobs from the PostgreSQL queue and runs them under a job-scoped, transaction-bound authority. It never holds a migrator credential, a BYPASSRLS credential, a control-plane credential or the signing secret.",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "files": [
+    "src"
+  ]
+}
