@@ -49,6 +49,7 @@ class Worker {
     this.jobTokenExpiresAt = 0;
     this.activeController = null;
     this.heartbeatInFlight = false;
+    this._heartbeatPromise = null;
   }
 
   /**
@@ -168,16 +169,27 @@ class Worker {
    *
    * @param {object} job
    */
-  async heartbeatOnce(job) {
-    if (this.heartbeatInFlight) return;
+  heartbeatOnce(job) {
+    // Every caller receives the actual pending operation, not a fresh
+    // resolved Promise from an overlapping interval tick.
+    if (this._heartbeatPromise) return this._heartbeatPromise;
     this.heartbeatInFlight = true;
-    try {
+    const pending = (async () => {
       const renewed = await this.renew(job);
       if (!renewed) return;
       await this.refreshToken(job);
-    } finally {
-      this.heartbeatInFlight = false;
-    }
+    })();
+    this._heartbeatPromise = pending;
+    const settled = () => {
+      if (this._heartbeatPromise === pending) {
+        this._heartbeatPromise = null;
+        this.heartbeatInFlight = false;
+      }
+    };
+    // Attach both settlement handlers; do not create an unhandled
+    // rejected Promise in the timer or cleanup paths.
+    pending.then(settled, settled);
+    return pending;
   }
 
   /**
@@ -235,11 +247,13 @@ class Worker {
    * @param {object} job
    */
   async runJob(job) {
+    // A previous job's heartbeat must never be allowed to mutate this
+    // job's authority. Refuse an unsafe direct runJob transition.
+    if (this._heartbeatPromise) throw new Error('previous heartbeat is still in flight');
     this.current = job;
     this.authorityLost = false;
     this.jobToken = null;
     this.jobTokenExpiresAt = 0;
-    this.heartbeatInFlight = false;
 
     const controller = new AbortController();
     this.activeController = controller;
@@ -257,7 +271,9 @@ class Worker {
       // authority. It keeps running while a graceful shutdown is in
       // progress, because the completion is still authorised.
       this.heartbeat = this.setIntervalImpl(() => {
-        this.heartbeatOnce(job).catch(() => {});
+        this.heartbeatOnce(job).catch((err) => {
+          this.loseAuthority('heartbeat.unexpected_failure', job, err);
+        });
       }, this.config.heartbeatSeconds * 1000);
       if (this.heartbeat && this.heartbeat.unref) this.heartbeat.unref();
 
@@ -304,6 +320,15 @@ class Worker {
       if (this.heartbeat) {
         this.clearIntervalImpl(this.heartbeat);
         this.heartbeat = null;
+      }
+      // Clearing the timer does not cancel a renewal already in flight.
+      // Drain it before allowing the loop to claim another job.
+      if (this._heartbeatPromise) {
+        try {
+          await this._heartbeatPromise;
+        } catch (err) {
+          this.loseAuthority('heartbeat.cleanup_failed', job, err);
+        }
       }
       this.activeController = null;
       this.current = null;
