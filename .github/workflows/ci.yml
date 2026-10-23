@@ -37,7 +37,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         node: ['20', '22']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -118,7 +118,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -152,7 +152,7 @@ jobs:
     name: zuni-seo contract drift
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -171,7 +171,7 @@ jobs:
       - name: Check out zuni-seo (read only)
         id: zuniseo
         continue-on-error: true
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: z-sops/zuni-seo
           ref: feature/geo-growth-intelligence
@@ -196,7 +196,7 @@ jobs:
     runs-on: windows-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
