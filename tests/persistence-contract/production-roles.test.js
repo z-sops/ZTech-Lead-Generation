@@ -156,7 +156,7 @@ if (!process.env.ZTECH_PG_URL) {
       `SELECT has_function_privilege(current_user, 'li.set_workspace(uuid,text)', 'EXECUTE') AS may_set,
               has_function_privilege(current_user, 'li.current_workspace()', 'EXECUTE') AS may_current,
               has_function_privilege(current_user, 'li.is_suppressed(text,text)', 'EXECUTE') AS may_suppressed,
-              has_function_privilege(current_user, 'li.issue_workspace_token(uuid,text,integer)', 'EXECUTE') AS may_issue,
+              has_function_privilege(current_user, 'li.issue_workspace_token(uuid,text,uuid,uuid,integer)', 'EXECUTE') AS may_issue,
               has_function_privilege(current_user, 'li.to_hex(bytea)', 'EXECUTE') AS may_helper,
               has_table_privilege(current_user, 'li.workspace_grants', 'SELECT') AS may_read_grants,
               has_table_privilege(current_user, 'li.workspace_context', 'SELECT') AS may_read_context,
@@ -173,7 +173,7 @@ if (!process.env.ZTECH_PG_URL) {
   });
 
   test('the control plane may issue a token, and may do nothing else', async () => {
-    const token = await control.query('SELECT li.issue_workspace_token($1, $2, 60) AS token', [A, ROLES.app]);
+    const token = await control.query('SELECT li.issue_workspace_token($1, $2, $3, $4, 60) AS token', [A, ROLES.app, db.sessionId, db.userId]);
     assert.ok(token.rows[0].token, 'the control plane may issue a token');
     // It may not read a row.
     await assert.rejects(control.query('SELECT count(*) FROM li.li_saved_searches'), /permission denied/i);

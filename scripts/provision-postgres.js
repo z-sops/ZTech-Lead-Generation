@@ -72,7 +72,8 @@ async function main() {
     console.error('');
     console.error('Nothing has been changed. Every role stays NOLOGIN until it is');
     console.error('given a credential. A role with no credential cannot be used.');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const admin = new Pool({ connectionString: ADMIN_URL });
@@ -87,8 +88,9 @@ async function main() {
         const { rows: make } = await admin.query("SELECT format('CREATE ROLE %I NOLOGIN', $1::text) AS statement", [role.name]);
         await admin.query(make[0].statement);
       }
-      await setCredential(admin, role.name, role.password);
+      const applied = await setCredential(admin, role.name, role.password);
       console.log(`  ${role.name}: credential set from ${role.env}`);
+      if (applied && applied.loggingOff) console.log(`    (the statement logging was off while it was set)`);
     }
 
     // 3. The database, and who may connect to it and create in it.
@@ -154,7 +156,8 @@ async function main() {
     if (wrong) {
       console.error('');
       console.error('The provisioning did not produce the expected result. Read the lines above.');
-      process.exit(1);
+      process.exitCode = 1;
+    return;
     }
     console.log('');
     console.log('Next: apply the migrations as ztech_migrator.');
@@ -165,5 +168,6 @@ async function main() {
 
 main().catch((err) => {
   console.error(err.message);
-  process.exit(1);
+  process.exitCode = 1;
+  return;
 });

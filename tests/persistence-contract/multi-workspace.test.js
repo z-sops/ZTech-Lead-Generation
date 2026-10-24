@@ -46,7 +46,7 @@ const DATABASE = 'ztech_multi';
 async function withSchema(fn) {
   const db = await freshDatabase(DATABASE, { workspace: A, workspaces: [A, B, PLATFORM_WORKSPACE_ID] });
   try {
-    return await fn(db.pool, db.owner, db.platformPool, db.controlPool);
+    return await fn(db.pool, db.owner, db.platformPool, db.controlPool, db.sessionFor, db.sessionId, db.userId);
   } finally {
     await dropDatabase(DATABASE, [db.pool, db.owner, db.platformPool, db.admin]);
   }
@@ -70,9 +70,10 @@ function packet(over = {}) {
 }
 
 test('two workspaces can hold the same business key', { skip }, async () => {
-  await withSchema(async (pool, owner, platformPool, controlPool) => {
-    const a = new PostgresStore({ pool, controlPool, workspaceId: A, logger: { warn() {} } });
-    const b = new PostgresStore({ pool, controlPool, workspaceId: B, logger: { warn() {} } });
+  await withSchema(async (pool, owner, platformPool, controlPool, sessionFor, sessionId, userId) => {
+      const bSession = await sessionFor(B);
+    const a = new PostgresStore({ pool, controlPool, sessionId, userId, workspaceId: A, logger: { warn() {} } });
+    const b = new PostgresStore({ pool, controlPool, sessionId: bSession.sessionId, userId: bSession.userId, workspaceId: B, logger: { warn() {} } });
 
     // The same request key, the same lead, the same job id, the same domain.
     await a.jobs.insert(job());
@@ -139,9 +140,10 @@ test('two workspaces can hold the same business key', { skip }, async () => {
 });
 
 test('one workspace cannot read the other\'s rows', { skip }, async () => {
-  await withSchema(async (pool, owner, platformPool, controlPool) => {
-    const a = new PostgresStore({ pool, controlPool, workspaceId: A, logger: { warn() {} } });
-    const b = new PostgresStore({ pool, controlPool, workspaceId: B, logger: { warn() {} } });
+  await withSchema(async (pool, owner, platformPool, controlPool, sessionFor, sessionId, userId) => {
+      const bSession = await sessionFor(B);
+    const a = new PostgresStore({ pool, controlPool, sessionId, userId, workspaceId: A, logger: { warn() {} } });
+    const b = new PostgresStore({ pool, controlPool, sessionId: bSession.sessionId, userId: bSession.userId, workspaceId: B, logger: { warn() {} } });
     await a.jobs.insert(job());
     await a.packets.insert(packet());
     await a.pitches.upsert({ pitch_id: 'p1', lead_id: 'L1', status: 'draft', content_hash: 'h1', created_at: T1, updated_at: T1 });
@@ -161,9 +163,10 @@ test('one workspace cannot read the other\'s rows', { skip }, async () => {
 });
 
 test('a row of one workspace cannot be written under another workspace\'s key', { skip }, async () => {
-  await withSchema(async (pool, owner, platformPool, controlPool) => {
-    const a = new PostgresStore({ pool, controlPool, workspaceId: A, logger: { warn() {} } });
-    const b = new PostgresStore({ pool, controlPool, workspaceId: B, logger: { warn() {} } });
+  await withSchema(async (pool, owner, platformPool, controlPool, sessionFor, sessionId, userId) => {
+      const bSession = await sessionFor(B);
+    const a = new PostgresStore({ pool, controlPool, sessionId, userId, workspaceId: A, logger: { warn() {} } });
+    const b = new PostgresStore({ pool, controlPool, sessionId: bSession.sessionId, userId: bSession.userId, workspaceId: B, logger: { warn() {} } });
     await a.jobs.insert(job());
     // B may hold the same id, but it is B's own row: the key is tenant-scoped.
     await b.jobs.insert(job({ request_key: 'other-key' }));
@@ -175,9 +178,10 @@ test('a row of one workspace cannot be written under another workspace\'s key', 
 });
 
 test('one workspace\'s pause-all does not pause another\'s sequences', { skip }, async () => {
-  await withSchema(async (pool, owner, platformPool, controlPool) => {
-    const a = new PostgresStore({ pool, controlPool, workspaceId: A, logger: { warn() {} } });
-    const b = new PostgresStore({ pool, controlPool, workspaceId: B, logger: { warn() {} } });
+  await withSchema(async (pool, owner, platformPool, controlPool, sessionFor, sessionId, userId) => {
+      const bSession = await sessionFor(B);
+    const a = new PostgresStore({ pool, controlPool, sessionId, userId, workspaceId: A, logger: { warn() {} } });
+    const b = new PostgresStore({ pool, controlPool, sessionId: bSession.sessionId, userId: bSession.userId, workspaceId: B, logger: { warn() {} } });
     await a.sequences.setControl({ paused: true, updatedAt: T1 });
     assert.equal((await a.sequences.control()).paused, true, 'workspace A is paused');
     assert.equal((await b.sequences.control()).paused, false, 'workspace B is not');
@@ -185,8 +189,9 @@ test('one workspace\'s pause-all does not pause another\'s sequences', { skip },
 });
 
 test('the market rules are platform data', { skip }, async () => {
-  await withSchema(async (pool, owner, platformPool, controlPool) => {
-    const tenant = new PostgresStore({ pool, controlPool, workspaceId: A, role: 'tenant', logger: { warn() {} } });
+  await withSchema(async (pool, owner, platformPool, controlPool, sessionFor, sessionId, userId) => {
+      const bSession = await sessionFor(B);
+    const tenant = new PostgresStore({ pool, controlPool, sessionId, userId, workspaceId: A, role: 'tenant', logger: { warn() {} } });
     const platform = new PostgresStore({ pool: platformPool, controlPool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
 
     await assert.rejects(
@@ -201,9 +206,10 @@ test('the market rules are platform data', { skip }, async () => {
 });
 
 test('a global suppression blocks every workspace, and exposes no contact information', { skip }, async () => {
-  await withSchema(async (pool, owner, platformPool, controlPool) => {
-    const a = new PostgresStore({ pool, controlPool, workspaceId: A, logger: { warn() {} } });
-    const b = new PostgresStore({ pool, controlPool, workspaceId: B, logger: { warn() {} } });
+  await withSchema(async (pool, owner, platformPool, controlPool, sessionFor, sessionId, userId) => {
+      const bSession = await sessionFor(B);
+    const a = new PostgresStore({ pool, controlPool, sessionId, userId, workspaceId: A, logger: { warn() {} } });
+    const b = new PostgresStore({ pool, controlPool, sessionId: bSession.sessionId, userId: bSession.userId, workspaceId: B, logger: { warn() {} } });
     const platform = new PostgresStore({ pool: platformPool, controlPool, workspaceId: PLATFORM_WORKSPACE_ID, role: 'platform', logger: { warn() {} } });
 
     await platform.suppressions.add({ suppression_id: 'sup_g', scope: 'global', channel: 'email', normalized_address: 'secret@other.test', reason: 'unsubscribe', source: 'relay', created_at: T1 });
@@ -225,9 +231,10 @@ test('a global suppression blocks every workspace, and exposes no contact inform
 });
 
 test('a workspace sees only its own suppressions', { skip }, async () => {
-  await withSchema(async (pool, owner, platformPool, controlPool) => {
-    const a = new PostgresStore({ pool, controlPool, workspaceId: A, logger: { warn() {} } });
-    const b = new PostgresStore({ pool, controlPool, workspaceId: B, logger: { warn() {} } });
+  await withSchema(async (pool, owner, platformPool, controlPool, sessionFor, sessionId, userId) => {
+      const bSession = await sessionFor(B);
+    const a = new PostgresStore({ pool, controlPool, sessionId, userId, workspaceId: A, logger: { warn() {} } });
+    const b = new PostgresStore({ pool, controlPool, sessionId: bSession.sessionId, userId: bSession.userId, workspaceId: B, logger: { warn() {} } });
     await a.suppressions.add({ suppression_id: 'sup_a', scope: 'workspace', channel: 'email', normalized_address: 'a@b.test', reason: 'bounce', source: 'relay', created_at: T1 });
     assert.ok(await a.suppressions.find({ channel: 'email', address: 'a@b.test' }));
     assert.equal(await b.suppressions.find({ channel: 'email', address: 'a@b.test' }), null, 'workspace B does not see it');

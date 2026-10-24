@@ -76,7 +76,7 @@ class PostgresStore {
   /**
    * @param {{pool: object, controlPool?: object, workspaceId?: string, role?: 'tenant'|'platform', logger?: object, now?: () => Date, tokenTtlSeconds?: number}} opts
    */
-  constructor({ pool, controlPool = null, workspaceId, role = 'tenant', schema = 'li', logger = console, now = () => new Date(), tokenTtlSeconds = 300 }) {
+  constructor({ pool, controlPool = null, workspaceId, sessionId = null, userId = null, role = 'tenant', schema = 'li', logger = console, now = () => new Date(), tokenTtlSeconds = 300 }) {
     if (!pool || typeof pool.query !== 'function') throw new TypeError('a pg Pool is required');
     const ws = String(workspaceId || '');
     const isPlatform = ws === PLATFORM_WORKSPACE_ID;
@@ -96,6 +96,10 @@ class PostgresStore {
      * context, and it says so rather than running unprotected.
      */
     this.controlPool = controlPool;
+    /** The session and the user the tokens are bound to. M3: a token is not
+     * a role's credential; it is a SESSION's credential. */
+    this.sessionId = sessionId;
+    this.userId = userId;
     this.tokenTtlSeconds = Math.min(300, Math.max(60, Number(tokenTtlSeconds) || 300));
     /** The workspace tokens this store holds, and when they stop being used. */
     this.tokenCache = new Map();
@@ -421,9 +425,14 @@ class PostgresStore {
     }
     const role = await this.dbRole();
     const ttl = this.tokenTtlSeconds;
+    if (!this.sessionId || !this.userId) {
+      throw new Error(
+        'a workspace context needs a session and a user: the token is bound to both, and a database role alone is not an entitlement',
+      );
+    }
     const res = await this.controlPool.query(
-      `SELECT ${this.schema}.issue_workspace_token($1, $2, $3) AS token`,
-      [workspaceId, role, ttl],
+      `SELECT ${this.schema}.issue_workspace_token($1, $2, $3, $4, $5) AS token`,
+      [workspaceId, role, this.sessionId, this.userId, ttl],
     );
     const token = res.rows[0].token;
     // A margin, so a token is never used in the moments before it expires.
@@ -477,6 +486,17 @@ class PostgresStore {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Is this address suppressed, here or globally?
+   *
+   * The answer is a BOOLEAN: never a row, never an address. It needs a
+   * context, so it runs inside a transaction that carries one.
+   */
+  async isSuppressed(channel, address) {
+    const res = await this.client.query(`SELECT ${this.schema}.is_suppressed($1, $2) AS s`, [channel, address]);
+    return Boolean(res.rows[0].s);
   }
 
   /**

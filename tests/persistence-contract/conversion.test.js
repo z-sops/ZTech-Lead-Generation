@@ -107,7 +107,7 @@ test('the store reports a document that is not an object', { skip: !process.env.
   const URL = process.env.ZTECH_PG_URL;
   const db = await freshDatabase('ztech_conversion', { workspace: '11111111-1111-4111-8111-111111111111' });
   const pool = db.pool;
-  const store = new PostgresStore({ pool, controlPool: db.controlPool, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
+  const store = new PostgresStore({ pool, controlPool: db.controlPool, sessionId: db.sessionId, userId: db.userId, workspaceId: '11111111-1111-4111-8111-111111111111', logger: { warn() {} } });
   await store.packets.insert({
     packet_id: 'pkt_1', lead_id: 'L1', job_id: 'rjob_1', research_status: 'complete',
     digital_footprint: { state: 'clean' }, requested_domain: 'acme.test',
