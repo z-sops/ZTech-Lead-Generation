@@ -297,7 +297,7 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
   const jobId = `job_${crypto.randomUUID()}`;
 
   // 1. Create research job record
-  const job = await store.jobs.create({
+  await store.jobs.create({
     job_id: jobId,
     lead_id: 'batch_discovery',
     provider_id: 'ztech_research_demo',

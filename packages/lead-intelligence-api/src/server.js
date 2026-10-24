@@ -4,7 +4,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { URL } = require('node:url');
-const { Throttle, ROLES, MATRIX, PERMISSIONS, newId } = require('./security');
+const { Throttle, ROLES, PERMISSIONS, newId } = require('./security');
 const { AuthService, ServiceError } = require('./service');
 const { InMemoryIdentityPool } = require('./inMemoryIdentity');
 const { InMemoryStoreForApi } = require('./inMemoryStore');
@@ -110,7 +110,9 @@ class ApiServer {
   }
 
   close() {
-    return new Promise((resolve) => this.server.close(resolve));
+    return new Promise((resolve) => {
+      this.server.close(resolve);
+    });
   }
 
   /* ------------------------------ the plumbing ------------------------------ */
