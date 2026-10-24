@@ -177,7 +177,9 @@ test('ZTech SaaS Vertical Slice Suite', async (t) => {
     assert.equal(discoveredOpp.is_synthetic, true);
     assert.ok(discoveredOpp.synthetic_badge.includes('DEMO / SYNTHETIC RESEARCH'));
     assert.ok(discoveredOpp.evidence_summary.findings_count >= 1);
-    assert.ok(discoveredOpp.icp_fit.score >= 50);
+    assert.equal(discoveredOpp.icp_fit.status, 'fit');
+    assert.ok(discoveredOpp.icp_fit.qualitative);
+    assert.ok(Array.isArray(discoveredOpp.icp_fit.matched_criteria));
 
     // Retrieve research job details
     const jobRes = await aliceClient.get(`/api/workspaces/${aliceWorkspaceId}/research/${discRes.body.job_id}`);
@@ -186,7 +188,17 @@ test('ZTech SaaS Vertical Slice Suite', async (t) => {
   });
 
   await t.test('6. Opportunity Persistence & Workspace Isolation', async () => {
-    // Alice saves the opportunity
+    // Negative test: Saving a forged/unverified opportunity must be rejected (404)
+    const forgedOpp = { ...discoveredOpp, opportunity_id: 'opp_forged_untrusted_12345' };
+    const forgedRes = await aliceClient.post(`/api/workspaces/${aliceWorkspaceId}/opportunities/save`, forgedOpp);
+    assert.equal(forgedRes.status, 404);
+    assert.equal(forgedRes.body.error, 'opportunity_not_found');
+
+    // Negative test: Bob cannot save Alice's opportunity into his workspace (404)
+    const crossSaveRes = await bobClient.post(`/api/workspaces/${bobWorkspaceId}/opportunities/save`, discoveredOpp);
+    assert.equal(crossSaveRes.status, 404);
+
+    // Alice saves the authentic discovered opportunity
     const saveRes = await aliceClient.post(`/api/workspaces/${aliceWorkspaceId}/opportunities/save`, discoveredOpp);
     assert.equal(saveRes.status, 200);
     assert.equal(saveRes.body.ok, true);
@@ -238,7 +250,23 @@ test('ZTech SaaS Vertical Slice Suite', async (t) => {
     assert.ok(gate.reasons.some((r) => r.code === 'HUMAN_APPROVAL'));
   });
 
-  await t.test('8. Human Outreach Approval Ledger', async () => {
+  await t.test('8. Human Outreach Approval Ledger & Integrity Verification', async () => {
+    // Negative test 1: Altered content hash must fail with 400 hash_mismatch
+    const tamperedRes = await aliceClient.post(`/api/workspaces/${aliceWorkspaceId}/outreach/approve`, {
+      pitch_id: pitchDraft.pitch_id,
+      content_hash: 'forged_tampered_hash_0000000',
+    });
+    assert.equal(tamperedRes.status, 400);
+    assert.equal(tamperedRes.body.error, 'hash_mismatch');
+
+    // Negative test 2: Bob cannot approve Alice's workspace pitch (404 / cross-tenant)
+    const crossPitchRes = await bobClient.post(`/api/workspaces/${bobWorkspaceId}/outreach/approve`, {
+      pitch_id: pitchDraft.pitch_id,
+      content_hash: pitchDraft.content_hash,
+    });
+    assert.equal(crossPitchRes.status, 404);
+
+    // Positive test: Alice (owner) approves authentic pitch
     const approveRes = await aliceClient.post(`/api/workspaces/${aliceWorkspaceId}/outreach/approve`, {
       pitch_id: pitchDraft.pitch_id,
       content_hash: pitchDraft.content_hash,
@@ -248,6 +276,14 @@ test('ZTech SaaS Vertical Slice Suite', async (t) => {
     assert.equal(approveRes.body.ok, true);
     assert.equal(approveRes.body.status, 'approved_for_human_dispatch');
     assert.equal(approveRes.body.auto_send_prohibited, true);
+
+    // Negative test 3: Duplicate approval fails with 409 Conflict
+    const duplicateRes = await aliceClient.post(`/api/workspaces/${aliceWorkspaceId}/outreach/approve`, {
+      pitch_id: pitchDraft.pitch_id,
+      content_hash: pitchDraft.content_hash,
+    });
+    assert.equal(duplicateRes.status, 409);
+    assert.equal(duplicateRes.body.error, 'already_approved');
   });
 
   await t.test('9. Static Asset Delivery for Browser SaaS Dashboard', async () => {

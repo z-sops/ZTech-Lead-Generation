@@ -9,7 +9,7 @@ const ROLES = Object.freeze(['owner', 'admin', 'manager', 'member', 'viewer']);
 const PERMISSIONS = Object.freeze([
   'workspace.read', 'workspace.write', 'workspace.create', 'workspace.delete',
   'member.read', 'member.invite', 'member.remove', 'member.role',
-  'settings.write', 'suppression.check', 'audit.read',
+  'settings.write', 'suppression.check', 'audit.read', 'outreach.approve',
 ]);
 
 /**
@@ -22,11 +22,11 @@ const MATRIX = Object.freeze({
   admin: [
     'workspace.read', 'workspace.write', 'workspace.create',
     'member.read', 'member.invite', 'member.remove', 'member.role',
-    'settings.write', 'suppression.check', 'audit.read',
+    'settings.write', 'suppression.check', 'audit.read', 'outreach.approve',
   ],
   manager: [
     'workspace.read', 'workspace.write',
-    'member.read', 'member.invite', 'suppression.check', 'audit.read',
+    'member.read', 'member.invite', 'suppression.check', 'audit.read', 'outreach.approve',
   ],
   member: ['workspace.read', 'workspace.write', 'suppression.check'],
   viewer: ['workspace.read', 'suppression.check'],

@@ -25,6 +25,9 @@
       <div class="demo-banner-pill" id="demo-banner">
         <span>⚡</span> DEMO / SYNTHETIC RESEARCH — INTERNAL SLICE
       </div>
+      <div class="storage-badge-pill" id="storage-badge" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.35); color: #a5b4fc; font-size: 11px; font-weight: 600;">
+        <span id="storage-mode-icon">💾</span> <span id="storage-mode-text">STORAGE: INITIALIZING...</span>
+      </div>
 
       <div class="topbar-controls">
         <div class="workspace-badge" id="current-workspace-badge">
@@ -291,11 +294,11 @@
       <form id="login-form">
         <div class="form-group">
           <label class="form-label" for="login-email">Email Address</label>
-          <input type="email" id="login-email" class="form-input" placeholder="alice@ztech.test" value="alice@ztech.test" required>
+          <input type="email" id="login-email" class="form-input" placeholder="user@company.com" required>
         </div>
         <div class="form-group">
           <label class="form-label" for="login-password">Password</label>
-          <input type="password" id="login-password" class="form-input" placeholder="••••••••••••" value="correct-horse-battery-staple" required>
+          <input type="password" id="login-password" class="form-input" placeholder="Enter password" required>
         </div>
         <button type="submit" id="btn-login-submit" class="btn btn-primary btn-block" style="margin-top: 10px;">Sign In to Workspace</button>
       </form>
@@ -321,8 +324,8 @@
         <button type="submit" id="btn-register-submit" class="btn btn-primary btn-block" style="margin-top: 10px;">Create Organization & Workspace</button>
       </form>
 
-      <div style="margin-top: 20px; text-align: center;">
-        <button type="button" id="quick-demo-fill" class="btn btn-secondary" style="font-size: 11px; padding: 6px 12px;">Quick Fill Demo Account</button>
+      <div id="demo-mode-helper" style="margin-top: 20px; text-align: center; display: none;">
+        <button type="button" id="quick-demo-fill" class="btn btn-secondary" style="font-size: 11px; padding: 6px 12px;">Auto-Login Local Demo Session</button>
       </div>
     </div>
 

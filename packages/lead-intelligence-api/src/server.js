@@ -54,7 +54,27 @@ class ApiServer {
     trustedProxyHops = 0,
     platformConsole = false,
     staticDir = null,
+    mode = null,
+    allowDemoAutologin = false,
+    demoEmail = 'alice@ztech.test',
   } = {}) {
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.ZTECH_ENV === 'production';
+    const requestedMode = mode || process.env.ZTECH_STORAGE_MODE;
+
+    if (isProduction) {
+      this.mode = 'production';
+      if (!identity || identity instanceof InMemoryIdentityPool) {
+        throw new Error('Production mode requires PostgreSQL persistent storage and secure configuration');
+      }
+      if (allowDemoAutologin) {
+        throw new Error('Demo auto-login is strictly prohibited in production mode');
+      }
+    } else if (requestedMode === 'postgres' || process.env.ZTECH_PG_URL) {
+      this.mode = 'postgres';
+    } else {
+      this.mode = 'local-demo';
+    }
+
     const idPool = identity || new InMemoryIdentityPool();
     this.service = new AuthService({ identity: idPool, tenant, logger, platformConsole });
     /**
@@ -72,6 +92,8 @@ class ApiServer {
     this.secureCookies = secureCookies;
     this.trustedProxyHops = Number(trustedProxyHops) || 0;
     this.staticDir = staticDir ? path.resolve(staticDir) : null;
+    this.allowDemoAutologin = Boolean(allowDemoAutologin);
+    this.demoEmail = demoEmail;
     this.loginThrottle = new Throttle({ limit: 5, windowMs: 15 * 60 * 1000 });
     this.suppressionThrottle = new Throttle({ limit: 30, windowMs: 60 * 1000 });
     this.activeCandidatesByWorkspace = new Map();
@@ -216,11 +238,18 @@ class ApiServer {
     const method = req.method;
 
     if (pathName === '/api/health') {
-      this.json(res, 200, { ok: true, roles: ROLES, permissions: PERMISSIONS });
+      this.json(res, 200, {
+        ok: true,
+        storage_mode: this.mode,
+        ephemeral: this.mode === 'local-demo',
+        roles: ROLES,
+        permissions: PERMISSIONS,
+      });
       return;
     }
     if (pathName === '/api/auth/register' && method === 'POST') return this.register(req, res);
     if (pathName === '/api/auth/login' && method === 'POST') return this.login(req, res);
+    if (pathName === '/api/auth/demo-login' && method === 'POST') return this.demoLogin(req, res);
     if (pathName === '/api/auth/logout' && method === 'POST') return this.logout(req, res);
     if (pathName === '/api/session' && method === 'GET') return this.sessionInfo(req, res);
     if (pathName === '/api/organizations' && method === 'POST') return this.createOrganization(req, res);
@@ -328,6 +357,41 @@ class ApiServer {
     });
   }
 
+  async demoLogin(req, res) {
+    if (this.mode === 'production' || process.env.NODE_ENV === 'production') {
+      this.json(res, 403, { error: 'forbidden', message: 'Demo auto-login is forbidden in production mode' });
+      return;
+    }
+    if (!this.allowDemoAutologin) {
+      this.json(res, 403, { error: 'forbidden', message: 'Demo auto-login is disabled. Explicit local configuration is required.' });
+      return;
+    }
+    const caller = this.callerAddress(req);
+    const isLoopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(caller) || !caller;
+    if (!isLoopback) {
+      this.json(res, 403, { error: 'forbidden', message: 'Demo auto-login is restricted to loopback connections.' });
+      return;
+    }
+    const demoEmail = this.demoEmail || 'alice@ztech.test';
+    const user = await this.service.findUserByEmail(demoEmail);
+    if (!user) {
+      this.json(res, 404, { error: 'demo_user_not_found', message: 'Demo user is not provisioned.' });
+      return;
+    }
+    const issued = await this.service.issueSession(user.user_id);
+    await this.service.audit({ user_id: user.user_id, session_id: issued.sessionId, action: 'auth.demo_login', outcome: 'allow' });
+    this.json(res, 200, {
+      ok: true,
+      user_id: user.user_id,
+      csrf_token: issued.csrf,
+      email: user.email,
+      storage_mode: this.mode,
+      ephemeral: this.mode === 'local-demo',
+    }, {
+      'set-cookie': this.sessionCookie(issued.token, 12 * 60 * 60),
+    });
+  }
+
   async logout(req, res) {
     const session = await this.requireSession(req, res);
     if (!session) return;
@@ -341,7 +405,11 @@ class ApiServer {
     if (!session) return;
     const memberships = await this.service.membershipsOf(session.user_id);
     this.json(res, 200, {
-      user_id: session.user_id, email: session.email, memberships,
+      user_id: session.user_id,
+      email: session.email,
+      memberships,
+      storage_mode: this.mode,
+      ephemeral: this.mode === 'local-demo',
     });
   }
 
@@ -497,31 +565,72 @@ class ApiServer {
     await this.service.authorize(session, workspaceId, 'workspace.write');
 
     const body = await this.body(req);
-    const id = opportunityId || body.opportunity_id || `opp_${newId().slice(0, 12)}`;
+    const id = opportunityId || body.opportunity_id;
+    if (!id) {
+      throw new ServiceError(400, 'missing_opportunity_id', 'Opportunity ID is required');
+    }
+
+    // 1. Authoritative candidate verification against server-generated discovery
+    const candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
+    const candidate = candidates.find((c) => c.opportunity_id === id);
+    if (!candidate) {
+      throw new ServiceError(404, 'opportunity_not_found', `Opportunity "${id}" was not discovered or verified in workspace "${workspaceId}"`);
+    }
+
+    // 2. Verify workspace ownership
+    if (candidate.workspace_id && candidate.workspace_id !== workspaceId) {
+      throw new ServiceError(403, 'cross_workspace_denied', 'Opportunity belongs to another workspace');
+    }
+
     const store = await this.storeFor(session, workspaceId);
 
+    // 3. Verify associated research job and evidence packet exist in workspace store
+    if (candidate.job_id) {
+      const job = await store.jobs.get(candidate.job_id);
+      if (!job) {
+        throw new ServiceError(400, 'invalid_job_association', 'Associated research job not found in workspace store');
+      }
+    }
+    if (candidate.packet_id) {
+      const packet = await store.packets.get(candidate.packet_id);
+      if (!packet) {
+        throw new ServiceError(400, 'invalid_packet_association', 'Associated evidence packet not found in workspace store');
+      }
+    }
+
+    // 4. Server-side authoritative filter — never trust client-supplied source claims, scores or approval metadata
+    const authoritativeFilter = {
+      opportunity_id: candidate.opportunity_id,
+      job_id: candidate.job_id,
+      packet_id: candidate.packet_id,
+      workspace_id: workspaceId,
+      company_name: candidate.company_name,
+      domain: candidate.domain,
+      detected_need: candidate.detected_need,
+      recommended_next_step: candidate.recommended_next_step,
+      evidence_summary: candidate.evidence_summary,
+      findings: candidate.findings,
+      icp_fit: candidate.icp_fit,
+      uncertainty_notes: candidate.uncertainty_notes,
+      is_synthetic: candidate.is_synthetic,
+      synthetic_badge: candidate.synthetic_badge,
+      review_status: 'saved',
+      saved_at: new Date().toISOString(),
+      saved_by: session.email,
+    };
+
     const savedRecord = {
-      search_id: id,
-      name: body.company_name || `Opportunity ${id}`,
-      filter: {
-        ...body,
-        opportunity_id: id,
-        saved_at: new Date().toISOString(),
-        saved_by: session.email,
-        review_status: 'saved',
-      },
+      search_id: candidate.opportunity_id,
+      name: candidate.company_name,
+      filter: authoritativeFilter,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
     await store.savedSearches.upsert(savedRecord);
+    candidate.review_status = 'saved';
 
-    // Update status in active candidates cache
-    const candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
-    const target = candidates.find((c) => c.opportunity_id === id);
-    if (target) target.review_status = 'saved';
-
-    this.json(res, 200, { ok: true, saved_opportunity: savedRecord.filter });
+    this.json(res, 200, { ok: true, saved_opportunity: authoritativeFilter });
   }
 
   async listSavedOpportunities(req, res, workspaceId) {
@@ -560,7 +669,9 @@ class ApiServer {
     const session = await this.requireSession(req, res);
     if (!session) return;
     if (!await this.requireCsrf(req, res, session)) return;
-    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    // 1. Enforce stronger role authority: requires outreach.approve permission
+    await this.service.authorize(session, workspaceId, 'outreach.approve');
 
     const body = await this.body(req);
     if (!body.pitch_id || !body.content_hash) {
@@ -568,6 +679,34 @@ class ApiServer {
     }
 
     const store = await this.storeFor(session, workspaceId);
+
+    // 2. Verify pitch exists in workspace store
+    const pitch = await store.pitches.get(body.pitch_id);
+    if (!pitch) {
+      throw new ServiceError(404, 'pitch_not_found', `Persisted pitch "${body.pitch_id}" not found in workspace store`);
+    }
+
+    // 3. Verify workspace ownership (cross-workspace reference must fail)
+    if (pitch.workspace_id && pitch.workspace_id !== workspaceId) {
+      throw new ServiceError(403, 'cross_workspace_denied', 'Pitch does not belong to this workspace');
+    }
+
+    // 4. Verify content hash (altered hash must fail)
+    if (pitch.content_hash && pitch.content_hash !== body.content_hash) {
+      throw new ServiceError(400, 'hash_mismatch', 'Pitch content hash does not match stored authoritative record');
+    }
+
+    // 5. Verify applicable OutreachGate decision (must not have policy violations other than pending human approval)
+    if (pitch.gate_reasons && pitch.gate_reasons.some((r) => r.code !== 'HUMAN_APPROVAL')) {
+      throw new ServiceError(400, 'gate_blocked', 'Pitch was rejected by safety gate policy and cannot be approved');
+    }
+
+    // 6. Duplicate approval behavior: cannot approve twice
+    const duplicate = await store.approvals.latestForPitch(body.pitch_id);
+    if (duplicate) {
+      throw new ServiceError(409, 'already_approved', `Pitch "${body.pitch_id}" has already been approved by ${duplicate.approved_by}`);
+    }
+
     const approval = await store.approvals.insert({
       approval_id: `appr_${newId().slice(0, 12)}`,
       pitch_id: body.pitch_id,

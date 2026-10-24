@@ -3,10 +3,20 @@
 /**
  * InMemoryIdentityPool
  *
+ * NON-SECURITY-CONFORMANCE TEST ADAPTER ONLY.
+ *
  * Implements the pg.Pool query and connection interface required by AuthService,
  * storing users, organizations, workspaces, memberships, sessions, and audits
  * in memory. Enables complete standalone demonstration and testing when a live
  * PostgreSQL 16 cluster is not active.
+ *
+ * IMPORTANT SECURITY BOUNDARY NOTICE:
+ * This adapter is strictly for local demo mode and non-security-conformance unit
+ * testing. It is NOT equivalent to PostgreSQL transactional security or PostgreSQL 16
+ * Row-Level Security (RLS). It does not provide multi-connection MVCC, serialized
+ * snapshot isolation, or cluster-level role separation. Only real PostgreSQL tests
+ * (e.g. tests/api/integrity.test.js and tests/persistence-contract/*) establish
+ * M3 transaction and RLS security guarantees.
  */
 class InMemoryIdentityPool {
   constructor() {
@@ -21,16 +31,56 @@ class InMemoryIdentityPool {
   }
 
   async connect() {
+    let inTransaction = false;
+    const undoStack = [];
+
     return {
-      query: (sql, params) => this.query(sql, params),
-      release: () => {},
+      query: async (sql, params = []) => {
+        const s = String(sql).trim();
+
+        if (/^BEGIN/i.test(s)) {
+          inTransaction = true;
+          undoStack.length = 0;
+          return { rows: [], rowCount: 0 };
+        }
+
+        if (/^COMMIT/i.test(s)) {
+          inTransaction = false;
+          undoStack.length = 0;
+          return { rows: [], rowCount: 0 };
+        }
+
+        if (/^ROLLBACK/i.test(s)) {
+          inTransaction = false;
+          while (undoStack.length > 0) {
+            const undo = undoStack.pop();
+            try { undo(); } catch {}
+          }
+          return { rows: [], rowCount: 0 };
+        }
+
+        return this._execute(sql, params, inTransaction ? undoStack : null);
+      },
+      release: () => {
+        if (inTransaction) {
+          while (undoStack.length > 0) {
+            const undo = undoStack.pop();
+            try { undo(); } catch {}
+          }
+          inTransaction = false;
+        }
+      },
     };
   }
 
   async query(sql, params = []) {
+    return this._execute(sql, params, null);
+  }
+
+  _execute(sql, params = [], undoStack = null) {
     const s = String(sql).trim();
 
-    // 1. Transaction markers
+    // 1. Transaction markers on direct pool (handled gracefully)
     if (/^(BEGIN|COMMIT|ROLLBACK)/i.test(s)) {
       return { rows: [], rowCount: 0 };
     }
@@ -65,6 +115,7 @@ class InMemoryIdentityPool {
         created_at: new Date().toISOString(),
       };
       this.users.set(userId, user);
+      if (undoStack) undoStack.push(() => this.users.delete(userId));
       return { rows: [user], rowCount: 1 };
     }
 
@@ -73,6 +124,7 @@ class InMemoryIdentityPool {
       const [orgId, name, slug] = params;
       const org = { org_id: orgId, name, slug, created_at: new Date().toISOString() };
       this.organizations.set(orgId, org);
+      if (undoStack) undoStack.push(() => this.organizations.delete(orgId));
       return { rows: [org], rowCount: 1 };
     }
 
@@ -95,6 +147,7 @@ class InMemoryIdentityPool {
       }
       const m = { membership_id: membershipId, org_id: orgId, user_id: userId, role: role || 'member', revoked_at: null };
       this.orgMemberships.set(membershipId, m);
+      if (undoStack) undoStack.push(() => this.orgMemberships.delete(membershipId));
       return { rows: [m], rowCount: 1 };
     }
 
@@ -103,6 +156,7 @@ class InMemoryIdentityPool {
       const [workspaceId, orgId, name] = params;
       const ws = { workspace_id: workspaceId, org_id: orgId, name, created_at: new Date().toISOString() };
       this.workspaces.set(workspaceId, ws);
+      if (undoStack) undoStack.push(() => this.workspaces.delete(workspaceId));
       return { rows: [ws], rowCount: 1 };
     }
 
@@ -132,6 +186,7 @@ class InMemoryIdentityPool {
         revoked_at: null,
       };
       this.wsMemberships.set(membershipId, m);
+      if (undoStack) undoStack.push(() => this.wsMemberships.delete(membershipId));
       return { rows: [m], rowCount: 1 };
     }
 
@@ -213,6 +268,7 @@ class InMemoryIdentityPool {
         created_at: new Date().toISOString(),
       };
       this.sessions.set(sessionId, sess);
+      if (undoStack) undoStack.push(() => this.sessions.delete(sessionId));
       return { rows: [sess], rowCount: 1 };
     }
 
@@ -225,7 +281,9 @@ class InMemoryIdentityPool {
     if (/UPDATE id\.sessions SET revoked_at = now\(\) WHERE session_id = \$1/i.test(s)) {
       const sess = this.sessions.get(params[0]);
       if (sess && !sess.revoked_at) {
+        const prev = sess.revoked_at;
         sess.revoked_at = new Date().toISOString();
+        if (undoStack) undoStack.push(() => { sess.revoked_at = prev; });
         return { rows: [], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };

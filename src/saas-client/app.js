@@ -29,6 +29,10 @@ const DOM = {
   displayOrgName: document.getElementById('display-org-name'),
   displayWsName: document.getElementById('display-ws-name'),
   logoutBtn: document.getElementById('logout-btn'),
+  storageBadge: document.getElementById('storage-badge'),
+  storageModeText: document.getElementById('storage-mode-text'),
+  storageModeIcon: document.getElementById('storage-mode-icon'),
+  demoModeHelper: document.getElementById('demo-mode-helper'),
 
   // Auth
   tabLogin: document.getElementById('tab-login'),
@@ -134,7 +138,36 @@ function toast(message, type = 'info') {
 
 /* -------------------------- Auth & Session State ------------------------- */
 
+async function updateStorageBadge() {
+  try {
+    const health = await api('/api/health');
+    if (DOM.storageBadge && DOM.storageModeText) {
+      if (health && health.storage_mode === 'postgres') {
+        DOM.storageBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+        DOM.storageBadge.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+        DOM.storageBadge.style.color = '#34d399';
+        if (DOM.storageModeIcon) DOM.storageModeIcon.textContent = '🐘';
+        DOM.storageModeText.textContent = 'STORAGE: POSTGRESQL 16 (PERSISTENT)';
+      } else {
+        DOM.storageBadge.style.background = 'rgba(245, 158, 11, 0.15)';
+        DOM.storageBadge.style.borderColor = 'rgba(245, 158, 11, 0.35)';
+        DOM.storageBadge.style.color = '#fbbf24';
+        if (DOM.storageModeIcon) DOM.storageModeIcon.textContent = '⚡';
+        DOM.storageModeText.textContent = 'STORAGE: EPHEMERAL IN-MEMORY (DEMO)';
+      }
+    }
+  } catch (err) {
+    console.warn('Storage mode check failed:', err.message);
+  }
+}
+
 async function checkSession() {
+  await updateStorageBadge();
+  const isLoopback = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (DOM.demoModeHelper) {
+    DOM.demoModeHelper.style.display = isLoopback ? 'block' : 'none';
+  }
+
   try {
     const data = await api('/api/session');
     if (data && data.user_id) {
@@ -226,13 +259,13 @@ async function executeDiscovery(criteria) {
   };
 
   try {
-    updateProgress('Step 1/4: Analyzing Market Entities & URLs...', 25);
+    updateProgress('Step 1/4: Analyzing Market Entities & Research Targets...', 25);
     await new Promise((r) => setTimeout(r, 350));
 
-    updateProgress('Step 2/4: Executing Page Crawl & Footprint Analysis...', 50);
+    updateProgress('Step 2/4: Generating Simulated Diagnostic Signals (Controlled Fixture)...', 50);
     await new Promise((r) => setTimeout(r, 400));
 
-    updateProgress('Step 3/4: Indexing Evidence Packets & Facts...', 75);
+    updateProgress('Step 3/4: Assembling Evidence Packets & Provenance Metadata...', 75);
     await new Promise((r) => setTimeout(r, 350));
 
     const result = await api(`/api/workspaces/${wsId}/research`, {
@@ -240,7 +273,7 @@ async function executeDiscovery(criteria) {
       body: criteria,
     });
 
-    updateProgress('Step 4/4: Computing ICP Fit & Opportunity Scoring...', 100);
+    updateProgress('Step 4/4: Evaluating Qualitative ICP Fit Alignment...', 100);
     await new Promise((r) => setTimeout(r, 250));
 
     DOM.discoveryProgress.style.display = 'none';
@@ -275,7 +308,7 @@ function createOpportunityCardElement(opp, isSavedView = false) {
   card.id = `card-${opp.opportunity_id}`;
 
   const fitClass = opp.icp_fit?.status || 'fit';
-  const fitScore = opp.icp_fit?.score ? `${opp.icp_fit.score}% Match` : 'Fit Verified';
+  const fitScore = opp.icp_fit?.qualitative ? 'Qualitative Fit' : (opp.icp_fit?.status || 'Fit').toUpperCase();
 
   card.innerHTML = `
     <div>
@@ -286,7 +319,7 @@ function createOpportunityCardElement(opp, isSavedView = false) {
           <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px;">📍 ${escapeHtml(opp.market_location)}</div>
         </div>
         <div class="fit-badge ${fitClass}">
-          <span>🎯</span> ${fitScore}
+          <span>🎯</span> ${escapeHtml(fitScore)}
         </div>
       </div>
 
@@ -297,14 +330,14 @@ function createOpportunityCardElement(opp, isSavedView = false) {
       <div class="evidence-provenance-box">
         <div style="font-weight: 700; color: #fff; margin-bottom: 4px;">🔬 Supporting Evidence (${opp.evidence_summary?.findings_count || 2} findings, ${opp.evidence_summary?.facts_count || 3} facts):</div>
         <ul>
-          <li>• Server Response: <strong style="color: #f87171;">${opp.evidence_summary?.server_latency || '3.2s'}</strong> (Audit target: &lt; 1.2s)</li>
+          <li>• Server Response: <strong style="color: #f87171;">${escapeHtml(opp.evidence_summary?.server_latency || '3.2s')}</strong> (Simulated Benchmark: &lt; 1.2s)</li>
           <li>• Content Deficit: <strong>${opp.evidence_summary?.missing_meta_pages || 4} pages</strong> lack structured descriptions</li>
-          <li>• Audit Source: Verified crawl on ${escapeHtml((opp.evidence_summary?.captured_at || '').slice(0, 10))}</li>
+          <li>• Data Provenance: Simulated Demo Fixture (${escapeHtml(opp.data_origin || 'controlled_demo_fixture')})</li>
         </ul>
       </div>
 
       <div class="uncertainty-box">
-        <strong>⚠️ Information Completeness:</strong> ${(opp.uncertainty_notes && opp.uncertainty_notes[1]) || 'Controlled synthetic fixture for demonstration.'}
+        <strong>⚠️ Simulated Finding:</strong> ${(opp.uncertainty_notes && opp.uncertainty_notes[0]) || 'Controlled synthetic fixture for demonstration. Not a live web crawl.'}
       </div>
     </div>
 
@@ -354,16 +387,18 @@ function openInspectionModal(opp) {
       </div>
       <div style="font-size: 13px; color: #e2e8f0; margin-bottom: 6px;">${escapeHtml(f.observed)}</div>
       <div style="font-size: 12px; color: var(--accent-info);"><strong>Recommendation:</strong> ${escapeHtml(f.recommendation)}</div>
-      <div style="font-size: 11px; color: var(--text-dim); margin-top: 6px;">Audited URLs: ${escapeHtml((f.urls || []).join(', '))}</div>
+      <div style="font-size: 11px; color: var(--text-dim); margin-top: 6px;">Audited URLs (Simulated): ${escapeHtml((f.urls || []).join(', '))}</div>
     </div>
   `).join('');
+
+  const matchedHtml = (opp.icp_fit?.matched_criteria || []).map((c) => `<li style="color: #34d399;">✓ ${escapeHtml(c)}</li>`).join('');
 
   DOM.modalBody.innerHTML = `
     <div style="margin-bottom: 20px;">
       <div class="demo-banner-pill" style="margin-bottom: 14px;">
         <span>⚡</span> ${escapeHtml(opp.synthetic_badge || 'DEMO / SYNTHETIC RESEARCH')}
       </div>
-      <h3 style="font-size: 15px; margin-bottom: 8px;">Technical Audit Findings</h3>
+      <h3 style="font-size: 15px; margin-bottom: 8px;">Technical Audit Findings (Simulated Demonstration)</h3>
       ${findingsHtml}
     </div>
 
@@ -372,15 +407,17 @@ function openInspectionModal(opp) {
       <div style="background: var(--bg-canvas); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">
         <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
           <span><strong>Fit Status:</strong> ${(opp.icp_fit?.status || 'fit').toUpperCase()}</span>
-          <span><strong>Alignment Score:</strong> ${opp.icp_fit?.score || 85}%</span>
+          <span><strong>Assessment:</strong> Qualitative Evaluation</span>
         </div>
-        <div style="font-size: 12px; color: var(--text-muted);">${escapeHtml(opp.icp_fit?.reason || 'Verified match against target criteria')}</div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">${escapeHtml(opp.icp_fit?.qualitative || opp.icp_fit?.reason || 'Verified match against target criteria')}</div>
+        ${matchedHtml ? `<ul style="font-size: 11px; list-style: none; display: flex; flex-direction: column; gap: 4px;">${matchedHtml}</ul>` : ''}
       </div>
     </div>
 
     <div style="margin-bottom: 20px;">
-      <h3 style="font-size: 15px; margin-bottom: 8px;">Source Provenance & Limitations</h3>
+      <h3 style="font-size: 15px; margin-bottom: 8px;">Source Provenance & Synthetic Disclaimer</h3>
       <div style="background: var(--bg-canvas); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px; font-size: 12px; color: var(--text-muted);">
+        <p>• <strong>Data Origin:</strong> ${escapeHtml(opp.data_origin || 'controlled_demo_fixture')} (Controlled Synthetic Data)</p>
         <p>• <strong>Captured At:</strong> ${escapeHtml(opp.evidence_summary?.captured_at || '')}</p>
         <p>• <strong>Provider:</strong> ZTech Controlled Lead Intelligence Engine (Engine v2.3.0)</p>
         <p>• <strong>Contact Channel:</strong> ${escapeHtml(opp.contact_info?.email || 'N/A')} (${escapeHtml(opp.contact_info?.phone || 'N/A')})</p>
@@ -417,7 +454,7 @@ async function saveOpportunity(opp, btnElement) {
 
     if (btnElement) {
       btnElement.textContent = 'Saved ✓';
-      btnElement.className = 'btn btn-secondary';
+      btnElement.className = 'btn btn-secondary save-btn';
     }
 
     opp.review_status = 'saved';
@@ -498,6 +535,8 @@ async function openOutreachPreparationModal(opp) {
 
     const reasons = gate.reasons || [];
     const gatePassed = reasons.length === 0;
+    const currentRole = state.currentWorkspace?.role || 'member';
+    const canApprove = ['owner', 'admin', 'manager'].includes(currentRole);
 
     DOM.modalBody.innerHTML = `
       <div style="margin-bottom: 16px; padding: 12px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: var(--radius-md); font-size: 12px; color: #f87171;">
@@ -543,17 +582,25 @@ async function openOutreachPreparationModal(opp) {
         <div style="color: var(--text-main);">${escapeHtml(pitch.callToAction)}</div>
       </div>
 
+      ${!canApprove ? `
+        <div style="margin-top: 12px; padding: 10px 14px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: var(--radius-sm); font-size: 12px; color: #fbbf24;">
+          ⚠️ <strong>Approval Restricted:</strong> Role '${escapeHtml(currentRole)}' does not have outreach approval permissions. An Owner, Admin, or Manager must authorize dispatch.
+        </div>
+      ` : ''}
+
       <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
         <button class="btn btn-secondary" onclick="DOM.modalContainer.style.display='none'">Cancel</button>
-        <button class="btn btn-primary" id="approve-outreach-btn" style="background: #10b981;">
+        <button class="btn btn-primary" id="approve-outreach-btn" style="background: ${canApprove ? '#10b981' : '#475569'};" ${canApprove ? '' : 'disabled title="Requires owner, admin, or manager role"'}>
           Approve Draft for Human Dispatch
         </button>
       </div>
     `;
 
-    document.getElementById('approve-outreach-btn').addEventListener('click', () => {
-      approveOutreachDraft(pitch);
-    });
+    if (canApprove) {
+      document.getElementById('approve-outreach-btn').addEventListener('click', () => {
+        approveOutreachDraft(pitch);
+      });
+    }
 
     DOM.kpiDraftsCount.textContent = '1';
   } catch (err) {
@@ -614,15 +661,19 @@ function setupEventListeners() {
     DOM.loginForm.style.display = 'none';
   });
 
-  // Quick fill button for easy demo login
-  DOM.quickDemoFill.addEventListener('click', () => {
-    DOM.loginEmail.value = 'alice@ztech.test';
-    DOM.loginPassword.value = 'correct-horse-battery-staple';
-    DOM.regEmail.value = `founder_${Math.floor(Math.random() * 1000)}@ztech.test`;
-    DOM.regPassword.value = 'correct-horse-battery-staple';
-    DOM.regOrg.value = 'Apex Health Ventures';
-    DOM.regWorkspace.value = 'London Operations';
-  });
+  // Loopback demo login trigger
+  if (DOM.quickDemoFill) {
+    DOM.quickDemoFill.addEventListener('click', async () => {
+      try {
+        const res = await api('/api/auth/demo-login', { method: 'POST' });
+        state.csrfToken = res.csrf_token;
+        toast('Local demo session established!', 'success');
+        await checkSession();
+      } catch (err) {
+        toast(`Demo login unavailable: ${err.message}`, 'error');
+      }
+    });
+  }
 
   // Login Form
   DOM.loginForm.addEventListener('submit', async (e) => {
@@ -732,15 +783,14 @@ function escapeHtml(str) {
 document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   const params = new URLSearchParams(window.location.search);
-  if (params.get('autologin') === '1') {
+  const isLoopback = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+  if (params.get('autologin') === '1' && isLoopback) {
     try {
-      const res = await api('/api/auth/login', {
-        method: 'POST',
-        body: { email: 'alice@ztech.test', password: 'correct-horse-battery-staple' },
-      });
+      const res = await api('/api/auth/demo-login', { method: 'POST' });
       state.csrfToken = res.csrf_token;
     } catch (e) {
-      console.warn('Autologin error:', e.message);
+      console.warn('Loopback demo autologin skipped:', e.message);
     }
   }
   await checkSession();

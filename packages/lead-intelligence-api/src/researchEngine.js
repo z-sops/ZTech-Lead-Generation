@@ -385,14 +385,16 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
       recommended_next_step: candidate.recommendedNextStep,
       evidence_summary: {
         captured_at: packet.captured_at,
-        server_latency: `${candidate.serverLatency}s`,
-        missing_meta_pages: candidate.missingMetaCount,
+        simulated_server_latency: `${candidate.serverLatency}s (fixture benchmark)`,
+        simulated_missing_meta_pages: candidate.missingMetaCount,
         findings_count: packet.findings.length,
         facts_count: packet.facts.length,
+        data_origin: 'controlled_demo_fixture',
         provenance_sources: packet.facts.map((f) => ({
           area: f.area,
           source_url: f.source_url,
           label: f.label,
+          simulated: true,
         })),
       },
       findings: packet.findings.map((f) => ({
@@ -403,21 +405,27 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
         recommendation: f.recommendation,
         urls: f.urls,
         fact_ids: f.fact_ids,
+        simulated: true,
       })),
       icp_fit: {
         status: icpFit.fitStatus,
-        score: icpFit.fitStatus === 'fit' ? 92 : 65,
+        qualitative: icpFit.fitStatus === 'fit' ? 'High Criteria Fit (Qualitative)' : (icpFit.fitStatus === 'review' ? 'Pending Review (Partial Data)' : 'Low Fit'),
         reason: icpFit.reason,
-        positiveMatches: (icpFit.matchedCriteria || []).map((m) => m.label),
+        matched_criteria: (icpFit.matchedCriteria || []).map((m) => m.label),
+        unmet_criteria: (icpFit.unmetCriteria || []).map((m) => m.label),
+        evaluated_at: icpFit.evaluatedAt,
       },
       uncertainty_notes: [
         'Notice: Controlled synthetic research fixture for customer vertical slice demonstration.',
-        'Sample crawl covered 14 pages; live provider dispatch is intentionally disabled in this demonstration stage.',
-        'Prospect email is synthetically configured and has not been queried against a live bounce or suppression registry.',
+        'Simulated crawl represents demonstration catalog fixture; live provider network dispatch is disabled.',
+        'Contact email and latency measurements are non-production demonstration fixtures.',
+        'Ownership, Companies House filings, and active vendor budgets have not been verified.',
       ],
       is_synthetic: true,
       synthetic_badge: 'DEMO / SYNTHETIC RESEARCH — INTERNAL SLICE',
       review_status: 'unreviewed',
+      workspace_id: workspaceId,
+      job_id: jobId,
       created_at: nowIso,
     };
 
@@ -497,7 +505,10 @@ async function prepareOutreachDraft({ workspaceId, opportunity, offer, store, us
     },
   });
 
-  // Persist draft pitch in workspace store
+  // Persist draft pitch with gate decision, reasons and workspace scope
+  pitch.workspace_id = workspaceId;
+  pitch.gate_decision = gateEvaluation.decision;
+  pitch.gate_reasons = gateEvaluation.reasons;
   await store.pitches.upsert(pitch);
 
   return {

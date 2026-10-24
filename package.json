@@ -11,6 +11,7 @@
     "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
     "start": "electron .",
     "saas": "node scripts/start-saas.js",
+    "db:dev:setup": "node scripts/setup-dev-db.js",
     "build": "electron-builder",
     "build:win": "electron-builder --dir --config.win.signAndEditExecutable=false",
     "build:brand": "node scripts/build-brand-assets.js",
@@ -37,6 +38,7 @@
     "electron-builder": "^26.15.3",
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
+    "playwright": "^1.64.1",
     "vite": "^5.4.0",
     "wait-on": "^7.2.0"
   },

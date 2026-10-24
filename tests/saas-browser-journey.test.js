@@ -1,11 +1,12 @@
 'use strict';
 
 /**
- * ZTech SaaS End-to-End Customer Journey & Browser Contract Test
+ * ZTech SaaS End-to-End Customer Journey — HTTP/API Contract Acceptance Suite
  *
- * Validates the full browser application workflow:
- * User Onboarding -> Workspace Selection -> Opportunity Discovery ->
- * Evidence Inspection -> Persistence -> Outreach Gate Review & Approval.
+ * NOTE: This is an HTTP/API Contract Test, validating endpoint contracts,
+ * session lifecycle, and JSON response shapes.
+ * For actual browser DOM, click, navigation and rendering automation,
+ * see tests/saas-browser-playwright.test.js.
  */
 
 const test = require('node:test');
@@ -135,7 +136,8 @@ test('ZTech SaaS Browser Customer Journey', async (t) => {
 
     // Verify ICP fit match
     assert.equal(selectedOpp.icp_fit.status, 'fit');
-    assert.ok(selectedOpp.icp_fit.score >= 80);
+    assert.ok(selectedOpp.icp_fit.qualitative);
+    assert.ok(Array.isArray(selectedOpp.icp_fit.matched_criteria));
     assert.ok(selectedOpp.uncertainty_notes.length >= 2);
   });
 
