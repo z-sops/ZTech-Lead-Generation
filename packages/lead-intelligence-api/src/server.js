@@ -1,12 +1,32 @@
 'use strict';
 
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const { URL } = require('node:url');
-const { Throttle, ROLES, MATRIX, PERMISSIONS } = require('./security');
+const { Throttle, ROLES, PERMISSIONS, newId } = require('./security');
 const { AuthService, ServiceError } = require('./service');
+const { InMemoryIdentityPool } = require('./inMemoryIdentity');
+const { InMemoryStoreForApi } = require('./inMemoryStore');
+const { executeResearchDiscovery, prepareOutreachDraft } = require('./researchEngine');
 
 const SESSION_COOKIE = 'ztech_session';
 const CSRF_HEADER = 'x-csrf-token';
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
 
 /**
  * The HTTP surface of the service.
@@ -25,20 +45,58 @@ const CSRF_HEADER = 'x-csrf-token';
  *   - every authorization decision is audited.
  */
 class ApiServer {
-  constructor({ identity, tenant, storeFor, logger = console, secureCookies = false, trustedProxyHops = 0, platformConsole = false } = {}) {
-    this.service = new AuthService({ identity, tenant, logger, platformConsole });
+  constructor({
+    identity,
+    tenant,
+    storeFor,
+    logger = console,
+    secureCookies = false,
+    trustedProxyHops = 0,
+    platformConsole = false,
+    staticDir = null,
+    mode = null,
+    allowDemoAutologin = false,
+    demoEmail = 'alice@ztech.test',
+  } = {}) {
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.ZTECH_ENV === 'production';
+    const requestedMode = mode || process.env.ZTECH_STORAGE_MODE;
+
+    if (isProduction) {
+      this.mode = 'production';
+      if (!identity || identity instanceof InMemoryIdentityPool) {
+        throw new Error('Production mode requires PostgreSQL persistent storage and secure configuration');
+      }
+      if (allowDemoAutologin) {
+        throw new Error('Demo auto-login is strictly prohibited in production mode');
+      }
+    } else if (requestedMode === 'postgres' || process.env.ZTECH_PG_URL) {
+      this.mode = 'postgres';
+    } else {
+      this.mode = 'local-demo';
+    }
+
+    const idPool = identity || new InMemoryIdentityPool();
+    this.service = new AuthService({ identity: idPool, tenant, logger, platformConsole });
     /**
      * Whether this server is the platform console. It is a MARKER, and it
      * is NOT an authorization: a configuration flag is not an
      * authentication, and nothing here is reachable because of it.
      */
     this.platformConsole = platformConsole;
-    this.storeFor = storeFor;
+    this.storeFor = storeFor || (async (session, workspaceId) => new InMemoryStoreForApi({
+      workspaceId,
+      sessionId: session?.session_id,
+      userId: session?.user_id,
+    }));
     this.logger = logger;
     this.secureCookies = secureCookies;
     this.trustedProxyHops = Number(trustedProxyHops) || 0;
+    this.staticDir = staticDir ? path.resolve(staticDir) : null;
+    this.allowDemoAutologin = Boolean(allowDemoAutologin);
+    this.demoEmail = demoEmail;
     this.loginThrottle = new Throttle({ limit: 5, windowMs: 15 * 60 * 1000 });
     this.suppressionThrottle = new Throttle({ limit: 30, windowMs: 60 * 1000 });
+    this.activeCandidatesByWorkspace = new Map();
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => this.fail(res, err));
     });
@@ -74,7 +132,9 @@ class ApiServer {
   }
 
   close() {
-    return new Promise((resolve) => this.server.close(resolve));
+    return new Promise((resolve) => {
+      this.server.close(resolve);
+    });
   }
 
   /* ------------------------------ the plumbing ------------------------------ */
@@ -174,44 +234,107 @@ class ApiServer {
 
   async handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
-    const path = url.pathname;
+    const pathName = url.pathname;
     const method = req.method;
 
-    if (path === '/api/health') {
-      this.json(res, 200, { ok: true, roles: ROLES, permissions: PERMISSIONS });
+    if (pathName === '/api/health') {
+      this.json(res, 200, {
+        ok: true,
+        storage_mode: this.mode,
+        ephemeral: this.mode === 'local-demo',
+        roles: ROLES,
+        permissions: PERMISSIONS,
+      });
       return;
     }
-    if (path === '/api/auth/register' && method === 'POST') return this.register(req, res);
-    if (path === '/api/auth/login' && method === 'POST') return this.login(req, res);
-    if (path === '/api/auth/logout' && method === 'POST') return this.logout(req, res);
-    if (path === '/api/session' && method === 'GET') return this.sessionInfo(req, res);
-    if (path === '/api/organizations' && method === 'POST') return this.createOrganization(req, res);
-    if (path === '/api/invitations/accept' && method === 'POST') return this.acceptInvitation(req, res);
+    if (pathName === '/api/auth/register' && method === 'POST') return this.register(req, res);
+    if (pathName === '/api/auth/login' && method === 'POST') return this.login(req, res);
+    if (pathName === '/api/auth/demo-login' && method === 'POST') return this.demoLogin(req, res);
+    if (pathName === '/api/auth/logout' && method === 'POST') return this.logout(req, res);
+    if (pathName === '/api/session' && method === 'GET') return this.sessionInfo(req, res);
+    if (pathName === '/api/organizations' && method === 'POST') return this.createOrganization(req, res);
+    if (pathName === '/api/invitations/accept' && method === 'POST') return this.acceptInvitation(req, res);
 
-    const members = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/members(?:\/([0-9a-f-]+))?$/i);
+    const members = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/members(?:\/([0-9a-f-]+))?$/i);
     if (members) return this.members(req, res, members[1], members[2]);
 
-    const invites = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/invitations$/i);
+    const invites = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/invitations$/i);
     if (invites && method === 'POST') return this.invite(req, res, invites[1]);
 
-    const workspaces = path.match(/^\/api\/organizations\/([0-9a-f-]+)\/workspaces$/i);
+    const workspaces = pathName.match(/^\/api\/organizations\/([0-9a-f-]+)\/workspaces$/i);
     if (workspaces && method === 'POST') return this.createWorkspace(req, res, workspaces[1]);
 
-    const checks = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/suppressions\/check$/i);
+    const checks = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/suppressions\/check$/i);
     if (checks && method === 'POST') return this.suppressionCheck(req, res, checks[1]);
 
-    // THERE IS NO ACCOUNT-SUSPENSION ROUTE. Not on the customer API and
-    // not on a platform-console configuration either: a configuration flag
-    // is not an authentication, and until there is an independent
-    // platform-operator authentication there is no way to reach a
-    // suspension from HTTP at all. An account is suspended by a privileged
-    // database operation, and the enforcement of a suspension is in
-    // sessionFor() and in the database's entitlement check.
-
-    const records = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/records$/i);
+    const records = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/records$/i);
     if (records && method === 'GET') return this.records(req, res, records[1]);
 
+    // Research Discovery Endpoints
+    const researchReq = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research$/i);
+    if (researchReq && method === 'POST') return this.createResearch(req, res, researchReq[1]);
+
+    const researchJob = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/([a-zA-Z0-9_-]+)$/i);
+    if (researchJob && method === 'GET') return this.getResearch(req, res, researchJob[1], researchJob[2]);
+
+    // Opportunities Endpoints
+    const candidates = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/opportunities\/candidates$/i);
+    if (candidates && method === 'GET') return this.opportunityCandidates(req, res, candidates[1]);
+
+    const saveOpp = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/opportunities(?:\/([a-zA-Z0-9_-]+))?\/save$/i);
+    if (saveOpp && method === 'POST') return this.saveOpportunity(req, res, saveOpp[1], saveOpp[2]);
+
+    const savedOpps = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/opportunities\/saved$/i);
+    if (savedOpps && method === 'GET') return this.listSavedOpportunities(req, res, savedOpps[1]);
+
+    // Outreach Preparation & Safety Gate Endpoints
+    const prepareOutreach = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/outreach\/prepare$/i);
+    if (prepareOutreach && method === 'POST') return this.prepareOutreach(req, res, prepareOutreach[1]);
+
+    const approveOutreach = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/outreach\/approve$/i);
+    if (approveOutreach && method === 'POST') return this.approveOutreach(req, res, approveOutreach[1]);
+
+    // Static Assets for Browser SaaS Dashboard
+    if (this.staticDir && method === 'GET' && !pathName.startsWith('/api/')) {
+      return this.serveStatic(req, res, pathName);
+    }
+
     this.json(res, 404, { error: 'not_found', message: 'there is nothing here' });
+  }
+
+  serveStatic(req, res, requestPath) {
+    let cleanPath = requestPath === '/' ? '/index.html' : requestPath;
+    cleanPath = path.normalize(cleanPath).replace(/^(\.\.[/\\])+/, '');
+    let filePath = path.join(this.staticDir, cleanPath);
+
+    // Prevent directory traversal
+    if (!filePath.startsWith(this.staticDir)) {
+      this.json(res, 403, { error: 'forbidden', message: 'access denied' });
+      return;
+    }
+
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+      filePath = path.join(this.staticDir, 'index.html');
+      if (!fs.existsSync(filePath)) {
+        this.json(res, 404, { error: 'not_found', message: 'file not found' });
+        return;
+      }
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+    try {
+      const content = fs.readFileSync(filePath);
+      res.writeHead(200, {
+        'content-type': contentType,
+        'cache-control': 'no-cache',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(content);
+    } catch (err) {
+      this.fail(res, err);
+    }
   }
 
   async register(req, res) {
@@ -234,6 +357,41 @@ class ApiServer {
     });
   }
 
+  async demoLogin(req, res) {
+    if (this.mode === 'production' || process.env.NODE_ENV === 'production') {
+      this.json(res, 403, { error: 'forbidden', message: 'Demo auto-login is forbidden in production mode' });
+      return;
+    }
+    if (!this.allowDemoAutologin) {
+      this.json(res, 403, { error: 'forbidden', message: 'Demo auto-login is disabled. Explicit local configuration is required.' });
+      return;
+    }
+    const caller = this.callerAddress(req);
+    const isLoopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(caller) || !caller;
+    if (!isLoopback) {
+      this.json(res, 403, { error: 'forbidden', message: 'Demo auto-login is restricted to loopback connections.' });
+      return;
+    }
+    const demoEmail = this.demoEmail || 'alice@ztech.test';
+    const user = await this.service.findUserByEmail(demoEmail);
+    if (!user) {
+      this.json(res, 404, { error: 'demo_user_not_found', message: 'Demo user is not provisioned.' });
+      return;
+    }
+    const issued = await this.service.issueSession(user.user_id);
+    await this.service.audit({ user_id: user.user_id, session_id: issued.sessionId, action: 'auth.demo_login', outcome: 'allow' });
+    this.json(res, 200, {
+      ok: true,
+      user_id: user.user_id,
+      csrf_token: issued.csrf,
+      email: user.email,
+      storage_mode: this.mode,
+      ephemeral: this.mode === 'local-demo',
+    }, {
+      'set-cookie': this.sessionCookie(issued.token, 12 * 60 * 60),
+    });
+  }
+
   async logout(req, res) {
     const session = await this.requireSession(req, res);
     if (!session) return;
@@ -247,7 +405,11 @@ class ApiServer {
     if (!session) return;
     const memberships = await this.service.membershipsOf(session.user_id);
     this.json(res, 200, {
-      user_id: session.user_id, email: session.email, memberships,
+      user_id: session.user_id,
+      email: session.email,
+      memberships,
+      storage_mode: this.mode,
+      ephemeral: this.mode === 'local-demo',
     });
   }
 
@@ -311,11 +473,6 @@ class ApiServer {
     this.json(res, 405, { error: 'method_not_allowed', message: 'not that way' });
   }
 
-  /**
-   * The suppression check: authenticated, authorized, and rate-limited.
-   *
-   * The answer is a boolean, never a row, and never an address.
-   */
   async suppressionCheck(req, res, workspaceId) {
     const session = await this.requireSession(req, res);
     if (!session) return;
@@ -328,20 +485,11 @@ class ApiServer {
     await this.service.authorize(session, workspaceId, 'suppression.check');
     const body = await this.body(req);
     const store = await this.storeFor(session, workspaceId);
-    // The check runs INSIDE a transaction that carries the workspace
-    // context: the context is bound to THIS session and to THIS user, and
-    // the database re-checks the session's entitlement on every read. A
-    // logout, a withdrawn membership or a revoked session therefore stops
-    // the check, even in a transaction that was already open.
     const suppressed = await store.tx(async () => store.isSuppressed(body.channel, body.address));
     this.suppressionThrottle.fail(key);
     this.json(res, 200, { suppressed: Boolean(suppressed) });
   }
 
-  /**
-   * The tenant's records, through the store, with a token that is bound to
-   * THIS session.
-   */
   async records(req, res, workspaceId) {
     const session = await this.requireSession(req, res);
     if (!session) return;
@@ -349,6 +497,231 @@ class ApiServer {
     const store = await this.storeFor(session, workspaceId);
     const records = await store.savedSearches.list();
     this.json(res, 200, { records });
+  }
+
+  /* ------------------- Research & Opportunity Intelligence ------------------ */
+
+  async createResearch(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+    const discoveryResult = await executeResearchDiscovery({
+      workspaceId,
+      criteria: body,
+      store,
+      userId: session.user_id,
+    });
+
+    this.activeCandidatesByWorkspace.set(workspaceId, discoveryResult.candidates);
+    this.json(res, 201, discoveryResult);
+  }
+
+  async getResearch(req, res, workspaceId, jobId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const store = await this.storeFor(session, workspaceId);
+    const job = await store.jobs.get(jobId);
+    if (!job) {
+      this.json(res, 404, { error: 'not_found', message: `research job "${jobId}" not found` });
+      return;
+    }
+
+    let packetMeta = null;
+    if (job.packet_id) {
+      const packet = await store.packets.get(job.packet_id);
+      if (packet) {
+        packetMeta = {
+          packet_id: packet.packet_id,
+          captured_at: packet.captured_at,
+          research_status: packet.research_status,
+          facts_count: packet.facts?.length || 0,
+          findings_count: packet.findings?.length || 0,
+        };
+      }
+    }
+
+    this.json(res, 200, { job, packet_meta: packetMeta });
+  }
+
+  async opportunityCandidates(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
+    this.json(res, 200, { candidates, workspace_id: workspaceId });
+  }
+
+  async saveOpportunity(req, res, workspaceId, opportunityId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const body = await this.body(req);
+    const id = opportunityId || body.opportunity_id;
+    if (!id) {
+      throw new ServiceError(400, 'missing_opportunity_id', 'Opportunity ID is required');
+    }
+
+    // 1. Authoritative candidate verification against server-generated discovery
+    const candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
+    const candidate = candidates.find((c) => c.opportunity_id === id);
+    if (!candidate) {
+      throw new ServiceError(404, 'opportunity_not_found', `Opportunity "${id}" was not discovered or verified in workspace "${workspaceId}"`);
+    }
+
+    // 2. Verify workspace ownership
+    if (candidate.workspace_id && candidate.workspace_id !== workspaceId) {
+      throw new ServiceError(403, 'cross_workspace_denied', 'Opportunity belongs to another workspace');
+    }
+
+    const store = await this.storeFor(session, workspaceId);
+
+    // 3. Verify associated research job and evidence packet exist in workspace store
+    if (candidate.job_id) {
+      const job = await store.jobs.get(candidate.job_id);
+      if (!job) {
+        throw new ServiceError(400, 'invalid_job_association', 'Associated research job not found in workspace store');
+      }
+    }
+    if (candidate.packet_id) {
+      const packet = await store.packets.get(candidate.packet_id);
+      if (!packet) {
+        throw new ServiceError(400, 'invalid_packet_association', 'Associated evidence packet not found in workspace store');
+      }
+    }
+
+    // 4. Server-side authoritative filter — never trust client-supplied source claims, scores or approval metadata
+    const authoritativeFilter = {
+      opportunity_id: candidate.opportunity_id,
+      job_id: candidate.job_id,
+      packet_id: candidate.packet_id,
+      workspace_id: workspaceId,
+      company_name: candidate.company_name,
+      domain: candidate.domain,
+      detected_need: candidate.detected_need,
+      recommended_next_step: candidate.recommended_next_step,
+      evidence_summary: candidate.evidence_summary,
+      findings: candidate.findings,
+      icp_fit: candidate.icp_fit,
+      uncertainty_notes: candidate.uncertainty_notes,
+      is_synthetic: candidate.is_synthetic,
+      synthetic_badge: candidate.synthetic_badge,
+      review_status: 'saved',
+      saved_at: new Date().toISOString(),
+      saved_by: session.email,
+    };
+
+    const savedRecord = {
+      search_id: candidate.opportunity_id,
+      name: candidate.company_name,
+      filter: authoritativeFilter,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    await store.savedSearches.upsert(savedRecord);
+    candidate.review_status = 'saved';
+
+    this.json(res, 200, { ok: true, saved_opportunity: authoritativeFilter });
+  }
+
+  async listSavedOpportunities(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const store = await this.storeFor(session, workspaceId);
+    const list = await store.savedSearches.list();
+    const opportunities = list.map((item) => (item.filter ? item.filter : item));
+
+    this.json(res, 200, { opportunities, count: opportunities.length, workspace_id: workspaceId });
+  }
+
+  async prepareOutreach(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+
+    const result = await prepareOutreachDraft({
+      workspaceId,
+      opportunity: body.opportunity,
+      offer: body.offer,
+      store,
+      userId: session.user_id,
+    });
+
+    this.json(res, 200, result);
+  }
+
+  async approveOutreach(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+
+    // 1. Enforce stronger role authority: requires outreach.approve permission
+    await this.service.authorize(session, workspaceId, 'outreach.approve');
+
+    const body = await this.body(req);
+    if (!body.pitch_id || !body.content_hash) {
+      throw new ServiceError(400, 'missing_parameters', 'pitch_id and content_hash are required');
+    }
+
+    const store = await this.storeFor(session, workspaceId);
+
+    // 2. Verify pitch exists in workspace store
+    const pitch = await store.pitches.get(body.pitch_id);
+    if (!pitch) {
+      throw new ServiceError(404, 'pitch_not_found', `Persisted pitch "${body.pitch_id}" not found in workspace store`);
+    }
+
+    // 3. Verify workspace ownership (cross-workspace reference must fail)
+    if (pitch.workspace_id && pitch.workspace_id !== workspaceId) {
+      throw new ServiceError(403, 'cross_workspace_denied', 'Pitch does not belong to this workspace');
+    }
+
+    // 4. Verify content hash (altered hash must fail)
+    if (pitch.content_hash && pitch.content_hash !== body.content_hash) {
+      throw new ServiceError(400, 'hash_mismatch', 'Pitch content hash does not match stored authoritative record');
+    }
+
+    // 5. Verify applicable OutreachGate decision (must not have policy violations other than pending human approval)
+    if (pitch.gate_reasons && pitch.gate_reasons.some((r) => r.code !== 'HUMAN_APPROVAL')) {
+      throw new ServiceError(400, 'gate_blocked', 'Pitch was rejected by safety gate policy and cannot be approved');
+    }
+
+    // 6. Duplicate approval behavior: cannot approve twice
+    const duplicate = await store.approvals.latestForPitch(body.pitch_id);
+    if (duplicate) {
+      throw new ServiceError(409, 'already_approved', `Pitch "${body.pitch_id}" has already been approved by ${duplicate.approved_by}`);
+    }
+
+    const approval = await store.approvals.insert({
+      approval_id: `appr_${newId().slice(0, 12)}`,
+      pitch_id: body.pitch_id,
+      content_hash: body.content_hash,
+      approved_by: session.email,
+      approved_at: new Date().toISOString(),
+    });
+
+    this.json(res, 200, {
+      ok: true,
+      approval,
+      status: 'approved_for_human_dispatch',
+      auto_send_prohibited: true,
+      notice: 'Outreach draft is formally approved by human supervisor. Automatic email or WhatsApp transmission is prohibited.',
+    });
   }
 }
 

@@ -60,7 +60,7 @@ const nodeScope = {
  * process requires them), so this scope carries the Node globals as well.
  */
 const browserScope = {
-  files: ['src/renderer/**/*.js', 'src/renderer/**/*.mjs'],
+  files: ['src/renderer/**/*.js', 'src/renderer/**/*.mjs', 'src/saas-client/**/*.js'],
   languageOptions: {
     ecmaVersion: 2023,
     sourceType: 'script',
