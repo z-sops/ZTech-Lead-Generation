@@ -44,7 +44,7 @@
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "electron-store": "^8.0.1",
-    "sql.js": "^1.10.3"
+    "sql.js": "^1.15.1"
   },
   "build": {
     "appId": "com.zunitech.ztech-lead-generation",
