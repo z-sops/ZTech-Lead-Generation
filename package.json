@@ -32,7 +32,7 @@
   "devDependencies": {
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
-    "electron": "33.4.11",
+    "electron": "44.9.2",
     "electron-builder": "^26.15.3",
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
