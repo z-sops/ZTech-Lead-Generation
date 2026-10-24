@@ -1,12 +1,32 @@
 'use strict';
 
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const { URL } = require('node:url');
-const { Throttle, ROLES, MATRIX, PERMISSIONS } = require('./security');
+const { Throttle, ROLES, MATRIX, PERMISSIONS, newId } = require('./security');
 const { AuthService, ServiceError } = require('./service');
+const { InMemoryIdentityPool } = require('./inMemoryIdentity');
+const { InMemoryStoreForApi } = require('./inMemoryStore');
+const { executeResearchDiscovery, prepareOutreachDraft } = require('./researchEngine');
 
 const SESSION_COOKIE = 'ztech_session';
 const CSRF_HEADER = 'x-csrf-token';
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
 
 /**
  * The HTTP surface of the service.
@@ -25,20 +45,36 @@ const CSRF_HEADER = 'x-csrf-token';
  *   - every authorization decision is audited.
  */
 class ApiServer {
-  constructor({ identity, tenant, storeFor, logger = console, secureCookies = false, trustedProxyHops = 0, platformConsole = false } = {}) {
-    this.service = new AuthService({ identity, tenant, logger, platformConsole });
+  constructor({
+    identity,
+    tenant,
+    storeFor,
+    logger = console,
+    secureCookies = false,
+    trustedProxyHops = 0,
+    platformConsole = false,
+    staticDir = null,
+  } = {}) {
+    const idPool = identity || new InMemoryIdentityPool();
+    this.service = new AuthService({ identity: idPool, tenant, logger, platformConsole });
     /**
      * Whether this server is the platform console. It is a MARKER, and it
      * is NOT an authorization: a configuration flag is not an
      * authentication, and nothing here is reachable because of it.
      */
     this.platformConsole = platformConsole;
-    this.storeFor = storeFor;
+    this.storeFor = storeFor || (async (session, workspaceId) => new InMemoryStoreForApi({
+      workspaceId,
+      sessionId: session?.session_id,
+      userId: session?.user_id,
+    }));
     this.logger = logger;
     this.secureCookies = secureCookies;
     this.trustedProxyHops = Number(trustedProxyHops) || 0;
+    this.staticDir = staticDir ? path.resolve(staticDir) : null;
     this.loginThrottle = new Throttle({ limit: 5, windowMs: 15 * 60 * 1000 });
     this.suppressionThrottle = new Throttle({ limit: 30, windowMs: 60 * 1000 });
+    this.activeCandidatesByWorkspace = new Map();
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => this.fail(res, err));
     });
@@ -174,44 +210,100 @@ class ApiServer {
 
   async handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
-    const path = url.pathname;
+    const pathName = url.pathname;
     const method = req.method;
 
-    if (path === '/api/health') {
+    if (pathName === '/api/health') {
       this.json(res, 200, { ok: true, roles: ROLES, permissions: PERMISSIONS });
       return;
     }
-    if (path === '/api/auth/register' && method === 'POST') return this.register(req, res);
-    if (path === '/api/auth/login' && method === 'POST') return this.login(req, res);
-    if (path === '/api/auth/logout' && method === 'POST') return this.logout(req, res);
-    if (path === '/api/session' && method === 'GET') return this.sessionInfo(req, res);
-    if (path === '/api/organizations' && method === 'POST') return this.createOrganization(req, res);
-    if (path === '/api/invitations/accept' && method === 'POST') return this.acceptInvitation(req, res);
+    if (pathName === '/api/auth/register' && method === 'POST') return this.register(req, res);
+    if (pathName === '/api/auth/login' && method === 'POST') return this.login(req, res);
+    if (pathName === '/api/auth/logout' && method === 'POST') return this.logout(req, res);
+    if (pathName === '/api/session' && method === 'GET') return this.sessionInfo(req, res);
+    if (pathName === '/api/organizations' && method === 'POST') return this.createOrganization(req, res);
+    if (pathName === '/api/invitations/accept' && method === 'POST') return this.acceptInvitation(req, res);
 
-    const members = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/members(?:\/([0-9a-f-]+))?$/i);
+    const members = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/members(?:\/([0-9a-f-]+))?$/i);
     if (members) return this.members(req, res, members[1], members[2]);
 
-    const invites = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/invitations$/i);
+    const invites = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/invitations$/i);
     if (invites && method === 'POST') return this.invite(req, res, invites[1]);
 
-    const workspaces = path.match(/^\/api\/organizations\/([0-9a-f-]+)\/workspaces$/i);
+    const workspaces = pathName.match(/^\/api\/organizations\/([0-9a-f-]+)\/workspaces$/i);
     if (workspaces && method === 'POST') return this.createWorkspace(req, res, workspaces[1]);
 
-    const checks = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/suppressions\/check$/i);
+    const checks = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/suppressions\/check$/i);
     if (checks && method === 'POST') return this.suppressionCheck(req, res, checks[1]);
 
-    // THERE IS NO ACCOUNT-SUSPENSION ROUTE. Not on the customer API and
-    // not on a platform-console configuration either: a configuration flag
-    // is not an authentication, and until there is an independent
-    // platform-operator authentication there is no way to reach a
-    // suspension from HTTP at all. An account is suspended by a privileged
-    // database operation, and the enforcement of a suspension is in
-    // sessionFor() and in the database's entitlement check.
-
-    const records = path.match(/^\/api\/workspaces\/([0-9a-f-]+)\/records$/i);
+    const records = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/records$/i);
     if (records && method === 'GET') return this.records(req, res, records[1]);
 
+    // Research Discovery Endpoints
+    const researchReq = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research$/i);
+    if (researchReq && method === 'POST') return this.createResearch(req, res, researchReq[1]);
+
+    const researchJob = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/([a-zA-Z0-9_-]+)$/i);
+    if (researchJob && method === 'GET') return this.getResearch(req, res, researchJob[1], researchJob[2]);
+
+    // Opportunities Endpoints
+    const candidates = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/opportunities\/candidates$/i);
+    if (candidates && method === 'GET') return this.opportunityCandidates(req, res, candidates[1]);
+
+    const saveOpp = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/opportunities(?:\/([a-zA-Z0-9_-]+))?\/save$/i);
+    if (saveOpp && method === 'POST') return this.saveOpportunity(req, res, saveOpp[1], saveOpp[2]);
+
+    const savedOpps = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/opportunities\/saved$/i);
+    if (savedOpps && method === 'GET') return this.listSavedOpportunities(req, res, savedOpps[1]);
+
+    // Outreach Preparation & Safety Gate Endpoints
+    const prepareOutreach = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/outreach\/prepare$/i);
+    if (prepareOutreach && method === 'POST') return this.prepareOutreach(req, res, prepareOutreach[1]);
+
+    const approveOutreach = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/outreach\/approve$/i);
+    if (approveOutreach && method === 'POST') return this.approveOutreach(req, res, approveOutreach[1]);
+
+    // Static Assets for Browser SaaS Dashboard
+    if (this.staticDir && method === 'GET' && !pathName.startsWith('/api/')) {
+      return this.serveStatic(req, res, pathName);
+    }
+
     this.json(res, 404, { error: 'not_found', message: 'there is nothing here' });
+  }
+
+  serveStatic(req, res, requestPath) {
+    let cleanPath = requestPath === '/' ? '/index.html' : requestPath;
+    cleanPath = path.normalize(cleanPath).replace(/^(\.\.[/\\])+/, '');
+    let filePath = path.join(this.staticDir, cleanPath);
+
+    // Prevent directory traversal
+    if (!filePath.startsWith(this.staticDir)) {
+      this.json(res, 403, { error: 'forbidden', message: 'access denied' });
+      return;
+    }
+
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+      filePath = path.join(this.staticDir, 'index.html');
+      if (!fs.existsSync(filePath)) {
+        this.json(res, 404, { error: 'not_found', message: 'file not found' });
+        return;
+      }
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+    try {
+      const content = fs.readFileSync(filePath);
+      res.writeHead(200, {
+        'content-type': contentType,
+        'cache-control': 'no-cache',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(content);
+    } catch (err) {
+      this.fail(res, err);
+    }
   }
 
   async register(req, res) {
@@ -311,11 +403,6 @@ class ApiServer {
     this.json(res, 405, { error: 'method_not_allowed', message: 'not that way' });
   }
 
-  /**
-   * The suppression check: authenticated, authorized, and rate-limited.
-   *
-   * The answer is a boolean, never a row, and never an address.
-   */
   async suppressionCheck(req, res, workspaceId) {
     const session = await this.requireSession(req, res);
     if (!session) return;
@@ -328,20 +415,11 @@ class ApiServer {
     await this.service.authorize(session, workspaceId, 'suppression.check');
     const body = await this.body(req);
     const store = await this.storeFor(session, workspaceId);
-    // The check runs INSIDE a transaction that carries the workspace
-    // context: the context is bound to THIS session and to THIS user, and
-    // the database re-checks the session's entitlement on every read. A
-    // logout, a withdrawn membership or a revoked session therefore stops
-    // the check, even in a transaction that was already open.
     const suppressed = await store.tx(async () => store.isSuppressed(body.channel, body.address));
     this.suppressionThrottle.fail(key);
     this.json(res, 200, { suppressed: Boolean(suppressed) });
   }
 
-  /**
-   * The tenant's records, through the store, with a token that is bound to
-   * THIS session.
-   */
   async records(req, res, workspaceId) {
     const session = await this.requireSession(req, res);
     if (!session) return;
@@ -349,6 +427,160 @@ class ApiServer {
     const store = await this.storeFor(session, workspaceId);
     const records = await store.savedSearches.list();
     this.json(res, 200, { records });
+  }
+
+  /* ------------------- Research & Opportunity Intelligence ------------------ */
+
+  async createResearch(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+    const discoveryResult = await executeResearchDiscovery({
+      workspaceId,
+      criteria: body,
+      store,
+      userId: session.user_id,
+    });
+
+    this.activeCandidatesByWorkspace.set(workspaceId, discoveryResult.candidates);
+    this.json(res, 201, discoveryResult);
+  }
+
+  async getResearch(req, res, workspaceId, jobId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const store = await this.storeFor(session, workspaceId);
+    const job = await store.jobs.get(jobId);
+    if (!job) {
+      this.json(res, 404, { error: 'not_found', message: `research job "${jobId}" not found` });
+      return;
+    }
+
+    let packetMeta = null;
+    if (job.packet_id) {
+      const packet = await store.packets.get(job.packet_id);
+      if (packet) {
+        packetMeta = {
+          packet_id: packet.packet_id,
+          captured_at: packet.captured_at,
+          research_status: packet.research_status,
+          facts_count: packet.facts?.length || 0,
+          findings_count: packet.findings?.length || 0,
+        };
+      }
+    }
+
+    this.json(res, 200, { job, packet_meta: packetMeta });
+  }
+
+  async opportunityCandidates(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
+    this.json(res, 200, { candidates, workspace_id: workspaceId });
+  }
+
+  async saveOpportunity(req, res, workspaceId, opportunityId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const body = await this.body(req);
+    const id = opportunityId || body.opportunity_id || `opp_${newId().slice(0, 12)}`;
+    const store = await this.storeFor(session, workspaceId);
+
+    const savedRecord = {
+      search_id: id,
+      name: body.company_name || `Opportunity ${id}`,
+      filter: {
+        ...body,
+        opportunity_id: id,
+        saved_at: new Date().toISOString(),
+        saved_by: session.email,
+        review_status: 'saved',
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    await store.savedSearches.upsert(savedRecord);
+
+    // Update status in active candidates cache
+    const candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
+    const target = candidates.find((c) => c.opportunity_id === id);
+    if (target) target.review_status = 'saved';
+
+    this.json(res, 200, { ok: true, saved_opportunity: savedRecord.filter });
+  }
+
+  async listSavedOpportunities(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const store = await this.storeFor(session, workspaceId);
+    const list = await store.savedSearches.list();
+    const opportunities = list.map((item) => (item.filter ? item.filter : item));
+
+    this.json(res, 200, { opportunities, count: opportunities.length, workspace_id: workspaceId });
+  }
+
+  async prepareOutreach(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+
+    const result = await prepareOutreachDraft({
+      workspaceId,
+      opportunity: body.opportunity,
+      offer: body.offer,
+      store,
+      userId: session.user_id,
+    });
+
+    this.json(res, 200, result);
+  }
+
+  async approveOutreach(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const body = await this.body(req);
+    if (!body.pitch_id || !body.content_hash) {
+      throw new ServiceError(400, 'missing_parameters', 'pitch_id and content_hash are required');
+    }
+
+    const store = await this.storeFor(session, workspaceId);
+    const approval = await store.approvals.insert({
+      approval_id: `appr_${newId().slice(0, 12)}`,
+      pitch_id: body.pitch_id,
+      content_hash: body.content_hash,
+      approved_by: session.email,
+      approved_at: new Date().toISOString(),
+    });
+
+    this.json(res, 200, {
+      ok: true,
+      approval,
+      status: 'approved_for_human_dispatch',
+      auto_send_prohibited: true,
+      notice: 'Outreach draft is formally approved by human supervisor. Automatic email or WhatsApp transmission is prohibited.',
+    });
   }
 }
 
