@@ -91,8 +91,10 @@ async function setup() {
 
     // Set passwords and enable login.
     // The worker role must remain NOLOGIN per the accepted architecture.
+    // The migrator role requires BYPASSRLS to create SECURITY DEFINER functions and own schema objects.
     // Use the validated setCredential module (SCRAM verifier, no clear-text SQL).
     // Reject missing or malformed credentials - no silent fallbacks.
+    const BYPASSRLS_ALLOWED = new Set(['ztech_migrator']);
     for (const role of ROLES_ORDER) {
       const creds = collectCredentials([role]);
       if (creds.missing.length > 0) {
@@ -104,7 +106,8 @@ async function setup() {
       const roleCreds = creds.credentials[0];
       await setCredential(adminPool, roleCreds.name, roleCreds.password);
       const props = await roleProperties(adminPool, roleCreds.name);
-      // Enforce: worker role stays NOLOGIN; no runtime role is superuser or BYPASSRLS.
+      // Enforce: worker role stays NOLOGIN; no runtime role is superuser.
+      // BYPASSRLS is allowed ONLY for the migrator role.
       if (roleCreds.name === 'ztech_worker' && props.rolcanlogin) {
         await disableLogin(adminPool, roleCreds.name);
         console.log('Worker role forced NOLOGIN per architecture.');
@@ -112,8 +115,8 @@ async function setup() {
       if (props.rolsuper) {
         throw new Error(`Role ${roleCreds.name} must not be SUPERUSER`);
       }
-      if (props.rolbypassrls) {
-        throw new Error(`Role ${roleCreds.name} must not bypass RLS`);
+      if (props.rolbypassrls && !BYPASSRLS_ALLOWED.has(roleCreds.name)) {
+        throw new Error(`Role ${roleCreds.name} must not bypass RLS (only ztech_migrator may have BYPASSRLS)`);
       }
       console.log(`${roleCreds.name}: ${describeRole(props)}`);
     }

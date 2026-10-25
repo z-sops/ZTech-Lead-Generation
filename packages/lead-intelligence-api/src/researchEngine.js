@@ -296,7 +296,7 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
   const nowIso = new Date().toISOString();
   const jobId = `job_${crypto.randomUUID()}`;
 
-  // 1. Create research job record
+  // 1. Create research job record with all required persisted fields
   const job = {
     job_id: jobId,
     lead_id: 'batch_discovery',
@@ -307,6 +307,17 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
     state: 'started',
     options: criteria,
     created_at: nowIso,
+    updated_at: nowIso,
+    started_at: nowIso,
+    finished_at: null,
+    version: 1,
+    provider_job_id: null,
+    attempts: 0,
+    poll_count: 0,
+    next_attempt_at: null,
+    last_error_code: null,
+    last_error_message: null,
+    packet_id: null,
   };
   await store.jobs.insert(job);
 

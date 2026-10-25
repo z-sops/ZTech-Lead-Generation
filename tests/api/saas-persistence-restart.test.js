@@ -104,20 +104,38 @@ test('ZTech SaaS PostgreSQL 16 Persistence & Restart Verification', async (t) =>
       if (db) await dropDatabase(DATABASE).catch(() => {});
     });
 
-    const createServer = async () => {
+    // Test-only error capture for server failures.
+    const capturedErrors = [];
+
+    const createServer = async (label = '') => {
       const server = new ApiServer({
         staticDir: STATIC_DIR,
         identity: identityPool,
         tenant: tenantPool,
         storageMode: 'postgres',
-        logger: { warn() {}, error() {}, log() {} },
+        logger: {
+          warn(msg) { console.warn(`[WARN:${label}]`, msg); },
+          error(msg, err) {
+            const sanitized = err && err.message ? err.message : String(err);
+            capturedErrors.push({ label, level: 'error', message: sanitized });
+            console.error(`[ERROR:${label}]`, sanitized);
+          },
+          log(msg) { console.log(`[LOG:${label}]`, msg); },
+        },
         storeFor: async (session, workspaceId) => new PostgresStore({
           pool: tenantPool,
           controlPool,
           workspaceId,
           sessionId: session.session_id,
           userId: session.user_id,
-          logger: { warn() {} },
+          logger: {
+            warn(msg) { console.warn(`[WARN:store:${label}]`, msg); },
+            error(msg, err) {
+              const sanitized = err && err.message ? err.message : String(err);
+              capturedErrors.push({ label: `store:${label}`, level: 'error', message: sanitized });
+              console.error(`[ERROR:store:${label}]`, sanitized);
+            },
+          },
         }),
       });
       const addr = await server.listen(0);
