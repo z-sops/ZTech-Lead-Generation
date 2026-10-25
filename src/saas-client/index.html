@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZTech Lead Generation — Business Opportunity Intelligence</title>
+  <meta name="description" content="AI-powered business opportunity discovery, evidence-backed research, and human-supervised outreach intelligence by ZuniTech.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Authenticated Top Navigation Bar (Hidden when unauthenticated) -->
+    <header id="topbar" class="topbar" style="display: none;">
+      <div class="brand-wrapper">
+        <div class="brand-logo-badge">Z</div>
+        <div>
+          <div class="brand-title">ZTech Lead Generation</div>
+          <div class="brand-subtitle">Opportunity Intelligence Platform</div>
+        </div>
+      </div>
+
+      <div class="demo-banner-pill" id="demo-banner">
+        <span>⚡</span> DEMO / SYNTHETIC RESEARCH — INTERNAL SLICE
+      </div>
+      <div class="storage-badge-pill" id="storage-badge" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.35); color: #a5b4fc; font-size: 11px; font-weight: 600;">
+        <span id="storage-mode-icon">💾</span> <span id="storage-mode-text">STORAGE: INITIALIZING...</span>
+      </div>
+
+      <div class="topbar-controls">
+        <div class="workspace-badge" id="current-workspace-badge">
+          <span class="org-name" id="display-org-name">Acme Corp</span>
+          <span>/</span>
+          <span class="ws-name" id="display-ws-name">Primary Workspace</span>
+        </div>
+
+        <div class="user-profile-badge">
+          <span id="user-email-text" style="font-size: 13px; font-weight: 500;">user@ztech.test</span>
+          <span class="role-pill owner" id="user-role-pill">OWNER</span>
+          <button id="logout-btn" class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;">Sign Out</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Application Container -->
+    <div id="workspace-layout" class="workspace-container" style="display: none;">
+      <!-- Sidebar Navigation -->
+      <aside class="sidebar" id="sidebar-nav">
+        <a class="nav-item active" id="nav-overview" data-view="overview">
+          <span class="icon">📊</span>
+          <span>Workspace Overview</span>
+        </a>
+        <a class="nav-item" id="nav-discovery" data-view="discovery">
+          <span class="icon">🔍</span>
+          <span>Opportunity Discovery</span>
+        </a>
+        <a class="nav-item" id="nav-saved" data-view="saved">
+          <span class="icon">⭐</span>
+          <span>Saved Opportunities</span>
+        </a>
+        <a class="nav-item" id="nav-outreach" data-view="outreach-review">
+          <span class="icon">✉️</span>
+          <span>Outreach Preparation</span>
+        </a>
+        <a class="nav-item" id="nav-security" data-view="security">
+          <span class="icon">🛡️</span>
+          <span>Tenant & RLS Status</span>
+        </a>
+
+        <div class="sidebar-footer">
+          <div class="tenant-status-box">
+            <div style="font-weight: 700; margin-bottom: 2px;">PostgreSQL Tenant Boundary</div>
+            <div>Isolated Workspace Context Active</div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Viewport Screens -->
+      <main class="main-viewport" id="main-content">
+        <!-- 1. Workspace Overview Screen -->
+        <section id="view-overview" class="view-panel">
+          <div class="panel-header">
+            <div>
+              <h1 class="panel-title">Workspace Opportunity Intelligence</h1>
+              <p style="color: var(--text-muted); font-size: 13px;">Evidence-based business need discovery, qualification, and human-supervised outreach.</p>
+            </div>
+            <button id="cta-start-discovery" class="btn btn-primary">
+              <span>+</span> New Opportunity Discovery
+            </button>
+          </div>
+
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-title">Discovered Opportunities</div>
+              <div class="kpi-value" id="kpi-discovered-count">0</div>
+              <div class="kpi-subtext">Evidence-backed opportunities found</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title">Saved Opportunities</div>
+              <div class="kpi-value" id="kpi-saved-count">0</div>
+              <div class="kpi-subtext">Persisted to workspace database</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title">Outreach Drafts Pending</div>
+              <div class="kpi-value" id="kpi-drafts-count">0</div>
+              <div class="kpi-subtext">Awaiting human review & approval</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title">Outreach Safety Gate</div>
+              <div class="kpi-value" style="color: #34d399; font-size: 20px; line-height: 28px;">100% ENFORCED</div>
+              <div class="kpi-subtext">Auto-send strictly prohibited</div>
+            </div>
+          </div>
+
+          <div class="discovery-panel" style="margin-top: 10px;">
+            <div class="panel-header">
+              <h2 style="font-size: 16px; font-weight: 700;">Quick Research Presets</h2>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px;">
+              <div class="kpi-card preset-card" data-industry="Healthcare & Specialized Clinics" data-country="United Kingdom" data-city="London" data-req="Legacy booking portals, high mobile drop-off rates, and missing specialist doctor schema markup." style="cursor: pointer;">
+                <div style="font-weight: 700; color: #fff; margin-bottom: 4px;">🏥 UK Healthcare & Private Clinics</div>
+                <div style="font-size: 12px; color: var(--text-muted);">Discover London medical clinics with slow server latency and outdated appointment systems.</div>
+              </div>
+              <div class="kpi-card preset-card" data-industry="B2B SaaS & Cloud Tech" data-country="United Kingdom" data-city="London" data-req="Developer documentation latency, unindexed trial onboarding, and lack of enterprise API self-serve sandboxes." style="cursor: pointer;">
+                <div style="font-weight: 700; color: #fff; margin-bottom: 4px;">💻 B2B SaaS & Developer Platforms</div>
+                <div style="font-size: 12px; color: var(--text-muted);">Identify scaling tech providers with documentation speed bottlenecks and conversion friction.</div>
+              </div>
+              <div class="kpi-card preset-card" data-industry="Corporate Advisory & Consulting" data-country="United Kingdom" data-city="London" data-req="Unresponsive client contact portal, missing SSL HSTS security header, and no mobile-optimized case studies." style="cursor: pointer;">
+                <div style="font-weight: 700; color: #fff; margin-bottom: 4px;">⚖️ Commercial Advisory & Consulting</div>
+                <div style="font-size: 12px; color: var(--text-muted);">Locate consulting partnerships with unoptimized client intake forms and security headers.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. Opportunity Discovery Screen -->
+        <section id="view-discovery" class="view-panel" style="display: none;">
+          <div class="discovery-panel">
+            <div class="panel-header">
+              <div>
+                <h1 class="panel-title">Opportunity Discovery & Research</h1>
+                <p style="color: var(--text-muted); font-size: 13px;">Target industries and geographic markets to detect actionable commercial opportunities with verified evidence.</p>
+              </div>
+            </div>
+
+            <form id="discovery-form">
+              <div class="discovery-form-grid">
+                <div class="form-group">
+                  <label class="form-label" for="disc-industry">Industry or Business Category *</label>
+                  <input type="text" id="disc-industry" class="form-input" placeholder="e.g. Healthcare & Clinics" value="Healthcare & Specialized Clinics" required>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="disc-country">Target Country *</label>
+                  <select id="disc-country" class="form-select" required>
+                    <option value="United Kingdom" selected>United Kingdom</option>
+                    <option value="United States">United States</option>
+                    <option value="Germany">Germany</option>
+                    <option value="Australia">Australia</option>
+                    <option value="Canada">Canada</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="disc-region">City or Geographic Region</label>
+                  <input type="text" id="disc-region" class="form-input" placeholder="e.g. London" value="London">
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="disc-customer-type">Target Customer Type</label>
+                  <input type="text" id="disc-customer-type" class="form-input" placeholder="e.g. Mid-market specialty medical practices" value="Private specialty medical practices">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="disc-requirements">Business Requirements & Opportunity Criteria *</label>
+                <textarea id="disc-requirements" class="form-textarea" rows="2" placeholder="Specify opportunity signals to detect (e.g. legacy booking engines, slow server latency, missing schema)" required>Outdated legacy appointment booking portal, slow server response times, and missing mobile-optimized patient intake forms.</textarea>
+              </div>
+
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 12px;">
+                <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fbbf24; cursor: pointer;">
+                  <input type="checkbox" id="disc-synthetic" checked disabled>
+                  <span>Controlled Synthetic Research Mode (Internal Demonstration)</span>
+                </label>
+
+                <button type="submit" id="submit-discovery-btn" class="btn btn-primary" style="padding: 12px 28px;">
+                  <span id="disc-btn-icon">⚡</span>
+                  <span id="disc-btn-text">Discover Opportunities</span>
+                </button>
+              </div>
+            </form>
+
+            <!-- Loading Progress Animation Indicator -->
+            <div id="discovery-progress" style="display: none; margin-top: 24px; padding: 18px; background: var(--bg-canvas); border-radius: var(--radius-md); border: 1px solid var(--border-accent);">
+              <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 12px; margin-bottom: 8px;">
+                <span id="progress-stage-label">Step 1/4: Analyzing Market Entities & URLs...</span>
+                <span id="progress-percent">25%</span>
+              </div>
+              <div style="height: 6px; background: var(--bg-surface-elevated); border-radius: 999px; overflow: hidden;">
+                <div id="progress-bar-fill" style="width: 25%; height: 100%; background: linear-gradient(90deg, #6366f1, #06b6d4); transition: width 0.3s ease;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Opportunities Results Grid -->
+          <div id="discovery-results-section" style="display: none;">
+            <div class="results-header">
+              <div>
+                <h2 style="font-size: 18px; font-weight: 700;">Evidence-Backed Opportunities</h2>
+                <p style="font-size: 12px; color: var(--text-muted);" id="results-count-label">3 actionable opportunities detected with verified technical findings.</p>
+              </div>
+            </div>
+
+            <div class="opportunity-grid" id="opportunities-container">
+              <!-- Dynamically populated opportunity cards -->
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. Saved Opportunities Screen -->
+        <section id="view-saved" class="view-panel" style="display: none;">
+          <div class="panel-header">
+            <div>
+              <h1 class="panel-title">Saved Workspace Opportunities</h1>
+              <p style="color: var(--text-muted); font-size: 13px;">Persisted opportunities saved to this workspace's PostgreSQL database.</p>
+            </div>
+          </div>
+
+          <div id="saved-empty-state" class="discovery-panel" style="text-align: center; padding: 48px 24px;">
+            <div style="font-size: 36px; margin-bottom: 12px;">📂</div>
+            <h3 style="font-size: 16px; margin-bottom: 6px;">No Saved Opportunities Yet</h3>
+            <p style="color: var(--text-muted); font-size: 13px; max-width: 400px; margin: 0 auto 20px;">Execute an opportunity discovery search and click "Save Opportunity" on any evidence card to persist it here.</p>
+            <button class="btn btn-primary" onclick="window.navigateTo('discovery')">Go to Discovery</button>
+          </div>
+
+          <div class="opportunity-grid" id="saved-container" style="display: none;">
+            <!-- Dynamically populated saved cards -->
+          </div>
+        </section>
+
+        <!-- 4. Outreach Review Screen -->
+        <section id="view-outreach-review" class="view-panel" style="display: none;">
+          <div class="panel-header">
+            <div>
+              <h1 class="panel-title">Human Outreach Gate & Drafts</h1>
+              <p style="color: var(--text-muted); font-size: 13px;">Review evidence citations and approve personalized outreach drafts before manual dispatch.</p>
+            </div>
+          </div>
+
+          <div class="discovery-panel" id="outreach-review-content">
+            <p style="color: var(--text-muted); font-size: 13px;">Select an opportunity from Discovery or Saved Opportunities and click <strong>"Prepare Outreach Draft"</strong> to inspect its evidence-backed pitch and verify Outreach Gate compliance.</p>
+          </div>
+        </section>
+
+        <!-- 5. Tenant Security Screen -->
+        <section id="view-security" class="view-panel" style="display: none;">
+          <div class="panel-header">
+            <div>
+              <h1 class="panel-title">Tenant Isolation & Security Matrix</h1>
+              <p style="color: var(--text-muted); font-size: 13px;">PostgreSQL Row-Level Security and M3 role-based permission verification.</p>
+            </div>
+          </div>
+
+          <div class="discovery-panel">
+            <h3 style="font-size: 16px; margin-bottom: 14px;">Active Tenant Boundaries</h3>
+            <ul style="list-style: none; font-size: 13px; color: var(--text-muted); display: flex; flex-direction: column; gap: 10px;">
+              <li style="display: flex; gap: 10px;"><span style="color: #34d399;">✓</span> <strong>Session Security:</strong> HttpOnly, SameSite=Strict session cookie with server-side scrypt authentication.</li>
+              <li style="display: flex; gap: 10px;"><span style="color: #34d399;">✓</span> <strong>CSRF Protection:</strong> Every state-changing request requires matching X-CSRF-Token header.</li>
+              <li style="display: flex; gap: 10px;"><span style="color: #34d399;">✓</span> <strong>Workspace Membership Scoping:</strong> Authorization is by workspace membership; arbitrary IDs are rejected.</li>
+              <li style="display: flex; gap: 10px;"><span style="color: #34d399;">✓</span> <strong>Outreach Safety Gate:</strong> Automatic sending is permanently disabled. Human approval required.</li>
+              <li style="display: flex; gap: 10px;"><span style="color: #34d399;">✓</span> <strong>Paid Spend Barrier:</strong> No live provider API credits or billable dispatch in demo mode.</li>
+            </ul>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Unauthenticated Registration / Login Screen -->
+    <div id="auth-screen" class="auth-container">
+      <div class="auth-header">
+        <div class="brand-logo-badge" style="margin: 0 auto 14px; width: 48px; height: 48px; font-size: 24px;">Z</div>
+        <h1>ZTech Customer Workspace</h1>
+        <p style="color: var(--text-muted); font-size: 13px;">Sign in to access your tenant-isolated intelligence workspace</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button id="tab-login" class="auth-tab-btn active" type="button">Sign In</button>
+        <button id="tab-register" class="auth-tab-btn" type="button">Create Account</button>
+      </div>
+
+      <!-- Login Form -->
+      <form id="login-form">
+        <div class="form-group">
+          <label class="form-label" for="login-email">Email Address</label>
+          <input type="email" id="login-email" class="form-input" placeholder="user@company.com" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="login-password">Password</label>
+          <input type="password" id="login-password" class="form-input" placeholder="Enter password" required>
+        </div>
+        <button type="submit" id="btn-login-submit" class="btn btn-primary btn-block" style="margin-top: 10px;">Sign In to Workspace</button>
+      </form>
+
+      <!-- Registration Form -->
+      <form id="register-form" style="display: none;">
+        <div class="form-group">
+          <label class="form-label" for="reg-email">Email Address</label>
+          <input type="email" id="reg-email" class="form-input" placeholder="founder@company.com" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-password">Password (min 12 chars)</label>
+          <input type="password" id="reg-password" class="form-input" placeholder="Create a secure password" minlength="12" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-org">Organization Name</label>
+          <input type="text" id="reg-org" class="form-input" placeholder="Acme Opportunities Ltd" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-workspace">Workspace Name</label>
+          <input type="text" id="reg-workspace" class="form-input" placeholder="Growth Team Workspace" required>
+        </div>
+        <button type="submit" id="btn-register-submit" class="btn btn-primary btn-block" style="margin-top: 10px;">Create Organization & Workspace</button>
+      </form>
+
+      <div id="demo-mode-helper" style="margin-top: 20px; text-align: center; display: none;">
+        <button type="button" id="quick-demo-fill" class="btn btn-secondary" style="font-size: 11px; padding: 6px 12px;">Auto-Login Local Demo Session</button>
+      </div>
+    </div>
+
+    <!-- Opportunity Inspection & Outreach Modal -->
+    <div id="modal-container" class="modal-backdrop" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h2 id="modal-title" style="font-family: var(--font-display); font-size: 20px;">Opportunity Detail</h2>
+            <div id="modal-subtitle" style="font-size: 12px; color: var(--text-muted);">Evidence & Provenance Inspection</div>
+          </div>
+          <button id="modal-close-btn" class="close-btn">&times;</button>
+        </div>
+        <div id="modal-body">
+          <!-- Dynamically populated content -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container" class="toast-container"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

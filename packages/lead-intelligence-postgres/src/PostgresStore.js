@@ -627,6 +627,11 @@ class PgJobs {
     }
     return out;
   }
+
+  async list() {
+    const list = await this.s.q('li_research_jobs', 'SELECT * FROM li_research_jobs WHERE workspace_id = ? ORDER BY created_at DESC, seq DESC', [this.s.workspaceId]);
+    return list.map((r) => this._from(r));
+  }
 }
 
 /* ----------------------------- packets ----------------------------- */

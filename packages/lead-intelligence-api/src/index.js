@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /**
  * @zunitech/lead-intelligence-api
@@ -14,6 +14,20 @@
 
 const { ApiServer, SESSION_COOKIE, CSRF_HEADER } = require('./server');
 const { AuthService, ServiceError } = require('./service');
+const { InMemoryIdentityPool } = require('./inMemoryIdentity');
+const { InMemoryStoreForApi } = require('./inMemoryStore');
+const { executeResearchDiscovery, prepareOutreachDraft } = require('./researchEngine');
 const security = require('./security');
 
-module.exports = { ApiServer, AuthService, ServiceError, SESSION_COOKIE, CSRF_HEADER, ...security };
+module.exports = {
+  ApiServer,
+  AuthService,
+  ServiceError,
+  SESSION_COOKIE,
+  CSRF_HEADER,
+  InMemoryIdentityPool,
+  InMemoryStoreForApi,
+  executeResearchDiscovery,
+  prepareOutreachDraft,
+  ...security,
+};
