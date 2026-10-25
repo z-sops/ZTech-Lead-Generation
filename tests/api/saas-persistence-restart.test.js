@@ -92,7 +92,7 @@ test('ZTech SaaS PostgreSQL 16 Persistence & Restart Verification', async (t) =>
   let base2;
 
   t.before(async () => {
-      db = await freshDatabase(DATABASE, { workspaces: [] });
+      db = await freshDatabase(DATABASE, { workspace: '11111111-1111-4111-8111-111111111111' });
       tenantPool = db.pool;
       controlPool = db.controlPool;
       identityPool = db.identityPool;

@@ -5,6 +5,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const { ApiServer } = require('../packages/lead-intelligence-api/src/server');
 const { PostgresStore } = require('../packages/lead-intelligence-postgres/src/PostgresStore');
+const { collectCredentials, credentialUrl, describeRole, roleProperties } = require('../scripts/lib/postgres-credentials');
 
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -61,15 +62,61 @@ async function main(listenPort = DEFAULT_PORT, cliArgs = process.argv) {
     }
 
     try {
-      // Connect to PostgreSQL 16
-      identityPool = new Pool({ connectionString: pgUrl });
-      tenantPool = new Pool({ connectionString: pgUrl });
-      controlPool = new Pool({ connectionString: pgUrl });
+      // Collect credentials for each role from environment variables.
+      // The module validates each credential, refuses placeholders, and
+      // computes SCRAM verifiers never exposed in clear-text SQL.
+      const { credentials: allCreds, missing } = collectCredentials([
+        'ztech_identity', 'ztech_app', 'ztech_control',
+      ]);
+      if (missing.length > 0) {
+        throw new Error('Missing PostgreSQL role credentials: ' + missing.join(', '));
+      }
 
-      // Verify connection immediately - DO NOT SILENTLY FALL BACK!
+      // Build per-role connection strings (credential in URL, never in source).
+      const identityCreds = allCreds.find((c) => c.name === 'ztech_identity');
+      const appCreds = allCreds.find((c) => c.name === 'ztech_app');
+      const controlCreds = allCreds.find((c) => c.name === 'ztech_control');
+
+      if (!identityCreds || !appCreds || !controlCreds) {
+        throw new Error('Could not find all required role credentials');
+      }
+
+      // Verify each role's actual database properties before creating pools.
+      const identityProps = await roleProperties(identityPool ? identityPool : new Pool({ connectionString: pgUrl }), 'ztech_identity');
+      const appProps = await roleProperties(appCreds.name);
+      const controlProps = await roleProperties(controlCreds.name);
+
+      // Enforce: worker role must remain NOLOGIN; no superuser or BYPASSRLS at runtime.
+      if (identityProps.rolcanlogin) {
+        throw new Error('Identity role must remain NOLOGIN');
+      }
+      if (appProps.rolsuper) {
+        throw new Error('App role must not be SUPERUSER');
+      }
+      if (appProps.rolbypassrls) {
+        throw new Error('App role must not bypass RLS');
+      }
+      if (controlProps.rolsuper) {
+        throw new Error('Control role must not be SUPERUSER');
+      }
+      if (controlProps.rolbypassrls) {
+        throw new Error('Control role must not bypass RLS');
+      }
+
+      // Identity pool: the identity service role (NOLOGIN, reads/writes id tables only).
+      identityPool = new Pool({ connectionString: credentialUrl(pgUrl, 'ztech_identity', identityCreds.password) });
       await identityPool.query('SELECT 1');
+
+      // Tenant/app pool: the API service role (may log in, may not bypass RLS).
+      tenantPool = new Pool({ connectionString: credentialUrl(pgUrl, 'ztech_app', appCreds.password) });
+      await tenantPool.query('SELECT 1');
+
+      // Control plane pool: the token issuer role (may log in, may not bypass RLS).
+      controlPool = new Pool({ connectionString: credentialUrl(pgUrl, 'ztech_control', controlCreds.password) });
+      await controlPool.query('SELECT 1');
+
       activeMode = 'postgres';
-      console.log('✓ Connected to PostgreSQL persistent storage');
+      console.log('Connected to PostgreSQL persistent storage');
 
       storeFor = async (session, workspaceId) => new PostgresStore({
         pool: tenantPool,
@@ -109,7 +156,7 @@ async function main(listenPort = DEFAULT_PORT, cliArgs = process.argv) {
           organization: 'Alice Opportunity Ventures',
           workspaceName: 'London Healthcare & Clinics',
         });
-        console.log('✓ Demo account provisioned: alice@ztech.test');
+        console.log('Demo account provisioned: alice@ztech.test');
       }
     } catch (err) {
       console.warn(`Note: Demo seed check: ${err.message}`);
@@ -128,18 +175,18 @@ async function main(listenPort = DEFAULT_PORT, cliArgs = process.argv) {
   };
 
   console.log('\n================================================================');
-  console.log('  ZTech Lead Generation — SaaS Customer Workspace');
+  console.log('  ZTech Lead Generation - SaaS Customer Workspace');
   console.log(`  Local Browser App: http://${HOST}:${actualPort}`);
   console.log(`  Runtime Storage:   ${activeMode.toUpperCase()}${activeMode === 'local-demo' ? ' (Ephemeral In-Memory)' : ' (Persistent PostgreSQL)'}`);
   console.log(`  Demo Auto-Login:   ${opts.demoAutologin ? 'ENABLED (Loopback Only)' : 'DISABLED'}`);
   console.log(`  Demo Seeding:      ${opts.demoSeed ? 'ENABLED' : 'DISABLED (Opt-in)'}`);
   console.log('----------------------------------------------------------------');
   console.log('  Features:');
-  console.log('    • Real M3 Session & CSRF Security');
-  console.log('    • Evidence-Backed Opportunity Discovery');
-  console.log('    • PitchGenerator & Outreach Gate Human Oversight');
-  console.log('    • Tenant-Isolated Workspace Data Persistence');
-  console.log('    • Auto-send & Live Provider Spend: PROHIBITED (Controlled Demo)');
+  console.log('    Real M3 Session & CSRF Security');
+  console.log('    Evidence-Backed Opportunity Discovery');
+  console.log('    PitchGenerator & Outreach Gate Human Oversight');
+  console.log('    Tenant-Isolated Workspace Data Persistence');
+  console.log('    Auto-send & Live Provider Spend: PROHIBITED (Controlled Demo)');
   console.log('================================================================\n');
 
   server.port = actualPort;
