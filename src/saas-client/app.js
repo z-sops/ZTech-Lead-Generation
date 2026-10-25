@@ -17,6 +17,9 @@ const state = {
   savedOpportunities: [],
   activePitch: null,
 };
+if (typeof window !== 'undefined') {
+  window.state = state;
+}
 
 /* ----------------------------- DOM Selectors ----------------------------- */
 

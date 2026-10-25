@@ -217,9 +217,15 @@ test('ZTech SaaS PostgreSQL 16 Browser E2E Acceptance Journey', async (t) => {
       assert.ok(storageText.includes('POSTGRESQL 16'), `Expected PostgreSQL storage badge, found: ${storageText}`);
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, '02_dashboard_overview.png'), fullPage: true });
 
-      // Retrieve workspace ID from page state (browser evaluated)
-      // eslint-disable-next-line no-undef
-      aliceWorkspaceId = await page.evaluate(() => window.state?.currentWorkspace?.workspace_id);
+      // Retrieve workspace ID from page state (browser evaluated via string expression)
+      aliceWorkspaceId = await page.evaluate(`
+        (() => {
+          if (typeof window !== 'undefined' && window.state && window.state.currentWorkspace) {
+            return window.state.currentWorkspace.workspace_id;
+          }
+          return null;
+        })()
+      `);
       assert.ok(aliceWorkspaceId, 'Workspace ID must be populated');
 
       // 4. Enter business discovery criteria
