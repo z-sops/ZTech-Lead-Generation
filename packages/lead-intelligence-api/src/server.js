@@ -273,6 +273,7 @@ class ApiServer {
     // Research Discovery Endpoints
     const researchReq = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research$/i);
     if (researchReq && method === 'POST') return this.createResearch(req, res, researchReq[1]);
+    if (researchReq && method === 'GET') return this.listResearch(req, res, researchReq[1]);
 
     const researchJob = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/([a-zA-Z0-9_-]+)$/i);
     if (researchJob && method === 'GET') return this.getResearch(req, res, researchJob[1], researchJob[2]);
@@ -520,6 +521,28 @@ class ApiServer {
     this.json(res, 201, discoveryResult);
   }
 
+  async listResearch(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const store = await this.storeFor(session, workspaceId);
+    const jobs = await store.jobs.list();
+    this.json(res, 200, {
+      workspace_id: workspaceId,
+      jobs: jobs.map((j) => ({
+        job_id: j.job_id,
+        state: j.state,
+        created_at: j.created_at,
+        finished_at: j.finished_at,
+        candidate_count: j.options?.candidate_count || j.options?.candidates?.length || 0,
+        industry: j.options?.industry || j.requested_domain,
+        requirements: j.options?.businessRequirements,
+        packet_id: j.packet_id,
+      })),
+    });
+  }
+
   async getResearch(req, res, workspaceId, jobId) {
     const session = await this.requireSession(req, res);
     if (!session) return;
@@ -546,7 +569,11 @@ class ApiServer {
       }
     }
 
-    this.json(res, 200, { job, packet_meta: packetMeta });
+    this.json(res, 200, {
+      job,
+      packet_meta: packetMeta,
+      candidates: job.options?.candidates || [],
+    });
   }
 
   async opportunityCandidates(req, res, workspaceId) {
@@ -554,8 +581,29 @@ class ApiServer {
     if (!session) return;
     await this.service.authorize(session, workspaceId, 'workspace.read');
 
-    const candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
-    this.json(res, 200, { candidates, workspace_id: workspaceId });
+    const store = await this.storeFor(session, workspaceId);
+    let candidates = this.activeCandidatesByWorkspace.get(workspaceId);
+    if (!candidates || candidates.length === 0) {
+      // Durable retrieval from persistent jobs repository
+      const jobs = await store.jobs.list();
+      const latestJob = jobs.find((j) => j.state === 'complete' && j.options?.candidates?.length > 0);
+      if (latestJob) {
+        candidates = latestJob.options.candidates;
+        this.activeCandidatesByWorkspace.set(workspaceId, candidates);
+      } else {
+        candidates = [];
+      }
+    }
+
+    // Reflect saved status against persistent saved searches
+    const savedList = await store.savedSearches.list();
+    const savedIds = new Set(savedList.map((s) => s.search_id || s.filter?.opportunity_id));
+    const resultCandidates = (candidates || []).map((c) => ({
+      ...c,
+      review_status: savedIds.has(c.opportunity_id) ? 'saved' : (c.review_status || 'unreviewed'),
+    }));
+
+    this.json(res, 200, { candidates: resultCandidates, workspace_id: workspaceId });
   }
 
   async saveOpportunity(req, res, workspaceId, opportunityId) {
@@ -570,9 +618,34 @@ class ApiServer {
       throw new ServiceError(400, 'missing_opportunity_id', 'Opportunity ID is required');
     }
 
+    const store = await this.storeFor(session, workspaceId);
+
     // 1. Authoritative candidate verification against server-generated discovery
-    const candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
-    const candidate = candidates.find((c) => c.opportunity_id === id);
+    let candidates = this.activeCandidatesByWorkspace.get(workspaceId) || [];
+    let candidate = candidates.find((c) => c.opportunity_id === id);
+    if (!candidate) {
+      // Check durable storage across completed research jobs for this workspace
+      const jobs = await store.jobs.list();
+      for (const j of jobs) {
+        const found = j.options?.candidates?.find((c) => c.opportunity_id === id);
+        if (found) {
+          candidate = found;
+          if (!this.activeCandidatesByWorkspace.has(workspaceId)) {
+            this.activeCandidatesByWorkspace.set(workspaceId, j.options.candidates);
+          }
+          break;
+        }
+      }
+    }
+
+    // Check if previously saved
+    if (!candidate) {
+      const existing = await store.savedSearches.get(id);
+      if (existing) {
+        candidate = existing.filter || existing;
+      }
+    }
+
     if (!candidate) {
       throw new ServiceError(404, 'opportunity_not_found', `Opportunity "${id}" was not discovered or verified in workspace "${workspaceId}"`);
     }
@@ -581,8 +654,6 @@ class ApiServer {
     if (candidate.workspace_id && candidate.workspace_id !== workspaceId) {
       throw new ServiceError(403, 'cross_workspace_denied', 'Opportunity belongs to another workspace');
     }
-
-    const store = await this.storeFor(session, workspaceId);
 
     // 3. Verify associated research job and evidence packet exist in workspace store
     if (candidate.job_id) {
@@ -652,6 +723,14 @@ class ApiServer {
     await this.service.authorize(session, workspaceId, 'workspace.write');
 
     const body = await this.body(req);
+    if (!body.opportunity || typeof body.opportunity !== 'object') {
+      throw new ServiceError(400, 'missing_opportunity', 'Valid opportunity object is required');
+    }
+
+    if (body.opportunity.workspace_id && body.opportunity.workspace_id !== workspaceId) {
+      throw new ServiceError(403, 'cross_workspace_denied', 'Opportunity belongs to another workspace');
+    }
+
     const store = await this.storeFor(session, workspaceId);
 
     const result = await prepareOutreachDraft({

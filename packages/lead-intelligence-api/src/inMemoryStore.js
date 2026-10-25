@@ -118,6 +118,11 @@ class InMemoryJobs {
     const map = getWorkspaceMap('jobs', this.store.workspaceId);
     return Array.from(map.values()).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
   }
+
+  async listByLead(leadId) {
+    const map = getWorkspaceMap('jobs', this.store.workspaceId);
+    return Array.from(map.values()).filter((j) => String(j.lead_id) === String(leadId)).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  }
 }
 
 class InMemoryPackets {

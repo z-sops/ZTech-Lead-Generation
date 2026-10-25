@@ -454,6 +454,11 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
     state: 'complete',
     finished_at: new Date().toISOString(),
     packet_id: candidates[0]?.packet_id || null,
+    options: {
+      ...(createdJob.options || {}),
+      candidates,
+      candidate_count: candidates.length,
+    },
   };
   await store.jobs.update(updatedJob, createdJob.version);
 
@@ -471,12 +476,19 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
  */
 async function prepareOutreachDraft({ workspaceId, opportunity, offer, store, userId }) {
   if (!opportunity || typeof opportunity !== 'object') {
-    throw new Error('Valid opportunity object is required to prepare outreach.');
+    const { ServiceError } = require('./service');
+    throw new ServiceError(400, 'missing_opportunity', 'Valid opportunity object is required to prepare outreach.');
+  }
+
+  if (!opportunity.packet_id) {
+    const { ServiceError } = require('./service');
+    throw new ServiceError(400, 'missing_packet_id', 'Opportunity must reference an evidence packet.');
   }
 
   const packet = await store.packets.get(opportunity.packet_id);
   if (!packet) {
-    throw new Error(`Evidence packet "${opportunity.packet_id}" not found in workspace store.`);
+    const { ServiceError } = require('./service');
+    throw new ServiceError(404, 'packet_not_found', `Evidence packet "${opportunity.packet_id}" not found in workspace store.`);
   }
 
   const leadView = {

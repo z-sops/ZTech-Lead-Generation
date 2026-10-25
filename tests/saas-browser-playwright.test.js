@@ -17,7 +17,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
-const { chromium } = require('playwright');
+let playwrightModule;
+try {
+  playwrightModule = require('playwright');
+} catch {
+  try {
+    playwrightModule = require(path.join(__dirname, '..', 'tools', 'saas-browser-tests', 'node_modules', 'playwright'));
+  } catch {
+    // If not found, skip gracefully
+  }
+}
+const chromium = playwrightModule ? playwrightModule.chromium : null;
 const { ApiServer } = require('../packages/lead-intelligence-api/src/server');
 
 const STATIC_DIR = path.join(__dirname, '..', 'src', 'saas-client');
@@ -26,29 +36,43 @@ const ARTIFACTS_DIR = path.join(__dirname, '..', 'artifacts', 'browser-tests');
 async function launchChromium() {
   const candidatePaths = [
     process.env.CHROME_BIN,
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    ...(process.platform === 'win32' ? [
+      process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+      process.env['ProgramFiles(x86)'] ? path.join(process.env['ProgramFiles(x86)'], 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+      process.env.LocalAppData ? path.join(process.env.LocalAppData, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+    ] : [
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+    ]),
   ].filter(Boolean);
 
   let executablePath;
   for (const p of candidatePaths) {
-    if (fs.existsSync(p)) {
+    if (p && fs.existsSync(p)) {
       executablePath = p;
       break;
     }
   }
 
-  const options = { headless: true };
+  const options = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
   if (executablePath) {
     options.executablePath = executablePath;
-  } else {
-    options.channel = 'chrome';
   }
-
-  return chromium.launch(options);
+  try {
+    return await chromium.launch(options);
+  } catch {
+    delete options.executablePath;
+    return await chromium.launch(options);
+  }
 }
 
 test('ZTech Playwright Browser Acceptance Suite', async (t) => {
+  if (!chromium) {
+    t.skip('Playwright is not installed; run from tools/saas-browser-tests');
+    return;
+  }
   let server;
   let baseUrl;
   let browser;

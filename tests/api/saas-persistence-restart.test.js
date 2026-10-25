@@ -255,6 +255,25 @@ test('ZTech SaaS PostgreSQL 16 Persistence & Restart Verification', async (t) =>
       assert.equal(savedRes.body.count, 1);
       assert.equal(savedRes.body.opportunities[0].company_name, discoveredOpp.company_name);
       assert.equal(savedRes.body.opportunities[0].domain, discoveredOpp.domain);
+
+      // Verify discovery candidates recovered from PostgreSQL across server restart
+      const candRes = await client.get(`/api/workspaces/${aliceWorkspaceId}/opportunities/candidates`);
+      assert.equal(candRes.status, 200);
+      assert.ok(candRes.body.candidates.length >= 2);
+      assert.ok(candRes.body.candidates.some((c) => c.opportunity_id === discoveredOpp.opportunity_id));
+
+      // Verify research job and evidence associations remain intact
+      const jobRes = await client.get(`/api/workspaces/${aliceWorkspaceId}/research/${discoveredOpp.job_id}`);
+      assert.equal(jobRes.status, 200);
+      assert.equal(jobRes.body.job.job_id, discoveredOpp.job_id);
+      assert.equal(jobRes.body.job.state, 'complete');
+
+      // Verify saving an opportunity from recovered discovery candidates succeeds after restart
+      const secondOpp = candRes.body.candidates.find((c) => c.opportunity_id !== discoveredOpp.opportunity_id);
+      assert.ok(secondOpp);
+      const save2Res = await client.post(`/api/workspaces/${aliceWorkspaceId}/opportunities/save`, secondOpp);
+      assert.equal(save2Res.status, 200);
+      assert.equal(save2Res.body.ok, true);
     });
 
     await t.test('Phase 3: Tenant Boundary & Cross-Workspace Isolation under PostgreSQL RLS', async () => {

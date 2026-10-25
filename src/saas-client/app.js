@@ -157,6 +157,13 @@ async function updateStorageBadge() {
       }
     }
   } catch (err) {
+    if (DOM.storageBadge && DOM.storageModeText) {
+      DOM.storageBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+      DOM.storageBadge.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+      DOM.storageBadge.style.color = '#f87171';
+      if (DOM.storageModeIcon) DOM.storageModeIcon.textContent = '⚠️';
+      DOM.storageModeText.textContent = 'DATABASE OFFLINE';
+    }
     console.warn('Storage mode check failed:', err.message);
   }
 }
@@ -177,6 +184,7 @@ async function checkSession() {
       }
       renderAuthenticatedState();
       await loadSavedOpportunities();
+      await loadActiveCandidates();
     } else {
       renderUnauthenticatedState();
     }
@@ -488,6 +496,23 @@ async function loadSavedOpportunities() {
     }
   } catch (err) {
     console.error('Failed to load saved opportunities:', err);
+  }
+}
+
+async function loadActiveCandidates() {
+  if (!state.currentWorkspace) return;
+  const wsId = state.currentWorkspace.workspace_id;
+  try {
+    const res = await api(`/api/workspaces/${wsId}/opportunities/candidates`);
+    if (res && Array.isArray(res.candidates) && res.candidates.length > 0) {
+      state.discoveredOpportunities = res.candidates;
+      renderOpportunityCards(state.discoveredOpportunities);
+      if (DOM.kpiDiscoveredCount) {
+        DOM.kpiDiscoveredCount.textContent = state.discoveredOpportunities.length;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load active discovery candidates:', err.message);
   }
 }
 
