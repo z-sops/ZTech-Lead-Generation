@@ -492,7 +492,7 @@ async function prepareOutreachDraft({ workspaceId, opportunity, offer, store, us
   }
 
   const leadView = {
-    id: opportunity.lead_id,
+    id: opportunity.lead_id || (packet && packet.lead_id) || `lead_${opportunity.opportunity_id || 'default'}`,
     name: opportunity.company_name,
     email: opportunity.contact_info?.email || 'prospect@example.com',
     qualification_status: 'qualified',

@@ -672,11 +672,14 @@ class ApiServer {
     // 4. Server-side authoritative filter — never trust client-supplied source claims, scores or approval metadata
     const authoritativeFilter = {
       opportunity_id: candidate.opportunity_id,
+      lead_id: candidate.lead_id || (candidate.packet_id ? `lead_${candidate.opportunity_id.replace(/^opp_/, '')}` : 'lead_default'),
       job_id: candidate.job_id,
       packet_id: candidate.packet_id,
       workspace_id: workspaceId,
       company_name: candidate.company_name,
       domain: candidate.domain,
+      contact_info: candidate.contact_info || null,
+      market_location: candidate.market_location || '',
       detected_need: candidate.detected_need,
       recommended_next_step: candidate.recommended_next_step,
       evidence_summary: candidate.evidence_summary,
