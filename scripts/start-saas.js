@@ -81,29 +81,46 @@ async function main(listenPort = DEFAULT_PORT, cliArgs = process.argv) {
         throw new Error('Could not find all required role credentials');
       }
 
-      // Verify each role's actual database properties before creating pools.
-      const identityProps = await roleProperties(identityPool ? identityPool : new Pool({ connectionString: pgUrl }), 'ztech_identity');
-      const appProps = await roleProperties(appCreds.name);
-      const controlProps = await roleProperties(controlCreds.name);
+      // Create a temporary admin pool for role verification (uses the base pgUrl with admin credentials).
+      // This pool is closed immediately after verification.
+      let adminPool = null;
+      try {
+        adminPool = new Pool({ connectionString: pgUrl });
+        await adminPool.query('SELECT 1');
 
-      // Enforce: worker role must remain NOLOGIN; no superuser or BYPASSRLS at runtime.
-      if (identityProps.rolcanlogin) {
-        throw new Error('Identity role must remain NOLOGIN');
-      }
-      if (appProps.rolsuper) {
-        throw new Error('App role must not be SUPERUSER');
-      }
-      if (appProps.rolbypassrls) {
-        throw new Error('App role must not bypass RLS');
-      }
-      if (controlProps.rolsuper) {
-        throw new Error('Control role must not be SUPERUSER');
-      }
-      if (controlProps.rolbypassrls) {
-        throw new Error('Control role must not bypass RLS');
+        // Verify each role's actual database properties before creating pools.
+        const identityProps = await roleProperties(adminPool, 'ztech_identity');
+        const appProps = await roleProperties(adminPool, 'ztech_app');
+        const controlProps = await roleProperties(adminPool, 'ztech_control');
+
+        // Enforce: worker role must remain NOLOGIN; no runtime role is superuser or BYPASSRLS.
+        // The identity role MUST be able to log in (it serves the identity service).
+        if (!identityProps.rolcanlogin) {
+          throw new Error('Identity role must be able to log in (NOLOGIN not allowed for identity service)');
+        }
+        if (identityProps.rolsuper) {
+          throw new Error('Identity role must not be SUPERUSER');
+        }
+        if (identityProps.rolbypassrls) {
+          throw new Error('Identity role must not bypass RLS');
+        }
+        if (appProps.rolsuper) {
+          throw new Error('App role must not be SUPERUSER');
+        }
+        if (appProps.rolbypassrls) {
+          throw new Error('App role must not bypass RLS');
+        }
+        if (controlProps.rolsuper) {
+          throw new Error('Control role must not be SUPERUSER');
+        }
+        if (controlProps.rolbypassrls) {
+          throw new Error('Control role must not bypass RLS');
+        }
+      } finally {
+        if (adminPool) await adminPool.end().catch(() => {});
       }
 
-      // Identity pool: the identity service role (NOLOGIN, reads/writes id tables only).
+      // Identity pool: the identity service role (reads/writes id tables only).
       identityPool = new Pool({ connectionString: credentialUrl(pgUrl, 'ztech_identity', identityCreds.password) });
       await identityPool.query('SELECT 1');
 

@@ -33,10 +33,30 @@ const ROLES_ORDER = [
   'ztech_control',
 ];
 
+/** Approved development database name patterns. */
+const DEV_DB_PATTERNS = [
+  /^ztech_dev$/,
+  /^ztech_dev_/,
+  /^ztech_test$/,
+  /^ztech_test_/,
+  /^test_/,
+];
+
+function isApprovedDevDatabase(dbName) {
+  return DEV_DB_PATTERNS.some((p) => p.test(dbName));
+}
+
 async function setup() {
   console.log('--- ZTech Development PostgreSQL 16 Setup ---');
   console.log(`Target Database: ${TARGET_DB}`);
   console.log(`Admin Connection: ${ADMIN_URL.replace(/:.[^:@]+@/, ':****@')}`);
+
+  // Refuse to run against non-development databases.
+  if (!isApprovedDevDatabase(TARGET_DB)) {
+    console.error(`Refusing to run: "${TARGET_DB}" does not match an approved development database pattern.`);
+    console.error('Set ZTECH_DEV_DATABASE to a development database name (e.g., ztech_dev, ztech_test).');
+    return false;
+  }
 
   let adminPool;
   try {
@@ -66,27 +86,20 @@ async function setup() {
     // 2. Apply role definitions from roles.sql (M2/M3 architecture)
     console.log('Configuring development roles...');
     if (fs.existsSync(ROLES_FILE)) {
-      try {
-        await adminPool.query(fs.readFileSync(ROLES_FILE, 'utf8'));
-      } catch (roleErr) {
-        // Roles might already exist; continue to verify state
-      }
+      await adminPool.query(fs.readFileSync(ROLES_FILE, 'utf8'));
     }
 
     // Set passwords and enable login.
     // The worker role must remain NOLOGIN per the accepted architecture.
     // Use the validated setCredential module (SCRAM verifier, no clear-text SQL).
+    // Reject missing or malformed credentials - no silent fallbacks.
     for (const role of ROLES_ORDER) {
       const creds = collectCredentials([role]);
       if (creds.missing.length > 0) {
-        console.warn(`Credential env var missing for role ${role}; skipping login enablement.`);
-        await disableLogin(adminPool, role);
-        continue;
+        throw new Error(`Missing required credential for role ${role}: ${creds.missing.join(', ')}`);
       }
       if (creds.malformed.length > 0) {
-        console.warn(`Credential malformed for role ${role}; skipping login enablement.`);
-        await disableLogin(adminPool, role);
-        continue;
+        throw new Error(`Malformed credential for role ${role}: ${creds.malformed.join(', ')}`);
       }
       const roleCreds = creds.credentials[0];
       await setCredential(adminPool, roleCreds.name, roleCreds.password);
@@ -96,12 +109,17 @@ async function setup() {
         await disableLogin(adminPool, roleCreds.name);
         console.log('Worker role forced NOLOGIN per architecture.');
       }
-      if (!props.rolcanlogin) {
-        console.log(`${roleCreds.name}: ${describeRole(props)}`);
+      if (props.rolsuper) {
+        throw new Error(`Role ${roleCreds.name} must not be SUPERUSER`);
       }
+      if (props.rolbypassrls) {
+        throw new Error(`Role ${roleCreds.name} must not bypass RLS`);
+      }
+      console.log(`${roleCreds.name}: ${describeRole(props)}`);
     }
 
     // Grant permissions on target database (only roles that can log in may connect).
+    // The migrator gets ALL for schema ownership; others get CONNECT.
     const creds = collectCredentials();
     const loginRoles = creds.credentials.filter((c) => c.name !== 'ztech_worker').map((c) => c.name);
     await adminPool.query(`GRANT CONNECT ON DATABASE "${TARGET_DB}" TO ${loginRoles.join(', ')}`);
@@ -110,12 +128,19 @@ async function setup() {
 
     await adminPool.end();
 
-    // 3. Connect as migrator and apply migrations - stop on real failures.
+    // 3. Connect as migrator and apply migrations - abort on FIRST failure.
+    const migratorCreds = collectCredentials(['ztech_migrator']);
+    if (migratorCreds.missing.length > 0) {
+      throw new Error('Missing required migrator credential: ZTECH_PG_PASSWORD_ZTECH_MIGRATOR');
+    }
+    if (migratorCreds.malformed.length > 0) {
+      throw new Error('Malformed migrator credential');
+    }
+    const migratorPassword = migratorCreds.credentials[0].password;
+
     const parsed = new URL(ADMIN_URL);
     parsed.pathname = `/${TARGET_DB}`;
     parsed.username = 'ztech_migrator';
-    // Use a temporary password from env; the migrator credential is set separately.
-    const migratorPassword = process.env.ZTECH_DEV_PG_PASSWORD || 'ztech_dev_secret';
     parsed.password = migratorPassword;
     const migratorUrl = parsed.toString();
 
@@ -123,23 +148,21 @@ async function setup() {
     const { MIGRATIONS } = require('../packages/lead-intelligence-postgres/src/index');
     const migratorPool = new Pool({ connectionString: migratorUrl });
 
-    let migrationErrors = 0;
+    const appliedMigrations = [];
     for (const migration of MIGRATIONS) {
       try {
         await migratorPool.query(migration.sql);
+        appliedMigrations.push(migration.version);
+        console.log(`  Applied migration ${migration.version}`);
       } catch (migErr) {
         console.error('Migration failed:', migErr.message);
-        migrationErrors += 1;
-        // Do not silently ignore: stop on genuine migration failures.
-        if (migrationErrors >= 3) {
-          console.error('Too many migration failures; aborting setup.');
-          await migratorPool.end();
-          return false;
-        }
+        console.error('Aborting on first migration failure. Applied so far:', appliedMigrations.join(', ') || 'none');
+        await migratorPool.end();
+        return false;
       }
     }
     await migratorPool.end();
-    console.log('All PostgreSQL schema migrations applied.');
+    console.log('All PostgreSQL schema migrations applied:', appliedMigrations.join(', '));
 
     console.log('\nDevelopment PostgreSQL setup complete!');
     console.log('Run the persistent SaaS product with:');

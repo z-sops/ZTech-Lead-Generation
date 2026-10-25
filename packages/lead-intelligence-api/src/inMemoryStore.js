@@ -53,15 +53,33 @@ function getWorkspaceMap(collection, workspaceId) {
 class InMemoryJobs {
   constructor(store) { this.store = store; }
 
-  async create(job) {
+  async insert(job) {
     const map = getWorkspaceMap('jobs', this.store.workspaceId);
     const id = job.job_id || `job_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
     const rec = {
       ...job,
       job_id: id,
       workspace_id: this.store.workspaceId,
-      created_at: job.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: job.created_at || now,
+      updated_at: now,
+      version: 1,
+      lead_id: job.lead_id ?? '',
+      provider_id: job.provider_id ?? '',
+      request_key: job.request_key ?? '',
+      requested_domain: job.requested_domain ?? null,
+      domain_key: job.domain_key ?? null,
+      state: job.state ?? 'started',
+      provider_job_id: job.provider_job_id ?? null,
+      attempts: job.attempts ?? 0,
+      poll_count: job.poll_count ?? 0,
+      next_attempt_at: job.next_attempt_at ?? null,
+      last_error_code: job.last_error_code ?? null,
+      last_error_message: job.last_error_message ?? null,
+      packet_id: job.packet_id ?? null,
+      options: job.options ?? job.options_json ?? {},
+      started_at: job.started_at ?? null,
+      finished_at: job.finished_at ?? null,
     };
     map.set(id, rec);
     return rec;
@@ -72,12 +90,27 @@ class InMemoryJobs {
     return map.get(id) || null;
   }
 
-  async update(id, updates) {
+  async update(job, expectedVersion) {
     const map = getWorkspaceMap('jobs', this.store.workspaceId);
-    const existing = map.get(id);
+    const existing = map.get(job.job_id);
     if (!existing) return null;
-    const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
-    map.set(id, updated);
+    if (existing.version !== expectedVersion) {
+      const err = new Error('Research job was changed by another operation');
+      err.name = 'ConflictError';
+      throw err;
+    }
+    const now = new Date().toISOString();
+    const updated = {
+      ...existing,
+      ...job,
+      job_id: existing.job_id,
+      workspace_id: existing.workspace_id,
+      created_at: existing.created_at,
+      version: existing.version + 1,
+      updated_at: now,
+      options: job.options ?? job.options_json ?? existing.options,
+    };
+    map.set(job.job_id, updated);
     return updated;
   }
 

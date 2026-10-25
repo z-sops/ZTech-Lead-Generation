@@ -297,7 +297,7 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
   const jobId = `job_${crypto.randomUUID()}`;
 
   // 1. Create research job record
-  await store.jobs.create({
+  const job = {
     job_id: jobId,
     lead_id: 'batch_discovery',
     provider_id: 'ztech_research_demo',
@@ -305,9 +305,10 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
     requested_domain: criteria.industry,
     domain_key: criteria.targetCountry || 'global',
     state: 'started',
-    options_json: criteria,
+    options: criteria,
     created_at: nowIso,
-  });
+  };
+  await store.jobs.insert(job);
 
   const templates = selectTemplates(criteria.industry);
   const candidates = [];
@@ -433,11 +434,17 @@ async function executeResearchDiscovery({ workspaceId, criteria, store, userId }
   }
 
   // Update job to complete
-  await store.jobs.update(jobId, {
+  const createdJob = await store.jobs.get(jobId);
+  if (!createdJob) {
+    throw new Error('Research job not found after creation');
+  }
+  const updatedJob = {
+    ...createdJob,
     state: 'complete',
     finished_at: new Date().toISOString(),
     packet_id: candidates[0]?.packet_id || null,
-  });
+  };
+  await store.jobs.update(updatedJob, createdJob.version);
 
   return {
     job_id: jobId,
