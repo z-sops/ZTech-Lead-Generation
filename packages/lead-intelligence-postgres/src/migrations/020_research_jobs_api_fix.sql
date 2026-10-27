@@ -35,7 +35,7 @@ CREATE OR REPLACE FUNCTION li.enqueue_research_job(
   deduplicated BOOLEAN
 ) LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 SET search_path = pg_catalog, li, id
--- #variable_conflict use_column
+#variable_conflict use_column
 AS $$
 DECLARE
   v_workspace UUID;
