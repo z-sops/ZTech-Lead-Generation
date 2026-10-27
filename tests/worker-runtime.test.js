@@ -69,8 +69,8 @@ function stubPool(overrides = {}) {
         return { rows: [{ renew_lease: new Date().toISOString() }] };
       }
       if (sql.includes('set_workspace_for_job')) return { rows: [] };
-      if (sql.includes('SELECT state FROM li.job_queue')) {
-        return { rows: [{ state: state.cancelled ? 'cancelled' : 'running' }] };
+      if (sql.includes('SELECT state, cancel_requested_at FROM li.job_queue')) {
+        return { rows: [{ state: state.cancelled ? 'cancelled' : 'running', cancel_requested_at: null }] };
       }
       if (sql.includes('write_job_result')) {
         if (state.writeFails) throw new Error('the write failed');

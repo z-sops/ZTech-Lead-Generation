@@ -33,7 +33,7 @@ function makePool(options = {}) {
         const token = options.token ? await options.token(id, index) : `token-${id}-${index}`;
         return { rows: [{ request_job_token: token }] };
       }
-      if (sql.includes('SELECT state FROM li.job_queue')) return { rows: [{ state: 'running' }] };
+      if (sql.includes('SELECT state, cancel_requested_at FROM li.job_queue')) return { rows: [{ state: 'running', cancel_requested_at: null }] };
       if (sql.includes('write_job_result')) {
         writes.push(params);
         return { rows: [{ write_job_result: 1 }] };
