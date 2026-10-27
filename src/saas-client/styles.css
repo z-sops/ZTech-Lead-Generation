@@ -707,3 +707,47 @@ body {
   .main-viewport { padding: 20px; }
   .topbar { padding: 0 16px; }
 }
+
+/* Research Jobs list */
+.research-jobs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+.rj-row {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.rj-row:hover { background: var(--bg-card-hover); }
+.rj-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.rj-state.queued { background: var(--accent-info-subtle); color: #22d3ee; }
+.rj-state.leased { background: var(--accent-warning-subtle); color: #fbbf24; }
+.rj-state.running { background: var(--accent-warning-subtle); color: #fbbf24; }
+.rj-state.succeeded { background: var(--accent-success-subtle); color: #34d399; }
+.rj-state.failed { background: var(--accent-danger-subtle); color: #f87171; }
+.rj-state.cancelled { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
+.rj-state.uncertain { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
+.rj-main { flex: 1; min-width: 200px; }
+.rj-id { font-family: var(--font-mono, monospace); font-size: 12px; color: var(--text-muted); word-break: break-all; }
+.rj-meta { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.rj-error { font-size: 12px; color: #f87171; margin-top: 4px; word-break: break-word; }
+.rj-actions { display: flex; gap: 8px; }
+.rj-cancel-btn { padding: 6px 12px; font-size: 12px; }
+.rj-retry-note { font-size: 11px; color: var(--text-dim); margin-top: 4px; }

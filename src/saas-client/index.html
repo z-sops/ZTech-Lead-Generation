@@ -56,6 +56,10 @@
           <span class="icon">🔍</span>
           <span>Opportunity Discovery</span>
         </a>
+        <a class="nav-item" id="nav-research-jobs" data-view="research-jobs">
+          <span class="icon">🗂️</span>
+          <span>Research Jobs</span>
+        </a>
         <a class="nav-item" id="nav-saved" data-view="saved">
           <span class="icon">⭐</span>
           <span>Saved Opportunities</span>
@@ -219,7 +223,55 @@
           </div>
         </section>
 
-        <!-- 3. Saved Opportunities Screen -->
+        <!-- 3. Research Jobs Screen -->
+        <section id="view-research-jobs" class="view-panel" style="display: none;">
+          <div class="panel-header">
+            <div>
+              <h1 class="panel-title">Durable Research Jobs</h1>
+              <p style="color: var(--text-muted); font-size: 13px;">Asynchronous research requests processed by the background worker. Status is read from the authoritative backend queue.</p>
+            </div>
+            <button id="rj-refresh-btn" class="btn btn-secondary">Refresh</button>
+          </div>
+
+          <div class="discovery-panel" id="rj-submit-panel">
+            <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 10px;">Submit a Research Job</h3>
+            <form id="research-job-form">
+              <div class="form-group">
+                <label class="form-label" for="rj-requirements">Research Criteria</label>
+                <textarea id="rj-requirements" class="form-textarea" rows="2" placeholder="Describe the research target (e.g. UK healthcare clinics with legacy booking portals)" required>UK healthcare clinics with legacy appointment booking portals and slow server response times.</textarea>
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
+                <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fbbf24;">
+                  <input type="checkbox" id="rj-synthetic" checked disabled>
+                  <span>Synthetic / No-op Research (Phase 1)</span>
+                </label>
+                <button type="submit" id="rj-submit-btn" class="btn btn-primary">Enqueue Research Job</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="rj-loading" class="discovery-panel" style="display: none; text-align: center; padding: 24px;">
+            <div style="font-size: 20px; margin-bottom: 8px;">⏳</div>
+            <div style="color: var(--text-muted); font-size: 13px;">Loading research jobs…</div>
+          </div>
+
+          <div id="rj-offline" class="discovery-panel" style="display: none; text-align: center; padding: 24px;">
+            <div style="font-size: 20px; margin-bottom: 8px;">⚠️</div>
+            <div style="color: #f87171; font-size: 13px;">The research queue is unavailable. Check that the API and worker are running.</div>
+          </div>
+
+          <div id="rj-empty-state" class="discovery-panel" style="display: none; text-align: center; padding: 40px 24px;">
+            <div style="font-size: 36px; margin-bottom: 12px;">🗂️</div>
+            <h3 style="font-size: 16px; margin-bottom: 6px;">No Research Jobs Yet</h3>
+            <p style="color: var(--text-muted); font-size: 13px; max-width: 400px; margin: 0 auto;">Submit a research job above to enqueue a durable, worker-processed request.</p>
+          </div>
+
+          <div id="rj-list" class="research-jobs-list" style="display: none;">
+            <!-- Dynamically populated job rows -->
+          </div>
+        </section>
+
+        <!-- 4. Saved Opportunities Screen -->
         <section id="view-saved" class="view-panel" style="display: none;">
           <div class="panel-header">
             <div>
