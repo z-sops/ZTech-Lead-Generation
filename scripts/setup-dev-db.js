@@ -17,7 +17,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const {
   collectCredentials, validateCredential, setCredential,
-  disableLogin, roleProperties, describeRole
+  roleProperties, describeRole
 } = require('../scripts/lib/postgres-credentials');
 
 const ROLES_FILE = path.join(__dirname, '..', 'packages', 'lead-intelligence-postgres', 'src', 'roles.sql');
@@ -90,7 +90,8 @@ async function setup() {
     }
 
     // Set passwords and enable login.
-    // The worker role must remain NOLOGIN per the accepted architecture.
+    // The worker role MUST be able to log in: it connects as ztech_worker to
+    // claim and execute jobs (assertWorkerIdentity requires session_user = 'ztech_worker').
     // The migrator role requires BYPASSRLS to create SECURITY DEFINER functions and own schema objects.
     // Use the validated setCredential module (SCRAM verifier, no clear-text SQL).
     // Reject missing or malformed credentials - no silent fallbacks.
@@ -106,11 +107,10 @@ async function setup() {
       const roleCreds = creds.credentials[0];
       await setCredential(adminPool, roleCreds.name, roleCreds.password);
       const props = await roleProperties(adminPool, roleCreds.name);
-      // Enforce: worker role stays NOLOGIN; no runtime role is superuser.
-      // BYPASSRLS is allowed ONLY for the migrator role.
-      if (roleCreds.name === 'ztech_worker' && props.rolcanlogin) {
-        await disableLogin(adminPool, roleCreds.name);
-        console.log('Worker role forced NOLOGIN per architecture.');
+      // Enforce: no runtime role is superuser; BYPASSRLS is allowed ONLY for
+      // the migrator role. The worker role must be able to log in.
+      if (roleCreds.name === 'ztech_worker' && !props.rolcanlogin) {
+        throw new Error('Worker role must be able to log in (the worker connects as ztech_worker)');
       }
       if (props.rolsuper) {
         throw new Error(`Role ${roleCreds.name} must not be SUPERUSER`);
@@ -124,7 +124,7 @@ async function setup() {
     // Grant permissions on target database (only roles that can log in may connect).
     // The migrator gets ALL for schema ownership; others get CONNECT.
     const creds = collectCredentials();
-    const loginRoles = creds.credentials.filter((c) => c.name !== 'ztech_worker').map((c) => c.name);
+    const loginRoles = creds.credentials.map((c) => c.name);
     await adminPool.query(`GRANT CONNECT ON DATABASE "${TARGET_DB}" TO ${loginRoles.join(', ')}`);
     // Only the migrator gets ALL on database (for schema creation).
     await adminPool.query(`GRANT ALL ON DATABASE "${TARGET_DB}" TO ztech_migrator`);
