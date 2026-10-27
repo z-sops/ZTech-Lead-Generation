@@ -32,11 +32,8 @@ CREATE OR REPLACE FUNCTION li.enqueue_research_job(
   deduplicated BOOLEAN
 ) LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 SET search_path = pg_catalog, li, id
--- Fix: resolve column-name/variable-name conflicts in the function body.
--- Without this directive, a column named workspace_id could be ambiguously
--- resolved depending on the session's role and the search-path state.
-#variable_conflict use_column
 AS $$
+#variable_conflict use_column
 DECLARE
   v_workspace UUID;
   v_inserted INTEGER;
