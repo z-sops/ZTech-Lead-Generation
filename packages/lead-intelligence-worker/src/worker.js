@@ -208,15 +208,46 @@ class Worker {
   /**
    * Is the job still to be run? The cancellation checkpoint.
    *
+   * A job is cancelled when its state is 'cancelled' or when a
+   * cancel_requested_at has been recorded against it, even while the job
+   * is still leased or running. The worker observes the request
+   * cooperatively and must not write a success for it.
+   *
    * @param {object} job
    * @returns {Promise<boolean>}
    */
   async isCancelled(job) {
     const rows = await withJobContext(this.pool, job.job_id, this.jobToken, (client) => client.query(
-      'SELECT state FROM li.job_queue WHERE job_id = $1',
+      'SELECT state, cancel_requested_at FROM li.job_queue WHERE job_id = $1',
       [job.job_id],
     ));
-    return rows.rows.length ? rows.rows[0].state === 'cancelled' : true;
+    if (!rows.rows.length) return true;
+    const row = rows.rows[0];
+    return row.state === 'cancelled' || row.cancel_requested_at !== null;
+  }
+
+  /**
+   * Record failure or requeue for the running job, decided by the database.
+   *
+   * Delegates to li.fail_or_retry_job, which validates the job context,
+   * the lease and the fencing token before writing anything. A cancelled
+   * job is marked cancelled; a job within its retry budget is requeued with
+   * a capped exponential backoff; an exhausted job is marked failed.
+   *
+   * @param {object} job
+   * @param {string} error
+   * @returns {Promise<string>} 'requeued' | 'failed' | 'cancelled' | 'refused'
+   */
+  async failOrRetry(job, error) {
+    if (this.authorityLost) {
+      this.log.warn('worker.authority_lost', { job_id: job.job_id, reason: 'suppressed failOrRetry' });
+      return 'refused';
+    }
+    const rows = await withJobContext(this.pool, job.job_id, this.jobToken, (client) => client.query(
+      'SELECT li.fail_or_retry_job($1, $2, $3)',
+      [job.job_id, job.fencing_token, error],
+    ));
+    return rows.rows[0].fail_or_retry_job;
   }
 
   /**
@@ -298,6 +329,14 @@ class Worker {
         this.log.info('job.aborted', { job_id: job.job_id });
         return;
       }
+      // A second cancellation checkpoint: the work may have been cancelled
+      // while it was in flight. A cancelled job must not be written as
+      // succeeded.
+      if (await this.isCancelled(job)) {
+        await this.writeResult(job, 'cancelled', null, 'the job was cancelled');
+        this.log.info('job.cancelled', { job_id: job.job_id });
+        return;
+      }
       const written = await this.writeResult(job, 'succeeded', outcome, null);
       if (written === 0) {
         // The fencing token moved on: another worker owns this job now.
@@ -308,10 +347,17 @@ class Worker {
       this.log.info('job.succeeded', { job_id: job.job_id, status: outcome && outcome.status });
     } catch (err) {
       this.log.error('job.failed', { job_id: job.job_id, error: err });
-      try {
-        await this.writeResult(job, 'failed', null, err.message);
-      } catch (writeErr) {
-        this.log.error('job.write_failed', { job_id: job.job_id, error: writeErr });
+      if (!this.authorityLost) {
+        try {
+          await this.failOrRetry(job, err.message);
+        } catch (dbErr) {
+          if (dbErr && dbErr.code === '42883') {
+            this.log.warn('migration.missing_function', { job_id: job.job_id, error: dbErr });
+          } else {
+            this.log.warn('failOrRetry.error', { job_id: job.job_id, error: dbErr });
+          }
+          // No fallback writeResult('failed')
+        }
       }
     } finally {
       // The heartbeat stops when the JOB ends, not when the worker is asked

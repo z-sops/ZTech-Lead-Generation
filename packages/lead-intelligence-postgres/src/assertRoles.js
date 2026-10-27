@@ -85,6 +85,13 @@ const SECURITY_FUNCTIONS = Object.freeze([
   { name: 'set_workspace_for_job', args: 'uuid,text', grantees: ['ztech_worker'] },
   { name: 'write_job_result', args: 'uuid,bigint,text,jsonb,text', grantees: ['ztech_worker'] },
   { name: 'recover_expired_leases', args: 'integer', grantees: ['ztech_worker'] },
+  // Checkpoint C �?" the app-facing research-job API. All are owned by the
+  // migration role, run SECURITY DEFINER, and are revoked from PUBLIC.
+  { name: 'enqueue_research_job', args: 'uuid,text,text,jsonb', grantees: ['ztech_app'] },
+  { name: 'list_research_jobs', args: 'integer', grantees: ['ztech_app'] },
+  { name: 'get_research_job', args: 'uuid', grantees: ['ztech_app'] },
+  { name: 'cancel_research_job', args: 'uuid', grantees: ['ztech_app'] },
+  { name: 'fail_or_retry_job', args: 'uuid,bigint,text', grantees: ['ztech_worker'] },
 ]);
 
 /**

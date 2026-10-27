@@ -21,6 +21,7 @@ class InMemoryStoreForApi {
     this.pitches = new InMemoryPitches(this);
     this.approvals = new InMemoryApprovals(this);
     this.suppressions = new InMemorySuppressions(this);
+    this.researchJobs = new InMemoryResearchQueue(this);
   }
 
   async tx(fn) {
@@ -41,6 +42,7 @@ const STORAGE = {
   pitches: new Map(),        // workspaceId -> Map<pitch_id, pitch>
   approvals: new Map(),      // workspaceId -> Map<approval_id, approval>
   suppressions: new Map(),   // workspaceId -> Map<channel:address, boolean>
+  researchJobs: new Map(),   // workspaceId -> Map<job_id, researchJob>
 };
 
 function getWorkspaceMap(collection, workspaceId) {
@@ -260,6 +262,73 @@ class InMemorySuppressions {
   isSuppressed(channel, address) {
     const map = getWorkspaceMap('suppressions', this.store.workspaceId);
     return map.has(`${channel}:${String(address).toLowerCase().trim()}`);
+  }
+}
+
+class InMemoryResearchQueue {
+  constructor(store) { this.store = store; }
+
+  async enqueue({ jobId, jobType, idempotencyKey, payload }) {
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('the payload must be a JSON object');
+    }
+    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > 16384) {
+      throw new Error('the payload is larger than 16 KiB');
+    }
+    const map = getWorkspaceMap('researchJobs', this.store.workspaceId);
+    const now = new Date().toISOString();
+    for (const item of map.values()) {
+      if (item.job_type === jobType && item.idempotency_key === idempotencyKey) {
+        return { ...item, deduplicated: true };
+      }
+    }
+    const rec = {
+      job_id: jobId,
+      workspace_id: this.store.workspaceId,
+      job_type: jobType,
+      idempotency_key: idempotencyKey,
+      payload,
+      state: 'queued',
+      job_class: 'noop',
+      created_at: now,
+      updated_at: now,
+      attempt_count: 0,
+      max_attempts: 5,
+      cancel_requested_at: null,
+    };
+    map.set(jobId, rec);
+    return { ...rec, deduplicated: false };
+  }
+
+  async list({ limit = 50 } = {}) {
+    const map = getWorkspaceMap('researchJobs', this.store.workspaceId);
+    return Array.from(map.values())
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+      .slice(0, limit);
+  }
+
+  async get({ jobId }) {
+    const map = getWorkspaceMap('researchJobs', this.store.workspaceId);
+    const rec = map.get(jobId);
+    return rec ? { ...rec } : null;
+  }
+
+  async cancel({ jobId }) {
+    const map = getWorkspaceMap('researchJobs', this.store.workspaceId);
+    const rec = map.get(jobId);
+    if (!rec) return { job_id: jobId, action: 'not_found', state: null, cancel_requested_at: null };
+    const now = new Date().toISOString();
+    if (rec.state === 'succeeded' || rec.state === 'failed' || rec.state === 'cancelled') {
+      return { job_id: jobId, action: 'unchanged', state: rec.state, cancel_requested_at: rec.cancel_requested_at };
+    }
+    if (rec.state === 'queued') {
+      Object.assign(rec, { state: 'cancelled', cancel_requested_at: now, finished_at: now, updated_at: now });
+      return { job_id: jobId, action: 'cancelled', state: 'cancelled', cancel_requested_at: now };
+    }
+    // leased or running: record the request, the worker observes it cooperatively
+    rec.cancel_requested_at = rec.cancel_requested_at || now;
+    rec.updated_at = now;
+    return { job_id: jobId, action: 'cancel_requested', state: rec.state, cancel_requested_at: rec.cancel_requested_at };
   }
 }
 

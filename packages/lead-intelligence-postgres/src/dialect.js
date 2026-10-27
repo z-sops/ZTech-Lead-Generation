@@ -121,6 +121,11 @@ const TYPES = Object.freeze({
   li_oi_associations: { generated_at: 'ts', recorded_at: 'ts' },
   li_oi_refresh_requests: { created_at: 'ts', updated_at: 'ts' },
   li_suppressions: { created_at: 'ts' },
+  li_job_queue: {
+    created_at: 'ts', updated_at: 'ts', started_at: 'ts', finished_at: 'ts',
+    next_attempt_at: 'ts', cancel_requested_at: 'ts',
+    payload: 'json', result: 'json',
+  },
   li_contact_consents: { consented_at: 'ts', recorded_at: 'ts' },
   li_contact_provenance: { collected_at: 'ts', recorded_at: 'ts', backfilled: 'bool' },
   li_trust_events: { received_at: 'ts', recorded_at: 'ts' },
