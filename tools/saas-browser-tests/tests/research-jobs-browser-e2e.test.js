@@ -1,5 +1,7 @@
 'use strict';
 
+/* global document, window */
+
 /**
  * ZTech Phase 1 — Durable Research Jobs Browser End-to-End Acceptance.
  *

@@ -17,8 +17,8 @@ class PgResearchJobs {
   /** Create a research job idempotently. Returns the job and a deduplicated flag. */
   async enqueue({ jobId, jobType, idempotencyKey, payload }) {
     return this.store.one('li_job_queue',
-      'SELECT * FROM li.enqueue_research_job($1, $2, $3, $4)',
-      [jobId, jobType, idempotencyKey, payload]);
+      'SELECT * FROM li.enqueue_research_job($1, $2, $3, $4::jsonb)',
+      [jobId, jobType, idempotencyKey, JSON.stringify(payload)]);
   }
 
   /** List this workspace's research jobs, newest first. */
