@@ -34,6 +34,7 @@ SET search_path = pg_catalog, li, id
 AS $$
 DECLARE
   v_workspace UUID;
+  v_inserted INTEGER;
 BEGIN
   v_workspace := li.current_workspace();
   IF v_workspace IS NULL THEN
