@@ -1,11 +1,9 @@
 -- 021_cancel_research_job_fix.sql
--- Fix ambiguity of job_id in li.cancel_research_job by qualifying columns with table alias.
-
 CREATE OR REPLACE FUNCTION li.cancel_research_job(p_job_id UUID)
 RETURNS TABLE (job_id UUID, action TEXT, state TEXT, cancel_requested_at TIMESTAMPTZ)
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 SET search_path = pg_catalog, li, id
-AS \$\$
+AS \$`
 DECLARE
   v_workspace UUID;
   v_state TEXT;
@@ -55,6 +53,6 @@ BEGIN
                    WHERE j2.job_id = p_job_id AND j2.workspace_id = v_workspace), v_now);
   RETURN;
 END;
-\$\$;
+`\$
 REVOKE ALL ON FUNCTION li.cancel_research_job(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION li.cancel_research_job(UUID) TO ztech_app;
