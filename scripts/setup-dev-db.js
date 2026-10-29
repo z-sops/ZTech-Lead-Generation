@@ -16,8 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
 const {
-  collectCredentials, validateCredential, setCredential,
-  roleProperties, describeRole
+  collectCredentials, setCredential, roleProperties, describeRole
 } = require('../scripts/lib/postgres-credentials');
 
 const ROLES_FILE = path.join(__dirname, '..', 'packages', 'lead-intelligence-postgres', 'src', 'roles.sql');
@@ -32,6 +31,20 @@ const ROLES_ORDER = [
   'ztech_platform',
   'ztech_control',
 ];
+
+/**
+ * The schemas the migrations require, all owned by the migration role.
+ *
+ * Migrations 001-013 create UNQUALIFIED tables, and the deployment connects
+ * as ztech_migrator with `search_path=li` (the same way the PostgreSQL test
+ * harness does), so `li` must exist and be owned by the migration role
+ * before the first migration runs. Migration 015 creates `id` itself, but
+ * creating it here with the same owner keeps the ownership rule in one place
+ * and makes that migration's `CREATE SCHEMA IF NOT EXISTS id` a no-op.
+ */
+const REQUIRED_SCHEMAS = ['li', 'id'];
+
+const MIGRATION_ROLE = 'ztech_migrator';
 
 /** Approved development database name patterns. */
 const DEV_DB_PATTERNS = [
@@ -55,6 +68,20 @@ async function setup() {
   if (!isApprovedDevDatabase(TARGET_DB)) {
     console.error(`Refusing to run: "${TARGET_DB}" does not match an approved development database pattern.`);
     console.error('Set ZTECH_DEV_DATABASE to a development database name (e.g., ztech_dev, ztech_test).');
+    return false;
+  }
+
+  // Validate ALL SIX credentials BEFORE any change: not a database, not a
+  // role, not a credential. A half-provisioned cluster is harder to reason
+  // about than one that was never touched.
+  const collected = collectCredentials(ROLES_ORDER);
+  if (collected.missing.length > 0) {
+    console.error('Missing required role credential(s): ' + collected.missing.join(', '));
+    console.error('Set them in the environment before running the development setup.');
+    return false;
+  }
+  if (collected.malformed.length > 0) {
+    console.error('Malformed role credential(s): ' + collected.malformed.join(', '));
     return false;
   }
 
@@ -94,17 +121,9 @@ async function setup() {
     // claim and execute jobs (assertWorkerIdentity requires session_user = 'ztech_worker').
     // The migrator role requires BYPASSRLS to create SECURITY DEFINER functions and own schema objects.
     // Use the validated setCredential module (SCRAM verifier, no clear-text SQL).
-    // Reject missing or malformed credentials - no silent fallbacks.
-    const BYPASSRLS_ALLOWED = new Set(['ztech_migrator']);
-    for (const role of ROLES_ORDER) {
-      const creds = collectCredentials([role]);
-      if (creds.missing.length > 0) {
-        throw new Error(`Missing required credential for role ${role}: ${creds.missing.join(', ')}`);
-      }
-      if (creds.malformed.length > 0) {
-        throw new Error(`Malformed credential for role ${role}: ${creds.malformed.join(', ')}`);
-      }
-      const roleCreds = creds.credentials[0];
+    // The credentials were validated in full before the first change.
+    const BYPASSRLS_ALLOWED = new Set([MIGRATION_ROLE]);
+    for (const roleCreds of collected.credentials) {
       await setCredential(adminPool, roleCreds.name, roleCreds.password);
       const props = await roleProperties(adminPool, roleCreds.name);
       // Enforce: no runtime role is superuser; BYPASSRLS is allowed ONLY for
@@ -121,35 +140,65 @@ async function setup() {
       console.log(`${roleCreds.name}: ${describeRole(props)}`);
     }
 
-    // Grant permissions on target database (only roles that can log in may connect).
-    // The migrator gets ALL for schema ownership; others get CONNECT.
-    const creds = collectCredentials();
-    const loginRoles = creds.credentials.map((c) => c.name);
-    await adminPool.query(`GRANT CONNECT ON DATABASE "${TARGET_DB}" TO ${loginRoles.join(', ')}`);
+    // Grant permissions on target database. Every one of the six roles is
+    // granted CONNECT EXPLICITLY: ztech_identity is not in the five-role
+    // default list in postgres-credentials.js, so relying on PostgreSQL's
+    // default PUBLIC grant would leave it connected only by accident.
+    // The migrator gets ALL for schema creation; the others get CONNECT.
+    await adminPool.query(`GRANT CONNECT ON DATABASE "${TARGET_DB}" TO ${ROLES_ORDER.join(', ')}`);
     // Only the migrator gets ALL on database (for schema creation).
-    await adminPool.query(`GRANT ALL ON DATABASE "${TARGET_DB}" TO ztech_migrator`);
+    await adminPool.query(`GRANT ALL ON DATABASE "${TARGET_DB}" TO ${MIGRATION_ROLE}`);
+
+    // 3. Create the schemas the migrations require, owned by the migration
+    // role. This must happen BEFORE the migrations: the first migration
+    // creates unqualified tables, and without `li` they land in `public`
+    // (or fail once a qualified li.* table is reached).
+    //
+    // NOTE: schemas are per-DATABASE, so the statements must run on a
+    // connection to the TARGET database - not on the administrative
+    // connection, which is connected to `postgres`.
+    const targetAdminUrl = new URL(ADMIN_URL);
+    targetAdminUrl.pathname = `/${TARGET_DB}`;
+    const targetAdmin = new Pool({ connectionString: targetAdminUrl.toString(), connectionTimeoutMillis: 3000 });
+    try {
+      console.log(`Creating schemas owned by ${MIGRATION_ROLE}...`);
+      for (const schema of REQUIRED_SCHEMAS) {
+        await targetAdmin.query(`CREATE SCHEMA IF NOT EXISTS ${schema} AUTHORIZATION ${MIGRATION_ROLE}`);
+      }
+      const owners = await targetAdmin.query(
+        `SELECT n.nspname, r.rolname
+           FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
+          WHERE n.nspname = ANY($1)`,
+        [REQUIRED_SCHEMAS],
+      );
+      const ownerOf = new Map(owners.rows.map((row) => [row.nspname, row.rolname]));
+      for (const schema of REQUIRED_SCHEMAS) {
+        const owner = ownerOf.get(schema);
+        if (owner !== MIGRATION_ROLE) {
+          throw new Error(`Schema ${schema} must be owned by ${MIGRATION_ROLE} (found: ${owner || 'absent'})`);
+        }
+        console.log(`  ${schema}: owned by ${owner}`);
+      }
+    } finally {
+      await targetAdmin.end();
+    }
 
     await adminPool.end();
 
-    // 3. Connect as migrator and apply migrations - abort on FIRST failure.
-    const migratorCreds = collectCredentials(['ztech_migrator']);
-    if (migratorCreds.missing.length > 0) {
-      throw new Error('Missing required migrator credential: ZTECH_PG_PASSWORD_ZTECH_MIGRATOR');
-    }
-    if (migratorCreds.malformed.length > 0) {
-      throw new Error('Malformed migrator credential');
-    }
-    const migratorPassword = migratorCreds.credentials[0].password;
+    // 4. Connect as migrator and apply migrations - abort on FIRST failure.
+    // The search_path is what puts the unqualified tables of migrations
+    // 001-013 in `li`, exactly as the deployment and the test harness do.
+    const migratorPassword = collected.credentials.find((c) => c.name === MIGRATION_ROLE).password;
 
     const parsed = new URL(ADMIN_URL);
     parsed.pathname = `/${TARGET_DB}`;
-    parsed.username = 'ztech_migrator';
+    parsed.username = MIGRATION_ROLE;
     parsed.password = migratorPassword;
     const migratorUrl = parsed.toString();
 
-    console.log('Applying schema migrations as ztech_migrator...');
+    console.log(`Applying schema migrations as ${MIGRATION_ROLE}...`);
     const { MIGRATIONS } = require('../packages/lead-intelligence-postgres/src/index');
-    const migratorPool = new Pool({ connectionString: migratorUrl });
+    const migratorPool = new Pool({ connectionString: migratorUrl, options: '-c search_path=li' });
 
     const appliedMigrations = [];
     for (const migration of MIGRATIONS) {

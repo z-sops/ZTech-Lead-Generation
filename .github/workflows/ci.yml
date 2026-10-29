@@ -156,6 +156,19 @@ jobs:
         env:
           ZTECH_PG_PROVISION_URL: postgres://ztech:ztech@127.0.0.1:5433/ztech
 
+      - name: The development provisioning path, on an isolated cluster
+        # The REAL `db:dev:setup` script, with all SIX roles. It proves that
+        # a fresh database gets the `li` and `id` schemas owned by the
+        # migration role, that migrations 001-021 are applied in order, that
+        # ztech_identity has an EXPLICIT CONNECT grant, and that an existing
+        # database or an invalid/missing credential is handled safely.
+        #
+        # It runs AFTER the production provisioning step: both use the same
+        # role names, so they must not run against the cluster at once.
+        run: node --test tests/persistence-contract/dev-provisioning.test.js
+        env:
+          ZTECH_PG_DEV_PROVISION_URL: postgres://ztech:ztech@127.0.0.1:5433/ztech
+
   # M5: The Playwright PostgreSQL browser acceptance suite.
   #
   # Exercises the full end-to-end customer journey in real Chromium against
