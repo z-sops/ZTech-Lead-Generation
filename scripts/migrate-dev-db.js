@@ -222,7 +222,13 @@ async function main() {
     // ---- Step 3: Acquire advisory lock for concurrent runner prevention ----
     await migratorPool.query('SELECT pg_advisory_lock(20261101)');
 
-    try {
+  } catch (err) {
+    console.error('Migration failed:', err.message);
+    process.exit(1);
+  } finally {
+    try { await migratorPool.end(); } catch {}
+    try { await adminPool.end(); } catch {}
+  }
       // ---- Step 4: Read already-recorded migration versions ----
       const existingResult = await migratorPool.query('SELECT version FROM li_schema_migrations ORDER BY version');
       const alreadyApplied = new Set(existingResult.rows.map((r) => Number(r.version)));
@@ -237,16 +243,6 @@ async function main() {
         console.log('No pending migrations: all versions already recorded (' + [...result.applied].join(', ') + ')');
       }
 
-      // Also report the full state
-      const finalResult = await migratorPool.query('SELECT version FROM li_schema_migrations ORDER BY version');
-      console.log('Migration ledger versions:', finalResult.rows.map((r) => Number(r.version)).join(', '));
-
-    } finally {
-      // ---- Step 7: Release advisory lock ----
-      try { await migratorPool.query('SELECT pg_advisory_unlock(20261101)'; } catch {}
-      }
-    }
-
   } catch (err) {
     console.error('Migration failed:', err.message);
     process.exit(1);
@@ -254,10 +250,3 @@ async function main() {
     try { await migratorPool.end(); } catch {}
     try { await adminPool.end(); } catch {}
   }
-}
-
-if (require.main === module) {
-  main().then(() => {}).catch(() => process.exit(1));
-}
-
-module.exports = { migrate, isApprovedDevDatabase, collectCredentials, verifyDatabase, ensureLedger, applyPendingMigrations };

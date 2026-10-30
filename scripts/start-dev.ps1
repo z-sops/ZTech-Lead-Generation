@@ -53,7 +53,7 @@ $required = @(
   'ZTECH_PG_PASSWORD_ZTECH_CONTROL',
   'ZTECH_PG_PASSWORD_ZTECH_WORKER'
 )
-$missing = @($required | Where-Object { -not $env:$_ })
+$missing = @($required | Where-Object { [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_)) })
 if ($missing.Count -gt 0) {
   Fail "Missing role credential(s): $($missing -join ', '). Run npm run db:dev:setup first, or set them in the environment."
 }
