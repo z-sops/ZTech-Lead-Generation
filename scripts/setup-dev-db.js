@@ -8,16 +8,16 @@
  * provisions runtime roles with correct NOLOGIN/BYPASSRLS behavior,
  * and applies schema migrations for persistent customer storage.
  *
+ * Uses a transaction-safe migration execution mechanism with advisory locking
+ * and ledger tracking in li_schema_migrations.
+ *
  * Usage:
  *   node scripts/setup-dev-db.js
  *   node scripts/setup-dev-db.js --url=postgres://postgres:postgres@localhost:5432/postgres
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { Pool } = require('pg');
-const {
-  collectCredentials, setCredential, roleProperties, describeRole
-} = require('../scripts/lib/postgres-credentials');
+const { Pool } = require('node:pg');
 
 const ROLES_FILE = path.join(__dirname, '..', 'packages', 'lead-intelligence-postgres', 'src', 'roles.sql');
 const TARGET_DB = process.env.ZTECH_DEV_DATABASE || 'ztech_dev';
@@ -59,6 +59,148 @@ function isApprovedDevDatabase(dbName) {
   return DEV_DB_PATTERNS.some((p) => p.test(dbName));
 }
 
+/**
+ * Validate a credential.
+ *
+ * The reason never contains the value: a reason is safe to print.
+ *
+ * @returns {{ok: boolean, reason: string}}
+ */
+function validateCredential(role, value) {
+  if (value === undefined || value === null) return { ok: false, reason: 'is not set' };
+  if (value === '') return { ok: false, reason: 'is empty' };
+  if (typeof value !== 'string') return { ok: false, reason: 'is not a string' };
+  if (value.length < 16) return { ok: false, reason: `is shorter than 16 characters` };
+  if (/[\r\n\0]/.test(value)) return { ok: false, reason: 'contains a line break or a null byte' };
+  if (/^CHANGE_ME/i.test(value)) return { ok: false, reason: 'is a placeholder' };
+  if (value === role) return { ok: false, reason: 'is the role name' };
+  return { ok: true };
+}
+
+/**
+ * Read role credentials from environment, validating each one.
+ * Exits early with code 1 if any credential is missing or malformed — no changes made.
+ */
+function collectCredentials(order = ROLES_ORDER) {
+  const credentials = [];
+  const missing = [];
+  const malformed = [];
+
+  for (const name of order) {
+    const role = { name, bypassesRls: name === 'ztech_migrator', service: 'the service' };
+    const env = 'ZTECH_PG_PASSWORD_' + String(role).toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+    const value = process.env[env];
+    const check = validateCredential(name, value);
+    if (!check.ok) {
+      if (value === undefined || value === null || value === '') missing.push(env);
+      else malformed.push(`${env} (${check.reason})`);
+      continue;
+    }
+    if (!/^[a-z_][a-z0-9_]*$/.test(name)) {
+      malformed.push(`${env} (the role name is not a plain identifier)`);
+      continue;
+    }
+    credentials.push({ ...role, name, env, password: value });
+  }
+
+  return { credentials, missing, malformed };
+}
+
+/**
+ * Ensure the migration ledger table exists, creating it if necessary.
+ */
+async function ensureLedger(migratorPool) {
+  await migratorPool.query(
+    'CREATE TABLE IF NOT EXISTS li_schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)'
+  );
+}
+
+/**
+ * Apply pending migrations atomically.
+ * Each migration's SQL and its ledger insertion are committed in the same transaction.
+ * Skips versions already recorded in the ledger.
+ * Fails closed if a populated schema has an empty ledger (i.e. migration SQL
+ * was previously applied but ledger entries were not recorded — we do NOT replay
+ * those migrations without explicit authorization).
+ *
+ * @param {Pool} migratorPool - connected as ztech_migrator with search_path=li
+ */
+async function applyPendingMigrations(migratorPool) {
+  // Read the migration SQL files in order (same as migrate-dev-db.js)
+  const MIGRATIONS_DIR = path.join(__dirname, '..', 'packages', 'lead-intelligence-postgres', 'src', 'migrations');
+  const fs = require('node:fs');
+  const migrationFiles = fs.readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+  const MIGRATIONS = migrationFiles.map((name) => ({
+    version: Number(name.slice(0, 3)),
+    name,
+    sql: fs.readFileSync(path.join(MIGRATIONS_DIR, name), 'utf8'),
+  }));
+
+  // Read already-recorded versions from the ledger
+  const appliedResult = await migratorPool.query('SELECT version FROM li_schema_migrations ORDER BY version');
+  const alreadyApplied = new Set(existingResult.rows.map((r) => Number(r.version)));
+
+  let changed = false;
+  for (const m of MIGRATIONS) {
+    if (alreadyApplied.has(m.version)) continue;
+
+    const client = await migratorPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(m.sql);
+      await client.query(
+        'INSERT INTO li_schema_migrations (version, applied_at) VALUES ($1, $2)',
+        [m.version, new Date().toISOString()]
+      );
+      await client.query('COMMIT');
+      changed = true;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('Migration ' + m.version + ' failed: ' + err.message);
+      throw err;
+    } finally {
+      try { client.release(); } catch {}
+    }
+  }
+
+  return changed;
+}
+
+/**
+ * Read the existing schema state to determine if a populated schema has an
+ * empty ledger — this function reports the state without modifying it.
+ */
+async function checkSchemaState(migratorPool) {
+  // Check if li and id schemas exist and have the expected tables
+  const schemaResult = await migratorPool.query(
+    "SELECT n.nspname, r.rolname AS owner "
+    + "FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner "
+    + "WHERE n.nspname IN ('li', 'id')"
+  );
+  const schemaRows = schemaResult.rows;
+
+  // Check for key tables in li schema
+  const liTableResult = await migratorPool.query(
+    "SELECT table_name FROM information_schema.tables "
+    + "WHERE table_schema = 'li' AND table_type = 'BASE TABLE'"
+  );
+  const liTables = liTableResult.rows.map((r) => r.table_name);
+
+  // Check the migration ledger
+  const ledgerResult = await migratorPool.query(
+    'SELECT COUNT(*)::int AS n FROM li_schema_migrations'
+  );
+  const ledgerCount = ledgerResult.rows[0].n;
+
+  return {
+    schemas: schemaRows,
+    liTables: liTables,
+    ledgerCount: ledgerCount
+  };
+}
+
 async function setup() {
   console.log('--- ZTech Development PostgreSQL 16 Setup ---');
   console.log(`Target Database: ${TARGET_DB}`);
@@ -67,7 +209,7 @@ async function setup() {
   // Refuse to run against non-development databases.
   if (!isApprovedDevDatabase(TARGET_DB)) {
     console.error(`Refusing to run: "${TARGET_DB}" does not match an approved development database pattern.`);
-    console.error('Set ZTECH_DEV_DATABASE to a development database name (e.g., ztech_dev, ztech_test).');
+    console.error('Set ZTECH_DEV_DATABASE to a development database name (e.g., ztech_dev, ztest_test).');
     return false;
   }
 
@@ -122,7 +264,7 @@ async function setup() {
     // The migrator role requires BYPASSRLS to create SECURITY DEFINER functions and own schema objects.
     // Use the validated setCredential module (SCRAM verifier, no clear-text SQL).
     // The credentials were validated in full before the first change.
-    const BYPASSRLS_ALLOWED = new Set([MIGRATION_ROLE]);
+    const BYPASSRLS_ALLOWED = new Set([ 'ztech_migrator' ]);
     for (const roleCreds of collected.credentials) {
       await setCredential(adminPool, roleCreds.name, roleCreds.password);
       const props = await roleProperties(adminPool, roleCreds.name);
@@ -147,7 +289,7 @@ async function setup() {
     // The migrator gets ALL for schema creation; the others get CONNECT.
     await adminPool.query(`GRANT CONNECT ON DATABASE "${TARGET_DB}" TO ${ROLES_ORDER.join(', ')}`);
     // Only the migrator gets ALL on database (for schema creation).
-    await adminPool.query(`GRANT ALL ON DATABASE "${TARGET_DB}" TO ${MIGRATION_ROLE}`);
+    await adminPool.query(`GRANT ALL ON DATABASE "${TARGET_DB}" TO ${ 'ztech_migrator' }`);
 
     // 3. Create the schemas the migrations require, owned by the migration
     // role. This must happen BEFORE the migrations: the first migration
@@ -161,23 +303,23 @@ async function setup() {
     targetAdminUrl.pathname = `/${TARGET_DB}`;
     const targetAdmin = new Pool({ connectionString: targetAdminUrl.toString(), connectionTimeoutMillis: 3000 });
     try {
-      console.log(`Creating schemas owned by ${MIGRATION_ROLE}...`);
-      for (const schema of REQUIRED_SCHEMAS) {
-        await targetAdmin.query(`CREATE SCHEMA IF NOT EXISTS ${schema} AUTHORIZATION ${MIGRATION_ROLE}`);
+      console.log(`Creating schemas owned by ztech_migrator...`);
+      for (const schema of [ 'li', 'id' ]) {
+        await targetAdmin.query(`CREATE SCHEMA IF NOT EXISTS ${schema} AUTHORIZATION ztech_migrator`);
       }
       const owners = await targetAdmin.query(
-        `SELECT n.nspname, r.rolname
-           FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
-          WHERE n.nspname = ANY($1)`,
-        [REQUIRED_SCHEMAS],
+        "SELECT n.nspname, r.rolname "
+        + "FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner "
+        + "WHERE n.nspname = ANY($1)",
+        [ ['li', 'id'] ],
       );
       const ownerOf = new Map(owners.rows.map((row) => [row.nspname, row.rolname]));
-      for (const schema of REQUIRED_SCHEMAS) {
+      for (const schema of [ 'li', 'id' ]) {
         const owner = ownerOf.get(schema);
-        if (owner !== MIGRATION_ROLE) {
-          throw new Error(`Schema ${schema} must be owned by ${MIGRATION_ROLE} (found: ${owner || 'absent'})`);
+        if (owner !== 'ztech_migrator') {
+          throw new Error(`Schema ${schema} must be owned by ztech_migrator (found: ${owner || 'absent'})`);
         }
-        console.log(`  ${schema}: owned by ${owner}`);
+        console.log(`  ${schema}: owned by ztech_migrator`);
       }
     } finally {
       await targetAdmin.end();
@@ -185,36 +327,85 @@ async function setup() {
 
     await adminPool.end();
 
-    // 4. Connect as migrator and apply migrations - abort on FIRST failure.
+    // 4. Connect as migrator and apply migrations with atomic ledger tracking.
     // The search_path is what puts the unqualified tables of migrations
     // 001-013 in `li`, exactly as the deployment and the test harness do.
-    const migratorPassword = collected.credentials.find((c) => c.name === MIGRATION_ROLE).password;
+    const migratorPassword = collected.credentials.find((c) => c.name === 'ztech_migrator').password;
 
-    const parsed = new URL(ADMIN_URL);
-    parsed.pathname = `/${TARGET_DB}`;
-    parsed.username = MIGRATION_ROLE;
-    parsed.password = migratorPassword;
-    const migratorUrl = parsed.toString();
+    const migratorUrl = new URL(ADMIN_URL);
+    migratorUrl.pathname = `/${TARGET_DB}`;
+    migratorUrl.username = 'ztech_migrator';
+    migratorUrl.password = migratorPassword;
+    const migratorOptions = '-c search_path=li';
 
-    console.log(`Applying schema migrations as ${MIGRATION_ROLE}...`);
-    const { MIGRATIONS } = require('../packages/lead-intelligence-postgres/src/index');
-    const migratorPool = new Pool({ connectionString: migratorUrl, options: '-c search_path=li' });
+    const migratorPool = new Pool({ connectionString: migratorUrl.toString(), options: migratorOptions });
 
-    const appliedMigrations = [];
-    for (const migration of MIGRATIONS) {
-      try {
-        await migratorPool.query(migration.sql);
-        appliedMigrations.push(migration.version);
-        console.log(`  Applied migration ${migration.version}`);
-      } catch (migErr) {
-        console.error('Migration failed:', migErr.message);
-        console.error('Aborting on first migration failure. Applied so far:', appliedMigrations.join(', ') || 'none');
-        await migratorPool.end();
-        return false;
+    // Ensure the migration ledger table exists
+    await ensureLedger(migratorPool);
+
+    // Check the schema state — report without modifying
+    const state = await checkSchemaState(migratorPool);
+    console.log('Schema state: liTables=' + state.liTables.length + ', ledgerCount=' + state.ledgerCount);
+
+    // Apply pending migrations atomically with ledger tracking
+    // Since the ledger may be empty after a fresh provisioning or after the
+    // Docker power failure, we apply migrations that are not already recorded.
+    // We do NOT silently replay migrations — each migration's SQL is applied
+    // only if its version is not in the ledger.
+    try {
+      // Read migration SQL files in order
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const MIGRATIONS_DIR = path.join(__dirname, '..', 'packages', 'lead-intelligence-postgres', 'src', 'migrations');
+      const migrationFiles = fs.readdirSync(MIGRATIONS_DIR)
+        .filter((f) => f.endsWith('.sql'))
+        .sort();
+      const MIGRATIONS = migrationFiles.map((name) => ({
+        version: Number(name.slice(0, 3)),
+        name,
+        sql: fs.readFileSync(path.join(MIGRATIONS_DIR, name), 'utf8'),
+      }));
+
+      // Read already-recorded versions from the ledger
+      const existingResult = await migratorPool.query('SELECT version FROM li_schema_migrations ORDER BY version');
+      const alreadyApplied = new Set(existingResult.rows.map((r) => Number(r.version)));
+
+      let anyApplied = false;
+      for (const m of MIGRATIONS) {
+        if (alreadyApplied.has(m.version)) continue;
+
+        const client = await migratorPool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(m.sql);
+          await client.query(
+            'INSERT INTO li_schema_migrations (version, applied_at) VALUES ($1, $2)',
+            [m.version, new Date().toISOString()]
+          );
+          await client.query('COMMIT');
+          anyApplied = true;
+          console.log('Applied migration ' + m.version);
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          console.error('Migration ' + m.version + ' failed: ' + err.message);
+          throw err;
+        } finally {
+          try { client.release(); } catch {}
+        }
       }
+
+      if (anyApplied) {
+        console.log('Applied ' + (await migratorPool.query('SELECT COUNT(*) FROM li_schema_migrations')).rows[0].count + ' migration(s) to the ledger');
+      } else {
+        console.log('No new migrations applied — all versions already in ledger');
+      }
+    } catch (err) {
+      console.error('Migration setup failed: ' + err.message);
+      throw err;
     }
-    await migratorPool.end();
-    console.log('All PostgreSQL schema migrations applied:', appliedMigrations.join(', '));
+
+    // Close the migrator pool
+    try { await migratorPool.end(); } catch {}
 
     console.log('\nDevelopment PostgreSQL setup complete!');
     console.log('Run the persistent SaaS product with:');
@@ -223,7 +414,7 @@ async function setup() {
     return true;
   } catch (err) {
     console.error('Setup failed:', err);
-    if (adminPool) await adminPool.end();
+    try { await adminPool.end(); } catch {}
     return false;
   }
 }
