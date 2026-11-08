@@ -11,13 +11,22 @@ against a real PostgreSQL 16 database with least-privilege roles.
 ## Prerequisites
 
 - **Node.js >= 20.19** and **npm** on `PATH`.
-- **PostgreSQL 16** reachable at the base URL in `ZTECH_PG_URL`.
+- **PostgreSQL 16** running locally.
+- Two URLs, because setup and the services use **different databases**:
+  - `ZTECH_PG_ADMIN_URL` — the administrative database (`.../postgres`), used
+    only by `npm run db:dev:setup` to create the development database and roles;
+  - `ZTECH_PG_URL` — the development database (`.../ztech_dev`), used by the
+    API and the worker. Only its host, port and database are used: each service
+    connects as its own role.
 - The role credentials in the environment (see below).
 
 ## 1. Provision the development database (once)
 
 ```powershell
-$env:ZTECH_PG_URL = "postgres://postgres:postgres@localhost:5432/postgres"
+npm ci   # installs the dependencies, including the PostgreSQL driver (pg)
+
+$env:ZTECH_PG_ADMIN_URL = "postgres://postgres:<your postgres password>@localhost:5432/postgres"
+$env:ZTECH_PG_URL       = "postgres://localhost:5432/ztech_dev"
 $env:ZTECH_PG_PASSWORD_ZTECH_MIGRATOR = "<a strong migrator credential>"
 $env:ZTECH_PG_PASSWORD_ZTECH_IDENTITY  = "<a strong identity credential>"
 $env:ZTECH_PG_PASSWORD_ZTECH_APP       = "<a strong app credential>"
@@ -84,7 +93,14 @@ worker runtime.
 
 ## 4. Diagnostics
 
-- **`ZTECH_PG_URL is not set`** — set the base PostgreSQL URL.
+- **`ZTECH_PG_URL is not set`** — set it to the development database,
+  `postgres://localhost:5432/ztech_dev`.
+- **`database "postgres" has no ZTech schema`** — `ZTECH_PG_URL` points at the
+  administrative database. Point it at `ztech_dev` (setup prints the exact
+  value); keep the administrative URL in `ZTECH_PG_ADMIN_URL`.
+- **`no migration record`** during setup — the development database was made by
+  an older script. Set `$env:ZTECH_DEV_DATABASE = "ztech_dev_2"` (and
+  `ZTECH_PG_URL` to `.../ztech_dev_2`) and run the setup again.
 - **`Missing role credential(s): ...`** — run `npm run db:dev:setup` with the
   credentials in the environment.
 - **`PostgreSQL integration connection failed`** — the API refuses to fall back

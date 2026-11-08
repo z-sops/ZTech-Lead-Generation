@@ -387,6 +387,32 @@ if (!ADMIN_URL) {
     }
   });
 
+  test('the services are pointed at the development database, and refuse the administrative one', async () => {
+    const { assertZtechSchema } = require('../../scripts/lib/schema-check');
+    // The setup tells the owner which URL the services must use: the
+    // development database, with no user name and no credential in it.
+    const rerun = await setup({ ZTECH_DEV_DATABASE: RERUN_DB, ...allCredentials() });
+    assert.equal(rerun.code, 0, rerun.stderr);
+    const admin0 = new URL(ADMIN_URL);
+    assert.ok(rerun.stdout.includes(`postgres://${admin0.hostname}:${admin0.port || 5432}/${RERUN_DB}`), 'setup prints the development database URL');
+    for (const role of ROLES) assert.ok(!rerun.stdout.includes(PASSWORDS[role]), `no ${role} credential is printed`);
+
+    // The development database passes the start-up check, as the API's role.
+    const appPool = new Pool({ connectionString: roleUrl('ztech_identity', RERUN_DB) });
+    try {
+      assert.equal(await assertZtechSchema(appPool), RERUN_DB);
+    } finally {
+      await appPool.end();
+    }
+    // The administrative database is refused with a message that says what to do,
+    // instead of an "internal_error" on the first request.
+    await assert.rejects(assertZtechSchema(admin), (err) => {
+      assert.match(err.message, /has no ZTech schema \(missing id\.users, li\.job_queue\)/);
+      assert.match(err.message, /ZTECH_PG_URL must name the development database/);
+      return true;
+    });
+  });
+
   test('migrate-dev-db applies only what is new, and needs the migrator credential', async () => {
     const env = allCredentials();
     const upToDate = await runScript('migrate-dev-db.js', { ZTECH_DEV_DATABASE: RERUN_DB, ...env });

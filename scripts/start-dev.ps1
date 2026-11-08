@@ -10,7 +10,7 @@
 #
 # Prerequisites (see docs/PHASE-1-WINDOWS-STARTUP.md):
 #   - Node.js >= 20.19 and npm
-#   - PostgreSQL 16 reachable at ZTECH_PG_URL
+#   - PostgreSQL 16; ZTECH_PG_URL names the development database (ztech_dev)
 #   - the role credentials in the environment (ZTECH_PG_PASSWORD_ZTECH_*)
 #   - the database provisioned:  npm run db:dev:setup
 #
@@ -40,9 +40,15 @@ Write-Host "  node $nodeVersion"
 # 2. PostgreSQL base URL.
 Write-Step 'Validating PostgreSQL configuration'
 if (-not $env:ZTECH_PG_URL) {
-  Fail 'ZTECH_PG_URL is not set. Set it to the base PostgreSQL URL (e.g. postgres://postgres:postgres@localhost:5432/postgres).'
+  Fail 'ZTECH_PG_URL is not set. Set it to the DEVELOPMENT database that npm run db:dev:setup created (e.g. postgres://localhost:5432/ztech_dev).'
 }
-Write-Host "  ZTECH_PG_URL is set"
+# The services must use the development database, never the administrative
+# one: that database has no ZTech schema, and every request would fail.
+try { $pgDb = ([Uri]$env:ZTECH_PG_URL).AbsolutePath.TrimStart('/') } catch { $pgDb = '' }
+if ($pgDb -notmatch '^(ztech_dev|ztech_test|test_)') {
+  Fail "ZTECH_PG_URL names the database '$pgDb'. It must name the development database (e.g. postgres://localhost:5432/ztech_dev). Keep the administrative URL in ZTECH_PG_ADMIN_URL for npm run db:dev:setup."
+}
+Write-Host "  ZTECH_PG_URL names the development database '$pgDb'"
 
 # 3. The runtime role credentials. The API needs ztech_app, ztech_identity and
 #    ztech_control; the worker needs ztech_worker (and ztech_control to mint

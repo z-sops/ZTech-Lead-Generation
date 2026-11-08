@@ -6,6 +6,7 @@ const { Pool } = require('pg');
 const { ApiServer } = require('../packages/lead-intelligence-api/src/server');
 const { PostgresStore } = require('../packages/lead-intelligence-postgres/src/PostgresStore');
 const { collectCredentials, credentialUrl, describeRole, roleProperties } = require('../scripts/lib/postgres-credentials');
+const { assertZtechSchema } = require('./lib/schema-check');
 
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -109,6 +110,9 @@ async function main(listenPort = DEFAULT_PORT, cliArgs = process.argv) {
       // Identity pool: the identity service role (reads/writes id tables only).
       identityPool = new Pool({ connectionString: credentialUrl(pgUrl, 'ztech_identity', identityCreds.password) });
       await identityPool.query('SELECT 1');
+      // The right database? ZTECH_PG_URL pointing at the administrative
+      // database connects fine and then fails on the first request.
+      await assertZtechSchema(identityPool);
 
       // Tenant/app pool: the API service role (may log in, may not bypass RLS).
       tenantPool = new Pool({ connectionString: credentialUrl(pgUrl, 'ztech_app', appCreds.password) });

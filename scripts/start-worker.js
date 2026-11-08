@@ -35,6 +35,7 @@
 
 const { Pool } = require('pg');
 const { collectCredentials, credentialUrl } = require('./lib/postgres-credentials');
+const { assertZtechSchema } = require('./lib/schema-check');
 const { main } = require('../packages/lead-intelligence-worker/src/index');
 
 /** The identity credential lifetime the startup mints (seconds). */
@@ -88,6 +89,8 @@ async function start() {
       options: '-c search_path=li',
     });
     try {
+      // The right database? (see scripts/lib/schema-check.js)
+      await assertZtechSchema(controlPool);
       const r = await controlPool.query(
         'SELECT li.issue_worker_identity($1, $2) AS token',
         [workerId, IDENTITY_TTL_SECONDS],

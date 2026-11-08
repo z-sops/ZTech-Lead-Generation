@@ -220,8 +220,15 @@ async function setup() {
       ? `All PostgreSQL schema migrations applied: ${result.applied.join(', ')}`
       : 'All PostgreSQL schema migrations applied: nothing new (the database is up to date).');
 
+    // The services must use the DEVELOPMENT database, not the administrative
+    // one this script connected to. Only host, port and database are shown:
+    // never a user name or a credential.
+    const runUrl = new URL(ADMIN_URL);
+    const serviceUrl = `postgres://${runUrl.hostname}:${runUrl.port || 5432}/${TARGET_DB}`;
     console.log('\nDevelopment PostgreSQL setup complete!');
-    console.log('Run the persistent SaaS product with:');
+    console.log('Point the services at the development database, then start them:');
+    console.log(`  $env:ZTECH_PG_URL = "${serviceUrl}"      (PowerShell)`);
+    console.log(`  export ZTECH_PG_URL="${serviceUrl}"      (bash)`);
     console.log("  node scripts/start-saas.js --postgres");
     console.log('======================================================\n');
     return true;
