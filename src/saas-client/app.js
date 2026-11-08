@@ -125,6 +125,26 @@ const DOM = {
   rrList: document.getElementById('rr-list'),
   rrEmpty: document.getElementById('rr-empty'),
   rrAttribution: document.getElementById('rr-attribution'),
+  rrAddAllBtn: document.getElementById('rr-add-all-btn'),
+  crmNewBtn: document.getElementById('crm-new-btn'),
+  crmPipeline: document.getElementById('crm-pipeline'),
+  crmQ: document.getElementById('crm-q'),
+  crmStage: document.getElementById('crm-stage'),
+  crmOwner: document.getElementById('crm-owner'),
+  crmArchived: document.getElementById('crm-archived'),
+  crmNewForm: document.getElementById('crm-new-form'),
+  crmNewName: document.getElementById('crm-new-name'),
+  crmNewWebsite: document.getElementById('crm-new-website'),
+  crmNewPhone: document.getElementById('crm-new-phone'),
+  crmNewValue: document.getElementById('crm-new-value'),
+  crmNewSubmit: document.getElementById('crm-new-submit'),
+  crmNewCancel: document.getElementById('crm-new-cancel'),
+  crmLoading: document.getElementById('crm-loading'),
+  crmError: document.getElementById('crm-error'),
+  crmEmpty: document.getElementById('crm-empty'),
+  crmList: document.getElementById('crm-list'),
+  crmMore: document.getElementById('crm-more'),
+  crmMoreBtn: document.getElementById('crm-more-btn'),
   researchJobForm: document.getElementById('research-job-form'),
   rjLoading: document.getElementById('rj-loading'),
   rjOffline: document.getElementById('rj-offline'),
@@ -285,6 +305,10 @@ function navigateTo(viewName) {
 
   if (viewName === 'saved') {
     loadSavedOpportunities();
+  }
+
+  if (viewName === 'crm') {
+    loadCrm();
   }
 
   if (viewName === 'research-jobs') {
@@ -936,6 +960,8 @@ function renderOpportunityList() {
   });
 
   DOM.rrCount.textContent = `${rows.length} of ${r.opportunities.length} businesses shown, ranked by score`;
+  state.researchShownIds = rows.map((o) => o.opportunity_id);
+  DOM.rrAddAllBtn.disabled = rows.length === 0;
   DOM.rrEmpty.style.display = rows.length ? 'none' : 'block';
   DOM.rrList.innerHTML = '';
 
@@ -1000,11 +1026,13 @@ function renderOpportunityList() {
       ${otherNeeds.length ? `<div class="rr-other">Also observed (not one of your services): ${otherNeeds.map((n) => escapeHtml(n.service)).join(', ')}</div>` : ''}
       ${(inspection.notes || []).length ? `<div class="rr-notes">${inspection.notes.map((n) => escapeHtml(n)).join('<br>')}</div>` : ''}
       <div class="rr-actions">
+        <button class="btn btn-secondary rr-crm-btn" type="button">Add to CRM</button>
         ${o.need_ids.length ? '<button class="btn btn-primary rr-draft-btn" type="button">Draft a proposal</button>' : ''}
       </div>
     `;
     const draftBtn = card.querySelector('.rr-draft-btn');
     if (draftBtn) draftBtn.addEventListener('click', () => openProposalModal(o));
+    card.querySelector('.rr-crm-btn').addEventListener('click', () => addOpportunitiesToCrm([o.opportunity_id]));
     DOM.rrList.appendChild(card);
   }
 }
@@ -1094,6 +1122,7 @@ function renderProposal(d) {
 
 function setupResearchResultsListeners() {
   DOM.rrCloseBtn.addEventListener('click', closeResearchResult);
+  DOM.rrAddAllBtn.addEventListener('click', () => addOpportunitiesToCrm((state.researchShownIds || []).slice(0, 100)));
   for (const el of [DOM.rrMinScore, DOM.rrFilterService, DOM.rrFilterWebsite, DOM.rrFilterHideZero]) {
     el.addEventListener('input', renderOpportunityList);
     el.addEventListener('change', renderOpportunityList);
@@ -1115,6 +1144,315 @@ function setupResearchResultsListeners() {
     applyFilters(pick.filters);
     renderOpportunityList();
   });
+}
+
+/* ---------------------- Phase 3: CRM & pipeline (P09) --------------------- */
+
+const CRM_STAGE_LABELS = {
+  new: 'New', contacted: 'Contacted', replied: 'Replied', meeting: 'Meeting',
+  proposal: 'Proposal', won: 'Won', lost: 'Lost',
+};
+const crm = {
+  stages: Object.keys(CRM_STAGE_LABELS), accounts: [], offset: 0, more: false,
+  canWrite: false, canManage: false, me: null, members: null, loading: false, debounce: null,
+};
+
+function money(cents) {
+  if (cents === null || cents === undefined) return '—';
+  return `$${(Number(cents) / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function crmBase() {
+  return `/api/workspaces/${state.currentWorkspace.workspace_id}/crm/accounts`;
+}
+
+function memberLabel(userId) {
+  if (!userId) return 'Unassigned';
+  if (userId === crm.me) return 'You';
+  if (crm.members && crm.members.has(userId)) return crm.members.get(userId);
+  return 'A teammate';
+}
+
+async function loadCrmMembers() {
+  if (crm.members !== null || !state.currentWorkspace) return;
+  try {
+    const res = await api(`/api/workspaces/${state.currentWorkspace.workspace_id}/members`);
+    crm.members = new Map((res.members || []).map((m) => [m.user_id, m.email]));
+  } catch {
+    crm.members = new Map(); // a role without member.read sees "You" / "A teammate"
+  }
+}
+
+function crmQuery(offset) {
+  const p = new URLSearchParams();
+  const q = DOM.crmQ.value.trim();
+  if (q) p.set('q', q);
+  if (DOM.crmStage.value) p.set('stage', DOM.crmStage.value);
+  if (DOM.crmOwner.value) p.set('owner', DOM.crmOwner.value);
+  if (DOM.crmArchived.checked) p.set('archived', 'include');
+  p.set('limit', '50');
+  p.set('offset', String(offset));
+  return p.toString();
+}
+
+async function loadCrm({ append = false } = {}) {
+  if (!state.currentWorkspace) return;
+  const offset = append ? crm.offset + 50 : 0;
+  DOM.crmLoading.style.display = append ? 'none' : 'block';
+  DOM.crmError.style.display = 'none';
+  try {
+    await loadCrmMembers();
+    const res = await api(`${crmBase()}?${crmQuery(offset)}`);
+    crm.stages = res.stages || crm.stages;
+    crm.canWrite = Boolean(res.can_write);
+    crm.canManage = Boolean(res.can_manage);
+    crm.me = res.me;
+    crm.offset = offset;
+    crm.more = Boolean(res.more);
+    crm.accounts = append ? crm.accounts.concat(res.accounts) : res.accounts;
+    DOM.crmLoading.style.display = 'none';
+    DOM.crmNewBtn.style.display = crm.canWrite ? '' : 'none';
+    if (DOM.crmStage.options.length <= 1) {
+      for (const s of crm.stages) {
+        const o = document.createElement('option');
+        o.value = s;
+        o.textContent = CRM_STAGE_LABELS[s] || s;
+        DOM.crmStage.appendChild(o);
+      }
+    }
+    renderCrmPipeline(res.pipeline || []);
+    renderCrmList();
+  } catch (err) {
+    DOM.crmLoading.style.display = 'none';
+    DOM.crmError.textContent = `The CRM could not be loaded: ${err.message}`;
+    DOM.crmError.style.display = 'block';
+  }
+}
+
+function renderCrmPipeline(pipeline) {
+  DOM.crmPipeline.innerHTML = pipeline.map((p) => `
+    <button type="button" class="crm-stage-chip${DOM.crmStage.value === p.stage ? ' active' : ''}" data-stage="${escapeHtml(p.stage)}" role="listitem"
+      aria-pressed="${DOM.crmStage.value === p.stage ? 'true' : 'false'}">
+      <span class="crm-stage-name">${escapeHtml(CRM_STAGE_LABELS[p.stage] || p.stage)}</span>
+      <span class="crm-stage-count">${escapeHtml(String(p.accounts))}</span>
+      <span class="crm-stage-value">${escapeHtml(money(p.value_cents))}</span>
+    </button>`).join('');
+  DOM.crmPipeline.querySelectorAll('.crm-stage-chip').forEach((b) => b.addEventListener('click', () => {
+    DOM.crmStage.value = DOM.crmStage.value === b.dataset.stage ? '' : b.dataset.stage;
+    loadCrm();
+  }));
+}
+
+function renderCrmList() {
+  DOM.crmList.innerHTML = '';
+  DOM.crmEmpty.style.display = crm.accounts.length ? 'none' : 'block';
+  DOM.crmMore.style.display = crm.more ? 'block' : 'none';
+  for (const a of crm.accounts) {
+    const row = document.createElement('article');
+    row.className = `crm-row${a.archived_at ? ' archived' : ''}`;
+    row.dataset.accountId = a.account_id;
+    row.innerHTML = `
+      <div class="crm-row-main">
+        <button type="button" class="crm-name-btn">${escapeHtml(a.name)}</button>
+        <div class="rr-meta">${a.website ? `${escapeHtml(a.website)} · ` : ''}${escapeHtml(memberLabel(a.owner_user_id))}${a.next_step ? ` · Next: ${escapeHtml(a.next_step)}` : ''}${a.archived_at ? ' · archived' : ''}</div>
+      </div>
+      <span class="crm-value">${escapeHtml(money(a.estimated_value_cents))}</span>
+      <span class="crm-stage crm-stage-${escapeHtml(a.stage)}">${escapeHtml(CRM_STAGE_LABELS[a.stage] || a.stage)}</span>
+    `;
+    row.querySelector('.crm-name-btn').addEventListener('click', () => openCrmAccount(a.account_id));
+    DOM.crmList.appendChild(row);
+  }
+}
+
+async function createCrmAccount(e) {
+  e.preventDefault();
+  const value = DOM.crmNewValue.value.trim();
+  const body = {
+    name: DOM.crmNewName.value,
+    website: DOM.crmNewWebsite.value.trim() || null,
+    phone: DOM.crmNewPhone.value.trim() || null,
+    estimated_value_cents: value === '' ? null : Math.round(Number(value) * 100),
+  };
+  DOM.crmNewSubmit.disabled = true;
+  try {
+    await api(crmBase(), { method: 'POST', body });
+    DOM.crmNewForm.reset();
+    DOM.crmNewForm.style.display = 'none';
+    toast('Account added', 'success');
+    await loadCrm();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    DOM.crmNewSubmit.disabled = false;
+  }
+}
+
+function activityText(a) {
+  const d = a.detail || {};
+  switch (a.kind) {
+    case 'created': return 'Account created';
+    case 'imported': return `Added from research (score ${d.score ?? '—'}${d.needs && d.needs.length ? `; needs: ${d.needs.join(', ')}` : ''})`;
+    case 'stage_changed': return `Stage: ${CRM_STAGE_LABELS[d.from] || d.from} → ${CRM_STAGE_LABELS[d.to] || d.to}${d.reason ? ` (${d.reason})` : ''}`;
+    case 'assigned': return `Owner: ${memberLabel(d.from)} → ${memberLabel(d.to)}`;
+    case 'note_added': return 'Note added';
+    case 'archived': return 'Archived';
+    case 'restored': return 'Restored';
+    case 'updated': return `Changed: ${Object.keys(d.changes || {}).map((k) => k.replace(/_/g, ' ')).join(', ')}`;
+    default: return a.kind;
+  }
+}
+
+async function openCrmAccount(accountId) {
+  DOM.modalTitle.textContent = 'Account';
+  DOM.modalSubtitle.textContent = '';
+  DOM.modalBody.innerHTML = '<div class="rr-state">Loading…</div>';
+  DOM.modalContainer.style.display = 'flex';
+  let d;
+  try {
+    d = await api(`${crmBase()}/${accountId}`);
+  } catch (err) {
+    DOM.modalBody.innerHTML = `<div class="rr-state rr-state-error">${escapeHtml(err.message)}</div>`;
+    return;
+  }
+  renderCrmAccount(d);
+}
+
+function renderCrmAccount(d) {
+  const a = d.account;
+  const editable = crm.canWrite && !a.archived_at;
+  DOM.modalTitle.textContent = a.name;
+  DOM.modalSubtitle.textContent = a.source === 'research'
+    ? `From research · score ${a.research_score ?? '—'}`
+    : 'Added by hand';
+  const ownerOptions = [];
+  ownerOptions.push(`<option value="">Unassigned</option>`);
+  const people = crm.members && crm.members.size ? [...crm.members.entries()] : [[crm.me, 'You']];
+  for (const [id, label] of people) {
+    if (!id) continue;
+    ownerOptions.push(`<option value="${escapeHtml(id)}"${a.owner_user_id === id ? ' selected' : ''}>${escapeHtml(id === crm.me ? `${label} (you)` : label)}</option>`);
+  }
+  if (a.owner_user_id && !people.some(([id]) => id === a.owner_user_id)) {
+    ownerOptions.push(`<option value="${escapeHtml(a.owner_user_id)}" selected>${escapeHtml(memberLabel(a.owner_user_id))}</option>`);
+  }
+  const canChangeOwner = editable && (crm.canManage || !a.owner_user_id);
+  DOM.modalBody.innerHTML = `
+    <form id="crm-edit" class="pp-form">
+      <div class="rr-form-grid">
+        <div class="form-group"><label class="form-label" for="crm-e-stage">Stage</label>
+          <select id="crm-e-stage" class="form-select"${editable ? '' : ' disabled'}>${crm.stages.map((s) => `<option value="${s}"${a.stage === s ? ' selected' : ''}>${escapeHtml(CRM_STAGE_LABELS[s] || s)}</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label" for="crm-e-owner">Owner</label>
+          <select id="crm-e-owner" class="form-select"${canChangeOwner ? '' : ' disabled'}>${ownerOptions.join('')}</select></div>
+        <div class="form-group"><label class="form-label" for="crm-e-value">Estimated value (USD)</label>
+          <input id="crm-e-value" class="form-input" type="number" min="0" step="1" value="${a.estimated_value_cents === null ? '' : escapeHtml(String(Math.round(a.estimated_value_cents / 100)))}"${editable ? '' : ' disabled'}></div>
+      </div>
+      <div class="form-group" id="crm-e-lost-wrap" style="display:${a.stage === 'lost' ? 'block' : 'none'};"><label class="form-label" for="crm-e-lost">Why was it lost?</label>
+        <input id="crm-e-lost" class="form-input" maxlength="300" value="${escapeHtml(a.lost_reason || '')}"${editable ? '' : ' disabled'}></div>
+      <div class="rr-form-grid">
+        <div class="form-group"><label class="form-label" for="crm-e-next">Next step</label>
+          <input id="crm-e-next" class="form-input" maxlength="300" value="${escapeHtml(a.next_step || '')}"${editable ? '' : ' disabled'}></div>
+        <div class="form-group"><label class="form-label" for="crm-e-next-at">Next step date</label>
+          <input id="crm-e-next-at" class="form-input" type="date" value="${a.next_step_at ? escapeHtml(a.next_step_at.slice(0, 10)) : ''}"${editable ? '' : ' disabled'}></div>
+      </div>
+      <div class="rr-meta" style="margin: 6px 0;">${[
+        a.website ? `<a href="${escapeHtml(a.website)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(a.website)}</a>` : '',
+        a.phone ? escapeHtml(a.phone) : '',
+        a.address ? escapeHtml(a.address) : '',
+        a.source_url ? `<a href="${escapeHtml(a.source_url)}" target="_blank" rel="noopener noreferrer">source record</a>` : '',
+      ].filter(Boolean).join(' · ')}</div>
+      <div style="display:flex; gap:8px; flex-wrap: wrap;">
+        ${editable ? '<button class="btn btn-primary" type="submit" id="crm-e-save">Save</button>' : ''}
+        ${crm.canManage ? `<button class="btn btn-secondary" type="button" id="crm-e-archive">${a.archived_at ? 'Restore' : 'Archive'}</button>` : ''}
+      </div>
+      ${a.archived_at ? '<div class="rr-caveat">This account is archived. Restore it to change it.</div>' : ''}
+    </form>
+    <h4 class="rr-section-title" style="margin-top: 16px;">Notes</h4>
+    ${editable ? `<form id="crm-note-form" class="crm-note-form"><textarea id="crm-note-body" class="form-textarea" rows="2" maxlength="4000" placeholder="What happened, what was agreed"></textarea><button class="btn btn-secondary" type="submit">Add note</button></form>` : ''}
+    <ul class="crm-notes">${d.notes.map((n) => `<li><div class="crm-note-body">${escapeHtml(n.body)}</div><div class="rr-meta">${escapeHtml(memberLabel(n.author_user_id))} · ${escapeHtml(formatTimestamp(n.created_at))}</div></li>`).join('') || '<li class="rr-meta">No notes yet.</li>'}</ul>
+    <h4 class="rr-section-title" style="margin-top: 16px;">History</h4>
+    <ul class="crm-activity">${d.activity.map((x) => `<li><span>${escapeHtml(activityText(x))}</span><span class="rr-meta">${escapeHtml(memberLabel(x.actor_user_id))} · ${escapeHtml(formatTimestamp(x.at))}</span></li>`).join('')}</ul>
+  `;
+  const stageSel = document.getElementById('crm-e-stage');
+  stageSel.addEventListener('change', () => {
+    document.getElementById('crm-e-lost-wrap').style.display = stageSel.value === 'lost' ? 'block' : 'none';
+  });
+  const form = document.getElementById('crm-edit');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!editable) return;
+    const value = document.getElementById('crm-e-value').value.trim();
+    const nextAt = document.getElementById('crm-e-next-at').value;
+    const patch = {
+      version: a.version,
+      stage: stageSel.value,
+      lost_reason: stageSel.value === 'lost' ? document.getElementById('crm-e-lost').value.trim() || null : null,
+      estimated_value_cents: value === '' ? null : Math.round(Number(value) * 100),
+      next_step: document.getElementById('crm-e-next').value.trim() || null,
+      next_step_at: nextAt ? `${nextAt}T09:00:00.000Z` : null,
+    };
+    const owner = document.getElementById('crm-e-owner');
+    if (!owner.disabled && (owner.value || null) !== (a.owner_user_id || null)) patch.owner_user_id = owner.value || null;
+    try {
+      await api(`${crmBase()}/${a.account_id}`, { method: 'PATCH', body: patch });
+      toast('Saved', 'success');
+      await openCrmAccount(a.account_id);
+      loadCrm();
+    } catch (err) {
+      toast(err.code === 'version_conflict' ? 'Someone else changed this account. It has been reloaded; make your change again.' : err.message, 'error');
+      if (err.code === 'version_conflict') await openCrmAccount(a.account_id);
+    }
+  });
+  const archiveBtn = document.getElementById('crm-e-archive');
+  if (archiveBtn) archiveBtn.addEventListener('click', async () => {
+    try {
+      await api(`${crmBase()}/${a.account_id}`, { method: 'PATCH', body: { version: a.version, archived: !a.archived_at } });
+      toast(a.archived_at ? 'Restored' : 'Archived', 'success');
+      await openCrmAccount(a.account_id);
+      loadCrm();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+  const noteForm = document.getElementById('crm-note-form');
+  if (noteForm) noteForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = document.getElementById('crm-note-body').value;
+    if (!body.trim()) return;
+    try {
+      await api(`${crmBase()}/${a.account_id}/notes`, { method: 'POST', body: { body } });
+      await openCrmAccount(a.account_id);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+}
+
+async function addOpportunitiesToCrm(opportunityIds) {
+  if (!state.currentWorkspace || !state.researchResultJobId || !opportunityIds.length) return;
+  try {
+    const res = await api(`${crmBase()}/import`, {
+      method: 'POST',
+      body: { job_id: state.researchResultJobId, opportunity_ids: opportunityIds },
+    });
+    const already = res.skipped.filter((x) => x.reason === 'already_in_crm').length;
+    toast(`${res.created.length} added to the CRM${already ? `, ${already} already there` : ''}`, 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function setupCrmListeners() {
+  DOM.crmNewBtn.addEventListener('click', () => {
+    DOM.crmNewForm.style.display = DOM.crmNewForm.style.display === 'none' ? 'block' : 'none';
+    if (DOM.crmNewForm.style.display === 'block') DOM.crmNewName.focus();
+  });
+  DOM.crmNewCancel.addEventListener('click', () => { DOM.crmNewForm.style.display = 'none'; });
+  DOM.crmNewForm.addEventListener('submit', createCrmAccount);
+  DOM.crmQ.addEventListener('input', () => {
+    clearTimeout(crm.debounce);
+    crm.debounce = setTimeout(() => loadCrm(), 300);
+  });
+  for (const el of [DOM.crmStage, DOM.crmOwner, DOM.crmArchived]) el.addEventListener('change', () => loadCrm());
+  DOM.crmMoreBtn.addEventListener('click', () => loadCrm({ append: true }));
 }
 
 /* ------------------ Outreach Preparation & Gate Modal ------------------- */
@@ -1355,6 +1693,8 @@ function setupEventListeners() {
     state.csrfToken = null;
     state.currentWorkspace = null;
     closeResearchResult();
+    crm.members = null;
+    crm.accounts = [];
     renderUnauthenticatedState();
     toast('Signed out', 'info');
   });
@@ -1367,6 +1707,7 @@ function setupEventListeners() {
     await submitResearchJob(criteria);
   });
   setupResearchResultsListeners();
+  setupCrmListeners();
 
   // Research Jobs refresh
   DOM.rjRefreshBtn.addEventListener('click', () => loadResearchJobs());

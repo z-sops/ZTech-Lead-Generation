@@ -300,6 +300,28 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
       assert.match(await page.textContent('.pp-banner'), /ZTech does not send it/);
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_06_proposal.png'), fullPage: true });
 
+      // Phase 3: the researched businesses go into the CRM, and stay there.
+      await page.click('#modal-close-btn');
+      await page.click('#rr-add-all-btn');
+      await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some((t) => /added to the CRM/.test(t.textContent)), null, { timeout: 8000 });
+      await page.click('#nav-crm');
+      await page.waitForSelector('.crm-row', { state: 'visible', timeout: 8000 });
+      const crmRows = await page.locator('.crm-row').count();
+      assert.ok(crmRows >= 1, 'the businesses are in the CRM');
+      await page.locator('.crm-name-btn', { hasText: 'Old Town Dental Surgery' }).click();
+      await page.waitForSelector('#crm-e-stage', { state: 'visible' });
+      await page.selectOption('#crm-e-stage', 'contacted');
+      await page.click('#crm-e-save');
+      await page.waitForFunction(() => /Stage: New → Contacted/.test(document.querySelector('.crm-activity')?.textContent || ''), null, { timeout: 8000 });
+      await page.click('#modal-close-btn');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#workspace-layout', { state: 'visible', timeout: 6000 });
+      await page.click('#nav-crm');
+      await page.waitForSelector('.crm-row', { state: 'visible', timeout: 8000 });
+      assert.equal(await page.locator('.crm-row').count(), crmRows, 'the CRM survives a reload');
+      assert.match(await page.textContent('.crm-stage-chip[data-stage="contacted"] .crm-stage-count'), /^1$/);
+      await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_07_crm.png'), fullPage: true });
+
       await context.close();
     } catch (err) {
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_failure_phase1.png'), fullPage: true }).catch(() => {});

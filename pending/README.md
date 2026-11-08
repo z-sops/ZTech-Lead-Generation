@@ -17,4 +17,4 @@ Statuses are `Pending`, `In Progress`, `Blocked` and `Verified`. `Verified` mean
 
 ## Current safety boundaries
 
-Phase 1 and Phase 2 implementation are authorized (Phase 2 on 2026-11-09); Phase 3 is **planning only**. Do not merge Draft PRs #7 and #16, modify production, invoke chargeable research, or send unsolicited outbound messages. Preserve local worktrees and uncommitted changes.
+Phase 1 and Phase 2 implementation are authorized (Phase 2 on 2026-11-09); Phase 3 was started on 2026-11-09 with P09 (CRM) only. Do not merge Draft PRs #7 and #16, modify production, invoke chargeable research, or send unsolicited outbound messages. Preserve local worktrees and uncommitted changes.

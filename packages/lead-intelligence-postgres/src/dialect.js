@@ -145,6 +145,9 @@ const TYPES = Object.freeze({
   li_sequence_gaps: { gap_at: 'ts' },
   li_sequence_control: { updated_at: 'ts', paused: 'bool' },
   li_reply_routes: { routed_at: 'ts', confirmed_at: 'ts' },
+  li_crm_accounts: { next_step_at: 'ts', created_at: 'ts', updated_at: 'ts', archived_at: 'ts' },
+  li_crm_notes: { created_at: 'ts' },
+  li_crm_activity: { at: 'ts', detail: 'json' },
 });
 
 /** The type of one column, or undefined. */

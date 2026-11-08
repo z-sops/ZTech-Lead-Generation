@@ -22,6 +22,7 @@ class InMemoryStoreForApi {
     this.approvals = new InMemoryApprovals(this);
     this.suppressions = new InMemorySuppressions(this);
     this.researchJobs = new InMemoryResearchQueue(this);
+    this.crm = new InMemoryCrm(this);
   }
 
   async tx(fn) {
@@ -43,6 +44,9 @@ const STORAGE = {
   approvals: new Map(),      // workspaceId -> Map<approval_id, approval>
   suppressions: new Map(),   // workspaceId -> Map<channel:address, boolean>
   researchJobs: new Map(),   // workspaceId -> Map<job_id, researchJob>
+  crmAccounts: new Map(),    // workspaceId -> Map<account_id, account>
+  crmNotes: new Map(),       // workspaceId -> Map<note_id, note>
+  crmActivity: new Map(),    // workspaceId -> Map<activity_id, activity>
 };
 
 function getWorkspaceMap(collection, workspaceId) {
@@ -339,6 +343,104 @@ class InMemoryResearchQueue {
     rec.cancel_requested_at = rec.cancel_requested_at || now;
     rec.updated_at = now;
     return { job_id: jobId, action: 'cancel_requested', state: rec.state, cancel_requested_at: rec.cancel_requested_at };
+  }
+}
+
+/**
+ * The CRM (Phase 3) with the same seam as PgCrm. Notes and activity are
+ * append-only here too; the version check mirrors the SQL one.
+ */
+const CRM_ACCOUNT_COLUMNS = [
+  'account_id', 'name', 'website', 'phone', 'address', 'stage', 'lost_reason', 'owner_user_id',
+  'estimated_value_cents', 'currency', 'next_step', 'next_step_at', 'source', 'source_job_id',
+  'source_business_id', 'source_url', 'research_score', 'created_by', 'created_at', 'updated_by',
+  'updated_at', 'archived_at', 'version',
+];
+
+class InMemoryCrm {
+  constructor(store) { this.store = store; }
+
+  accounts() { return getWorkspaceMap('crmAccounts', this.store.workspaceId); }
+
+  async createAccount(rec) {
+    const map = this.accounts();
+    if (rec.source_business_id && [...map.values()].some((a) => a.source_business_id === rec.source_business_id)) {
+      const err = new Error('duplicate key value violates unique constraint "li_crm_accounts_source_business"');
+      err.code = '23505';
+      throw err;
+    }
+    // Every column present, as a database row would have it.
+    const row = { ...Object.fromEntries(CRM_ACCOUNT_COLUMNS.map((c) => [c, null])), ...rec };
+    map.set(row.account_id, row);
+    return { ...row };
+  }
+
+  async getAccount(accountId) {
+    const row = this.accounts().get(accountId);
+    return row ? { ...row } : null;
+  }
+
+  async findBySourceBusiness(businessId) {
+    const row = [...this.accounts().values()].find((a) => a.source_business_id === businessId);
+    return row ? { ...row } : null;
+  }
+
+  async listAccounts(query) {
+    const q = (query.q || '').toLowerCase();
+    let rows = [...this.accounts().values()].filter((a) => {
+      if (!query.includeArchived && a.archived_at) return false;
+      if (query.stage && a.stage !== query.stage) return false;
+      if (query.unassigned && a.owner_user_id) return false;
+      if (!query.unassigned && query.ownerUserId && a.owner_user_id !== query.ownerUserId) return false;
+      if (q && !a.name.toLowerCase().includes(q) && !String(a.website || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+    rows.sort((x, y) => (y.updated_at.localeCompare(x.updated_at)) || x.account_id.localeCompare(y.account_id));
+    rows = rows.slice(query.offset, query.offset + query.limit + 1);
+    return { rows: rows.slice(0, query.limit).map((r) => ({ ...r })), more: rows.length > query.limit };
+  }
+
+  async updateAccount(accountId, version, patch) {
+    const row = this.accounts().get(accountId);
+    if (!row || row.version !== version) return null;
+    Object.assign(row, patch, { version: row.version + 1 });
+    return { ...row };
+  }
+
+  async addNote(rec) {
+    getWorkspaceMap('crmNotes', this.store.workspaceId).set(rec.note_id, { ...rec });
+    return { ...rec };
+  }
+
+  async listNotes(accountId, limit = 100) {
+    return [...getWorkspaceMap('crmNotes', this.store.workspaceId).values()]
+      .filter((n) => n.account_id === accountId)
+      .sort((x, y) => y.created_at.localeCompare(x.created_at) || x.note_id.localeCompare(y.note_id))
+      .slice(0, limit).map((n) => ({ ...n }));
+  }
+
+  async addActivity(rec) {
+    getWorkspaceMap('crmActivity', this.store.workspaceId).set(rec.activity_id, { ...rec, detail: rec.detail || {} });
+    return { ...rec };
+  }
+
+  async listActivity(accountId, limit = 100) {
+    return [...getWorkspaceMap('crmActivity', this.store.workspaceId).values()]
+      .filter((a) => a.account_id === accountId)
+      .sort((x, y) => y.at.localeCompare(x.at) || x.activity_id.localeCompare(y.activity_id))
+      .slice(0, limit).map((a) => ({ ...a }));
+  }
+
+  async pipelineSummary() {
+    const by = new Map();
+    for (const a of this.accounts().values()) {
+      if (a.archived_at) continue;
+      const e = by.get(a.stage) || { stage: a.stage, accounts: 0, value_cents: 0 };
+      e.accounts += 1;
+      e.value_cents += a.estimated_value_cents || 0;
+      by.set(a.stage, e);
+    }
+    return [...by.values()];
   }
 }
 

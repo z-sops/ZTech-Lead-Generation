@@ -22,7 +22,7 @@ The objective is an opportunity-first B2B research SaaS: industry/location/requi
 
 **Acceptance gate:** actual company identities and evidence verified, provenance/permission policies tested, evaluation datasets and false-positive criteria documented; no invented facts or autonomous outbound actions.
 
-## Phase 3 — CRM, Automation and Commercial Release (PLANNING ONLY)
+## Phase 3 — CRM, Automation and Commercial Release (STARTED 2026-11-09: P09 in progress)
 
 **Features:** P09, P10, P11, P12, P16, P17, P18, P19, P20, P21.
 
