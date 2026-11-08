@@ -12,11 +12,11 @@ The objective is an opportunity-first B2B research SaaS: industry/location/requi
 
 **Acceptance gate:** actual CLI SaaS startup; queue submit/claim/complete; cross-tenant denial; persisted browser status through refresh and API/worker restart; real PostgreSQL and Playwright acceptance; new Phase 1 CI run(s); separate Draft PR, unmerged. Preserve M4 P1 and M5 PRs.
 
-## Phase 2 — Real AI Business Opportunity Intelligence (PLANNING ONLY)
+## Phase 2 — Real AI Business Opportunity Intelligence (AUTHORIZED 2026-11-09, IN PROGRESS)
 
 **Features:** P03, P04, P05, P06, P07, P08, P15.
 
-**Prerequisite:** Phase 1 independently accepted and owner grants Phase 2 implementation approval.
+**Prerequisite:** Phase 1 independently accepted and owner grants Phase 2 implementation approval. The owner granted implementation approval on 2026-11-09 while Phase 1 owner-machine acceptance is still pending; Phase 2 acceptance follows Phase 1's. Implementation: docs/PHASE-2-INTELLIGENCE.md.
 
 **Build:** source-backed real company discovery; website and technical gap inspection; attributable evidence, confidence and freshness; explainable scoring; human-reviewed AI proposals; advanced opportunity analytics.
 

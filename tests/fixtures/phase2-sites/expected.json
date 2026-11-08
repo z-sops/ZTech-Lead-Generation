@@ -1,0 +1,62 @@
+{
+ "_about": "Evaluation labels for the Phase 2 inspector. Every finding the inspector reports must be listed here (precision), and every listed finding must be reported (recall). Hosts are served by tests/lib/phase2-fixture-server.js.",
+ "osm_node_1001": {
+  "status": "inspected",
+  "findings": []
+ },
+ "osm_node_1002": {
+  "status": "inspected",
+  "findings": [
+   "NO_HTTPS",
+   "MISSING_TITLE",
+   "MISSING_META_DESCRIPTION",
+   "MISSING_H1",
+   "MISSING_VIEWPORT",
+   "NO_STRUCTURED_DATA",
+   "NO_CONTACT_PATH",
+   "NO_ONLINE_BOOKING",
+   "IMAGES_MISSING_ALT",
+   "STALE_COPYRIGHT",
+   "NO_SITEMAP"
+  ]
+ },
+ "osm_way_2001": {
+  "status": "inspected",
+  "findings": [
+   "NOINDEX",
+   "MIXED_CONTENT"
+  ]
+ },
+ "osm_node_1003": {
+  "status": "not_permitted",
+  "findings": []
+ },
+ "osm_node_1004": {
+  "status": "inspected",
+  "findings": []
+ },
+ "osm_node_1005": {
+  "status": "inspected",
+  "findings": [
+   "SITE_ERROR"
+  ]
+ },
+ "osm_node_1006": {
+  "status": "unreachable",
+  "findings": [
+   "SITE_UNREACHABLE"
+  ]
+ },
+ "osm_node_1007": {
+  "status": "no_website",
+  "findings": [
+   "NO_WEBSITE"
+  ]
+ },
+ "osm_node_1008": {
+  "status": "inspected",
+  "findings": [
+   "HTTP_NOT_REDIRECTED"
+  ]
+ }
+}

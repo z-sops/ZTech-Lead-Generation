@@ -321,6 +321,9 @@ class Worker {
         payload: job.payload || {},
         jobClass: job.job_class || 'noop',
         signal: controller.signal,
+        // Phase 2 research checks between websites whether the customer
+        // cancelled, so a long job stops early instead of only at the end.
+        isCancelled: () => this.isCancelled(job),
       });
       if (controller.signal.aborted) {
         // The work was cancelled cooperatively. There may be no authority

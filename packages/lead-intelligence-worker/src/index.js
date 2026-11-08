@@ -5,6 +5,7 @@ const { createLogger } = require('./log');
 const { createPool, assertWorkerIdentity } = require('./db');
 const { Worker } = require('./worker');
 const { executeNoop } = require('./noop');
+const { createResearchExecutor } = require('./research');
 const { fetchIdentityToken, IdentityProvider } = require('./identity');
 
 /**
@@ -38,7 +39,7 @@ async function main() {
   }
   logger.info('worker.identity_confirmed', { session_user: identity.sessionUser });
 
-  const worker = new Worker({ pool, config, logger });
+  const worker = new Worker({ pool, config, logger, executor: createResearchExecutor() });
 
   const shutdown = (signal) => {
     logger.info('worker.signal', { signal });
@@ -64,6 +65,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  main, Worker, loadConfig, createLogger, createPool, executeNoop, fetchIdentityToken, IdentityProvider,
+  main, Worker, loadConfig, createResearchExecutor, createLogger, createPool, executeNoop, fetchIdentityToken, IdentityProvider,
   assertWorkerIdentity,
 };

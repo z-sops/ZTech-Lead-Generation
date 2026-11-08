@@ -451,6 +451,11 @@ if (!process.env.ZTECH_PG_URL) {
       'the worker may not get research jobs',
     );
     await assert.rejects(
+      worker.query('SELECT li.get_research_job_result($1)', ['00000000-0000-0000-0000-000000000000']),
+      /permission denied/i,
+      'the worker may not read research results through the customer function',
+    );
+    await assert.rejects(
       worker.query('SELECT li.cancel_research_job($1)', ['00000000-0000-0000-0000-000000000000']),
       /permission denied/i,
       'the worker may not cancel research jobs',

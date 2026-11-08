@@ -90,6 +90,7 @@ const SECURITY_FUNCTIONS = Object.freeze([
   { name: 'enqueue_research_job', args: 'uuid,text,text,jsonb', grantees: ['ztech_app'] },
   { name: 'list_research_jobs', args: 'integer', grantees: ['ztech_app'] },
   { name: 'get_research_job', args: 'uuid', grantees: ['ztech_app'] },
+  { name: 'get_research_job_result', args: 'uuid', grantees: ['ztech_app'] },
   { name: 'cancel_research_job', args: 'uuid', grantees: ['ztech_app'] },
   { name: 'fail_or_retry_job', args: 'uuid,bigint,text', grantees: ['ztech_worker'] },
 ]);
