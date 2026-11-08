@@ -795,7 +795,7 @@ test('S1. the bridge exposes exactly one send method and no scheduling surface',
   // F26.6 declared lock update: the mailbox methods that take a payload (none sends; there is no
   // mailbox send method on the bridge).
   const expectedF266 = ['connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'setMarketRule', 'removeMarketRule', 'check', 'checkReplies'];
-  const expectedF28 = ['create', 'forLead', 'activate', 'pause', 'resume', 'stop', 'setPauseAll']; // F28 declared lock update: follow-up sequences (none sends)
+  const expectedF28 = ['create', 'forLead', 'canStart', 'activate', 'pause', 'resume', 'stop', 'setPauseAll']; // F28 declared lock update: follow-up sequences (none sends); Nov 2026: + canStart (read)
   const expectedF29 = ['list', 'confirm', 'forLead']; // F29 declared lock update: reply categories (none sends)
   assert.deepStrictEqual(methods, [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedF265, ...expectedF266, ...expectedF28, ...expectedF29],
     'the bridge method list is exactly the eleven declared channels plus Phase I2 Opportunity Intelligence');

@@ -7931,9 +7931,21 @@ async function loadLeadSequence(leadId) {
   renderLeadSequence();
   let next;
   try {
-    next = { ...f28Lead, view: f28Unwrap(await bridge.forLead({ leadId }), 'Follow-ups could not be read.'), loading: false };
+    const view = f28Unwrap(await bridge.forLead({ leadId }), 'Follow-ups could not be read.');
+    // Ask the service whether follow-ups may be added, so the button is only
+    // offered when the service would accept it (and otherwise says why).
+    let start = null;
+    const startable = !view || view.status === 'stopped' || view.status === 'completed';
+    if (startable && typeof bridge.canStart === 'function') {
+      try {
+        start = f28Unwrap(await bridge.canStart({ leadId }), 'Could not check whether follow-ups can be added.');
+      } catch (err) {
+        start = { ok: false, code: 'CHECK_FAILED', message: (err && err.message) || 'Could not check whether follow-ups can be added.' };
+      }
+    }
+    next = { ...f28Lead, view, start, loading: false };
   } catch (err) {
-    next = { ...f28Lead, view: null, loading: false, error: (err && err.message) || 'Follow-ups could not be read.' };
+    next = { ...f28Lead, view: null, start: null, loading: false, error: (err && err.message) || 'Follow-ups could not be read.' };
   }
   if (seq !== f28LeadSeq || leadDrawerLeadId !== leadId) return;
   f28Lead = next;
@@ -8063,6 +8075,13 @@ function renderLeadSequence() {
     if (!canStartNew) host.appendChild(f28Controls(v));
   }
   if (canStartNew) {
+    const start = f28Lead.start;
+    const blocked = Boolean(start && start.ok === false);
+    if (blocked) {
+      // The service would refuse: say why, and offer no button that cannot work.
+      host.appendChild(trustEl('p', 'lead-drawer-muted f28-unavailable', `Follow-ups are not available for this lead yet: ${start.message}`));
+      return;
+    }
     if (!v) host.appendChild(trustEl('p', 'lead-drawer-muted', 'No follow-ups. They can be added after a first email from your mailbox was accepted by Gmail.'));
     const row = trustEl('div', 'f28-controls');
     const select = trustEl('select', 'f28-plan');

@@ -588,7 +588,7 @@ test('9. zero new persistence, IPC channel, preload method or schema', () => {
   const expectedI6 = ['forLead']; // I6 declared lock update: the read-only lead timeline
   const expectedF265 = ['forLead', 'suppress', 'lift', 'recordConsent', 'handoff', 'reviewReply']; // F26.5 declared lock update: trust (no send) // F26.6 follow-up: + reviewReply (a review, not a send)
   const expectedF266 = ['capabilities', 'list', 'connect', 'disconnect', 'setDefault', 'setLimits', 'setGoogleClient', 'marketRules', 'setMarketRule', 'removeMarketRule', 'check', 'checkReplies']; // F26.6 declared lock update: mailboxes (no send to a lead)
-  const expectedF28 = ['create', 'forLead', 'list', 'activate', 'pause', 'resume', 'stop', 'setPauseAll']; // F28 declared lock update: follow-up sequences (none sends)
+  const expectedF28 = ['create', 'forLead', 'canStart', 'list', 'activate', 'pause', 'resume', 'stop', 'setPauseAll']; // F28 declared lock update: follow-up sequences (none sends); Nov 2026: + canStart (read-only)
   const expectedF29 = ['list', 'confirm', 'forLead']; // F29 declared lock update: reply categories (none sends)
   assert.deepStrictEqual(methods.sort(), [...expectedOutreach, ...expectedOI, ...expectedI6, ...expectedF265, ...expectedF266, ...expectedF28, ...expectedF29, ...expectedI3].sort(),
     'F17 added no preload method of its own; F18 adds exactly prepare, F19 exactly outreachSend, F21 exactly the reads; Phase I2 adds Opportunity Intelligence');

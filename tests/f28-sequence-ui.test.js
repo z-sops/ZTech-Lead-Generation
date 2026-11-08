@@ -51,7 +51,7 @@ async function env() {
   const wrap = (name, fn) => async (p) => { calls.push([name, p]); try { return { ok: true, data: await fn(p) }; } catch (e) { return { ok: false, error: { code: e.code, message: e.message } }; } };
   const bridge = {
     sequences: {
-      create: call('lead-intel:sequence-create'), forLead: call('lead-intel:sequence-for-lead'), list: call('lead-intel:sequence-list'),
+      create: call('lead-intel:sequence-create'), forLead: call('lead-intel:sequence-for-lead'), canStart: call('lead-intel:sequence-can-start'), list: call('lead-intel:sequence-list'),
       activate: call('lead-intel:sequence-activate'), pause: call('lead-intel:sequence-pause'), resume: call('lead-intel:sequence-resume'),
       stop: call('lead-intel:sequence-stop'), setPauseAll: call('lead-intel:sequence-pause-all'),
     },
@@ -98,6 +98,17 @@ test('U1. drawer: "Add follow-ups" drafts a sequence; each step shows its text, 
   await settle();
   assert.ok(/Active\. Next: follow-up 1 of 3/.test(e.drawer().textContent));
   assert.strictEqual(h.sendCalls(e.s.gmail).length, 1, 'activation itself sends nothing');
+});
+
+test('U1b. no "Add follow-ups" button the service would refuse: the drawer says why instead', async () => {
+  const e = await env();
+  await e.ui.load('L1'); // no first email was sent to this lead
+  assert.strictEqual(e.button(e.drawer(), 'Add follow-ups'), null, 'no dead button');
+  assert.ok(/Follow-ups are not available for this lead yet: Follow-ups start from a first email sent from your connected mailbox/.test(e.drawer().textContent));
+  assert.ok(!e.calls.some((c) => c[0] === 'lead-intel:sequence-create'), 'nothing was attempted');
+  await h.firstEmail(e.s);
+  await e.ui.load('L1');
+  assert.ok(e.button(e.drawer(), 'Add follow-ups'), 'once a first email was accepted, the button is offered');
 });
 
 test('U2. editing a step goes through pitch.update and needs a fresh approval', async () => {
@@ -162,7 +173,7 @@ test('U5. static: the block cannot send, uses no innerHTML, reaches only the seq
     assert.ok(!banned.test(code), 'the F28 block must not contain ' + banned);
   }
   const calls = [...code.matchAll(/(?:bridge|api)\.(\w+(?:\.\w+)?)\(/g)].map((m) => m[1]);
-  assert.deepStrictEqual([...new Set(calls)].sort(), ['activate', 'create', 'forLead', 'list', 'outreach.approve', 'pause', 'pitch.update', 'resume', 'setPauseAll', 'stop'].sort());
+  assert.deepStrictEqual([...new Set(calls)].sort(), ['activate', 'canStart', 'create', 'forLead', 'list', 'outreach.approve', 'pause', 'pitch.update', 'resume', 'setPauseAll', 'stop'].sort());
   assert.ok(htmlSource.includes('id="lead-drawer-sequence"') && htmlSource.includes('id="f28-followups"'), 'both hosts exist');
   const view = htmlSource.slice(htmlSource.indexOf('<section class="view" id="view-outreach">'), htmlSource.indexOf('<section class="view" id="view-targets">'));
   assert.deepStrictEqual([...view.matchAll(/<button[^>]*>([^<]*)</g)].map((m) => m[1].trim()).sort(), ['Next', 'Previous', 'Refresh'], 'no static control was added to the Outreach view');

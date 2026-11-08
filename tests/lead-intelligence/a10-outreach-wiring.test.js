@@ -722,11 +722,11 @@ const leadIntel = invoked.filter((c) => c.startsWith('lead-intel:'));
     // F26.6 declared lock update: the ten mailbox / market-rule channels (none of them sends).
     'lead-intel:mailbox-connect', 'lead-intel:mailbox-default', 'lead-intel:mailbox-disconnect', 'lead-intel:mailbox-google-client', 'lead-intel:mailbox-limits', 'lead-intel:mailbox-list', 'lead-intel:mailbox-capabilities', 'lead-intel:mailbox-check', 'lead-intel:mailbox-replies', 'lead-intel:market-rule-remove', 'lead-intel:market-rule-set', 'lead-intel:market-rules',
     // F28 declared lock update: the eight sequence channels (none of them sends).
-    'lead-intel:sequence-activate', 'lead-intel:sequence-create', 'lead-intel:sequence-for-lead', 'lead-intel:sequence-list', 'lead-intel:sequence-pause', 'lead-intel:sequence-pause-all', 'lead-intel:sequence-resume', 'lead-intel:sequence-stop',
+    'lead-intel:sequence-activate', 'lead-intel:sequence-can-start', 'lead-intel:sequence-create', 'lead-intel:sequence-for-lead', 'lead-intel:sequence-list', 'lead-intel:sequence-pause', 'lead-intel:sequence-pause-all', 'lead-intel:sequence-resume', 'lead-intel:sequence-stop',
     // F29 declared lock update: the three reply-route channels (none of them sends).
     'lead-intel:reply-route-confirm', 'lead-intel:reply-route-lead', 'lead-intel:reply-routes',
     ].sort());
-    assert.equal(leadIntel.length, 50, 'exactly fifty Lead Intelligence methods (1 acceptance-fix pitch regenerate + 11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes + 1 F26.6 reply review + 8 F28 sequences + 3 F29 reply routes)');
+    assert.equal(leadIntel.length, 51, 'exactly fifty-one Lead Intelligence methods (1 acceptance-fix pitch regenerate + 11 F15-F21 + 7 Phase I2 OI + 1 I6 timeline + 1 I7 pitch preview + 5 F26.5 trust + 12 F26.6 mailboxes + 1 F26.6 reply review + 9 F28 sequences (Nov 2026: + can-start, a read) + 3 F29 reply routes)');
     assert.equal(leadIntel.filter((c) => /send/.test(c)).length, 2, 'the send boundary and its ledger read exist; exactly one sends');
     assert.ok(!invoked.includes('lead-intel:email-send'), 'no email.send is exposed');
 

@@ -609,15 +609,20 @@ test('9b. scope (static): the scheduler only asks for due steps; nothing in F28 
   assert.strictEqual((svc.match(/sendFromMailbox\(/g) || []).length, 1, 'exactly one send call site');
 });
 
-test('9c. IPC: eight channels, trusted sender only, closed schemas; none sends, none names a step, time, address or mailbox', async () => {
+test('9c. IPC: nine channels, trusted sender only, closed schemas; none sends, none names a step, time, address or mailbox', async () => {
   const handlers = {};
   const s = await setup();
   await firstEmail(s);
   let trusted = true;
   const names = registerSequenceIpc({ ipcMain: { handle: (c, f) => { handlers[c] = f; } }, sequences: s.sequences, isTrustedSender: () => trusted, logger: { warn() {} } });
   assert.deepStrictEqual(names.sort(), Object.values(SEQUENCE_CHANNELS_IPC).sort());
-  assert.strictEqual(names.length, 8);
+  assert.strictEqual(names.length, 9); // Nov 2026: + can-start (read-only)
   assert.ok(names.every((c) => !/send/.test(c)));
+  const before = await handlers[SEQUENCE_CHANNELS_IPC.CAN_START]({}, { leadId: 'L1' });
+  assert.deepStrictEqual(before, { ok: true, data: { ok: true, code: null, message: null } }, 'a lead with an accepted first email may get follow-ups');
+  const none = await handlers[SEQUENCE_CHANNELS_IPC.CAN_START]({}, { leadId: 'L-no-email' });
+  assert.strictEqual(none.data.ok, false);
+  assert.strictEqual(none.data.code, 'FIRST_EMAIL_REQUIRED', 'the button is disabled with the same reason the service would give');
   const created = await handlers[SEQUENCE_CHANNELS_IPC.CREATE]({}, { leadId: 'L1' });
   assert.strictEqual(created.ok, true);
   assert.ok(!JSON.stringify(created).includes(LEAD_EMAIL));
@@ -626,6 +631,9 @@ test('9c. IPC: eight channels, trusted sender only, closed schemas; none sends, 
     assert.strictEqual(r.ok, false);
     assert.strictEqual(r.error.code, 'VALIDATION_FAILED');
   }
+  const after = await handlers[SEQUENCE_CHANNELS_IPC.CAN_START]({}, { leadId: 'L1' });
+  assert.strictEqual(after.data.code, 'SEQUENCE_EXISTS');
+  assert.ok(!JSON.stringify(after).includes(LEAD_EMAIL), 'no address crosses to the renderer');
   const badDelay = await handlers[SEQUENCE_CHANNELS_IPC.CREATE]({}, { leadId: 'L2', delays: [1] });
   assert.strictEqual(badDelay.ok, false);
   trusted = false;

@@ -239,13 +239,11 @@ class SequenceService {
   /* ------------------------------ human actions ------------------------------ */
 
   /**
-   * "Add follow-ups": a DRAFT sequence from the lead's newest first email that a connected
-   * mailbox sent, Gmail accepted and ZTech read back. Nothing is scheduled until activation.
+   * Every precondition of "Add follow-ups", without writing anything: the
+   * sequence that WOULD be created, or the LiError saying why not. Shared by
+   * create() and canStart(), so the button and the action can never disagree.
    */
-  async create({ leadId, delays } = {}) {
-    const lead = String(leadId || '');
-    if (!lead) throw new ValidationError('Invalid lead', [{ path: '$.leadId', message: 'is required' }]);
-    const plan = normalizeDelays(delays);
+  async _prepare(lead) {
     if (await this.store.sequences.openForLead(lead)) throw new LiError('SEQUENCE_EXISTS', 'This lead already has follow-ups. Stop them first to start new ones.');
 
     const page = await this.store.sends.list({ leadId: lead, limit: 50 });
@@ -267,7 +265,6 @@ class SequenceService {
       throw new LiError('FIRST_EMAIL_CHANGED', 'The first email\'s pitch was edited after it was sent, so follow-ups cannot be written from it.');
     }
     if (!this.store.mailboxes || !(await this.store.mailboxes.get(first.mailbox_id))) throw new LiError('MAILBOX_NOT_FOUND', 'The mailbox that sent the first email is no longer connected.');
-
     const nowIso = this._nowIso();
     const seq = {
       sequence_id: newId('seq'), lead_id: lead, mailbox_id: first.mailbox_id, first_send_id: first.send_id, first_pitch_id: firstPitch.pitch_id,
@@ -280,6 +277,37 @@ class SequenceService {
     if (gap && Date.parse(gap) >= Date.parse(seq.first_accepted_at)) seq.replies_gap_at = gap;
     const stop = await this._stopReason(seq);
     if (stop) throw new LiError('SEQUENCE_NOT_ALLOWED', stop === 'replied' ? 'They already replied, so no follow-ups are added.' : (stop === 'suppressed' ? 'This contact is on the do-not-contact list.' : 'The lead\'s email address changed since the first email.'));
+
+    return { seq, first, firstPitch };
+  }
+
+  /**
+   * Can follow-ups be added for this lead right now? Read-only. The screen
+   * uses it to disable "Add follow-ups" and say why, instead of offering a
+   * button the service would refuse.
+   */
+  async canStart({ leadId } = {}) {
+    const lead = String(leadId || '');
+    if (!lead) return { ok: false, code: 'VALIDATION', message: 'No lead is selected.' };
+    try {
+      await this._prepare(lead);
+      return { ok: true, code: null, message: null };
+    } catch (err) {
+      if (err instanceof LiError) return { ok: false, code: err.code, message: err.message };
+      throw err;
+    }
+  }
+
+  /**
+   * "Add follow-ups": a DRAFT sequence from the lead's newest first email that a connected
+   * mailbox sent, Gmail accepted and ZTech read back. Nothing is scheduled until activation.
+   */
+  async create({ leadId, delays } = {}) {
+    const lead = String(leadId || '');
+    if (!lead) throw new ValidationError('Invalid lead', [{ path: '$.leadId', message: 'is required' }]);
+    const plan = normalizeDelays(delays);
+    const { seq, firstPitch } = await this._prepare(lead);
+    const nowIso = seq.created_at;
 
     const packet = firstPitch.packet_id ? await this.store.packets.get(firstPitch.packet_id) : null;
     const ctx = await this.outreach.contexts.getContext(lead, { targetId: firstPitch.target_id ?? undefined });
