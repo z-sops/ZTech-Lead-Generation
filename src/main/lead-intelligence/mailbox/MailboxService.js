@@ -215,7 +215,7 @@ class MailboxService {
     if (!cap || !cap.canSend) return { allowed: false, code: cap ? cap.code : 'MAILBOX_PROVIDER_UNVERIFIED', message: PROVIDER_NOTICE[row.provider] || 'This mailbox provider cannot send yet.' };
     if (row.status !== 'ready') return { allowed: false, code: 'MAILBOX_NOT_READY', message: 'Run "Check mailbox" for this mailbox before sending from it.' };
     const verdict = await this._pacingFor(row);
-    if (pacing && !verdict.allowed) return { allowed: false, code: PACING_CODE, message: pacingMessage(verdict), nextAllowedAt: verdict.nextAllowedAt, reason: verdict.reason };
+    if (pacing && !verdict.allowed) return { allowed: false, code: PACING_CODE, message: pacingMessage(verdict, row.time_zone), nextAllowedAt: verdict.nextAllowedAt, reason: verdict.reason };
     return { allowed: true, mailbox: sanitizeMailbox(row, verdict) };
   }
 

@@ -230,6 +230,19 @@ test('P2. the minimum gap refuses with MAILBOX_PACING and the exact next time; n
   assert.match(pacingMessage(v), /Nothing was queued/);
 });
 
+test('P2b. the refusal shows the next time in the mailbox time zone, never a raw UTC timestamp', () => {
+  // 8 Oct 2026, 19:42 in Karachi: the 09:00-17:00 window opens again at 09:00 the next morning.
+  const outside = { allowed: false, code: 'MAILBOX_PACING', reason: 'outside_window', nextAllowedAt: '2026-10-09T04:00:00.000Z' };
+  const text = pacingMessage(outside, 'Asia/Karachi');
+  assert.equal(text, "This is outside this mailbox's sending window. Nothing was queued. Sending opens Fri 9 Oct, 09:00 (Asia/Karachi).");
+  assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), 'no ISO timestamp');
+  assert.ok(!/again/.test(text), 'nothing was sent before, so it is not "again"');
+  const gap = { ...outside, reason: 'min_gap', nextAllowedAt: '2026-10-08T14:45:00.000Z' };
+  assert.match(pacingMessage(gap, 'Asia/Karachi'), /You can send again from Thu 8 Oct, 19:45 \(Asia\/Karachi\)\.$/);
+  assert.match(pacingMessage(gap, 'Not/AZone'), /Thu 8 Oct, 14:45 \(UTC\)\.$/, 'an unknown zone falls back to labelled UTC');
+  assert.equal(pacingMessage({ ...outside, nextAllowedAt: null }), "This is outside this mailbox's sending window. Nothing was queued.");
+});
+
 test('P3. the hourly cap is a rolling 60 minutes; the daily cap a rolling 24 hours', () => {
   const hourly = Array.from({ length: 8 }, (_, i) => new Date(K('09:00').getTime() + i * 4 * 60000).toISOString());
   const h = evaluatePacing({ mailbox: box(), sendTimes: hourly, now: K('09:40') });

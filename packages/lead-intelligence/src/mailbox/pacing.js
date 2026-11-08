@@ -107,10 +107,34 @@ const PACING_MESSAGES = Object.freeze({
   outside_window: 'This is outside this mailbox\'s sending window.',
 });
 
-/** The refusal text for a blocked verdict; nothing is queued, the user clicks again later. */
-function pacingMessage(verdict) {
-  const head = PACING_MESSAGES[verdict.reason] || 'This mailbox cannot send right now.';
-  return verdict.nextAllowedAt ? `${head} Nothing was queued. You can send again from ${verdict.nextAllowedAt}.` : `${head} Nothing was queued.`;
+/**
+ * A time as a person reads it, in the mailbox's own time zone (the zone its
+ * sending window is defined in): "Fri 9 Oct, 09:00 (Asia/Karachi)". Never a
+ * raw UTC timestamp. An unknown zone falls back to UTC, labelled as such.
+ */
+function readableTime(iso, timeZone) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return String(iso);
+  const options = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+  try {
+    return `${new Intl.DateTimeFormat('en-GB', { ...options, timeZone }).format(at)} (${timeZone})`;
+  } catch {
+    return `${new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'UTC' }).format(at)} (UTC)`;
+  }
 }
 
-module.exports = { PACING_CODE, evaluatePacing, nextWindowOpen, localParts, pacingMessage };
+/**
+ * The refusal text for a blocked verdict; nothing is queued, the user clicks again later.
+ * @param {object} verdict the evaluatePacing result
+ * @param {string} [timeZone] the mailbox's time_zone; the next time is shown in it
+ */
+function pacingMessage(verdict, timeZone = 'UTC') {
+  const head = PACING_MESSAGES[verdict.reason] || 'This mailbox cannot send right now.';
+  if (!verdict.nextAllowedAt) return `${head} Nothing was queued.`;
+  const when = readableTime(verdict.nextAllowedAt, timeZone);
+  // Outside the window nothing was sent before, so it is not "again".
+  const next = verdict.reason === 'outside_window' ? `Sending opens ${when}.` : `You can send again from ${when}.`;
+  return `${head} Nothing was queued. ${next}`;
+}
+
+module.exports = { PACING_CODE, evaluatePacing, nextWindowOpen, localParts, pacingMessage, readableTime };
