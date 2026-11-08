@@ -51,6 +51,9 @@ const EXISTING_DB = 'ztech_dev_n004_existing';
 const MISSING_DB = 'ztech_dev_n004_missing';
 const MALFORMED_DB = 'ztech_dev_n004_malformed';
 const INVALID_DB = 'ztech_n004_production';
+const RERUN_DB = 'ztech_dev_n004_rerun';
+const LEGACY_DB = 'ztech_dev_n004_legacy';
+const CONCURRENT_DB = 'ztech_dev_n004_concurrent';
 
 const ROLES = [
   'ztech_migrator',
@@ -75,6 +78,11 @@ function allCredentials() {
 
 /** Run the development setup script with a controlled environment. */
 function setup(env) {
+  return runScript('setup-dev-db.js', env);
+}
+
+/** Run one of the development scripts with a controlled environment. */
+function runScript(script, env) {
   const childEnv = {
     PATH: process.env.PATH,
     ZTECH_PG_ADMIN_URL: ADMIN_URL,
@@ -86,7 +94,7 @@ function setup(env) {
   return new Promise((resolve) => {
     execFile(
       process.execPath,
-      [path.join(ROOT, 'scripts', 'setup-dev-db.js')],
+      [path.join(ROOT, 'scripts', script)],
       { env: childEnv, cwd: ROOT },
       (error, stdout, stderr) => resolve({
         code: error ? (error.code || 1) : 0,
@@ -123,7 +131,7 @@ if (!ADMIN_URL) {
   }
 
   async function dropAllTestDatabases() {
-    for (const name of [NEW_DB, EXISTING_DB, MISSING_DB, MALFORMED_DB, INVALID_DB]) {
+    for (const name of [NEW_DB, EXISTING_DB, MISSING_DB, MALFORMED_DB, INVALID_DB, RERUN_DB, LEGACY_DB, CONCURRENT_DB]) {
       await dropDatabase(name);
     }
   }
@@ -351,6 +359,106 @@ if (!ADMIN_URL) {
     }
 
     await dropDatabase(EXISTING_DB);
+  });
+
+  test('the setup can be re-run: nothing is applied twice and nothing is lost', async () => {
+    const first = await setup({ ZTECH_DEV_DATABASE: RERUN_DB, ...allCredentials() });
+    assert.equal(first.code, 0, `the first run succeeded: ${first.stderr}`);
+    const target = new Pool({ connectionString: databaseUrl(RERUN_DB) });
+    try {
+      await target.query("INSERT INTO li.li_market_rules (country_code, rule, note, reviewed_by, reviewed_at) VALUES ('ZZ', 'consent_required', 'n004 marker', 'test', now())");
+    } finally {
+      await target.end();
+    }
+
+    const second = await setup({ ZTECH_DEV_DATABASE: RERUN_DB, ...allCredentials() });
+    assert.equal(second.code, 0, `the second run succeeded: ${second.stderr}`);
+    assert.equal([...second.stdout.matchAll(/Applied migration (\d+)/g)].length, 0, 'no migration was applied again');
+    assert.ok(second.stdout.includes('nothing new'), 'and it said the database is up to date');
+
+    const check = new Pool({ connectionString: databaseUrl(RERUN_DB) });
+    try {
+      const ledger = await check.query('SELECT version FROM li.li_schema_migrations ORDER BY version');
+      assert.deepEqual(ledger.rows.map((r) => Number(r.version)), MIGRATIONS.map((m) => m.version), 'every version is recorded once');
+      const marker = await check.query("SELECT note FROM li.li_market_rules WHERE country_code = 'ZZ'");
+      assert.equal(marker.rows[0].note, 'n004 marker', 'the data written between the runs is still there');
+    } finally {
+      await check.end();
+    }
+  });
+
+  test('migrate-dev-db applies only what is new, and needs the migrator credential', async () => {
+    const env = allCredentials();
+    const upToDate = await runScript('migrate-dev-db.js', { ZTECH_DEV_DATABASE: RERUN_DB, ...env });
+    assert.equal(upToDate.code, 0, `the run succeeded: ${upToDate.stderr}`);
+    assert.ok(upToDate.stdout.includes('Nothing new'), 'nothing was applied to an up-to-date database');
+    for (const secret of Object.values(PASSWORDS)) {
+      assert.ok(!upToDate.stdout.includes(secret) && !upToDate.stderr.includes(secret), 'no credential is printed');
+    }
+
+    delete env[passwordEnvVar('ztech_migrator')];
+    const missing = await runScript('migrate-dev-db.js', { ZTECH_DEV_DATABASE: RERUN_DB, ...env });
+    assert.notEqual(missing.code, 0, 'the run failed without the migrator credential');
+    assert.ok(missing.stderr.includes(passwordEnvVar('ztech_migrator')), 'and named the missing variable');
+
+    const refused = await runScript('migrate-dev-db.js', { ZTECH_DEV_DATABASE: INVALID_DB, ...allCredentials() });
+    assert.notEqual(refused.code, 0, 'a non-development database name is refused');
+    assert.ok(/Refusing to run/.test(refused.stderr), 'and it said why');
+    await dropDatabase(RERUN_DB);
+  });
+
+  test('a database with tables but no migration record is refused, not replayed', async () => {
+    const first = await setup({ ZTECH_DEV_DATABASE: LEGACY_DB, ...allCredentials() });
+    assert.equal(first.code, 0, `the first run succeeded: ${first.stderr}`);
+    const legacy = new Pool({ connectionString: databaseUrl(LEGACY_DB) });
+    let tablesBefore;
+    try {
+      // What a database made by the pre-2026-11 setup looks like: the
+      // migrations' tables exist, and the ledger is empty.
+      await legacy.query('DELETE FROM li.li_schema_migrations');
+      tablesBefore = (await legacy.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname IN ('li', 'id')")).rows[0].n;
+    } finally {
+      await legacy.end();
+    }
+
+    const result = await setup({ ZTECH_DEV_DATABASE: LEGACY_DB, ...allCredentials() });
+    assert.notEqual(result.code, 0, 'the setup failed closed');
+    assert.ok(result.stderr.includes('no migration record'), 'and it said why');
+    assert.equal([...result.stdout.matchAll(/Applied migration (\d+)/g)].length, 0, 'nothing was replayed');
+
+    const check = new Pool({ connectionString: databaseUrl(LEGACY_DB) });
+    try {
+      const ledger = await check.query('SELECT count(*)::int AS n FROM li.li_schema_migrations');
+      assert.equal(ledger.rows[0].n, 0, 'the ledger was not filled in by guesswork');
+      const tablesAfter = (await check.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname IN ('li', 'id')")).rows[0].n;
+      assert.equal(tablesAfter, tablesBefore, 'no table was created or dropped');
+    } finally {
+      await check.end();
+    }
+    await dropDatabase(LEGACY_DB);
+  });
+
+  test('two runners at once apply every migration exactly once', async () => {
+    const { applyPendingMigrations } = require('../../scripts/lib/dev-migrations');
+    await admin.query(`CREATE DATABASE ${CONCURRENT_DB}`);
+    await admin.query(`GRANT ALL ON DATABASE ${CONCURRENT_DB} TO ztech_migrator`);
+    const target = new Pool({ connectionString: databaseUrl(CONCURRENT_DB) });
+    try {
+      for (const schema of ['li', 'id']) await target.query(`CREATE SCHEMA ${schema} AUTHORIZATION ztech_migrator`);
+    } finally {
+      await target.end();
+    }
+    const pools = [0, 1].map(() => new Pool({ connectionString: roleUrl('ztech_migrator', CONCURRENT_DB), options: '-c search_path=li' }));
+    try {
+      const quiet = () => {};
+      const [a, b] = await Promise.all(pools.map((pool) => applyPendingMigrations(pool, { log: quiet })));
+      const all = [...a.applied, ...b.applied].sort((x, y) => x - y);
+      assert.deepEqual(all, MIGRATIONS.map((m) => m.version), 'between them, each migration was applied once');
+      assert.ok(a.applied.length === 0 || b.applied.length === 0, 'one runner waited for the other, then had nothing to do');
+    } finally {
+      await Promise.all(pools.map((pool) => pool.end()));
+    }
+    await dropDatabase(CONCURRENT_DB);
   });
 
   test('the cleanup', async () => {

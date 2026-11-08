@@ -17,7 +17,7 @@ const { Pool } = require('pg');
 const path = require('node:path');
 const { MIGRATIONS } = require('../packages/lead-intelligence-postgres/src/index');
 
-const DATABASE = process.env.ZTECH_DEV_DATABASE || 'zttech_dev';
+const DATABASE = process.env.ZTECH_DEV_DATABASE || 'ztech_dev';
 const ADMIN_URL = process.env.ZTECH_PG_ADMIN_URL || process.env.ZTECH_PG_URL || 'postgres://postgres:postgres@localhost:5432/postgres';
 
 /**
@@ -100,7 +100,7 @@ const EXPECTED_ARTIFACTS = {
 
   // Control plane secret exists
   controlPlaneSecret: `
-    SELECT singleton, pg_size_pretty(pg_estimate_tuple_size(li.control_plane_secret)) AS size_estimate
+    SELECT singleton, octet_length(secret) AS secret_bytes
     FROM li.control_plane_secret
     WHERE singleton = TRUE;
   `,
@@ -196,14 +196,11 @@ async function reconcile() {
   console.log(`  Functions found: ${functions.length}`);
   // Show key functions only
   const keyFuncs = ['set_workspace', 'current_workspace', 'issue_workspace_token',
-    'session_entitled', 'session_entitled', 'grant_workspace', 'max_token_lifetime',
+    'session_entitled', 'grant_workspace', 'max_token_lifetime',
     'hmac_sha256', 'bytea_xor', 'constant_time_equals', 'to_hex', 'from_hex'];
-  const funcNames = new Set(functions.map((f) => f.proname));
   keyFuncs.forEach((fn) => {
     const f = functions.find((f) => f.proname === fn);
-    if (f) {
-      console.log(`  ${fn}: ${f.prosrc.substring(0, 80)}...`);
-    }
+    console.log(`  ${fn}: ${f ? 'present' : 'MISSING'}`);
   });
   console.log('');
 
@@ -226,7 +223,7 @@ async function reconcile() {
   const secret = await runQuery(EXPECTED_ARTIFACTS.controlPlaneSecret, dbConnStrFull);
   if (secret.length > 0) {
     console.log(`  Singleton: ${secret[0].singleton}`);
-    console.log(`  Estimated size: ${secret[0].size_estimate}`);
+    console.log(`  Secret length: ${secret[0].secret_bytes} bytes (the value is never printed)`);
   } else {
     console.log('  No control plane secret found');
   }
@@ -275,10 +272,11 @@ async function reconcile() {
   console.log('');
   console.log('=== END OF RECONCILIATION REPORT ===');
   console.log('');
-  console.log('IMPORTANT: Any subsequent ledger reconciliation must be separately authorized');
-  console.log('and based on verified equivalence, not fabricated applied versions.');
-  console.log('The empty ledger (0 of 21) reflects a gap in the provisioning script, not');
-  console.log('evidence that zero migrations were structurally executed.');
+  if (ledgerCount[0].n === 0) {
+    console.log('IMPORTANT: an empty ledger means the versions were not recorded, not that no');
+    console.log('migration ran. Filling it in must be separately authorized and based on');
+    console.log('verified equivalence, never on guessed versions.');
+  }
 }
 
 if (require.main === module) {
