@@ -16,7 +16,7 @@
 | Development database setup | EXECUTED | `tests/persistence-contract/dev-provisioning.test.js` 11/11 on PostgreSQL 16: fresh setup, safe re-run, migrate-only, no-ledger refusal, concurrent runners |
 | Phase 1 CI | GREEN | Run 42490098037 on `76823b8`: all 8 jobs success (4 test matrix, persistence contract, Playwright, contract drift, Windows package smoke) |
 | Actual owner-ready SaaS and worker CLI | NOT EXECUTED on owner machine | `npm run db:dev:setup` then `node scripts/start-saas.js --postgres` on the owner's Windows PC; the only gate left before P01/P02/P13/P14 can be `Verified` |
-| Draft PR | CREATED | See the Phase 1 Draft PR targeting `feat/m5-product-vertical-slice` (unmerged) |
+| Draft PR | CREATED | [#18](https://github.com/z-sops/ZTech-Lead-Generation/pull/18), Draft, base `feat/m5-product-vertical-slice`, unmerged |
 
 ## Open risks
 
