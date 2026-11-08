@@ -313,6 +313,16 @@ class InMemoryResearchQueue {
     return rec ? { ...rec } : null;
   }
 
+  async result({ jobId }) {
+    const map = getWorkspaceMap('researchJobs', this.store.workspaceId);
+    const rec = map.get(jobId);
+    if (!rec) return null;
+    return {
+      job_id: rec.job_id, state: rec.state, finished_at: rec.finished_at || null,
+      result: rec.state === 'succeeded' ? rec.result || null : null,
+    };
+  }
+
   async cancel({ jobId }) {
     const map = getWorkspaceMap('researchJobs', this.store.workspaceId);
     const rec = map.get(jobId);

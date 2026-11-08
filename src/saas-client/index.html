@@ -23,7 +23,7 @@
       </div>
 
       <div class="demo-banner-pill" id="demo-banner">
-        <span>⚡</span> DEMO / SYNTHETIC RESEARCH — INTERNAL SLICE
+        <span>⚡</span> DEMO / SYNTHETIC RESEARCH — DISCOVERY TAB ONLY
       </div>
       <div class="storage-badge-pill" id="storage-badge" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.35); color: #a5b4fc; font-size: 11px; font-weight: 600;">
         <span id="storage-mode-icon">💾</span> <span id="storage-mode-text">STORAGE: INITIALIZING...</span>
@@ -227,25 +227,45 @@
         <section id="view-research-jobs" class="view-panel" style="display: none;">
           <div class="panel-header">
             <div>
-              <h1 class="panel-title">Durable Research Jobs</h1>
-              <p style="color: var(--text-muted); font-size: 13px;">Asynchronous research requests processed by the background worker. Status is read from the authoritative backend queue.</p>
+              <h1 class="panel-title">Research Jobs</h1>
+              <p style="color: var(--text-muted); font-size: 13px;">Real research on real businesses, run by the background worker. Status is read from the server, so it survives a refresh or a restart.</p>
             </div>
             <button id="rj-refresh-btn" class="btn btn-secondary">Refresh</button>
           </div>
 
           <div class="discovery-panel" id="rj-submit-panel">
-            <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 10px;">Submit a Research Job</h3>
+            <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 4px;">Find real businesses that need your services</h3>
+            <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">Businesses come from OpenStreetMap; their websites are checked politely (robots.txt is respected). Every finding shows the page and the time it was observed.</p>
             <form id="research-job-form">
-              <div class="form-group">
-                <label class="form-label" for="rj-requirements">Research Criteria</label>
-                <textarea id="rj-requirements" class="form-textarea" rows="2" placeholder="Describe the research target (e.g. UK healthcare clinics with legacy booking portals)" required>UK healthcare clinics with legacy appointment booking portals and slow server response times.</textarea>
+              <div class="rr-form-grid">
+                <div class="form-group">
+                  <label class="form-label" for="rj-industry">Industry</label>
+                  <select id="rj-industry" class="form-select" required></select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="rj-location">Location</label>
+                  <input id="rj-location" class="form-input" type="text" maxlength="120" placeholder="e.g. Leeds, UK" required>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="rj-website-filter">Businesses</label>
+                  <select id="rj-website-filter" class="form-select">
+                    <option value="any">With or without a website</option>
+                    <option value="with_website">Only with a website</option>
+                    <option value="without_website">Only without a website</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="rj-max-results">How many (1–25)</label>
+                  <input id="rj-max-results" class="form-input" type="number" min="1" max="25" value="10" required>
+                </div>
               </div>
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
-                <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fbbf24;">
-                  <input type="checkbox" id="rj-synthetic" checked disabled>
-                  <span>Synthetic / No-op Research (Phase 1)</span>
-                </label>
-                <button type="submit" id="rj-submit-btn" class="btn btn-primary">Enqueue Research Job</button>
+              <fieldset class="form-group rr-services" id="rj-services">
+                <legend class="form-label">Services you offer</legend>
+                <div id="rj-services-list" class="rr-checks"></div>
+              </fieldset>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; flex-wrap: wrap;">
+                <span id="rj-attribution" style="font-size: 11px; color: var(--text-muted);"></span>
+                <button type="submit" id="rj-submit-btn" class="btn btn-primary">Start research</button>
               </div>
             </form>
           </div>
@@ -268,6 +288,43 @@
 
           <div id="rj-list" class="research-jobs-list" style="display: none;">
             <!-- Dynamically populated job rows -->
+          </div>
+
+          <!-- Phase 2 research results (P15) -->
+          <div id="rr-panel" class="discovery-panel" style="display: none;" aria-live="polite">
+            <div class="rr-header">
+              <div>
+                <h2 id="rr-title" class="rr-title">Research results</h2>
+                <div id="rr-subtitle" class="rr-subtitle"></div>
+              </div>
+              <button id="rr-close-btn" class="btn btn-secondary" type="button">Close results</button>
+            </div>
+            <div id="rr-loading" class="rr-state" style="display: none;">Loading results…</div>
+            <div id="rr-error" class="rr-state rr-state-error" style="display: none;"></div>
+            <div id="rr-content" style="display: none;">
+              <div id="rr-stats" class="rr-stats"></div>
+              <div class="rr-chart-wrap">
+                <h3 class="rr-section-title">Needs found, by service</h3>
+                <div id="rr-chart" class="rr-chart" role="img"></div>
+              </div>
+              <div class="rr-filters" id="rr-filters">
+                <label>Minimum score <input id="rr-min-score" type="range" min="0" max="100" step="5" value="0"> <span id="rr-min-score-value">0</span></label>
+                <label>Service <select id="rr-filter-service" class="form-select"><option value="">All services</option></select></label>
+                <label>Website <select id="rr-filter-website" class="form-select">
+                  <option value="">Any</option><option value="yes">Has a website</option><option value="no">No website</option>
+                </select></label>
+                <label>Search <input id="rr-filter-text" class="form-input" type="search" placeholder="Business name"></label>
+                <label class="rr-inline"><input id="rr-filter-hide-zero" type="checkbox" checked> Hide businesses with no matching need</label>
+                <div class="rr-saved">
+                  <select id="rr-saved-select" class="form-select" aria-label="Saved filters"><option value="">Saved filters…</option></select>
+                  <button id="rr-save-filter-btn" class="btn btn-secondary" type="button">Save filters</button>
+                </div>
+              </div>
+              <div id="rr-count" class="rr-count"></div>
+              <div id="rr-list" class="rr-list"></div>
+              <div id="rr-empty" class="rr-state" style="display: none;">No business matches these filters.</div>
+              <p id="rr-attribution" class="rr-attribution"></p>
+            </div>
           </div>
         </section>
 

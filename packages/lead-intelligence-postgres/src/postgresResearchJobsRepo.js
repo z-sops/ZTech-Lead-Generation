@@ -33,6 +33,12 @@ class PgResearchJobs {
       'SELECT * FROM li.get_research_job($1)', [jobId]);
   }
 
+  /** The result of one research job in this workspace (null unless it succeeded). */
+  async result({ jobId }) {
+    return this.store.one('li_job_queue',
+      'SELECT * FROM li.get_research_job_result($1)', [jobId]);
+  }
+
   /** Request cancellation of one research job in this workspace. */
   async cancel({ jobId }) {
     return this.store.one('li_job_queue',

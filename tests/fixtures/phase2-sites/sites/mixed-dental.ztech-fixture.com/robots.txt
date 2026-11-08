@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://mixed-dental.ztech-fixture.com/sitemap.xml

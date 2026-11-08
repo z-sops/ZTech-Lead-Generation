@@ -35,7 +35,8 @@ const { ApiServer } = require('../../../packages/lead-intelligence-api/src/serve
 const { PostgresStore } = require('../../../packages/lead-intelligence-postgres/src/PostgresStore');
 const { Worker } = require('../../../packages/lead-intelligence-worker/src/worker');
 const { IdentityProvider } = require('../../../packages/lead-intelligence-worker/src/identity');
-const { executeNoop } = require('../../../packages/lead-intelligence-worker/src/noop');
+const { createResearchExecutor } = require('../../../packages/lead-intelligence-worker/src/research');
+const { startFixtureServer } = require('../../../tests/lib/phase2-fixture-server');
 const {
   freshDatabase, dropDatabase, roleUrl, ROLES,
 } = require('../../../tests/persistence-contract/lib/postgres');
@@ -113,10 +114,14 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
   let base;
   let worker;
   let workerLoop;
+  let fixtures;
   const pools = [];
 
   t.before(async () => {
     db = await freshDatabase(DATABASE_NAME, { workspace: '11111111-1111-4111-8111-111111111111' });
+    // Phase 2: the worker runs the REAL research pipeline, against the
+    // evaluation websites and map data served locally.
+    fixtures = await startFixtureServer();
     browser = await launchBrowser();
   });
 
@@ -127,6 +132,7 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
     if (browser) await browser.close().catch(() => {});
     if (server) await server.close().catch(() => {});
     if (db) await dropDatabase(DATABASE_NAME).catch(() => {});
+    if (fixtures) await fixtures.close().catch(() => {});
   });
 
   const createServerInstance = async () => {
@@ -171,7 +177,12 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
       config,
       identity,
       logger: { debug() {}, info() {}, warn() {}, error() {} },
-      executor: executeNoop,
+      executor: createResearchExecutor({ env: {
+        ZTECH_INSPECT_ALLOW_PRIVATE: '1',
+        ZTECH_INSPECT_HOST_MAP: fixtures.hostMap,
+        ZTECH_NOMINATIM_URL: fixtures.nominatimUrl,
+        ZTECH_OVERPASS_URL: fixtures.overpassUrl,
+      } }),
     });
     return w;
   };
@@ -182,6 +193,7 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
   const workspaceName = 'London Clinical Discovery Desk';
 
   let aliceWorkspaceId = '';
+  let aliceJobId = '';
 
   await t.test('Phase 1: enqueue, worker execution, history and recovery', async () => {
     const inst = await createServerInstance();
@@ -216,7 +228,11 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
       await page.waitForSelector('#view-research-jobs', { state: 'visible' });
 
       // Submit a research job (HTTP 202 via the API).
-      await page.fill('#rj-requirements', 'UK healthcare clinics with legacy booking portals');
+      await page.waitForSelector('#rj-industry option[value="dentist"]', { state: 'attached', timeout: 8000 });
+      await page.selectOption('#rj-industry', 'dentist');
+      await page.fill('#rj-location', 'Leeds, UK');
+      await page.check('input[name="rj-service"][value="security"]');
+      await page.fill('#rj-max-results', '25');
       await page.click('#rj-submit-btn');
 
       // The job appears in the history, initially queued, then the worker
@@ -237,6 +253,7 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
       // The job id is rendered.
       const jobIdText = await page.textContent('.rj-id');
       assert.ok(jobIdText && jobIdText.trim().length > 0, 'a durable job id is rendered');
+      aliceJobId = jobIdText.trim();
 
       // Browser refresh recovery: the persisted job survives a reload.
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -259,6 +276,29 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
       const stateAfterLogin = await page.textContent('.rj-state');
       assert.equal(stateAfterLogin.trim(), 'succeeded', 'the job state survives logout/login');
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_04_login_recovery.png'), fullPage: true });
+
+      // Phase 2: the stored, real result is shown, with evidence.
+      await page.click('.rj-view-btn');
+      await page.waitForSelector('.rr-card', { state: 'visible', timeout: 8000 });
+      const top = await page.textContent('.rr-card .rr-name');
+      assert.equal(top.trim(), 'Old Town Dental Surgery', 'the business with the most evidenced needs ranks first');
+      assert.ok(await page.locator('.rr-card').first().locator('.rr-evidence a[href="http://poor-dental.ztech-fixture.com/"]').count() > 0, 'each finding links to the page it was observed on');
+      const shown = await page.locator('.rr-card').count();
+      await page.selectOption('#rr-filter-service', 'security');
+      assert.ok(await page.locator('.rr-card').count() < shown, 'the service filter narrows the list');
+      await page.selectOption('#rr-filter-service', '');
+      await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_05_results.png'), fullPage: true });
+
+      // A proposal draft: evidence-backed, editable, never sent.
+      await page.locator('.rr-draft-btn').first().click();
+      await page.fill('#pp-sender', 'Zee');
+      await page.fill('#pp-company', 'Zunitech');
+      await page.fill('#pp-offer', 'We fix small-business websites for a fixed price.');
+      await page.click('#pp-generate');
+      await page.waitForSelector('#pp-body', { state: 'visible', timeout: 8000 });
+      assert.match(await page.inputValue('#pp-body'), /Hello Old Town Dental Surgery team/);
+      assert.match(await page.textContent('.pp-banner'), /ZTech does not send it/);
+      await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_06_proposal.png'), fullPage: true });
 
       await context.close();
     } catch (err) {
@@ -346,6 +386,17 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
         }
       }, aliceWorkspaceId);
       assert.equal(breachStatus, 403, 'cross-workspace job listing is denied with 403');
+
+      // Nor read Alice's research result: not through her workspace (403),
+      // and not by naming her job id in its own workspace (404: the database
+      // function only returns jobs of the workspace in scope).
+      const resultStatuses = await page.evaluate(async ([targetWsId, jobId]) => {
+        const own = window.state.currentWorkspace.workspace_id;
+        const a = await fetch(`/api/workspaces/${targetWsId}/research/jobs/${jobId}/result`);
+        const b = await fetch(`/api/workspaces/${own}/research/jobs/${jobId}/result`);
+        return [a.status, b.status];
+      }, [aliceWorkspaceId, aliceJobId]);
+      assert.deepEqual(resultStatuses, [403, 404], 'another workspace cannot read a research result');
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_06_cross_tenant.png'), fullPage: true });
 
       await competitorContext.close();

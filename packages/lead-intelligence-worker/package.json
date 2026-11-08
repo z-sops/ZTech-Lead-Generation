@@ -9,6 +9,7 @@
     "node": ">=20.19.0"
   },
   "dependencies": {
+    "@zunitech/lead-intelligence": "*",
     "pg": "^8.13.1"
   },
   "files": [

@@ -1,0 +1,145 @@
+{
+ "version": 0.6,
+ "generator": "fixture",
+ "osm3s": {
+  "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+ },
+ "elements": [
+  {
+   "type": "node",
+   "id": 1001,
+   "tags": {
+    "name": "Riverside Family Dental",
+    "amenity": "dentist",
+    "website": "https://good-dental.ztech-fixture.com/",
+    "phone": "+44 113 496 0000",
+    "addr:street": "Kirkgate",
+    "addr:housenumber": "12",
+    "addr:city": "Leeds",
+    "addr:postcode": "LS1 6BY",
+    "opening_hours": "Mo-Fr 08:30-17:30"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "node",
+   "id": 1002,
+   "tags": {
+    "name": "Old Town Dental Surgery",
+    "amenity": "dentist",
+    "website": "http://poor-dental.ztech-fixture.com",
+    "phone": "+44 113 496 0001",
+    "addr:city": "Leeds"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "way",
+   "id": 2001,
+   "tags": {
+    "name": "Parkside Dental Practice",
+    "amenity": "dentist",
+    "contact:website": "https://mixed-dental.ztech-fixture.com/",
+    "addr:city": "Leeds",
+    "addr:postcode": "LS6 1AA"
+   },
+   "center": {
+    "lat": 53.81,
+    "lon": -1.56
+   }
+  },
+  {
+   "type": "node",
+   "id": 1003,
+   "tags": {
+    "name": "Headingley Smile Clinic",
+    "amenity": "dentist",
+    "website": "https://private-dental.ztech-fixture.com/",
+    "phone": "+44 113 496 0003"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "node",
+   "id": 1004,
+   "tags": {
+    "name": "Roundhay Dental Care",
+    "amenity": "dentist",
+    "website": "https://spa-dental.ztech-fixture.com/",
+    "opening_hours": "Mo-Sa 09:00-18:00"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "node",
+   "id": 1005,
+   "tags": {
+    "name": "Chapel Allerton Dentistry",
+    "amenity": "dentist",
+    "website": "https://broken-dental.ztech-fixture.com/"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "node",
+   "id": 1006,
+   "tags": {
+    "name": "Armley Dental Centre",
+    "amenity": "dentist",
+    "website": "https://down-dental.ztech-fixture.com/",
+    "phone": "+44 113 496 0006"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "node",
+   "id": 1007,
+   "tags": {
+    "name": "Beeston Dental Practice",
+    "amenity": "dentist",
+    "phone": "+44 113 496 0007",
+    "addr:city": "Leeds"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "node",
+   "id": 1008,
+   "tags": {
+    "name": "Kirkgate Dental Studio",
+    "amenity": "dentist",
+    "website": "http://noredirect-dental.ztech-fixture.com/",
+    "phone": "+44 113 496 0008"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "node",
+   "id": 1009,
+   "tags": {
+    "amenity": "dentist"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  },
+  {
+   "type": "node",
+   "id": 1010,
+   "tags": {
+    "name": "Riverside Family Dental (duplicate listing)",
+    "amenity": "dentist",
+    "website": "https://www.good-dental.ztech-fixture.com"
+   },
+   "lat": 53.8,
+   "lon": -1.55
+  }
+ ]
+}

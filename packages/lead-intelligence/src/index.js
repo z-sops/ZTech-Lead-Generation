@@ -147,6 +147,9 @@ const opportunity = {
   PitchEvidenceBridge: require('./opportunity/PitchEvidenceBridge'),
 };
 
+// --- Phase 2: real business opportunity intelligence ---------------------------
+const intel = require('./intel');
+
 module.exports = {
   core,
   contracts,
@@ -166,6 +169,7 @@ module.exports = {
   providers,
   persistence,
   opportunity,
+  intel,
 
   // The most-used entry points are also exposed at the top level, so a
   // consumer does not have to know which area a helper lives in.

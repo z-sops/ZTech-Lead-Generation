@@ -9,6 +9,8 @@ const { AuthService, ServiceError } = require('./service');
 const { InMemoryIdentityPool } = require('./inMemoryIdentity');
 const { InMemoryStoreForApi } = require('./inMemoryStore');
 const { executeResearchDiscovery, prepareOutreachDraft } = require('./researchEngine');
+const { intel } = require('@zunitech/lead-intelligence');
+const { llmConfigFromEnv } = require('./llm');
 
 const SESSION_COOKIE = 'ztech_session';
 const CSRF_HEADER = 'x-csrf-token';
@@ -57,6 +59,7 @@ class ApiServer {
     mode = null,
     allowDemoAutologin = false,
     demoEmail = 'alice@ztech.test',
+    llm = undefined,
   } = {}) {
     const isProduction = process.env.NODE_ENV === 'production' || process.env.ZTECH_ENV === 'production';
     const requestedMode = mode || process.env.ZTECH_STORAGE_MODE;
@@ -96,6 +99,11 @@ class ApiServer {
     this.demoEmail = demoEmail;
     this.loginThrottle = new Throttle({ limit: 5, windowMs: 15 * 60 * 1000 });
     this.suppressionThrottle = new Throttle({ limit: 30, windowMs: 60 * 1000 });
+    // Proposal drafts: AI drafts cost money, so each workspace gets a bounded
+    // number per hour; template drafts are bounded too, against abuse.
+    this.aiDraftThrottle = new Throttle({ limit: 30, windowMs: 60 * 60 * 1000 });
+    this.draftThrottle = new Throttle({ limit: 120, windowMs: 60 * 60 * 1000 });
+    this.llm = llm === undefined ? llmConfigFromEnv(process.env) : llm;
     this.activeCandidatesByWorkspace = new Map();
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => this.fail(res, err));
@@ -274,6 +282,15 @@ class ApiServer {
     const researchReq = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research$/i);
     if (researchReq && method === 'POST') return this.createResearch(req, res, researchReq[1]);
     if (researchReq && method === 'GET') return this.listResearch(req, res, researchReq[1]);
+
+    const researchOptions = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/options$/i);
+    if (researchOptions && method === 'GET') return this.researchOptions(req, res, researchOptions[1]);
+
+    const researchJobResult = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/jobs\/([a-zA-Z0-9_-]+)\/result$/i);
+    if (researchJobResult && method === 'GET') return this.getResearchJobResult(req, res, researchJobResult[1], researchJobResult[2]);
+
+    const researchJobProposal = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/jobs\/([a-zA-Z0-9_-]+)\/proposals$/i);
+    if (researchJobProposal && method === 'POST') return this.createProposalDraft(req, res, researchJobProposal[1], researchJobProposal[2]);
 
     // Async research-job endpoints (registered before the generic
     // /research/:id route so /research/jobs is not mistaken for a job id).
@@ -600,10 +617,24 @@ class ApiServer {
       this.json(res, 400, { error: 'invalid_idempotency_key', message: 'the idempotency key must be 1 to 200 characters' });
       return;
     }
-    const payload = body && body.payload !== undefined ? body.payload : {};
+    let payload = body && body.payload !== undefined ? body.payload : {};
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
       this.json(res, 400, { error: 'invalid_payload', message: 'the payload must be a JSON object' });
       return;
+    }
+    if (payload.kind === 'business_research') {
+      // Phase 2: a real research job. The criteria are validated here, so a
+      // bad request is refused now instead of failing later in the worker,
+      // and only the normalised criteria are stored.
+      try {
+        payload = { kind: 'business_research', criteria: intel.criteria.validateCriteria(payload.criteria) };
+      } catch (err) {
+        if (err instanceof intel.criteria.CriteriaError) {
+          this.json(res, 400, { error: 'invalid_criteria', field: err.field, message: err.message });
+          return;
+        }
+        throw err;
+      }
     }
     if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > 16384) {
       this.json(res, 400, { error: 'payload_too_large', message: 'the payload is larger than 16 KiB' });
@@ -646,6 +677,10 @@ class ApiServer {
         cancel_requested_at: j.cancel_requested_at,
         attempt_count: j.attempt_count, last_error: j.last_error,
         idempotency_key: j.idempotency_key, job_type: j.job_type,
+        // Phase 2: what was asked for, so the history says which research
+        // each row is (the criteria hold no secret).
+        kind: j.payload && j.payload.kind === 'business_research' ? 'business_research' : 'noop',
+        criteria: j.payload && j.payload.kind === 'business_research' ? j.payload.criteria : null,
       })),
     });
   }
@@ -672,6 +707,95 @@ class ApiServer {
     }
 
     this.json(res, 200, { job });
+  }
+
+  async researchOptions(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+    this.json(res, 200, {
+      ...intel.criteria.criteriaOptions(),
+      ai_drafts_available: Boolean(this.llm),
+      sources: [{ name: 'OpenStreetMap', attribution: intel.discovery.ATTRIBUTION }],
+    });
+  }
+
+  /** The stored result of one research job of this workspace, or null. */
+  async loadResearchResult(session, workspaceId, jobId) {
+    const store = await this.storeFor(session, workspaceId);
+    try {
+      return await store.tx(async () => store.researchJobs.result({ jobId }));
+    } catch (err) {
+      if (err.code === '22P02') return null;
+      throw err;
+    }
+  }
+
+  async getResearchJobResult(req, res, workspaceId, jobId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+    const row = await this.loadResearchResult(session, workspaceId, jobId);
+    if (!row) {
+      this.json(res, 404, { error: 'not_found', message: `research job "${jobId}" not found` });
+      return;
+    }
+    const result = row.result && row.result.schema === intel.pipeline.RESULT_SCHEMA ? row.result : null;
+    this.json(res, 200, {
+      job_id: row.job_id,
+      state: row.state,
+      finished_at: row.finished_at,
+      // A job without a Phase 2 result (still running, failed, or a Phase 1
+      // no-op job) has nothing to show: that is said, not invented.
+      result,
+    });
+  }
+
+  async createProposalDraft(req, res, workspaceId, jobId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+    const body = await this.body(req);
+    const useAi = Boolean(body && body.use_ai);
+    const throttle = useAi ? this.aiDraftThrottle : this.draftThrottle;
+    if (throttle.blocked(workspaceId)) {
+      this.json(res, 429, { error: 'too_many_requests', message: useAi ? 'the hourly limit for AI drafts is reached; use the template draft or try later' : 'too many drafts; try again later' });
+      return;
+    }
+    if (useAi && !this.llm) {
+      this.json(res, 409, { error: 'ai_not_configured', message: 'AI drafts are not set up on this server (GEMINI_API_KEY and ZTECH_LLM_MODEL)' });
+      return;
+    }
+    const row = await this.loadResearchResult(session, workspaceId, jobId);
+    if (!row) {
+      this.json(res, 404, { error: 'not_found', message: `research job "${jobId}" not found` });
+      return;
+    }
+    throttle.fail(workspaceId);
+    try {
+      const draft = await intel.proposal.generateProposal({
+        result: row.result,
+        opportunityId: String((body && body.opportunity_id) || ''),
+        offer: body && body.offer,
+        llm: useAi ? this.llm : null,
+      });
+      await this.service.audit({
+        user_id: session.user_id,
+        session_id: session.session_id,
+        workspace_id: workspaceId,
+        action: 'proposal.draft',
+        outcome: 'allow',
+        detail: { job_id: jobId, opportunity_id: draft.opportunity_id, generator: draft.generator },
+      });
+      this.json(res, 200, { draft });
+    } catch (err) {
+      if (err instanceof intel.proposal.ProposalError) {
+        this.json(res, err.status, { error: err.code, message: err.message });
+        return;
+      }
+      throw err;
+    }
   }
 
   async cancelResearchJob(req, res, workspaceId, jobId) {

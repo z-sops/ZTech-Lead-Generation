@@ -18,6 +18,9 @@ const state = {
   activePitch: null,
   researchJobs: [],
   researchJobsPollTimer: null,
+  researchOptions: null,
+  researchResult: null,
+  researchResultJobId: null,
 };
 if (typeof window !== 'undefined') {
   window.state = state;
@@ -95,7 +98,33 @@ const DOM = {
   // Research Jobs
   rjRefreshBtn: document.getElementById('rj-refresh-btn'),
   rjSubmitBtn: document.getElementById('rj-submit-btn'),
-  rjRequirements: document.getElementById('rj-requirements'),
+  rjIndustry: document.getElementById('rj-industry'),
+  rjLocation: document.getElementById('rj-location'),
+  rjWebsiteFilter: document.getElementById('rj-website-filter'),
+  rjMaxResults: document.getElementById('rj-max-results'),
+  rjServicesList: document.getElementById('rj-services-list'),
+  rjAttribution: document.getElementById('rj-attribution'),
+  rrPanel: document.getElementById('rr-panel'),
+  rrTitle: document.getElementById('rr-title'),
+  rrSubtitle: document.getElementById('rr-subtitle'),
+  rrCloseBtn: document.getElementById('rr-close-btn'),
+  rrLoading: document.getElementById('rr-loading'),
+  rrError: document.getElementById('rr-error'),
+  rrContent: document.getElementById('rr-content'),
+  rrStats: document.getElementById('rr-stats'),
+  rrChart: document.getElementById('rr-chart'),
+  rrMinScore: document.getElementById('rr-min-score'),
+  rrMinScoreValue: document.getElementById('rr-min-score-value'),
+  rrFilterService: document.getElementById('rr-filter-service'),
+  rrFilterWebsite: document.getElementById('rr-filter-website'),
+  rrFilterText: document.getElementById('rr-filter-text'),
+  rrFilterHideZero: document.getElementById('rr-filter-hide-zero'),
+  rrSavedSelect: document.getElementById('rr-saved-select'),
+  rrSaveFilterBtn: document.getElementById('rr-save-filter-btn'),
+  rrCount: document.getElementById('rr-count'),
+  rrList: document.getElementById('rr-list'),
+  rrEmpty: document.getElementById('rr-empty'),
+  rrAttribution: document.getElementById('rr-attribution'),
   researchJobForm: document.getElementById('research-job-form'),
   rjLoading: document.getElementById('rj-loading'),
   rjOffline: document.getElementById('rj-offline'),
@@ -259,6 +288,7 @@ function navigateTo(viewName) {
   }
 
   if (viewName === 'research-jobs') {
+    loadResearchOptions();
     loadResearchJobs();
     startResearchJobsPolling();
   } else {
@@ -583,8 +613,15 @@ function renderResearchJobs(jobs) {
       ? '<div class="rj-retry-note">Retry is managed automatically by the server (bounded, with backoff).</div>'
       : '';
 
+    const isResearch = job.kind === 'business_research' && job.criteria;
+    const summary = isResearch
+      ? `<div class="rj-criteria">${escapeHtml(industryLabel(job.criteria.industry))} in ${escapeHtml(job.criteria.location)} · up to ${String(job.criteria.max_results)} businesses</div>`
+      : '';
+    const viewable = isResearch && job.state === 'succeeded';
+
     row.innerHTML = `
       <div class="rj-main">
+        ${summary}
         <div class="rj-id">${escapeHtml(job.job_id)}</div>
         <div class="rj-meta">
           Created ${formatTimestamp(job.created_at)}
@@ -597,9 +634,13 @@ function renderResearchJobs(jobs) {
       </div>
       <span class="rj-state ${stateLabel}">${stateLabel}</span>
       <div class="rj-actions">
+        ${viewable ? `<button class="btn btn-primary rj-view-btn" data-id="${escapeHtml(job.job_id)}">View results</button>` : ''}
         ${cancellable ? `<button class="btn btn-secondary rj-cancel-btn" data-id="${escapeHtml(job.job_id)}">Cancel</button>` : ''}
       </div>
     `;
+
+    const viewBtn = row.querySelector('.rj-view-btn');
+    if (viewBtn) viewBtn.addEventListener('click', () => openResearchResult(job.job_id));
 
     const cancelBtn = row.querySelector('.rj-cancel-btn');
     if (cancelBtn) {
@@ -649,6 +690,11 @@ function startResearchJobsPolling() {
   }, 3000);
 }
 
+function newIdempotencyKey() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') return `research-${window.crypto.randomUUID()}`;
+  return `research-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 async function submitResearchJob(criteria) {
   if (!state.currentWorkspace) {
     toast('No active workspace selected', 'error');
@@ -661,11 +707,11 @@ async function submitResearchJob(criteria) {
     const res = await api(`/api/workspaces/${wsId}/research/jobs`, {
       method: 'POST',
       body: {
-        idempotency_key: `research-${Date.now()}`,
-        payload: { criteria, isSynthetic: true },
+        idempotency_key: newIdempotencyKey(),
+        payload: { kind: 'business_research', criteria },
       },
     });
-    toast(`Research job enqueued (${res.state})`, 'success');
+    toast(`Research started (${res.state}). Results appear here when the worker finishes.`, 'success');
     await loadResearchJobs();
   } catch (err) {
     toast(err.message, 'error');
@@ -691,6 +737,384 @@ async function cancelResearchJob(jobId) {
   } catch (err) {
     toast(err.message, 'error');
   }
+}
+
+/* ------------------- Phase 2: research results (P15) -------------------- */
+
+const SAVED_FILTERS_KEY = 'ztech.researchFilters.v1';
+const OFFER_KEY = 'ztech.proposalOffer.v1';
+
+function industryLabel(id) {
+  const list = state.researchOptions ? state.researchOptions.industries : [];
+  const hit = list.find((i) => i.id === id);
+  return hit ? hit.label : String(id || '');
+}
+
+function serviceLabel(id) {
+  const list = state.researchOptions ? state.researchOptions.offer_categories : [];
+  const hit = list.find((o) => o.id === id);
+  return hit ? hit.label : String(id || '');
+}
+
+function readStored(key, fallback) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStored(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage may be unavailable (private window); the page works without it.
+  }
+}
+
+async function loadResearchOptions() {
+  if (state.researchOptions || !state.currentWorkspace) return;
+  try {
+    const opts = await api(`/api/workspaces/${state.currentWorkspace.workspace_id}/research/options`);
+    state.researchOptions = opts;
+    DOM.rjIndustry.innerHTML = opts.industries
+      .map((i) => `<option value="${escapeHtml(i.id)}">${escapeHtml(i.label)}</option>`).join('');
+    DOM.rjServicesList.innerHTML = opts.offer_categories.map((o) => `
+      <label class="rr-check"><input type="checkbox" name="rj-service" value="${escapeHtml(o.id)}"${['web_design', 'seo'].includes(o.id) ? ' checked' : ''}> ${escapeHtml(o.label)}</label>
+    `).join('');
+    DOM.rrFilterService.innerHTML = '<option value="">All services</option>'
+      + opts.offer_categories.map((o) => `<option value="${escapeHtml(o.id)}">${escapeHtml(o.label)}</option>`).join('');
+    DOM.rjAttribution.textContent = `Business data ${opts.sources[0].attribution}`;
+  } catch (err) {
+    toast(`Could not load the research options: ${err.message}`, 'error');
+  }
+}
+
+function readResearchForm() {
+  const services = Array.from(DOM.rjServicesList.querySelectorAll('input[name="rj-service"]:checked')).map((i) => i.value);
+  if (services.length === 0) {
+    toast('Choose at least one service you offer', 'error');
+    return null;
+  }
+  const location = DOM.rjLocation.value.trim();
+  if (location.length < 2) {
+    toast('Enter a location, for example "Leeds, UK"', 'error');
+    return null;
+  }
+  return {
+    industry: DOM.rjIndustry.value,
+    location,
+    offer_categories: services,
+    website_filter: DOM.rjWebsiteFilter.value,
+    max_results: Number(DOM.rjMaxResults.value),
+  };
+}
+
+function closeResearchResult() {
+  state.researchResult = null;
+  state.researchResultJobId = null;
+  DOM.rrPanel.style.display = 'none';
+}
+
+async function openResearchResult(jobId) {
+  if (!state.currentWorkspace) return;
+  DOM.rrPanel.style.display = 'block';
+  DOM.rrLoading.style.display = 'block';
+  DOM.rrError.style.display = 'none';
+  DOM.rrContent.style.display = 'none';
+  DOM.rrTitle.textContent = 'Research results';
+  DOM.rrSubtitle.textContent = '';
+  DOM.rrPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  try {
+    const res = await api(`/api/workspaces/${state.currentWorkspace.workspace_id}/research/jobs/${jobId}/result`);
+    DOM.rrLoading.style.display = 'none';
+    if (!res.result) {
+      DOM.rrError.textContent = res.state === 'succeeded'
+        ? 'This job has no research result to show (it was a test job without real research).'
+        : `This research is ${res.state}; results appear when it has finished.`;
+      DOM.rrError.style.display = 'block';
+      return;
+    }
+    state.researchResult = res.result;
+    state.researchResultJobId = jobId;
+    renderResearchResult();
+  } catch (err) {
+    DOM.rrLoading.style.display = 'none';
+    DOM.rrError.textContent = `The results could not be loaded: ${err.message}`;
+    DOM.rrError.style.display = 'block';
+  }
+}
+
+function pct(n) {
+  return `${Math.round(Number(n || 0) * 100)}%`;
+}
+
+function renderResearchResult() {
+  const r = state.researchResult;
+  const c = r.criteria;
+  DOM.rrTitle.textContent = `${industryLabel(c.industry)} in ${r.place && r.place.display_name ? r.place.display_name : c.location}`;
+  DOM.rrSubtitle.textContent = `Researched ${formatTimestamp(r.finished_at)} · your services: ${c.offer_categories.map(serviceLabel).join(', ')}`;
+
+  const s = r.summary;
+  const inspected = (s.inspections && s.inspections.inspected) || 0;
+  const stats = [
+    ['Businesses found in the area', s.found_in_area],
+    ['Researched', s.businesses],
+    ['Websites inspected', inspected],
+    ['Evidence items', s.evidence],
+    ['Businesses with a need you serve', s.opportunities_with_need],
+  ];
+  DOM.rrStats.innerHTML = stats.map(([label, value]) => `
+    <div class="rr-stat"><div class="rr-stat-value">${escapeHtml(String(value))}</div><div class="rr-stat-label">${escapeHtml(label)}</div></div>
+  `).join('');
+
+  const entries = Object.entries(s.needs_by_category || {}).sort((a, b) => b[1] - a[1]);
+  const max = entries.length ? Math.max(...entries.map((e) => e[1])) : 0;
+  DOM.rrChart.setAttribute('aria-label', entries.length
+    ? `Needs by service: ${entries.map(([k, v]) => `${serviceLabel(k)} ${v}`).join(', ')}`
+    : 'No needs found for your services');
+  DOM.rrChart.innerHTML = entries.length
+    ? entries.map(([k, v]) => `
+      <div class="rr-bar-row">
+        <span class="rr-bar-label">${escapeHtml(serviceLabel(k))}</span>
+        <span class="rr-bar-track"><span class="rr-bar" style="width:${Math.max(4, Math.round((v / max) * 100))}%"></span></span>
+        <span class="rr-bar-value">${escapeHtml(String(v))}</span>
+      </div>`).join('')
+    : '<div class="rr-state">No business showed a need for the services you chose.</div>';
+
+  DOM.rrAttribution.textContent = `Business data ${r.provider && r.provider.attribution ? r.provider.attribution : ''}. Website findings were observed by ZTech at the times shown; each one links to the page it came from.`;
+  renderSavedFilterOptions();
+  DOM.rrContent.style.display = 'block';
+  renderOpportunityList();
+}
+
+function currentFilters() {
+  return {
+    minScore: Number(DOM.rrMinScore.value),
+    service: DOM.rrFilterService.value,
+    website: DOM.rrFilterWebsite.value,
+    text: DOM.rrFilterText.value.trim(),
+    hideZero: DOM.rrFilterHideZero.checked,
+  };
+}
+
+function applyFilters(f) {
+  DOM.rrMinScore.value = String(f.minScore || 0);
+  DOM.rrFilterService.value = f.service || '';
+  DOM.rrFilterWebsite.value = f.website || '';
+  DOM.rrFilterText.value = f.text || '';
+  DOM.rrFilterHideZero.checked = f.hideZero !== false;
+}
+
+function renderSavedFilterOptions() {
+  const saved = readStored(SAVED_FILTERS_KEY, []);
+  DOM.rrSavedSelect.innerHTML = '<option value="">Saved filters…</option>'
+    + saved.map((f, i) => `<option value="${i}">${escapeHtml(f.name)}</option>`).join('');
+}
+
+function renderOpportunityList() {
+  const r = state.researchResult;
+  if (!r) return;
+  const f = currentFilters();
+  DOM.rrMinScoreValue.textContent = String(f.minScore);
+  const businesses = new Map(r.businesses.map((b) => [b.business_id, b]));
+  const needs = new Map(r.needs.map((n) => [n.need_id, n]));
+  const evidence = new Map(r.evidence.map((e) => [e.evidence_id, e]));
+  const findings = new Map(r.findings.map((x) => [x.finding_id, x]));
+  const text = f.text.toLowerCase();
+
+  const rows = r.opportunities.filter((o) => {
+    const b = businesses.get(o.business_id);
+    if (f.hideZero && o.score === 0) return false;
+    if (o.score < f.minScore) return false;
+    if (f.website === 'yes' && !b.website) return false;
+    if (f.website === 'no' && b.website) return false;
+    if (f.service && !o.need_ids.some((id) => needs.get(id) && needs.get(id).category === f.service)) return false;
+    if (text && !o.business_name.toLowerCase().includes(text)) return false;
+    return true;
+  });
+
+  DOM.rrCount.textContent = `${rows.length} of ${r.opportunities.length} businesses shown, ranked by score`;
+  DOM.rrEmpty.style.display = rows.length ? 'none' : 'block';
+  DOM.rrList.innerHTML = '';
+
+  for (const o of rows) {
+    const b = businesses.get(o.business_id);
+    const card = document.createElement('article');
+    card.className = 'rr-card';
+    card.dataset.opportunityId = o.opportunity_id;
+    const oppNeeds = o.need_ids.map((id) => needs.get(id)).filter(Boolean);
+    const otherNeeds = (o.other_need_ids || []).map((id) => needs.get(id)).filter(Boolean);
+    const factorRows = [
+      ['Evidence quality', o.factors.evidence_quality],
+      ['Fit with your services', o.factors.offer_fit],
+      ['Urgency', o.factors.urgency],
+      ['Listing completeness', o.factors.reachability],
+    ];
+    const needHtml = oppNeeds.map((n) => {
+      const items = n.finding_ids.map((fid) => findings.get(fid)).filter(Boolean).map((fd) => {
+        const evs = fd.evidence_ids.map((id) => evidence.get(id)).filter(Boolean).map((ev) => `
+          <li class="rr-evidence">
+            <div class="rr-evidence-text">“${escapeHtml(ev.excerpt)}”</div>
+            <div class="rr-evidence-meta">${escapeHtml(ev.method)} · observed ${escapeHtml(formatTimestamp(ev.observed_at))} ·
+              <a href="${escapeHtml(ev.source_url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(ev.source_url)}</a></div>
+          </li>`).join('');
+        return `
+          <li class="rr-finding">
+            <div><strong>${escapeHtml(fd.title)}</strong> <span class="rr-sev rr-sev-${escapeHtml(fd.severity)}">${escapeHtml(fd.severity)}</span>
+              <span class="rr-conf">confidence ${pct(fd.confidence)}</span></div>
+            ${fd.caveat ? `<div class="rr-caveat">Caveat: ${escapeHtml(fd.caveat)}</div>` : ''}
+            <ul class="rr-evidence-list">${evs}</ul>
+          </li>`;
+      }).join('');
+      return `
+        <div class="rr-need">
+          <div class="rr-need-head">${escapeHtml(n.service)} <span class="rr-basis">inferred from the findings below</span></div>
+          <div class="rr-need-problem">${escapeHtml(n.problems[0])}</div>
+          <ul class="rr-findings">${items}</ul>
+        </div>`;
+    }).join('');
+    const inspection = b.inspection || {};
+    card.innerHTML = `
+      <div class="rr-card-head">
+        <div>
+          <div class="rr-rank">#${String(o.rank)}</div>
+          <h3 class="rr-name">${escapeHtml(o.business_name)}</h3>
+          <div class="rr-meta">
+            ${b.address ? `${escapeHtml(b.address)} · ` : ''}${b.phone ? `${escapeHtml(b.phone)} · ` : ''}
+            ${b.website ? `<a href="${escapeHtml(b.website)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(b.website)}</a>` : 'No website listed'}
+          </div>
+          <div class="rr-meta">Source: <a href="${escapeHtml(b.source_url)}" target="_blank" rel="noopener noreferrer">OpenStreetMap record</a>, retrieved ${escapeHtml(formatTimestamp(b.retrieved_at))} · website check: ${escapeHtml(inspection.status || 'not run')}</div>
+        </div>
+        <div class="rr-score" title="Score out of 100">${String(o.score)}</div>
+      </div>
+      <details class="rr-why">
+        <summary>Why this score</summary>
+        <ul class="rr-factors">
+          ${factorRows.map(([label, v]) => `<li><span>${escapeHtml(label)}</span><span class="rr-bar-track"><span class="rr-bar" style="width:${Math.round(Number(v) * 100)}%"></span></span><span>${pct(v)}</span></li>`).join('')}
+        </ul>
+        <ul class="rr-explanation">${o.explanation.map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>
+      </details>
+      ${needHtml || '<div class="rr-state">No need was found that matches the services you offer.</div>'}
+      ${otherNeeds.length ? `<div class="rr-other">Also observed (not one of your services): ${otherNeeds.map((n) => escapeHtml(n.service)).join(', ')}</div>` : ''}
+      ${(inspection.notes || []).length ? `<div class="rr-notes">${inspection.notes.map((n) => escapeHtml(n)).join('<br>')}</div>` : ''}
+      <div class="rr-actions">
+        ${o.need_ids.length ? '<button class="btn btn-primary rr-draft-btn" type="button">Draft a proposal</button>' : ''}
+      </div>
+    `;
+    const draftBtn = card.querySelector('.rr-draft-btn');
+    if (draftBtn) draftBtn.addEventListener('click', () => openProposalModal(o));
+    DOM.rrList.appendChild(card);
+  }
+}
+
+function openProposalModal(opp) {
+  const offer = readStored(OFFER_KEY, {});
+  const aiAvailable = Boolean(state.researchOptions && state.researchOptions.ai_drafts_available);
+  DOM.modalTitle.textContent = `Proposal draft — ${opp.business_name}`;
+  DOM.modalSubtitle.textContent = 'A draft for you to edit. Nothing is sent from here.';
+  DOM.modalBody.innerHTML = `
+    <form id="pp-form" class="pp-form">
+      <div class="rr-form-grid">
+        <div class="form-group"><label class="form-label" for="pp-sender">Your name</label>
+          <input id="pp-sender" class="form-input" maxlength="80" required value="${escapeHtml(offer.sender_name || '')}"></div>
+        <div class="form-group"><label class="form-label" for="pp-company">Your company</label>
+          <input id="pp-company" class="form-input" maxlength="120" required value="${escapeHtml(offer.sender_company || '')}"></div>
+      </div>
+      <div class="form-group"><label class="form-label" for="pp-offer">What you offer (one or two sentences)</label>
+        <textarea id="pp-offer" class="form-textarea" rows="2" maxlength="600" required>${escapeHtml(offer.offer_summary || '')}</textarea></div>
+      <div class="form-group"><label class="form-label" for="pp-cta">Closing question</label>
+        <input id="pp-cta" class="form-input" maxlength="200" placeholder="Would a short call next week be useful?" value="${escapeHtml(offer.call_to_action || '')}"></div>
+      <label class="rr-inline"><input type="checkbox" id="pp-ai"${aiAvailable ? '' : ' disabled'}> Write it with AI${aiAvailable ? ' (checked against the evidence before it is shown)' : ' (not set up on this server)'}</label>
+      <div style="margin-top: 12px;"><button class="btn btn-primary" id="pp-generate" type="submit">Create draft</button></div>
+    </form>
+    <div id="pp-result" style="display: none;"></div>
+  `;
+  DOM.modalContainer.style.display = 'flex';
+  const form = document.getElementById('pp-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {
+      opportunity_id: opp.opportunity_id,
+      use_ai: document.getElementById('pp-ai').checked,
+      offer: {
+        sender_name: document.getElementById('pp-sender').value.trim(),
+        sender_company: document.getElementById('pp-company').value.trim(),
+        offer_summary: document.getElementById('pp-offer').value.trim(),
+        call_to_action: document.getElementById('pp-cta').value.trim(),
+      },
+    };
+    writeStored(OFFER_KEY, body.offer);
+    const btn = document.getElementById('pp-generate');
+    btn.disabled = true;
+    try {
+      const res = await api(`/api/workspaces/${state.currentWorkspace.workspace_id}/research/jobs/${state.researchResultJobId}/proposals`, { method: 'POST', body });
+      renderProposal(res.draft);
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function renderProposal(d) {
+  const out = document.getElementById('pp-result');
+  out.style.display = 'block';
+  out.innerHTML = `
+    <div class="pp-banner">Draft only — review and edit it, then send it yourself from your own email. ZTech does not send it.</div>
+    ${d.notes.map((n) => `<div class="rr-caveat">${escapeHtml(n)}</div>`).join('')}
+    <div class="form-group"><label class="form-label" for="pp-subject">Subject</label>
+      <input id="pp-subject" class="form-input" value="${escapeHtml(d.subject)}"></div>
+    <div class="form-group"><label class="form-label" for="pp-body">Message</label>
+      <textarea id="pp-body" class="form-textarea" rows="14">${escapeHtml(d.body)}</textarea></div>
+    <div style="display:flex; gap: 8px; align-items:center;">
+      <button id="pp-copy" class="btn btn-secondary" type="button">Copy to clipboard</button>
+      <span style="font-size: 11px; color: var(--text-muted);">Written by: ${escapeHtml(d.generator)}</span>
+    </div>
+    <h4 class="rr-section-title" style="margin-top: 14px;">Facts this draft relies on</h4>
+    <ul class="rr-evidence-list">${d.facts.map((f) => `
+      <li class="rr-evidence"><div class="rr-evidence-text">${escapeHtml(f.title)}: “${escapeHtml(f.observation)}”</div>
+        <div class="rr-evidence-meta">observed ${escapeHtml(formatTimestamp(f.observed_at))} · <a href="${escapeHtml(f.source_url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(f.source_url)}</a></div></li>`).join('')}
+    </ul>
+    <h4 class="rr-section-title">What we infer from them (not certain)</h4>
+    <ul class="rr-explanation">${d.inferences.map((i) => `<li>${escapeHtml(i.text)}${i.caveats.length ? ` <em>(${escapeHtml(i.caveats.join(' '))})</em>` : ''}</li>`).join('')}</ul>
+  `;
+  document.getElementById('pp-copy').addEventListener('click', async () => {
+    const text = `Subject: ${document.getElementById('pp-subject').value}\n\n${document.getElementById('pp-body').value}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Copied', 'success');
+    } catch {
+      toast('Copy is not available here; select the text and copy it', 'error');
+    }
+  });
+}
+
+function setupResearchResultsListeners() {
+  DOM.rrCloseBtn.addEventListener('click', closeResearchResult);
+  for (const el of [DOM.rrMinScore, DOM.rrFilterService, DOM.rrFilterWebsite, DOM.rrFilterHideZero]) {
+    el.addEventListener('input', renderOpportunityList);
+    el.addEventListener('change', renderOpportunityList);
+  }
+  DOM.rrFilterText.addEventListener('input', renderOpportunityList);
+  DOM.rrSaveFilterBtn.addEventListener('click', () => {
+    const name = window.prompt('Name for these filters');
+    if (!name || !name.trim()) return;
+    const saved = readStored(SAVED_FILTERS_KEY, []).filter((f) => f.name !== name.trim());
+    saved.push({ name: name.trim().slice(0, 60), filters: currentFilters() });
+    writeStored(SAVED_FILTERS_KEY, saved.slice(-20));
+    renderSavedFilterOptions();
+    toast('Filters saved in this browser', 'success');
+  });
+  DOM.rrSavedSelect.addEventListener('change', () => {
+    const saved = readStored(SAVED_FILTERS_KEY, []);
+    const pick = saved[Number(DOM.rrSavedSelect.value)];
+    if (!pick) return;
+    applyFilters(pick.filters);
+    renderOpportunityList();
+  });
 }
 
 /* ------------------ Outreach Preparation & Gate Modal ------------------- */
@@ -930,6 +1354,7 @@ function setupEventListeners() {
     state.session = null;
     state.csrfToken = null;
     state.currentWorkspace = null;
+    closeResearchResult();
     renderUnauthenticatedState();
     toast('Signed out', 'info');
   });
@@ -937,8 +1362,11 @@ function setupEventListeners() {
   // Research Jobs form
   DOM.researchJobForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    await submitResearchJob(DOM.rjRequirements.value.trim());
+    const criteria = readResearchForm();
+    if (!criteria) return;
+    await submitResearchJob(criteria);
   });
+  setupResearchResultsListeners();
 
   // Research Jobs refresh
   DOM.rjRefreshBtn.addEventListener('click', () => loadResearchJobs());
