@@ -4,13 +4,14 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { URL } = require('node:url');
-const { Throttle, ROLES, PERMISSIONS, newId } = require('./security');
+const { Throttle, ROLES, PERMISSIONS, newId, hasPermission } = require('./security');
 const { AuthService, ServiceError } = require('./service');
 const { InMemoryIdentityPool } = require('./inMemoryIdentity');
 const { InMemoryStoreForApi } = require('./inMemoryStore');
 const { executeResearchDiscovery, prepareOutreachDraft } = require('./researchEngine');
 const { intel } = require('@zunitech/lead-intelligence');
 const { llmConfigFromEnv } = require('./llm');
+const { CrmService, CrmError, STAGES } = require('./crm');
 
 const SESSION_COOKIE = 'ztech_session';
 const CSRF_HEADER = 'x-csrf-token';
@@ -104,6 +105,7 @@ class ApiServer {
     this.aiDraftThrottle = new Throttle({ limit: 30, windowMs: 60 * 60 * 1000 });
     this.draftThrottle = new Throttle({ limit: 120, windowMs: 60 * 60 * 1000 });
     this.llm = llm === undefined ? llmConfigFromEnv(process.env) : llm;
+    this.crm = new CrmService();
     this.activeCandidatesByWorkspace = new Map();
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => this.fail(res, err));
@@ -190,6 +192,10 @@ class ApiServer {
     if (res.headersSent) { res.end(); return; }
     if (err instanceof ServiceError) {
       this.json(res, err.status, { error: err.code, message: err.message });
+      return;
+    }
+    if (err instanceof CrmError) {
+      this.json(res, err.status, { error: err.code, message: err.message, ...(err.field ? { field: err.field } : {}) });
       return;
     }
     this.logger.error(`unhandled: ${err.stack || err.message}`);
@@ -282,6 +288,18 @@ class ApiServer {
     const researchReq = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research$/i);
     if (researchReq && method === 'POST') return this.createResearch(req, res, researchReq[1]);
     if (researchReq && method === 'GET') return this.listResearch(req, res, researchReq[1]);
+
+    // Phase 3: the CRM.
+    const crmImport = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/crm\/accounts\/import$/i);
+    if (crmImport && method === 'POST') return this.crmImport(req, res, crmImport[1]);
+    const crmNotes = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/crm\/accounts\/([0-9a-f-]+)\/notes$/i);
+    if (crmNotes && method === 'POST') return this.crmAddNote(req, res, crmNotes[1], crmNotes[2]);
+    const crmAccount = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/crm\/accounts\/([0-9a-f-]+)$/i);
+    if (crmAccount && method === 'GET') return this.crmDetail(req, res, crmAccount[1], crmAccount[2]);
+    if (crmAccount && method === 'PATCH') return this.crmUpdate(req, res, crmAccount[1], crmAccount[2]);
+    const crmAccounts = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/crm\/accounts$/i);
+    if (crmAccounts && method === 'GET') return this.crmList(req, res, crmAccounts[1]);
+    if (crmAccounts && method === 'POST') return this.crmCreate(req, res, crmAccounts[1]);
 
     const researchOptions = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/options$/i);
     if (researchOptions && method === 'GET') return this.researchOptions(req, res, researchOptions[1]);
@@ -707,6 +725,101 @@ class ApiServer {
     }
 
     this.json(res, 200, { job });
+  }
+
+  /* ------------------------------- Phase 3: CRM ------------------------------ */
+
+  /** Who is acting, and what they may do in this workspace. */
+  crmActor(session, workspaceId, membership) {
+    return {
+      userId: session.user_id,
+      canManage: hasPermission(membership.role, 'crm.manage'),
+      isMember: async (userId) => Boolean(await this.service.membershipOf(userId, workspaceId)),
+    };
+  }
+
+  async crmList(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    const membership = await this.service.authorize(session, workspaceId, 'workspace.read');
+    const url = new URL(req.url, 'http://localhost');
+    const p = Object.fromEntries(url.searchParams.entries());
+    const store = await this.storeFor(session, workspaceId);
+    const out = await this.crm.list(store, { ...p, userId: session.user_id });
+    this.json(res, 200, {
+      ...out,
+      stages: STAGES,
+      can_write: hasPermission(membership.role, 'workspace.write'),
+      can_manage: hasPermission(membership.role, 'crm.manage'),
+      me: session.user_id,
+    });
+  }
+
+  async crmCreate(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    const membership = await this.service.authorize(session, workspaceId, 'workspace.write');
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+    const account = await this.crm.create(store, this.crmActor(session, workspaceId, membership), body);
+    this.json(res, 201, { account });
+  }
+
+  async crmImport(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    const membership = await this.service.authorize(session, workspaceId, 'workspace.write');
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+    try {
+      const out = await this.crm.importFromResearch(store, this.crmActor(session, workspaceId, membership), {
+        jobId: body && body.job_id, opportunityIds: body && body.opportunity_ids,
+      });
+      this.json(res, 200, out);
+    } catch (err) {
+      if (err && err.code === '22P02') {
+        this.json(res, 404, { error: 'not_found', message: 'research job not found' });
+        return;
+      }
+      throw err;
+    }
+  }
+
+  async crmDetail(req, res, workspaceId, accountId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+    const store = await this.storeFor(session, workspaceId);
+    const detail = await this.crm.detail(store, accountId);
+    if (!detail) {
+      this.json(res, 404, { error: 'not_found', message: 'no such account' });
+      return;
+    }
+    this.json(res, 200, detail);
+  }
+
+  async crmUpdate(req, res, workspaceId, accountId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    const membership = await this.service.authorize(session, workspaceId, 'workspace.write');
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+    const account = await this.crm.update(store, this.crmActor(session, workspaceId, membership), accountId, body);
+    this.json(res, 200, { account });
+  }
+
+  async crmAddNote(req, res, workspaceId, accountId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    const membership = await this.service.authorize(session, workspaceId, 'workspace.write');
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+    const note = await this.crm.addNote(store, this.crmActor(session, workspaceId, membership), accountId, body && body.body);
+    this.json(res, 201, { note });
   }
 
   async researchOptions(req, res, workspaceId) {

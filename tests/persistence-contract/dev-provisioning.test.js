@@ -200,10 +200,10 @@ if (!ADMIN_URL) {
       assert.ok(!result.stderr.includes(secret), 'and none in the error output either');
     }
 
-    // Migrations 001-022, in order, each exactly once.
+    // Migrations 001-023, in order, each exactly once.
     const applied = [...result.stdout.matchAll(/Applied migration (\d+)/g)].map((m) => Number(m[1]));
     assert.deepEqual(applied, MIGRATIONS.map((m) => m.version), 'every migration was applied in order');
-    assert.equal(applied.length, 22, 'there are twenty-two migrations');
+    assert.equal(applied.length, 23, 'there are twenty-three migrations');
     assert.equal(new Set(applied).size, applied.length, 'no migration was applied twice');
     assert.ok(result.stdout.includes('All PostgreSQL schema migrations applied'), 'the run reported success');
 
@@ -399,6 +399,7 @@ if (!ADMIN_URL) {
 
     // The development database passes the start-up check, as the API's role.
     const appPool = new Pool({ connectionString: roleUrl('ztech_identity', RERUN_DB) });
+    appPool.on('error', () => {});
     try {
       assert.equal(await assertZtechSchema(appPool), RERUN_DB);
     } finally {
@@ -469,12 +470,16 @@ if (!ADMIN_URL) {
     await admin.query(`CREATE DATABASE ${CONCURRENT_DB}`);
     await admin.query(`GRANT ALL ON DATABASE ${CONCURRENT_DB} TO ztech_migrator`);
     const target = new Pool({ connectionString: databaseUrl(CONCURRENT_DB) });
+    target.on('error', () => {});
     try {
       for (const schema of ['li', 'id']) await target.query(`CREATE SCHEMA ${schema} AUTHORIZATION ztech_migrator`);
     } finally {
       await target.end();
     }
     const pools = [0, 1].map(() => new Pool({ connectionString: roleUrl('ztech_migrator', CONCURRENT_DB), options: '-c search_path=li' }));
+    // DROP DATABASE ... WITH (FORCE) below may terminate a connection the
+    // pool is still closing; that notice is expected, not a failure.
+    for (const pool of pools) pool.on('error', () => {});
     try {
       const quiet = () => {};
       const [a, b] = await Promise.all(pools.map((pool) => applyPendingMigrations(pool, { log: quiet })));

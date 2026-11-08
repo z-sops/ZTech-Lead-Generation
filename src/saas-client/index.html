@@ -60,6 +60,10 @@
           <span class="icon">🗂️</span>
           <span>Research Jobs</span>
         </a>
+        <a class="nav-item" id="nav-crm" data-view="crm">
+          <span class="icon">📇</span>
+          <span>CRM &amp; Pipeline</span>
+        </a>
         <a class="nav-item" id="nav-saved" data-view="saved">
           <span class="icon">⭐</span>
           <span>Saved Opportunities</span>
@@ -320,12 +324,54 @@
                   <button id="rr-save-filter-btn" class="btn btn-secondary" type="button">Save filters</button>
                 </div>
               </div>
-              <div id="rr-count" class="rr-count"></div>
+              <div class="rr-count-row"><div id="rr-count" class="rr-count"></div><button id="rr-add-all-btn" class="btn btn-secondary" type="button">Add all shown to CRM</button></div>
               <div id="rr-list" class="rr-list"></div>
               <div id="rr-empty" class="rr-state" style="display: none;">No business matches these filters.</div>
               <p id="rr-attribution" class="rr-attribution"></p>
             </div>
           </div>
+        </section>
+
+        <!-- Phase 3: CRM and sales pipeline (P09) -->
+        <section id="view-crm" class="view-panel" style="display: none;">
+          <div class="panel-header">
+            <div>
+              <h1 class="panel-title">CRM &amp; Pipeline</h1>
+              <p style="color: var(--text-muted); font-size: 13px;">The businesses you are selling to, where each one stands, and who is on it. Every change is recorded. Nothing here contacts anyone.</p>
+            </div>
+            <button id="crm-new-btn" class="btn btn-primary" type="button">New account</button>
+          </div>
+
+          <div id="crm-pipeline" class="crm-pipeline" role="list" aria-label="Pipeline by stage"></div>
+
+          <div class="rr-filters" id="crm-filters">
+            <label>Search <input id="crm-q" class="form-input" type="search" placeholder="Name or website" maxlength="100"></label>
+            <label>Stage <select id="crm-stage" class="form-select"><option value="">All stages</option></select></label>
+            <label>Owner <select id="crm-owner" class="form-select">
+              <option value="">Everyone</option><option value="me">Mine</option><option value="unassigned">Unassigned</option>
+            </select></label>
+            <label class="rr-inline"><input id="crm-archived" type="checkbox"> Show archived</label>
+          </div>
+
+          <form id="crm-new-form" class="discovery-panel" style="display: none;">
+            <h3 class="rr-section-title">New account</h3>
+            <div class="rr-form-grid">
+              <div class="form-group"><label class="form-label" for="crm-new-name">Business name</label><input id="crm-new-name" class="form-input" maxlength="200" required></div>
+              <div class="form-group"><label class="form-label" for="crm-new-website">Website</label><input id="crm-new-website" class="form-input" maxlength="500" placeholder="example.com"></div>
+              <div class="form-group"><label class="form-label" for="crm-new-phone">Phone</label><input id="crm-new-phone" class="form-input" maxlength="60"></div>
+              <div class="form-group"><label class="form-label" for="crm-new-value">Estimated value (USD)</label><input id="crm-new-value" class="form-input" type="number" min="0" step="1"></div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button class="btn btn-primary" type="submit" id="crm-new-submit">Add account</button>
+              <button class="btn btn-secondary" type="button" id="crm-new-cancel">Cancel</button>
+            </div>
+          </form>
+
+          <div id="crm-loading" class="rr-state" style="display: none;">Loading…</div>
+          <div id="crm-error" class="rr-state rr-state-error" style="display: none;"></div>
+          <div id="crm-empty" class="discovery-panel rr-state" style="display: none;">No accounts yet. Add one, or open a finished research job and choose “Add to CRM”.</div>
+          <div id="crm-list" class="crm-list"></div>
+          <div id="crm-more" style="display: none; text-align: center; margin-top: 10px;"><button class="btn btn-secondary" id="crm-more-btn" type="button">Show more</button></div>
         </section>
 
         <!-- 4. Saved Opportunities Screen -->

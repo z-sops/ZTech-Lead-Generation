@@ -10,6 +10,8 @@ const PERMISSIONS = Object.freeze([
   'workspace.read', 'workspace.write', 'workspace.create', 'workspace.delete',
   'member.read', 'member.invite', 'member.remove', 'member.role',
   'settings.write', 'suppression.check', 'audit.read', 'outreach.approve',
+  // Phase 3: assign accounts to people and archive them (managers and up).
+  'crm.manage',
 ]);
 
 /**
@@ -22,11 +24,11 @@ const MATRIX = Object.freeze({
   admin: [
     'workspace.read', 'workspace.write', 'workspace.create',
     'member.read', 'member.invite', 'member.remove', 'member.role',
-    'settings.write', 'suppression.check', 'audit.read', 'outreach.approve',
+    'settings.write', 'suppression.check', 'audit.read', 'outreach.approve', 'crm.manage',
   ],
   manager: [
     'workspace.read', 'workspace.write',
-    'member.read', 'member.invite', 'suppression.check', 'audit.read', 'outreach.approve',
+    'member.read', 'member.invite', 'suppression.check', 'audit.read', 'outreach.approve', 'crm.manage',
   ],
   member: ['workspace.read', 'workspace.write', 'suppression.check'],
   viewer: ['workspace.read', 'suppression.check'],

@@ -34,6 +34,8 @@ const TENANT_TABLES = Object.freeze([
   'li_mailbox_sent', 'li_reply_reviews', 'li_sequences', 'li_sequence_steps',
   'li_sequence_events', 'li_sequence_gaps', 'li_sequence_control', 'li_reply_routes',
   'job_queue',
+  // Phase 3 (migration 023): the CRM.
+  'li_crm_accounts', 'li_crm_notes', 'li_crm_activity',
 ]);
 
 /**
