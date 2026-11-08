@@ -1218,6 +1218,15 @@ function businessProfileFromSettings() {
   }
 }
 
+// Who is recorded as having approved a pitch, recorded an opt-in or reviewed a reply
+// (approved_by / recorded_by / reviewed_by). It is the Business Profile representative's
+// name when one is set, so the records name a person instead of "local-user" (Windows
+// acceptance, 8 Oct 2026). Plain text, at most 80 characters, never a secret.
+function operatorNameFromSettings() {
+  const name = String(businessProfileFromSettings().sender_name || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80);
+  return name || 'local-user';
+}
+
 // F24 PLUG & PLAY: WhatsApp send configuration, mirroring emailConfigFromSettings above.
 // Read-only, non-secret, main-process only. With no configuration it returns the OFF
 // state, which is the honest current state of this installation (no enabled switch, no
@@ -1382,6 +1391,7 @@ async function initLeadIntelligence() {
         email: emailConfigFromSettings(),
         whatsapp: whatsappConfigFromSettings(),
         offer: businessProfileFromSettings(),
+        operatorName: operatorNameFromSettings(),
       },
       // F23: the operational Resend transport (main-process only, credential closure).
       emailProvider: buildResendEmailProvider(),
@@ -1768,6 +1778,10 @@ function applyOutreachSettings() {
     whatsapp: whatsappConfigFromSettings(),
     offer: businessProfileFromSettings(),
   });
+  // A changed representative name applies to the next record at once, without a restart.
+  const operator = operatorNameFromSettings();
+  outreach.operator = operator;
+  if (leadIntelRuntime.li.trust) leadIntelRuntime.li.trust.operator = operator;
 }
 
 /**

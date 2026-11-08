@@ -774,7 +774,7 @@ test('R1. opening preparation calls prepare() once, defaults to Email, and rende
   // every attempt is refused first). The new wording is neutralised here by the same rule as
   // before: the declared boundary text is removed, then everything else must still contain no
   // outbound-control word.
-  assert.ok(!/\bSend\b|\bSchedule\b|\bQueue\b|\bLaunch\b|\bCampaign\b|\bRetry\b/i.test(body.textContent.replace('Review only · nothing has been attempted for this pitch yet · attempting still needs a configured provider', '')));
+  assert.ok(!/\bSend\b|\bSchedule\b|\bQueue\b|\bLaunch\b|\bCampaign\b|\bRetry\b/i.test(body.textContent.replace('Review only · this preview contacts no one · a message goes out only from the controls below, after you confirm', '')));
 });
 
 test('R2. switching to WhatsApp re-prepares the SAME pitch, shows the candidate caveat, and switching back is read-only', async () => {
@@ -898,3 +898,23 @@ test('R6. the renderer block keeps the same outbound/send and persistence hygien
   }
   console.log(passed + ' passed, ' + failed + ' failed');
 })();
+
+test('R7. evidence references read as page, provider and date - never as raw JSON (Windows acceptance, 8 Oct 2026)', async () => {
+  const asObject = {
+    ref_id: 'find_85d9c0a07172abd1563a110d', provider: 'round1-zuni-seo',
+    source_url: 'https://www.standardpharma.com/sitemap_index.xml', captured_at: '2026-10-08T06:09:46.139Z',
+  };
+  const asJsonText = JSON.stringify({ ref_id: 'fact_58dd88415c9a5b3ef83bad8f', provider: 'round1-zuni-seo', source_url: null, captured_at: '2026-10-08T06:09:46.139Z' });
+  const preview = { ...PREVIEW_EMAIL, content: { ...PREVIEW_EMAIL.content, evidenceReferences: [asObject, asJsonText, 'audit-1', '{not json'] } };
+  const p = loadPrepare({ outreach: { prepare: () => ok(preview) } });
+  p.f18OpenPrepare('p1');
+  await settle();
+  const items = p.doc.getElementById('f18-prepare-body').byTag('li');
+  assert.strictEqual(items.length, 4, 'every reference is listed, none dropped');
+  assert.strictEqual(items[0].textContent, 'standardpharma.com/sitemap_index.xml · round1-zuni-seo · captured 08/10/2026');
+  assert.strictEqual(items[1].textContent, 'A measured fact (no single page) · round1-zuni-seo · captured 08/10/2026');
+  assert.strictEqual(items[2].textContent, 'audit-1', 'a plain reference stays as it is');
+  assert.strictEqual(items[3].textContent, '{not json', 'unreadable text is shown, not hidden');
+  assert.strictEqual(items[0].title, 'find_85d9c0a07172abd1563a110d', 'the reference id stays available on hover');
+  for (const li of items.slice(0, 2)) assert.ok(!/[{}"]|ref_id|packet_id/.test(li.textContent), 'no JSON on screen');
+});

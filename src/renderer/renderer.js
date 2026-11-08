@@ -9560,6 +9560,32 @@ function f18PrepareEl(tag, className, text) {
   return el;
 }
 
+/**
+ * One evidence reference as a person reads it: the page it came from (or "a measured
+ * fact" when it has no page), who captured it, and when. A reference arrives as an
+ * object or as its JSON text; anything unreadable is shown as it is, never dropped.
+ */
+function f18EvidenceRef(raw) {
+  let ref = raw;
+  if (typeof raw === 'string') {
+    try { ref = raw.trim().startsWith('{') ? JSON.parse(raw) : raw; } catch { ref = raw; }
+  }
+  if (!ref || typeof ref !== 'object') return { label: String(raw), id: null };
+  let where = 'A measured fact (no single page)';
+  if (typeof ref.source_url === 'string' && ref.source_url) {
+    try {
+      const u = new URL(ref.source_url);
+      where = (u.host + (u.pathname === '/' ? '' : u.pathname) + u.search).replace(/^www\./, '');
+    } catch { where = ref.source_url; }
+  }
+  const parts = [where];
+  if (typeof ref.provider === 'string' && ref.provider) parts.push(ref.provider);
+  const at = ref.captured_at ? new Date(ref.captured_at) : null;
+  if (at && !Number.isNaN(at.getTime())) parts.push(`captured ${at.toLocaleDateString('en-GB')}`);
+  const id = typeof ref.ref_id === 'string' ? ref.ref_id : null;
+  return { label: parts.join(' · '), id };
+}
+
 /** Availability of BOTH channels, read from the contactFacts any preview carries. */
 function f18ChannelAvailability(data) {
   const channels = data && data.contactFacts && data.contactFacts.channels ? data.contactFacts.channels : null;
@@ -9771,7 +9797,12 @@ function f18PrepareRenderBody() {
     contentBox.appendChild(f18PrepareEl('div', 'f18-prepare-hint', 'This pitch carries no evidence references.'));
   } else {
     const list = f18PrepareEl('ul', 'f18-prepare-refs');
-    for (const r of refs) list.appendChild(f18PrepareEl('li', null, typeof r === 'string' ? r : JSON.stringify(r)));
+    for (const r of refs) {
+      const ref = f18EvidenceRef(r);
+      const li = f18PrepareEl('li', null, ref.label);
+      if (ref.id) li.title = ref.id; // the reference id stays available, out of the way
+      list.appendChild(li);
+    }
     contentBox.appendChild(list);
   }
   body.appendChild(contentBox);
@@ -9785,9 +9816,11 @@ function f18PrepareRenderBody() {
     // facts that fail for different reasons. The second half also said nothing was
     // "recorded", which stopped being true the moment the ledger became readable: an attempt
     // against this pitch is recorded, it is just refused before it reaches anyone. So the
-    // line now states the one true thing about this screen (nothing has been attempted yet)
-    // and names the actual precondition, without claiming a provider is or is not live.
-    'Review only · nothing has been attempted for this pitch yet · attempting still needs a configured provider'));
+    // line used to say "nothing has been attempted for this pitch yet", which stayed on screen
+    // after a send and became false (Windows acceptance, 8 Oct 2026). It now states only what
+    // is ALWAYS true of this body: it is a preview, and any message leaves from the footer
+    // controls after a confirmation - without claiming a provider is or is not live.
+    'Review only · this preview contacts no one · a message goes out only from the controls below, after you confirm'));
 }
 
 function f18PrepareRenderFooter() {
