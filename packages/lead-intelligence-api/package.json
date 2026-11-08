@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@zunitech/lead-intelligence-api",
   "version": "0.1.0",
   "description": "The HTTP service of ZTech: authentication, organizations, memberships, invitations and role-based authorization over the PostgreSQL tenant boundary.",
@@ -9,6 +9,7 @@
     "node": ">=20.19.0"
   },
   "dependencies": {
+    "@zunitech/lead-intelligence": "*",
     "@zunitech/lead-intelligence-postgres": "*",
     "pg": "^8.13.1"
   },

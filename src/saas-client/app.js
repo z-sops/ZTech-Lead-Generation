@@ -16,6 +16,8 @@ const state = {
   discoveredOpportunities: [],
   savedOpportunities: [],
   activePitch: null,
+  researchJobs: [],
+  researchJobsPollTimer: null,
 };
 if (typeof window !== 'undefined') {
   window.state = state;
@@ -87,8 +89,18 @@ const DOM = {
   modalBody: document.getElementById('modal-body'),
   modalCloseBtn: document.getElementById('modal-close-btn'),
 
-  // Toasts
+// Toasts
   toastContainer: document.getElementById('toast-container'),
+
+  // Research Jobs
+  rjRefreshBtn: document.getElementById('rj-refresh-btn'),
+  rjSubmitBtn: document.getElementById('rj-submit-btn'),
+  rjRequirements: document.getElementById('rj-requirements'),
+  researchJobForm: document.getElementById('research-job-form'),
+  rjLoading: document.getElementById('rj-loading'),
+  rjOffline: document.getElementById('rj-offline'),
+  rjEmptyState: document.getElementById('rj-empty-state'),
+  rjList: document.getElementById('rj-list'),
 };
 
 /* ----------------------------- API Client ------------------------------- */
@@ -244,6 +256,13 @@ function navigateTo(viewName) {
 
   if (viewName === 'saved') {
     loadSavedOpportunities();
+  }
+
+  if (viewName === 'research-jobs') {
+    loadResearchJobs();
+    startResearchJobsPolling();
+  } else {
+    stopResearchJobsPolling();
   }
 }
 
@@ -519,6 +538,161 @@ async function loadActiveCandidates() {
   }
 }
 
+/* ------------------------- Research Jobs (Async) ------------------------ */
+
+const RESEARCH_JOB_STATES = ['queued', 'leased', 'running', 'succeeded', 'failed', 'cancelled'];
+
+function jobStateLabel(state) {
+  if (!state) return 'uncertain';
+  return RESEARCH_JOB_STATES.includes(state) ? state : 'uncertain';
+}
+
+function formatTimestamp(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+
+function renderResearchJobs(jobs) {
+  if (!DOM.rjList) return;
+  DOM.rjList.innerHTML = '';
+
+  if (!jobs || jobs.length === 0) {
+    DOM.rjList.style.display = 'none';
+    DOM.rjEmptyState.style.display = 'block';
+    return;
+  }
+
+  DOM.rjEmptyState.style.display = 'none';
+  DOM.rjList.style.display = 'flex';
+
+  jobs.forEach((job) => {
+    const row = document.createElement('div');
+    row.className = 'rj-row';
+    row.id = `rj-${job.job_id}`;
+
+    const stateLabel = jobStateLabel(job.state);
+    const cancellable = ['queued', 'leased', 'running'].includes(job.state);
+
+    const errorSummary = job.last_error
+      ? `<div class="rj-error">Error: ${escapeHtml(job.last_error)}</div>`
+      : '';
+
+    const retryNote = job.state === 'failed'
+      ? '<div class="rj-retry-note">Retry is managed automatically by the server (bounded, with backoff).</div>'
+      : '';
+
+    row.innerHTML = `
+      <div class="rj-main">
+        <div class="rj-id">${escapeHtml(job.job_id)}</div>
+        <div class="rj-meta">
+          Created ${formatTimestamp(job.created_at)}
+          ${job.started_at ? ` · Started ${formatTimestamp(job.started_at)}` : ''}
+          ${job.finished_at ? ` · Finished ${formatTimestamp(job.finished_at)}` : ''}
+          ${job.attempt_count ? ` · Attempt ${job.attempt_count}` : ''}
+        </div>
+        ${errorSummary}
+        ${retryNote}
+      </div>
+      <span class="rj-state ${stateLabel}">${stateLabel}</span>
+      <div class="rj-actions">
+        ${cancellable ? `<button class="btn btn-secondary rj-cancel-btn" data-id="${escapeHtml(job.job_id)}">Cancel</button>` : ''}
+      </div>
+    `;
+
+    const cancelBtn = row.querySelector('.rj-cancel-btn');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => cancelResearchJob(job.job_id));
+    }
+
+    DOM.rjList.appendChild(row);
+  });
+}
+
+async function loadResearchJobs() {
+  if (!state.currentWorkspace) return;
+  const wsId = state.currentWorkspace.workspace_id;
+
+  DOM.rjLoading.style.display = 'block';
+  DOM.rjOffline.style.display = 'none';
+
+  try {
+    const res = await api(`/api/workspaces/${wsId}/research/jobs`);
+    state.researchJobs = res.jobs || [];
+    DOM.rjLoading.style.display = 'none';
+    renderResearchJobs(state.researchJobs);
+  } catch (err) {
+    DOM.rjLoading.style.display = 'none';
+    DOM.rjOffline.style.display = 'block';
+    DOM.rjList.style.display = 'none';
+    DOM.rjEmptyState.style.display = 'none';
+    console.warn('Could not load research jobs:', err.message);
+  }
+}
+
+function stopResearchJobsPolling() {
+  if (state.researchJobsPollTimer) {
+    clearInterval(state.researchJobsPollTimer);
+    state.researchJobsPollTimer = null;
+  }
+}
+
+function startResearchJobsPolling() {
+  stopResearchJobsPolling();
+  // Poll the authoritative backend while the view is active. The interval is
+  // bounded and cleared on logout, workspace change and view cleanup.
+  state.researchJobsPollTimer = setInterval(() => {
+    if (state.activeView === 'research-jobs' && state.currentWorkspace) {
+      loadResearchJobs();
+    }
+  }, 3000);
+}
+
+async function submitResearchJob(criteria) {
+  if (!state.currentWorkspace) {
+    toast('No active workspace selected', 'error');
+    return;
+  }
+  const wsId = state.currentWorkspace.workspace_id;
+
+  DOM.rjSubmitBtn.disabled = true;
+  try {
+    const res = await api(`/api/workspaces/${wsId}/research/jobs`, {
+      method: 'POST',
+      body: {
+        idempotency_key: `research-${Date.now()}`,
+        payload: { criteria, isSynthetic: true },
+      },
+    });
+    toast(`Research job enqueued (${res.state})`, 'success');
+    await loadResearchJobs();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    DOM.rjSubmitBtn.disabled = false;
+  }
+}
+
+async function cancelResearchJob(jobId) {
+  if (!state.currentWorkspace) return;
+  const wsId = state.currentWorkspace.workspace_id;
+
+  const confirmed = window.confirm('Cancel this research job? A queued job is cancelled immediately; a running job is cancelled cooperatively.');
+  if (!confirmed) return;
+
+  try {
+    const res = await api(`/api/workspaces/${wsId}/research/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      body: {},
+    });
+    toast(`Cancellation ${res.action || 'requested'}`, 'success');
+    await loadResearchJobs();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
 /* ------------------ Outreach Preparation & Gate Modal ------------------- */
 
 async function openOutreachPreparationModal(opp) {
@@ -747,6 +921,7 @@ function setupEventListeners() {
 
   // Logout
   DOM.logoutBtn.addEventListener('click', async () => {
+    stopResearchJobsPolling();
     try {
       await api('/api/auth/logout', { method: 'POST' });
     } catch {
@@ -758,6 +933,15 @@ function setupEventListeners() {
     renderUnauthenticatedState();
     toast('Signed out', 'info');
   });
+
+  // Research Jobs form
+  DOM.researchJobForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await submitResearchJob(DOM.rjRequirements.value.trim());
+  });
+
+  // Research Jobs refresh
+  DOM.rjRefreshBtn.addEventListener('click', () => loadResearchJobs());
 
   // Discovery Form
   DOM.discoveryForm.addEventListener('submit', async (e) => {

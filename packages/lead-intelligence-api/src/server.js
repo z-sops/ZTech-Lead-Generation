@@ -275,6 +275,18 @@ class ApiServer {
     if (researchReq && method === 'POST') return this.createResearch(req, res, researchReq[1]);
     if (researchReq && method === 'GET') return this.listResearch(req, res, researchReq[1]);
 
+    // Async research-job endpoints (registered before the generic
+    // /research/:id route so /research/jobs is not mistaken for a job id).
+    const researchJobs = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/jobs$/i);
+    if (researchJobs && method === 'POST') return this.enqueueResearchJob(req, res, researchJobs[1]);
+    if (researchJobs && method === 'GET') return this.listResearchJobs(req, res, researchJobs[1]);
+
+    const researchJobCancel = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/jobs\/([a-zA-Z0-9_-]+)\/cancel$/i);
+    if (researchJobCancel && method === 'POST') return this.cancelResearchJob(req, res, researchJobCancel[1], researchJobCancel[2]);
+
+    const researchJobDetail = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/jobs\/([a-zA-Z0-9_-]+)$/i);
+    if (researchJobDetail && method === 'GET') return this.getResearchJob(req, res, researchJobDetail[1], researchJobDetail[2]);
+
     const researchJob = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/([a-zA-Z0-9_-]+)$/i);
     if (researchJob && method === 'GET') return this.getResearch(req, res, researchJob[1], researchJob[2]);
 
@@ -574,6 +586,113 @@ class ApiServer {
       packet_meta: packetMeta,
       candidates: job.options?.candidates || [],
     });
+  }
+
+  async enqueueResearchJob(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const body = await this.body(req);
+    const idempotencyKey = body && body.idempotency_key;
+    if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.length < 1 || idempotencyKey.length > 200) {
+      this.json(res, 400, { error: 'invalid_idempotency_key', message: 'the idempotency key must be 1 to 200 characters' });
+      return;
+    }
+    const payload = body && body.payload !== undefined ? body.payload : {};
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      this.json(res, 400, { error: 'invalid_payload', message: 'the payload must be a JSON object' });
+      return;
+    }
+    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > 16384) {
+      this.json(res, 400, { error: 'payload_too_large', message: 'the payload is larger than 16 KiB' });
+      return;
+    }
+    const store = await this.storeFor(session, workspaceId);
+    const result = await store.tx(async () => store.researchJobs.enqueue({
+      jobId: newId(),
+      jobType: 'research',
+      idempotencyKey,
+      payload,
+    }));
+
+    this.json(res, 202, {
+      job_id: result.job_id,
+      workspace_id: workspaceId,
+      job_type: result.job_type,
+      state: result.state,
+      idempotency_key: result.idempotency_key,
+      created_at: result.created_at,
+      deduplicated: Boolean(result.deduplicated),
+    });
+  }
+
+  async listResearchJobs(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const url = new URL(req.url, 'http://localhost');
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 1000);
+    const store = await this.storeFor(session, workspaceId);
+    const jobs = await store.tx(async () => store.researchJobs.list({ limit }));
+
+    this.json(res, 200, {
+      workspace_id: workspaceId,
+      jobs: jobs.map((j) => ({
+        job_id: j.job_id, state: j.state, created_at: j.created_at,
+        started_at: j.started_at, finished_at: j.finished_at,
+        cancel_requested_at: j.cancel_requested_at,
+        attempt_count: j.attempt_count, last_error: j.last_error,
+        idempotency_key: j.idempotency_key, job_type: j.job_type,
+      })),
+    });
+  }
+
+  async getResearchJob(req, res, workspaceId, jobId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+
+    const store = await this.storeFor(session, workspaceId);
+    let job = null;
+    try {
+      job = await store.tx(async () => store.researchJobs.get({ jobId }));
+    } catch (err) {
+      if (err.code === '22P02') {
+        this.json(res, 404, { error: 'not_found', message: `research job "${jobId}" not found` });
+        return;
+      }
+      throw err;
+    }
+    if (!job) {
+      this.json(res, 404, { error: 'not_found', message: `research job "${jobId}" not found` });
+      return;
+    }
+
+    this.json(res, 200, { job });
+  }
+
+  async cancelResearchJob(req, res, workspaceId, jobId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+
+    const store = await this.storeFor(session, workspaceId);
+    let result = null;
+    try {
+      result = await store.tx(async () => store.researchJobs.cancel({ jobId }));
+    } catch (err) {
+      if (err.code === '22P02') {
+        this.json(res, 200, { job_id: jobId, action: 'not_found', state: null, cancel_requested_at: null });
+        return;
+      }
+      throw err;
+    }
+
+    this.json(res, 200, result);
   }
 
   async opportunityCandidates(req, res, workspaceId) {
