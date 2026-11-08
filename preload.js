@@ -234,6 +234,7 @@ contextBridge.exposeInMainWorld('ztechLeadIntel', Object.freeze({
   sequences: Object.freeze({
     create: (payload) => ipcRenderer.invoke('lead-intel:sequence-create', payload || {}),
     forLead: (payload) => ipcRenderer.invoke('lead-intel:sequence-for-lead', payload || {}),
+    canStart: (payload) => ipcRenderer.invoke('lead-intel:sequence-can-start', payload || {}),
     list: () => ipcRenderer.invoke('lead-intel:sequence-list', {}),
     activate: (payload) => ipcRenderer.invoke('lead-intel:sequence-activate', payload || {}),
     pause: (payload) => ipcRenderer.invoke('lead-intel:sequence-pause', payload || {}),

@@ -5,6 +5,7 @@
  *
  *   lead-intel:sequence-create     { leadId, delays? }               a DRAFT from the lead's newest mailbox first email
  *   lead-intel:sequence-for-lead   { leadId }                        read
+ *   lead-intel:sequence-can-start  { leadId }                        read: may follow-ups be added, and if not, why
  *   lead-intel:sequence-list       {}                                read: open sequences + the Pause all switch
  *   lead-intel:sequence-activate   { sequenceId }                    every step approved -> the scheduler may send due steps
  *   lead-intel:sequence-pause      { sequenceId }                    write
@@ -25,6 +26,7 @@ const { LIMITS } = require('./sequenceContract');
 const SEQUENCE_CHANNELS_IPC = Object.freeze({
   CREATE: 'lead-intel:sequence-create',
   FOR_LEAD: 'lead-intel:sequence-for-lead',
+  CAN_START: 'lead-intel:sequence-can-start',
   LIST: 'lead-intel:sequence-list',
   ACTIVATE: 'lead-intel:sequence-activate',
   PAUSE: 'lead-intel:sequence-pause',
@@ -43,6 +45,7 @@ const SEQUENCE_SCHEMAS = Object.freeze({
     delays: { type: 'array', minItems: 1, maxItems: LIMITS.MAX_STEPS, items: { type: 'integer', minimum: LIMITS.MIN_DELAY_DAYS, maximum: LIMITS.MAX_DELAY_DAYS } },
   }, ['leadId']),
   [SEQUENCE_CHANNELS_IPC.FOR_LEAD]: obj({ leadId: LEAD_ID }, ['leadId']),
+  [SEQUENCE_CHANNELS_IPC.CAN_START]: obj({ leadId: LEAD_ID }, ['leadId']),
   [SEQUENCE_CHANNELS_IPC.LIST]: obj({}),
   [SEQUENCE_CHANNELS_IPC.ACTIVATE]: obj({ sequenceId: SEQUENCE_ID }, ['sequenceId']),
   [SEQUENCE_CHANNELS_IPC.PAUSE]: obj({ sequenceId: SEQUENCE_ID }, ['sequenceId']),
@@ -57,6 +60,7 @@ function registerSequenceIpc({ ipcMain, sequences, isTrustedSender, logger = con
   const handlers = {
     [SEQUENCE_CHANNELS_IPC.CREATE]: (a) => sequences.create({ leadId: a.leadId, delays: a.delays }),
     [SEQUENCE_CHANNELS_IPC.FOR_LEAD]: (a) => sequences.forLead({ leadId: a.leadId }),
+    [SEQUENCE_CHANNELS_IPC.CAN_START]: (a) => sequences.canStart({ leadId: a.leadId }),
     [SEQUENCE_CHANNELS_IPC.LIST]: () => sequences.list(),
     [SEQUENCE_CHANNELS_IPC.ACTIVATE]: (a) => sequences.activate({ sequenceId: a.sequenceId }),
     [SEQUENCE_CHANNELS_IPC.PAUSE]: (a) => sequences.pause({ sequenceId: a.sequenceId }),
