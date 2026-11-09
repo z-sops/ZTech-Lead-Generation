@@ -36,6 +36,8 @@ const TENANT_TABLES = Object.freeze([
   'job_queue',
   // Phase 3 (migration 023): the CRM.
   'li_crm_accounts', 'li_crm_notes', 'li_crm_activity',
+  // Migration 024: competitor ad watches.
+  'li_competitor_watches',
 ]);
 
 /**

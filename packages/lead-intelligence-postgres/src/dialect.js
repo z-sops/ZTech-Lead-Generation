@@ -148,6 +148,7 @@ const TYPES = Object.freeze({
   li_crm_accounts: { next_step_at: 'ts', created_at: 'ts', updated_at: 'ts', archived_at: 'ts' },
   li_crm_notes: { created_at: 'ts' },
   li_crm_activity: { at: 'ts', detail: 'json' },
+  li_competitor_watches: { created_at: 'ts', archived_at: 'ts' },
 });
 
 /** The type of one column, or undefined. */

@@ -200,10 +200,10 @@ if (!ADMIN_URL) {
       assert.ok(!result.stderr.includes(secret), 'and none in the error output either');
     }
 
-    // Migrations 001-023, in order, each exactly once.
+    // Migrations 001-024, in order, each exactly once.
     const applied = [...result.stdout.matchAll(/Applied migration (\d+)/g)].map((m) => Number(m[1]));
     assert.deepEqual(applied, MIGRATIONS.map((m) => m.version), 'every migration was applied in order');
-    assert.equal(applied.length, 23, 'there are twenty-three migrations');
+    assert.equal(applied.length, 24, 'there are twenty-four migrations');
     assert.equal(new Set(applied).size, applied.length, 'no migration was applied twice');
     assert.ok(result.stdout.includes('All PostgreSQL schema migrations applied'), 'the run reported success');
 

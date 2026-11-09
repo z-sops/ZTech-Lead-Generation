@@ -1,0 +1,15 @@
+{
+  "name": "@zunitech/meta-ads-mcp",
+  "version": "0.1.0",
+  "description": "Meta Ads connector: an MCP server that reads the ads a Facebook/Instagram advertiser is running (Meta Ad Library API, or a hosted Ad Library scraper) and returns them in one clean shape. Read-only; it stores nothing.",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/index.js",
+  "bin": { "meta-ads-mcp": "src/server.js" },
+  "engines": { "node": ">=20.19.0" },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
+    "zod": "^4.2.0"
+  },
+  "files": ["src"]
+}

@@ -23,6 +23,7 @@ class InMemoryStoreForApi {
     this.suppressions = new InMemorySuppressions(this);
     this.researchJobs = new InMemoryResearchQueue(this);
     this.crm = new InMemoryCrm(this);
+    this.competitors = new InMemoryCompetitorWatches(this);
   }
 
   async tx(fn) {
@@ -47,6 +48,7 @@ const STORAGE = {
   crmAccounts: new Map(),    // workspaceId -> Map<account_id, account>
   crmNotes: new Map(),       // workspaceId -> Map<note_id, note>
   crmActivity: new Map(),    // workspaceId -> Map<activity_id, activity>
+  competitorWatches: new Map(), // workspaceId -> Map<watch_id, watch>
 };
 
 function getWorkspaceMap(collection, workspaceId) {
@@ -441,6 +443,41 @@ class InMemoryCrm {
       by.set(a.stage, e);
     }
     return [...by.values()];
+  }
+}
+
+class InMemoryCompetitorWatches {
+  constructor(store) { this.store = store; }
+
+  map() { return getWorkspaceMap('competitorWatches', this.store.workspaceId); }
+
+  async create(rec) {
+    const map = this.map();
+    if ([...map.values()].some((w) => !w.archived_at && w.query.toLowerCase() === rec.query.toLowerCase() && w.country === rec.country)) {
+      const err = new Error('duplicate key value violates unique constraint "li_competitor_watches_unique"');
+      err.code = '23505';
+      throw err;
+    }
+    const row = { page_id: null, account_id: null, archived_at: null, ...rec };
+    map.set(row.watch_id, row);
+    return { ...row };
+  }
+
+  async get(watchId) {
+    const w = this.map().get(watchId);
+    return w ? { ...w } : null;
+  }
+
+  async list({ includeArchived = false } = {}) {
+    return [...this.map().values()].filter((w) => includeArchived || !w.archived_at)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at)).map((w) => ({ ...w }));
+  }
+
+  async archive(watchId, at) {
+    const w = this.map().get(watchId);
+    if (!w || w.archived_at) return null;
+    w.archived_at = at;
+    return { ...w };
   }
 }
 

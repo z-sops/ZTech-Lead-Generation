@@ -64,6 +64,10 @@
           <span class="icon">📇</span>
           <span>CRM &amp; Pipeline</span>
         </a>
+        <a class="nav-item" id="nav-competitors" data-view="competitors">
+          <span class="icon">📣</span>
+          <span>Competitor Ads</span>
+        </a>
         <a class="nav-item" id="nav-saved" data-view="saved">
           <span class="icon">⭐</span>
           <span>Saved Opportunities</span>
@@ -372,6 +376,32 @@
           <div id="crm-empty" class="discovery-panel rr-state" style="display: none;">No accounts yet. Add one, or open a finished research job and choose “Add to CRM”.</div>
           <div id="crm-list" class="crm-list"></div>
           <div id="crm-more" style="display: none; text-align: center; margin-top: 10px;"><button class="btn btn-secondary" id="crm-more-btn" type="button">Show more</button></div>
+        </section>
+
+        <!-- Competitor ads (Meta Ads connector) -->
+        <section id="view-competitors" class="view-panel" style="display: none;">
+          <div class="panel-header">
+            <div>
+              <h1 class="panel-title">Competitor Ads</h1>
+              <p style="color: var(--text-muted); font-size: 13px;">The Facebook and Instagram ads your competitors run, checked every week: what is new, what stopped, and what keeps running. Meta does not publish another advertiser's leads; an ad still running after 21 days is marked "likely working".</p>
+            </div>
+          </div>
+          <form id="ca-form" class="discovery-panel">
+            <h3 class="rr-section-title">Watch a competitor</h3>
+            <div class="rr-form-grid">
+              <div class="form-group"><label class="form-label" for="ca-query">Facebook page name</label><input id="ca-query" class="form-input" maxlength="120" placeholder="e.g. Bright Smile Dental" required></div>
+              <div class="form-group"><label class="form-label" for="ca-country">Country the ads run in</label>
+                <input id="ca-country" class="form-input" list="ca-countries" maxlength="2" placeholder="PK" required>
+                <datalist id="ca-countries"><option value="PK">Pakistan</option><option value="GB">United Kingdom</option><option value="US">United States</option><option value="AE">United Arab Emirates</option><option value="SA">Saudi Arabia</option><option value="CA">Canada</option><option value="AU">Australia</option><option value="DE">Germany</option></datalist></div>
+              <div class="form-group"><label class="form-label" for="ca-label">Your note (optional)</label><input id="ca-label" class="form-input" maxlength="120" placeholder="Competitor of Old Town Dental"></div>
+              <div class="form-group"><label class="form-label" for="ca-page-id">Page id (optional, more exact)</label><input id="ca-page-id" class="form-input" inputmode="numeric" maxlength="25" placeholder="from the Ad Library link"></div>
+            </div>
+            <button class="btn btn-primary" type="submit" id="ca-submit">Start watching</button>
+          </form>
+          <div id="ca-loading" class="rr-state" style="display: none;">Loading…</div>
+          <div id="ca-error" class="rr-state rr-state-error" style="display: none;"></div>
+          <div id="ca-empty" class="discovery-panel rr-state" style="display: none;">No competitors watched yet.</div>
+          <div id="ca-list" class="crm-list"></div>
         </section>
 
         <!-- 4. Saved Opportunities Screen -->

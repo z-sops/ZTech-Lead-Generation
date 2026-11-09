@@ -14,4 +14,5 @@ module.exports = {
   scoring: require('./scoring'),
   pipeline: require('./pipeline'),
   proposal: require('./proposal'),
+  adsDiff: require('./adsDiff'),
 };
