@@ -9,6 +9,7 @@
     "node": ">=20.19.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "^2.1.0",
     "@zunitech/lead-intelligence": "*",
     "pg": "^8.13.1"
   },

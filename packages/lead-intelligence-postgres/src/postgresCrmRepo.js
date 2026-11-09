@@ -116,4 +116,29 @@ class PgCrm {
   }
 }
 
-module.exports = { PgCrm, ACCOUNT_COLUMNS };
+const WATCH_COLUMNS = ['watch_id', 'label', 'query', 'page_id', 'country', 'account_id', 'created_by', 'created_at', 'archived_at'];
+
+/** Competitor ad watches (migration 024). */
+class PgCompetitorWatches {
+  constructor(store) { this.store = store; }
+
+  async create(rec) {
+    return this.store.insert('li_competitor_watches', WATCH_COLUMNS, WATCH_COLUMNS.map((c) => (rec[c] === undefined ? null : rec[c])));
+  }
+
+  async get(watchId) {
+    return this.store.one('li_competitor_watches', 'SELECT * FROM li_competitor_watches WHERE watch_id = ?', [watchId]);
+  }
+
+  async list({ includeArchived = false } = {}) {
+    return this.store.q('li_competitor_watches',
+      `SELECT * FROM li_competitor_watches ${includeArchived ? '' : 'WHERE archived_at IS NULL'} ORDER BY created_at DESC, watch_id`);
+  }
+
+  async archive(watchId, at) {
+    return this.store.one('li_competitor_watches',
+      'UPDATE li_competitor_watches SET archived_at = ? WHERE watch_id = ? AND archived_at IS NULL RETURNING *', [at, watchId]);
+  }
+}
+
+module.exports = { PgCrm, PgCompetitorWatches, ACCOUNT_COLUMNS };

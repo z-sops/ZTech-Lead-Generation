@@ -23,9 +23,12 @@
 const { intel } = require('@zunitech/lead-intelligence');
 const { createSafeFetch } = require('./safeFetch');
 const { executeNoop } = require('./noop');
+const { createAdsConnector, connectorConfig } = require('./adsConnector');
 
 const DEFAULT_USER_AGENT = 'ZTechResearchBot/1.0 (+https://zunitech.ai/bot)';
 const RESEARCH_KIND = 'business_research';
+const ADS_KIND = 'competitor_ads';
+const ADS_MAX = 200;
 
 function isProduction(env) {
   return env.NODE_ENV === 'production' || env.ZTECH_ENV === 'production';
@@ -76,9 +79,42 @@ function createResearchExecutor(options = {}) {
   // over a city may take a while to compute.
   const apiFetcher = options.fetcher || createSafeFetch({ userAgent: cfg.userAgent, allowPrivate: cfg.allowPrivate, hostMap: cfg.hostMap, timeoutMs: 40000, maxBytes: 8388608 });
   const now = options.now || (() => new Date());
+  const adsCfg = options.adsConnector ? null : connectorConfig(options.env || process.env);
+  const ads = options.adsConnector || (adsCfg ? createAdsConnector(adsCfg) : null);
+
+  /** One competitor-ads check: the connector's ads_search, kept as the job result. */
+  async function checkAds(payload) {
+    if (!ads) {
+      const e = new Error('connector_not_configured: the Meta Ads connector is not set up on this worker (ZTECH_ADS_MCP_URL)');
+      e.code = 'connector_not_configured';
+      throw e;
+    }
+    const w = payload.watch || {};
+    const out = await ads.search({
+      query: w.query, ...(w.page_id ? { page_id: w.page_id } : {}), country: w.country, active: 'all', max_ads: ADS_MAX,
+    }).catch((err) => {
+      const e = new Error(`${err.code || 'connector_error'}: ${err.message}`);
+      e.code = err.code;
+      throw e;
+    });
+    return {
+      schema: intel.adsDiff.RESULT_SCHEMA,
+      watch_id: payload.watch_id,
+      query: out.query,
+      page_id: out.page_id || null,
+      country: out.country,
+      source: out.source,
+      fetched_at: out.fetched_at || now().toISOString(),
+      ads: out.ads.slice(0, ADS_MAX),
+      notes: Array.isArray(out.notes) ? out.notes.slice(0, 5) : [],
+    };
+  }
 
   return async function executeJob(job) {
     const payload = job.payload || {};
+    if (job.jobType === 'research' && payload.kind === ADS_KIND && (!job.jobClass || job.jobClass === 'noop')) {
+      return checkAds(payload);
+    }
     if (job.jobType !== 'research' || payload.kind !== RESEARCH_KIND) return executeNoop(job);
     if (job.jobClass && job.jobClass !== 'noop') return executeNoop(job); // refused there, loudly
 
@@ -112,4 +148,4 @@ function createResearchExecutor(options = {}) {
   };
 }
 
-module.exports = { createResearchExecutor, researchConfig, RESEARCH_KIND, DEFAULT_USER_AGENT };
+module.exports = { createResearchExecutor, researchConfig, RESEARCH_KIND, ADS_KIND, DEFAULT_USER_AGENT };

@@ -12,6 +12,7 @@ const { executeResearchDiscovery, prepareOutreachDraft } = require('./researchEn
 const { intel } = require('@zunitech/lead-intelligence');
 const { llmConfigFromEnv } = require('./llm');
 const { CrmService, CrmError, STAGES } = require('./crm');
+const { CompetitorService, CompetitorError } = require('./competitors');
 
 const SESSION_COOKIE = 'ztech_session';
 const CSRF_HEADER = 'x-csrf-token';
@@ -106,6 +107,8 @@ class ApiServer {
     this.draftThrottle = new Throttle({ limit: 120, windowMs: 60 * 60 * 1000 });
     this.llm = llm === undefined ? llmConfigFromEnv(process.env) : llm;
     this.crm = new CrmService();
+    this.competitors = new CompetitorService();
+    this.adsCheckThrottle = new Throttle({ limit: 20, windowMs: 60 * 60 * 1000 });
     this.activeCandidatesByWorkspace = new Map();
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => this.fail(res, err));
@@ -192,6 +195,10 @@ class ApiServer {
     if (res.headersSent) { res.end(); return; }
     if (err instanceof ServiceError) {
       this.json(res, err.status, { error: err.code, message: err.message });
+      return;
+    }
+    if (err instanceof CompetitorError) {
+      this.json(res, err.status, { error: err.code, message: err.message, ...(err.field ? { field: err.field } : {}) });
       return;
     }
     if (err instanceof CrmError) {
@@ -288,6 +295,17 @@ class ApiServer {
     const researchReq = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research$/i);
     if (researchReq && method === 'POST') return this.createResearch(req, res, researchReq[1]);
     if (researchReq && method === 'GET') return this.listResearch(req, res, researchReq[1]);
+
+    // Competitor ads (Meta Ads connector).
+    const compCheck = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/competitors\/([0-9a-f-]+)\/check$/i);
+    if (compCheck && method === 'POST') return this.competitorCheck(req, res, compCheck[1], compCheck[2]);
+    const compArchive = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/competitors\/([0-9a-f-]+)\/archive$/i);
+    if (compArchive && method === 'POST') return this.competitorArchive(req, res, compArchive[1], compArchive[2]);
+    const compOne = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/competitors\/([0-9a-f-]+)$/i);
+    if (compOne && method === 'GET') return this.competitorDetail(req, res, compOne[1], compOne[2]);
+    const comps = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/competitors$/i);
+    if (comps && method === 'GET') return this.competitorList(req, res, comps[1]);
+    if (comps && method === 'POST') return this.competitorCreate(req, res, comps[1]);
 
     // Phase 3: the CRM.
     const crmImport = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/crm\/accounts\/import$/i);
@@ -725,6 +743,69 @@ class ApiServer {
     }
 
     this.json(res, 200, { job });
+  }
+
+  /* --------------------------- Competitor ads ---------------------------- */
+
+  async competitorList(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    const membership = await this.service.authorize(session, workspaceId, 'workspace.read');
+    const store = await this.storeFor(session, workspaceId);
+    const canWrite = hasPermission(membership.role, 'workspace.write');
+    // A due weekly check is queued only for someone who may queue work.
+    const watches = await this.competitors.list(store, { autoSchedule: canWrite });
+    this.json(res, 200, { watches, can_write: canWrite });
+  }
+
+  async competitorCreate(req, res, workspaceId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+    const body = await this.body(req);
+    const store = await this.storeFor(session, workspaceId);
+    const watch = await this.competitors.create(store, { userId: session.user_id }, body);
+    this.json(res, 201, { watch });
+  }
+
+  async competitorDetail(req, res, workspaceId, watchId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    await this.service.authorize(session, workspaceId, 'workspace.read');
+    const store = await this.storeFor(session, workspaceId);
+    const detail = await this.competitors.detail(store, watchId);
+    if (!detail) {
+      this.json(res, 404, { error: 'not_found', message: 'no such watch' });
+      return;
+    }
+    this.json(res, 200, detail);
+  }
+
+  async competitorCheck(req, res, workspaceId, watchId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+    // Paid scraper credits: a bounded number of manual checks per workspace.
+    if (this.adsCheckThrottle.blocked(workspaceId)) {
+      this.json(res, 429, { error: 'too_many_requests', message: 'too many manual checks this hour; the weekly check still runs' });
+      return;
+    }
+    this.adsCheckThrottle.fail(workspaceId);
+    const store = await this.storeFor(session, workspaceId);
+    const out = await this.competitors.checkNow(store, watchId);
+    this.json(res, 202, out);
+  }
+
+  async competitorArchive(req, res, workspaceId, watchId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+    const store = await this.storeFor(session, workspaceId);
+    const watch = await this.competitors.archive(store, watchId);
+    this.json(res, 200, { watch });
   }
 
   /* ------------------------------- Phase 3: CRM ------------------------------ */

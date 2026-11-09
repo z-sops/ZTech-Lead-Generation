@@ -34,7 +34,7 @@ const REPOSITORY_NAMES = Object.freeze({
   approvals: true, activity: true, sends: true, enrichmentJobs: true, enrichmentObservations: true,
   oiAssociations: true, oiRefreshRequests: true, suppressions: true, consents: true, provenance: true,
   trustEvents: true, recipientRefs: true, mailboxes: true, mailboxSent: true, marketRules: true,
-  replyReviews: true, sequences: true, replyRoutes: true, researchJobs: true, crm: true,
+  replyReviews: true, sequences: true, replyRoutes: true, researchJobs: true, crm: true, competitors: true,
 });
 
 const ACTIVE_SQL = "('requested','preflight','started','polling','pending')";
@@ -156,6 +156,7 @@ class PostgresStore {
 
     const crm = require('./postgresCrmRepo');
     this.crm = new crm.PgCrm(this);
+    this.competitors = new crm.PgCompetitorWatches(this);
 
     // Every repository call runs INSIDE a transaction that carries the
     // workspace context. Without that, the row-level security policies would

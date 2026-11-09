@@ -145,6 +145,16 @@ const DOM = {
   crmList: document.getElementById('crm-list'),
   crmMore: document.getElementById('crm-more'),
   crmMoreBtn: document.getElementById('crm-more-btn'),
+  caForm: document.getElementById('ca-form'),
+  caQuery: document.getElementById('ca-query'),
+  caCountry: document.getElementById('ca-country'),
+  caLabel: document.getElementById('ca-label'),
+  caPageId: document.getElementById('ca-page-id'),
+  caSubmit: document.getElementById('ca-submit'),
+  caLoading: document.getElementById('ca-loading'),
+  caError: document.getElementById('ca-error'),
+  caEmpty: document.getElementById('ca-empty'),
+  caList: document.getElementById('ca-list'),
   researchJobForm: document.getElementById('research-job-form'),
   rjLoading: document.getElementById('rj-loading'),
   rjOffline: document.getElementById('rj-offline'),
@@ -309,6 +319,10 @@ function navigateTo(viewName) {
 
   if (viewName === 'crm') {
     loadCrm();
+  }
+
+  if (viewName === 'competitors') {
+    loadCompetitors();
   }
 
   if (viewName === 'research-jobs') {
@@ -1455,6 +1469,164 @@ function setupCrmListeners() {
   DOM.crmMoreBtn.addEventListener('click', () => loadCrm({ append: true }));
 }
 
+/* ---------------------- Competitor ads (Meta connector) -------------------- */
+
+function caBase() {
+  return `/api/workspaces/${state.currentWorkspace.workspace_id}/competitors`;
+}
+
+function daysAgo(iso) {
+  if (!iso) return 'never';
+  const d = Math.floor((Date.now() - Date.parse(iso)) / 86400000);
+  return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`;
+}
+
+async function loadCompetitors() {
+  if (!state.currentWorkspace) return;
+  DOM.caLoading.style.display = 'block';
+  DOM.caError.style.display = 'none';
+  try {
+    const res = await api(caBase());
+    DOM.caLoading.style.display = 'none';
+    DOM.caForm.style.display = res.can_write ? '' : 'none';
+    renderCompetitors(res.watches || [], res.can_write);
+  } catch (err) {
+    DOM.caLoading.style.display = 'none';
+    DOM.caError.textContent = `Competitor ads could not be loaded: ${err.message}`;
+    DOM.caError.style.display = 'block';
+  }
+}
+
+function renderCompetitors(watches, canWrite) {
+  DOM.caList.innerHTML = '';
+  DOM.caEmpty.style.display = watches.length ? 'none' : 'block';
+  for (const w of watches) {
+    const s = w.summary;
+    const row = document.createElement('article');
+    row.className = 'crm-row ca-row';
+    const counts = s ? s.counts : null;
+    row.innerHTML = `
+      <div class="crm-row-main">
+        <button type="button" class="crm-name-btn">${escapeHtml(w.watch.label)}</button>
+        <div class="rr-meta">${escapeHtml(w.watch.query)} · ${escapeHtml(w.watch.country)} · last checked ${escapeHtml(s ? daysAgo(s.checked_at) : 'not yet')}${w.checking ? ' · checking now…' : ''}</div>
+        ${w.last_error ? `<div class="rr-caveat">Last check failed: ${escapeHtml(w.last_error)}</div>` : ''}
+      </div>
+      <div class="ca-counts">${counts ? `
+        <span title="Ads running now"><strong>${String(counts.active)}</strong> running</span>
+        ${counts.new_since_last !== null ? `<span title="New since the previous check"><strong>${String(counts.new_since_last)}</strong> new</span>` : ''}
+        ${counts.stopped_since_last !== null ? `<span title="Stopped since the previous check"><strong>${String(counts.stopped_since_last)}</strong> stopped</span>` : ''}
+        <span title="Still running after 21 days"><strong>${String(counts.likely_working)}</strong> likely working</span>` : '<span class="rr-meta">Waiting for the first check</span>'}
+      </div>
+      <div class="rr-actions" style="margin-top:0; gap:6px;">
+        ${canWrite ? '<button class="btn btn-secondary ca-check-btn" type="button">Check now</button>' : ''}
+      </div>`;
+    row.querySelector('.crm-name-btn').addEventListener('click', () => openCompetitor(w.watch.watch_id));
+    const check = row.querySelector('.ca-check-btn');
+    if (check) check.addEventListener('click', async () => {
+      try {
+        const r = await api(`${caBase()}/${w.watch.watch_id}/check`, { method: 'POST', body: {} });
+        toast(r.deduplicated ? 'A check is already queued for this hour' : 'Check queued; results appear when the worker finishes', 'success');
+        loadCompetitors();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+    DOM.caList.appendChild(row);
+  }
+}
+
+async function openCompetitor(watchId) {
+  DOM.modalTitle.textContent = 'Competitor ads';
+  DOM.modalSubtitle.textContent = '';
+  DOM.modalBody.innerHTML = '<div class="rr-state">Loading…</div>';
+  DOM.modalContainer.style.display = 'flex';
+  let d;
+  try {
+    d = await api(`${caBase()}/${watchId}`);
+  } catch (err) {
+    DOM.modalBody.innerHTML = `<div class="rr-state rr-state-error">${escapeHtml(err.message)}</div>`;
+    return;
+  }
+  DOM.modalTitle.textContent = d.watch.label;
+  DOM.modalSubtitle.textContent = `${d.watch.query} · ${d.watch.country}${d.source ? ` · source: ${d.source === 'meta_api' ? 'Meta Ad Library API' : 'Ad Library scraper'}` : ''}`;
+  const r = d.report;
+  if (!r) {
+    DOM.modalBody.innerHTML = `<div class="rr-state">${d.checking ? 'The first check is running; come back in a few minutes.' : escapeHtml(d.last_error ? `The check failed: ${d.last_error}` : 'No check has finished yet.')}</div>`;
+    return;
+  }
+  const max = Math.max(1, ...d.history.map((h) => h.active));
+  const tally = (obj) => Object.entries(obj).map(([k, v]) => `<li><span>${escapeHtml(k)}</span><strong>${String(v)}</strong></li>`).join('') || '<li class="rr-meta">—</li>';
+  DOM.modalBody.innerHTML = `
+    <div class="rr-stats">
+      <div class="rr-stat"><div class="rr-stat-value">${String(r.counts.active)}</div><div class="rr-stat-label">Running now</div></div>
+      <div class="rr-stat"><div class="rr-stat-value">${r.counts.new_since_last === null ? '—' : String(r.counts.new_since_last)}</div><div class="rr-stat-label">New since last check</div></div>
+      <div class="rr-stat"><div class="rr-stat-value">${r.counts.stopped_since_last === null ? '—' : String(r.counts.stopped_since_last)}</div><div class="rr-stat-label">Stopped since last check</div></div>
+      <div class="rr-stat"><div class="rr-stat-value">${String(r.counts.likely_working)}</div><div class="rr-stat-label">Likely working (21+ days)</div></div>
+    </div>
+    <div class="rr-meta">Checked ${escapeHtml(formatTimestamp(r.checked_at))}${r.previous_checked_at ? `, compared with ${escapeHtml(formatTimestamp(r.previous_checked_at))}` : ' (first check)'}.</div>
+    ${d.notes.map((n) => `<div class="rr-caveat">${escapeHtml(n)}</div>`).join('')}
+    <h4 class="rr-section-title" style="margin-top:14px;">Ads running, check by check</h4>
+    <div class="rr-chart" role="img" aria-label="Running ads per check: ${d.history.map((h) => `${formatTimestamp(h.checked_at)} ${h.active}`).join(', ')}">
+      ${d.history.map((h) => `<div class="rr-bar-row"><span class="rr-bar-label">${escapeHtml(new Date(h.checked_at).toLocaleDateString())}</span><span class="rr-bar-track"><span class="rr-bar" style="width:${Math.max(4, Math.round((h.active / max) * 100))}%"></span></span><span class="rr-bar-value">${String(h.active)}</span></div>`).join('')}
+    </div>
+    <div class="ca-tallies">
+      <div><h4 class="rr-section-title">Buttons (running ads)</h4><ul class="ca-tally">${tally(r.by_cta)}</ul></div>
+      <div><h4 class="rr-section-title">Platforms</h4><ul class="ca-tally">${tally(r.by_platform)}</ul></div>
+      <div><h4 class="rr-section-title">Formats</h4><ul class="ca-tally">${tally(r.by_format)}</ul></div>
+    </div>
+    <h4 class="rr-section-title" style="margin-top:14px;">Ads</h4>
+    <ul class="ca-ads">${r.ads.map((a) => `
+      <li class="ca-ad${a.is_active ? '' : ' stopped'}">
+        <div class="ca-ad-head">
+          ${a.is_new ? '<span class="crm-stage crm-stage-meeting">New</span>' : ''}
+          ${a.likely_working ? '<span class="crm-stage crm-stage-won">Likely working</span>' : ''}
+          ${a.is_active ? '' : '<span class="crm-stage">Stopped</span>'}
+          <span class="rr-meta">${a.running_days === null ? '' : `${String(a.running_days)} days`}${a.cta ? ` · ${escapeHtml(a.cta)}` : ''}${a.platforms && a.platforms.length ? ` · ${escapeHtml(a.platforms.join(', '))}` : ''}${a.display_format ? ` · ${escapeHtml(a.display_format.toLowerCase())}` : ''}</span>
+        </div>
+        <div class="ca-ad-body">${escapeHtml(a.body || a.title || '(no text)')}</div>
+        ${a.snapshot_url ? `<a class="rr-meta" href="${escapeHtml(a.snapshot_url)}" target="_blank" rel="noopener noreferrer nofollow">Open in Meta Ad Library</a>` : ''}
+      </li>`).join('')}</ul>
+    <p class="rr-meta" style="margin-top:10px;">${escapeHtml(r.rule)}</p>
+    ${d.watch.archived_at ? '' : '<button class="btn btn-secondary" type="button" id="ca-archive">Stop watching</button>'}
+  `;
+  const archive = document.getElementById('ca-archive');
+  if (archive) archive.addEventListener('click', async () => {
+    try {
+      await api(`${caBase()}/${d.watch.watch_id}/archive`, { method: 'POST', body: {} });
+      DOM.modalContainer.style.display = 'none';
+      toast('Stopped watching', 'success');
+      loadCompetitors();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+}
+
+function setupCompetitorListeners() {
+  DOM.caForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    DOM.caSubmit.disabled = true;
+    try {
+      await api(caBase(), {
+        method: 'POST',
+        body: {
+          query: DOM.caQuery.value.trim(),
+          country: DOM.caCountry.value.trim().toUpperCase(),
+          label: DOM.caLabel.value.trim() || undefined,
+          page_id: DOM.caPageId.value.trim() || undefined,
+        },
+      });
+      DOM.caForm.reset();
+      toast('Watching. The first check is queued.', 'success');
+      loadCompetitors();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      DOM.caSubmit.disabled = false;
+    }
+  });
+}
+
 /* ------------------ Outreach Preparation & Gate Modal ------------------- */
 
 async function openOutreachPreparationModal(opp) {
@@ -1708,6 +1880,7 @@ function setupEventListeners() {
   });
   setupResearchResultsListeners();
   setupCrmListeners();
+  setupCompetitorListeners();
 
   // Research Jobs refresh
   DOM.rjRefreshBtn.addEventListener('click', () => loadResearchJobs());
