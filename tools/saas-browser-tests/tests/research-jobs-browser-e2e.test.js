@@ -143,6 +143,15 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
       storageMode: 'postgres',
       allowDemoAutologin: false,
       logger: { warn() {}, error() {}, log() {} },
+      // Google Places is played by a fake: nothing reaches Google or costs money.
+      places: {
+        apiKey: 'e2e-places-key',
+        request: async () => ({ ok: true, status: 200, body: JSON.stringify({ places: [{
+          id: 'ChIJe2e', displayName: { text: 'Riverside Family Dental' }, rating: 4.6, userRatingCount: 212, googleMapsUri: 'https://maps.google.com/?cid=1',
+          reviews: [{ rating: 5, text: { text: 'Lovely staff, quick appointment.' }, relativePublishTimeDescription: '2 weeks ago',
+            authorAttribution: { displayName: 'A. Reviewer', uri: 'https://www.google.com/maps/contrib/1' } }],
+        }] }) }),
+      },
       storeFor: async (session, workspaceId) => new PostgresStore({
         pool: db.pool,
         controlPool: db.controlPool,
@@ -182,6 +191,11 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
         ZTECH_INSPECT_HOST_MAP: fixtures.hostMap,
         ZTECH_NOMINATIM_URL: fixtures.nominatimUrl,
         ZTECH_OVERPASS_URL: fixtures.overpassUrl,
+        COMPANIES_HOUSE_API_KEY: 'test-ch-key-0123456789',
+        ZTECH_COMPANIES_HOUSE_URL: fixtures.companiesHouseUrl,
+        ZTECH_IG_ACCESS_TOKEN: 'test-ig-token-0123456789',
+        ZTECH_IG_USER_ID: '1789',
+        ZTECH_GRAPH_URL: fixtures.graphUrl,
       } }),
     });
     return w;
@@ -288,6 +302,24 @@ test('ZTech Phase 1 Durable Research Jobs Browser E2E', async (t) => {
       assert.ok(await page.locator('.rr-card').count() < shown, 'the service filter narrows the list');
       await page.selectOption('#rr-filter-service', '');
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_05_results.png'), fullPage: true });
+
+      // Contacts, owners, Instagram and (on demand) Google reviews.
+      const oldTown = page.locator('.rr-card').first();
+      assert.match(await oldTown.locator('.rr-contacts').textContent(), /KHAN, Sarah/);
+      assert.ok(await oldTown.locator('.rr-contacts a[href="https://find-and-update.company-information.service.gov.uk/company/01234567"]').count() === 1);
+      await page.uncheck('#rr-filter-hide-zero'); // Riverside has no need in the chosen services
+      const riverside = page.locator('.rr-card', { hasText: 'Riverside Family Dental' });
+      const rc = await riverside.locator('.rr-contacts').textContent();
+      assert.match(rc, /reception@good-dental\.ztech-fixture\.com/);
+      assert.match(rc, /sarah\.khan@good-dental\.ztech-fixture\.com/);
+      assert.match(rc, /PECR/);
+      assert.match(rc, /850 followers/);
+      await riverside.locator('.rr-google-btn').click();
+      await page.waitForFunction(() => /★ 4\.6 \(212 reviews\)/.test(document.body.textContent), null, { timeout: 8000 });
+      assert.match(await page.locator('.rr-card', { hasText: 'Riverside Family Dental' }).locator('.rr-contacts').textContent(), /A\. Reviewer[\s\S]*Lovely staff[\s\S]*Source: Google Maps/);
+      await page.locator('.rr-card', { hasText: 'Riverside Family Dental' }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'rj_05b_contacts.png'), fullPage: false });
+      await page.check('#rr-filter-hide-zero');
 
       // A proposal draft: evidence-backed, editable, never sent.
       await page.locator('.rr-draft-btn').first().click();

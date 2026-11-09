@@ -11,6 +11,7 @@ const { InMemoryStoreForApi } = require('./inMemoryStore');
 const { executeResearchDiscovery, prepareOutreachDraft } = require('./researchEngine');
 const { intel } = require('@zunitech/lead-intelligence');
 const { llmConfigFromEnv } = require('./llm');
+const { placesConfigFromEnv, lookupPlace } = require('./googlePlaces');
 const { CrmService, CrmError, STAGES } = require('./crm');
 const { CompetitorService, CompetitorError } = require('./competitors');
 
@@ -62,6 +63,7 @@ class ApiServer {
     allowDemoAutologin = false,
     demoEmail = 'alice@ztech.test',
     llm = undefined,
+    places = undefined,
   } = {}) {
     const isProduction = process.env.NODE_ENV === 'production' || process.env.ZTECH_ENV === 'production';
     const requestedMode = mode || process.env.ZTECH_STORAGE_MODE;
@@ -106,6 +108,9 @@ class ApiServer {
     this.aiDraftThrottle = new Throttle({ limit: 30, windowMs: 60 * 60 * 1000 });
     this.draftThrottle = new Throttle({ limit: 120, windowMs: 60 * 60 * 1000 });
     this.llm = llm === undefined ? llmConfigFromEnv(process.env) : llm;
+    // Google rating & reviews: a paid, live lookup per press (never stored).
+    this.places = places === undefined ? placesConfigFromEnv(process.env) : places;
+    this.placesThrottle = new Throttle({ limit: 60, windowMs: 60 * 60 * 1000 });
     this.crm = new CrmService();
     this.competitors = new CompetitorService();
     this.adsCheckThrottle = new Throttle({ limit: 20, windowMs: 60 * 60 * 1000 });
@@ -324,6 +329,9 @@ class ApiServer {
 
     const researchJobResult = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/jobs\/([a-zA-Z0-9_-]+)\/result$/i);
     if (researchJobResult && method === 'GET') return this.getResearchJobResult(req, res, researchJobResult[1], researchJobResult[2]);
+
+    const researchGoogle = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/jobs\/([a-zA-Z0-9_-]+)\/businesses\/([a-zA-Z0-9_-]+)\/google$/i);
+    if (researchGoogle && method === 'POST') return this.googleReviews(req, res, researchGoogle[1], researchGoogle[2], researchGoogle[3]);
 
     const researchJobProposal = pathName.match(/^\/api\/workspaces\/([0-9a-f-]+)\/research\/jobs\/([a-zA-Z0-9_-]+)\/proposals$/i);
     if (researchJobProposal && method === 'POST') return this.createProposalDraft(req, res, researchJobProposal[1], researchJobProposal[2]);
@@ -910,6 +918,7 @@ class ApiServer {
     this.json(res, 200, {
       ...intel.criteria.criteriaOptions(),
       ai_drafts_available: Boolean(this.llm),
+      google_reviews_available: Boolean(this.places),
       sources: [{ name: 'OpenStreetMap', attribution: intel.discovery.ATTRIBUTION }],
     });
   }
@@ -990,6 +999,44 @@ class ApiServer {
       }
       throw err;
     }
+  }
+
+  /**
+   * Google rating and reviews for one business of a research result, looked
+   * up live (Google's terms forbid storing them). POST + CSRF: each press
+   * costs money, so a cross-site link must not be able to trigger it.
+   */
+  async googleReviews(req, res, workspaceId, jobId, businessId) {
+    const session = await this.requireSession(req, res);
+    if (!session) return;
+    if (!await this.requireCsrf(req, res, session)) return;
+    await this.service.authorize(session, workspaceId, 'workspace.write');
+    if (!this.places) {
+      this.json(res, 409, { error: 'google_not_configured', message: 'Google reviews are not set up on this server (GOOGLE_PLACES_API_KEY)' });
+      return;
+    }
+    if (this.placesThrottle.blocked(workspaceId)) {
+      this.json(res, 429, { error: 'too_many_requests', message: 'the hourly limit for Google lookups is reached; try again later' });
+      return;
+    }
+    const row = await this.loadResearchResult(session, workspaceId, jobId);
+    const result = row && row.result && row.result.schema === intel.pipeline.RESULT_SCHEMA ? row.result : null;
+    const business = result && Array.isArray(result.businesses) ? result.businesses.find((b) => b.business_id === businessId) : null;
+    if (!business) {
+      this.json(res, 404, { error: 'not_found', message: 'business not found in this research result' });
+      return;
+    }
+    this.placesThrottle.fail(workspaceId);
+    const google = await lookupPlace({ request: this.places.request, apiKey: this.places.apiKey, business });
+    await this.service.audit({
+      user_id: session.user_id,
+      session_id: session.session_id,
+      workspace_id: workspaceId,
+      action: 'research.google_lookup',
+      outcome: 'allow',
+      detail: { job_id: jobId, business_id: businessId, status: google.status },
+    });
+    this.json(res, 200, { business_id: businessId, google });
   }
 
   async cancelResearchJob(req, res, workspaceId, jobId) {

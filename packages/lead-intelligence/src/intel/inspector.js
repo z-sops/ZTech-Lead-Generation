@@ -23,6 +23,7 @@ const { normalizeDomain } = require('../core/urls');
 const { readHtml } = require('./html');
 const { parseRobots, isAllowed } = require('./robots');
 const { CHECKS, SLOW_MS, MIN_TEXT_FOR_CONTENT_CHECKS, contentChecks, excerpt } = require('./checks');
+const { contactsFromPage, mergeContacts, contactPageUrl } = require('./contacts');
 
 function stableId(prefix, ...parts) {
   return `${prefix}_${crypto.createHash('sha256').update(parts.join('\u0001')).digest('hex').slice(0, 16)}`;
@@ -101,8 +102,9 @@ async function inspectWebsite({ business, industryBooking, fetchPage, now = () =
     fetches += 1;
     return fetchPage(url, { signal });
   };
+  let contacts = null;
   const done = (status) => ({
-    status, evidence: rec.evidence, findings: rec.findings, pages_fetched: fetches, notes: rec.notes,
+    status, evidence: rec.evidence, findings: rec.findings, pages_fetched: fetches, notes: rec.notes, contacts,
   });
 
   // 1. No website in the listing: that absence is the observation.
@@ -248,7 +250,20 @@ async function inspectWebsite({ business, industryBooking, fetchPage, now = () =
     }
   }
 
-  // 8. Sitemap: declared in robots.txt, or at the conventional address.
+  // 8. Contact details the business publishes: the home page, and one
+  //    contact page on the same site if robots.txt allows it.
+  if (doc && doc.looksLikeHtml) {
+    const home = contactsFromPage(doc, finalUrl);
+    let contactPage = null;
+    const contactUrl = contactPageUrl(doc, finalUrl);
+    if (contactUrl && isAllowed(robots, `${new URL(contactUrl).pathname}${new URL(contactUrl).search}`).allowed) {
+      const cp = await get(contactUrl);
+      if (cp.ok && cp.status < 400 && /html/i.test(cp.contentType || '')) contactPage = contactsFromPage(readHtml(cp.body || ''), cp.finalUrl || contactUrl);
+    }
+    contacts = mergeContacts(home, contactPage);
+  }
+
+  // 9. Sitemap: declared in robots.txt, or at the conventional address.
   if (robots.sitemaps.length === 0 && isAllowed(robots, '/sitemap.xml').allowed) {
     const sitemapUrl = `${originOf(finalUrl)}/sitemap.xml`;
     const sm = await get(sitemapUrl);
@@ -261,4 +276,4 @@ async function inspectWebsite({ business, industryBooking, fetchPage, now = () =
   return done('inspected');
 }
 
-module.exports = { inspectWebsite, stableId };
+module.exports = { inspectWebsite, stableId, Recorder };

@@ -70,7 +70,7 @@ test('Phase 2 research API', async (t) => {
   const realResult = await exec({ jobType: 'research', jobClass: 'noop', payload: { kind: 'business_research', criteria: CRITERIA } });
   await fx.close();
 
-  const server = new ApiServer({ logger: { warn() {}, error() {}, log() {}, info() {} }, llm: null });
+  const server = new ApiServer({ logger: { warn() {}, error() {}, log() {}, info() {} }, llm: null, places: null });
   const addr = await server.listen(0);
   const base = `http://127.0.0.1:${addr.port}`;
   t.after(() => server.close());
@@ -86,6 +86,7 @@ test('Phase 2 research API', async (t) => {
     assert.ok(r.body.industries.some((i) => i.id === 'dentist'));
     assert.ok(r.body.offer_categories.some((o) => o.id === 'seo'));
     assert.equal(r.body.ai_drafts_available, false);
+    assert.equal(r.body.google_reviews_available, false);
     assert.match(r.body.sources[0].attribution, /OpenStreetMap contributors/);
   });
 
@@ -227,6 +228,67 @@ test('Phase 2 research API', async (t) => {
       assert.ok(!calls[0].body.includes('test-key'));
     } finally {
       await aiServer.close();
+    }
+  });
+  await t.test('Google rating & reviews: live lookup, attributed, never stored; off without a key', async () => {
+    const off = await a.client.post(`${jobsA}/${jobId}/businesses/osm_node_1001/google`, {});
+    assert.equal(off.status, 409);
+    assert.equal(off.body.error, 'google_not_configured');
+
+    const calls = [];
+    const replies = [
+      { places: [{
+        id: 'ChIJtest', displayName: { text: 'Riverside Family Dental' }, formattedAddress: '1 River St, Leeds', rating: 4.6, userRatingCount: 212,
+        googleMapsUri: 'https://maps.google.com/?cid=1',
+        reviews: [{ rating: 5, text: { text: 'Lovely staff.' }, relativePublishTimeDescription: '2 weeks ago', publishTime: '2026-10-26T10:00:00Z',
+          authorAttribution: { displayName: 'A. Reviewer', uri: 'https://www.google.com/maps/contrib/1', photoUri: 'javascript:alert(1)' }, googleMapsUri: 'https://maps.google.com/r/1' }],
+      }] },
+      { places: [{ id: 'ChIJother', displayName: { text: 'Totally Unrelated Pizza' } }] },
+    ];
+    const gServer = new ApiServer({
+      logger: { warn() {}, error() {}, log() {}, info() {} },
+      llm: null,
+      places: { apiKey: 'places-test-key', request: async (req) => { calls.push(req); return { ok: true, status: 200, body: JSON.stringify(replies.shift() || {}) }; } },
+    });
+    const gAddr = await gServer.listen(0);
+    try {
+      const gBase = `http://127.0.0.1:${gAddr.port}`;
+      const c = await register(gBase, 'google');
+      const d = await register(gBase, 'google-other');
+      const r = await c.client.post(`/api/workspaces/${c.ws}/research/jobs`, { idempotency_key: 'g-1', payload: { kind: 'business_research', criteria: CRITERIA } });
+      completeJob(c.ws, r.body.job_id, realResult);
+      const url = `/api/workspaces/${c.ws}/research/jobs/${r.body.job_id}/businesses/osm_node_1001/google`;
+
+      const g = await c.client.post(url, {});
+      assert.equal(g.status, 200);
+      assert.equal(g.body.google.status, 'found');
+      assert.equal(g.body.google.rating, 4.6);
+      assert.equal(g.body.google.rating_count, 212);
+      assert.equal(g.body.google.attribution, 'Google Maps');
+      assert.equal(g.body.google.reviews[0].author, 'A. Reviewer');
+      assert.equal(g.body.google.reviews[0].author_url, 'https://www.google.com/maps/contrib/1');
+      assert.equal(g.body.google.reviews[0].author_photo, null, 'only https links are passed on');
+      assert.equal(calls[0].url, 'https://places.googleapis.com/v1/places:searchText');
+      assert.equal(calls[0].headers['X-Goog-Api-Key'], 'places-test-key');
+      assert.match(calls[0].headers['X-Goog-FieldMask'], /places\.reviews/);
+      assert.ok(!calls[0].body.includes('places-test-key'));
+      assert.match(JSON.parse(calls[0].body).textQuery, /^Riverside Family Dental/);
+      // Nothing from Google is written to the stored result.
+      assert.ok(!JSON.stringify(STORAGE.researchJobs.get(c.ws).get(r.body.job_id)).includes('Lovely staff'));
+
+      // A different business at the top of Google's results is not shown as this one.
+      const other = await c.client.post(url, {});
+      assert.equal(other.body.google.status, 'not_found');
+
+      // Unknown business, other workspace, no CSRF.
+      assert.equal((await c.client.post(url.replace('osm_node_1001', 'osm_node_999999'), {})).status, 404);
+      assert.equal((await d.client.post(url, {})).status, 403);
+      const noCsrf = new Client(gBase);
+      noCsrf.cookie = c.client.cookie;
+      assert.equal((await noCsrf.post(url, {})).status, 403);
+      assert.equal(calls.length, 2);
+    } finally {
+      await gServer.close();
     }
   });
 });

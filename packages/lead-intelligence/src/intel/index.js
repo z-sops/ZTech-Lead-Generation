@@ -15,4 +15,6 @@ module.exports = {
   pipeline: require('./pipeline'),
   proposal: require('./proposal'),
   adsDiff: require('./adsDiff'),
+  contacts: require('./contacts'),
+  enrich: require('./enrich'),
 };

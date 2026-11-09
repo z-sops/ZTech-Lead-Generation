@@ -30,7 +30,8 @@
     "amenity": "dentist",
     "website": "http://poor-dental.ztech-fixture.com",
     "phone": "+44 113 496 0001",
-    "addr:city": "Leeds"
+    "addr:city": "Leeds",
+    "addr:postcode": "LS1 4AP"
    },
    "lat": 53.8,
    "lon": -1.55
@@ -104,7 +105,10 @@
     "name": "Beeston Dental Practice",
     "amenity": "dentist",
     "phone": "+44 113 496 0007",
-    "addr:city": "Leeds"
+    "addr:city": "Leeds",
+    "contact:instagram": "beestondental",
+    "email": "info@beestondental.example.co.uk",
+    "addr:postcode": "LS11 8AA"
    },
    "lat": 53.8,
    "lon": -1.55

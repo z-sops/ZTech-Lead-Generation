@@ -783,7 +783,7 @@ body {
 .rr-rank { font-size: 11px; color: var(--text-muted); }
 .rr-name { font-size: 16px; font-weight: 700; margin: 2px 0 4px; }
 .rr-meta { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
-.rr-meta a, .rr-evidence-meta a { color: var(--accent-info); }
+.rr-meta a, .rr-evidence-meta a, .rr-contacts a { color: var(--accent-info); }
 .rr-score { min-width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 700; background: var(--accent-primary-glow); border: 1px solid var(--border-accent); font-variant-numeric: tabular-nums; }
 .rr-why { margin: 10px 0; font-size: 12px; }
 .rr-why summary { cursor: pointer; color: var(--text-muted); }
@@ -806,6 +806,16 @@ body {
 .rr-evidence-text { font-size: 12px; overflow-wrap: anywhere; }
 .rr-evidence-meta { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .rr-other, .rr-notes { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+.rr-contacts { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 13px; display: grid; gap: 6px; }
+.rr-contact-row { display: grid; grid-template-columns: 84px 1fr; gap: 8px; align-items: start; overflow-wrap: anywhere; }
+.rr-contact-label { font-weight: 600; color: var(--text-muted); }
+.rr-email { display: inline-block; margin-right: 10px; }
+.rr-badge { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border, #d1d5db); margin-left: 4px; color: var(--text-muted); }
+.rr-badge-named { border-color: #d97706; color: #b45309; }
+.rr-src { font-size: 12px; color: var(--text-muted); }
+.rr-reviews { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 6px; }
+.rr-review { padding: 6px 8px; background: var(--surface-muted, rgba(127,127,127,.08)); border-radius: 6px; }
+@media (max-width: 520px) { .rr-contact-row { grid-template-columns: 1fr; gap: 2px; } }
 .rr-actions { margin-top: 10px; display: flex; justify-content: flex-end; }
 .pp-banner { background: var(--accent-warning-subtle); border: 1px solid rgba(245, 158, 11, .4); color: #fcd34d; border-radius: 8px; padding: 8px 10px; font-size: 12px; margin: 12px 0; }
 @media (max-width: 640px) {

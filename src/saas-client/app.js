@@ -852,6 +852,7 @@ function readResearchForm() {
 function closeResearchResult() {
   state.researchResult = null;
   state.researchResultJobId = null;
+  state.googleLookups = new Map();
   DOM.rrPanel.style.display = 'none';
 }
 
@@ -876,6 +877,7 @@ async function openResearchResult(jobId) {
     }
     state.researchResult = res.result;
     state.researchResultJobId = jobId;
+    state.googleLookups = new Map();
     renderResearchResult();
   } catch (err) {
     DOM.rrLoading.style.display = 'none';
@@ -1038,16 +1040,98 @@ function renderOpportunityList() {
       </details>
       ${needHtml || '<div class="rr-state">No need was found that matches the services you offer.</div>'}
       ${otherNeeds.length ? `<div class="rr-other">Also observed (not one of your services): ${otherNeeds.map((n) => escapeHtml(n.service)).join(', ')}</div>` : ''}
+      ${contactsHtml(b)}
       ${(inspection.notes || []).length ? `<div class="rr-notes">${inspection.notes.map((n) => escapeHtml(n)).join('<br>')}</div>` : ''}
       <div class="rr-actions">
         <button class="btn btn-secondary rr-crm-btn" type="button">Add to CRM</button>
+        ${state.researchOptions && state.researchOptions.google_reviews_available && !(state.googleLookups && state.googleLookups.has(b.business_id)) ? '<button class="btn btn-secondary rr-google-btn" type="button">Google rating &amp; reviews</button>' : ''}
         ${o.need_ids.length ? '<button class="btn btn-primary rr-draft-btn" type="button">Draft a proposal</button>' : ''}
       </div>
     `;
+    const googleBtn = card.querySelector('.rr-google-btn');
+    if (googleBtn) googleBtn.addEventListener('click', () => lookupGoogle(o, googleBtn));
     const draftBtn = card.querySelector('.rr-draft-btn');
     if (draftBtn) draftBtn.addEventListener('click', () => openProposalModal(o));
     card.querySelector('.rr-crm-btn').addEventListener('click', () => addOpportunitiesToCrm([o.opportunity_id]));
     DOM.rrList.appendChild(card);
+  }
+}
+
+/** An http(s) link, or nothing: other schemes are never put in an href. */
+function safeLink(url, label) {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return escapeHtml(label || '');
+  return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(label || url)}</a>`;
+}
+
+const SOCIAL_LABELS = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', tiktok: 'TikTok', x: 'X', youtube: 'YouTube' };
+
+/** Contacts, owners, Instagram and Google for one business card. */
+function contactsHtml(b) {
+  const c = b.contacts || { emails: [], phones: [], socials: {} };
+  const parts = [];
+  if (c.emails.length) {
+    const named = c.emails.some((e) => e.kind === 'named');
+    parts.push(`<div class="rr-contact-row"><span class="rr-contact-label">Email</span><span>${c.emails.map((e) => `
+      <span class="rr-email">${escapeHtml(e.address)}
+        <span class="rr-badge rr-badge-${e.kind === 'named' ? 'named' : 'generic'}" title="${e.kind === 'named' ? 'A person\'s address' : 'A role address such as info@ or reception@'}">${e.kind === 'named' ? 'person' : 'role'}</span>${e.same_domain ? '' : '<span class="rr-badge" title="Not on the website\'s own domain">other domain</span>'}
+        <span class="rr-src">(${safeLink(e.source_url, 'source')})</span></span>`).join('')}</span></div>`);
+    if (named) parts.push('<div class="rr-caveat">UK rule (PECR): a person\'s address may belong to a sole trader or partnership, who must have agreed before you email them for marketing. Role addresses of companies are safer.</div>');
+  }
+  if (c.phones.length) {
+    parts.push(`<div class="rr-contact-row"><span class="rr-contact-label">Phone</span><span>${c.phones.map((p) => `${escapeHtml(p.number)} <span class="rr-src">(${safeLink(p.source_url, 'source')})</span>`).join(' · ')}</span></div>`);
+  }
+  const socials = Object.entries(c.socials || {});
+  if (socials.length) {
+    parts.push(`<div class="rr-contact-row"><span class="rr-contact-label">Social</span><span>${socials.map(([k, v]) => safeLink(v.url, SOCIAL_LABELS[k] || k)).join(' · ')}</span></div>`);
+  }
+  const ig = b.instagram;
+  if (ig) {
+    const text = ig.status === 'ok'
+      ? `@${escapeHtml(ig.handle)}: ${ig.followers ?? '?'} followers, ${ig.posts ?? '?'} posts, last post ${ig.last_post_at ? `${escapeHtml(ig.last_post_at.slice(0, 10))} (${ig.days_since_last_post} days ago)` : 'none'}${ig.stale ? ' <span class="rr-sev rr-sev-medium">inactive</span>' : ''}`
+      : escapeHtml(ig.note || ig.status);
+    parts.push(`<div class="rr-contact-row"><span class="rr-contact-label">Instagram</span><span>${text}</span></div>`);
+  }
+  const ow = b.owners;
+  if (ow) {
+    let text;
+    if (ow.status === 'matched') {
+      const how = ow.match.postcode === 'same' ? 'same name and postcode' : 'close name, same postcode area';
+      text = `${safeLink(ow.company.url, `${ow.company.name} (${ow.company.number})`)}: ${ow.owners.length ? ow.owners.map((o) => `${escapeHtml(o.name)} <span class="rr-src">${escapeHtml(o.role)}</span>`).join(', ') : 'no active directors listed'}
+        <div class="rr-src">Companies House; matched on ${escapeHtml(how)}. Check before you rely on it.</div>`;
+    } else {
+      text = escapeHtml(ow.note || ow.status);
+    }
+    parts.push(`<div class="rr-contact-row"><span class="rr-contact-label">Owners</span><span>${text}</span></div>`);
+  }
+  const g = state.googleLookups && state.googleLookups.get(b.business_id);
+  if (g) parts.push(googleHtml(g));
+  return parts.length ? `<div class="rr-contacts">${parts.join('')}</div>` : '<div class="rr-contacts rr-src">No email, phone or social profile was found on the website or the listing.</div>';
+}
+
+function googleHtml(g) {
+  if (g.status !== 'found') return `<div class="rr-contact-row"><span class="rr-contact-label">Google</span><span>${escapeHtml(g.note || g.status)}</span></div>`;
+  const stars = g.rating === null ? 'no rating' : `★ ${g.rating} (${g.rating_count ?? 0} reviews)`;
+  const reviews = g.reviews.map((r) => `
+    <li class="rr-review">
+      <div>${r.rating === null ? '' : `${'★'.repeat(Math.round(r.rating))} `}<strong>${safeLink(r.author_url, r.author || 'A Google user')}</strong> <span class="rr-src">${escapeHtml(r.relative_time || '')}</span></div>
+      ${r.text ? `<div>${escapeHtml(r.text)}</div>` : ''}
+    </li>`).join('');
+  return `<div class="rr-contact-row"><span class="rr-contact-label">Google</span><span>${safeLink(g.google_maps_uri, stars)}
+    ${reviews ? `<ul class="rr-reviews">${reviews}</ul>` : ''}
+    <div class="rr-src">Source: Google Maps. Shown live, not saved.</div></span></div>`;
+}
+
+async function lookupGoogle(o, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Asking Google…';
+  try {
+    const res = await api(`/api/workspaces/${state.currentWorkspace.workspace_id}/research/jobs/${state.researchResultJobId}/businesses/${encodeURIComponent(o.business_id)}/google`, { method: 'POST', body: {} });
+    state.googleLookups.set(o.business_id, res.google);
+    renderOpportunityList();
+  } catch (err) {
+    toast(`Google reviews: ${err.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Google rating & reviews';
   }
 }
 

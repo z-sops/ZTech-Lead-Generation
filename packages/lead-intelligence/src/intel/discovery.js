@@ -108,6 +108,12 @@ function toBusiness(el, retrievedAt, industry) {
     industry,
     address: addressOf(tags),
     phone: firstTag(tags, ['phone', 'contact:phone']),
+    email: firstTag(tags, ['email', 'contact:email']),
+    postcode: firstTag(tags, ['addr:postcode']),
+    social_tags: {
+      instagram: firstTag(tags, ['contact:instagram', 'instagram']),
+      facebook: firstTag(tags, ['contact:facebook', 'facebook']),
+    },
     website,
     opening_hours: firstTag(tags, ['opening_hours']),
     lat: typeof el.lat === 'number' ? el.lat : el.center && el.center.lat,

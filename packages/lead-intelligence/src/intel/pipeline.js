@@ -15,7 +15,8 @@
 
 const { validateCriteria } = require('./criteria');
 const { INDUSTRIES } = require('./criteria');
-const { inspectWebsite, stableId } = require('./inspector');
+const { inspectWebsite, stableId, Recorder } = require('./inspector');
+const { mergeContacts, contactsFromListing } = require('./contacts');
 const { detectNeeds, scoreOpportunity, rankOpportunities, WEIGHTS } = require('./scoring');
 
 const RESULT_SCHEMA = 'ztech.research.v1';
@@ -82,6 +83,27 @@ async function runResearch(deps) {
         notes: [`The inspection failed: ${String((err && err.message) || err).slice(0, 200)}`],
       };
     }
+    const contacts = mergeContacts(inspection.contacts, contactsFromListing(business));
+    // Official-source enrichment (owners, Instagram), when configured. A
+    // failure here never fails the business: it is noted and skipped.
+    let enriched = {};
+    if (deps.enrich) {
+      try {
+        enriched = (await deps.enrich({ ...business, contacts }, deps.signal)) || {};
+      } catch (err) {
+        enriched = { note: `Enrichment failed: ${String((err && err.message) || err).slice(0, 160)}` };
+      }
+    }
+    if (Array.isArray(enriched.findings) && enriched.findings.length) {
+      const rec = new Recorder(business.business_id, now);
+      for (const f of enriched.findings) {
+        const ev = rec.addEvidence({ source_url: f.source_url, method: f.method, excerpt: f.excerpt, kind: f.kind || 'observed' });
+        rec.addFinding(f.check_id, [ev]);
+      }
+      inspection.evidence.push(...rec.evidence);
+      inspection.findings.push(...rec.findings);
+    }
+    if (enriched.note) inspection.notes.push(enriched.note);
     pagesFetched += inspection.pages_fetched;
     evidence.push(...inspection.evidence);
     findings.push(...inspection.findings);
@@ -101,6 +123,9 @@ async function runResearch(deps) {
     });
     return {
       ...business,
+      contacts,
+      owners: enriched.owners || null,
+      instagram: enriched.instagram || null,
       inspection: { status: inspection.status, notes: inspection.notes, pages_fetched: inspection.pages_fetched },
     };
   });

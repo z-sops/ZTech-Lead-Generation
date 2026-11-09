@@ -58,6 +58,33 @@ function handler(scheme, requests) {
       return;
     }
 
+    if (host === 'ch.ztech-fixture.com') {
+      // Companies House stand-in: Basic auth with the key as the user name.
+      const api = JSON.parse(fs.readFileSync(path.join(SITES, host, 'api.json'), 'utf8'));
+      const expected = `Basic ${Buffer.from(`${api.key}:`).toString('base64')}`;
+      if (req.headers.authorization !== expected) { res.writeHead(401); res.end('{}'); return; }
+      res.setHeader('content-type', 'application/json');
+      if (url.pathname === '/search/companies') {
+        res.end(JSON.stringify({ items: api.search[(url.searchParams.get('q') || '').toLowerCase()] || [] }));
+        return;
+      }
+      const m = /^\/company\/([A-Z0-9]{8})\/officers$/.exec(url.pathname);
+      if (m) { res.end(JSON.stringify({ items: api.officers[m[1]] || [] })); return; }
+      res.writeHead(404); res.end('{}');
+      return;
+    }
+    if (host === 'graph.ztech-fixture.com') {
+      // Instagram Business Discovery stand-in.
+      const api = JSON.parse(fs.readFileSync(path.join(SITES, host, 'api.json'), 'utf8'));
+      res.setHeader('content-type', 'application/json');
+      if (req.headers.authorization !== `Bearer ${api.token}`) { res.end(JSON.stringify({ error: { code: 190, message: 'Invalid OAuth access token' } })); return; }
+      const handle = (/username\(([^)]+)\)/.exec(url.searchParams.get('fields') || '') || [])[1];
+      const acct = api.accounts[handle];
+      if (!acct) { res.end(JSON.stringify({ error: { code: 110, message: `Invalid user id: cannot find business account ${handle}` } })); return; }
+      res.end(JSON.stringify({ id: '1789', business_discovery: { username: handle, followers_count: acct.followers_count, media_count: acct.media_count, media: { data: [{ timestamp: acct.last, id: 'm1' }] } } }));
+      return;
+    }
+
     const dir = path.join(SITES, host);
     if (!host || !fs.existsSync(dir)) {
       res.writeHead(404);
@@ -78,7 +105,7 @@ function handler(scheme, requests) {
       return;
     }
     const status = url.pathname === '/' && cfg.status ? cfg.status : 200;
-    res.writeHead(status, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+    res.writeHead(status, { 'content-type': TYPES[path.extname(file)] || (path.extname(file) === '' ? 'text/html; charset=utf-8' : 'application/octet-stream') });
     res.end(fs.readFileSync(file));
   };
 }
@@ -104,13 +131,15 @@ async function startFixtureServer() {
   const hosts = fs.readdirSync(SITES).filter((h) => fs.statSync(path.join(SITES, h)).isDirectory());
   const entries = hosts.map((h) => {
     const cfg = siteConfig(h);
-    return `${h}=${hp}${cfg.https || h === 'maps.ztech-fixture.com' ? `:${sp}` : ''}`;
+    return `${h}=${hp}${cfg.https || ['maps.ztech-fixture.com', 'ch.ztech-fixture.com', 'graph.ztech-fixture.com'].includes(h) ? `:${sp}` : ''}`;
   });
   entries.push(`down-dental.ztech-fixture.com=${deadPort}:${deadPort}`);
   return {
     hostMap: entries.join(','),
     nominatimUrl: 'http://maps.ztech-fixture.com/search',
     overpassUrl: 'http://maps.ztech-fixture.com/api/interpreter',
+    companiesHouseUrl: 'https://ch.ztech-fixture.com',
+    graphUrl: 'https://graph.ztech-fixture.com',
     requests,
     expected: JSON.parse(fs.readFileSync(path.join(ROOT, 'expected.json'), 'utf8')),
     close: () => Promise.all([plain, secure].map((s) => new Promise((r) => { s.closeAllConnections(); s.close(r); }))).then(() => {}),
