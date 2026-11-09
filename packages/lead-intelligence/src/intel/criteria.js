@@ -42,6 +42,7 @@ const OFFER_CATEGORIES = Object.freeze({
   security: 'HTTPS and website security',
   booking: 'Online booking and contact flows',
   accessibility: 'Accessibility',
+  social_media: 'Social media management',
 });
 
 const WEBSITE_FILTERS = Object.freeze(['any', 'with_website', 'without_website']);

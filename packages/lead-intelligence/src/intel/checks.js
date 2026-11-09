@@ -128,6 +128,12 @@ const CHECKS = Object.freeze({
     problem: 'An old year suggests the website has not been looked after.',
     caveat: 'An old year alone does not prove the content is out of date.',
   },
+  INSTAGRAM_INACTIVE: {
+    area: 'social', severity: 'medium', confidence: 0.8, category: 'social_media',
+    title: 'Instagram not updated for months',
+    problem: 'Customers who look the business up on Instagram see no recent posts.',
+    caveat: 'Stories, and posts on other accounts the business may use, are not counted.',
+  },
   NO_SITEMAP: {
     area: 'seo', severity: 'low', confidence: 0.7, category: 'seo',
     title: 'No sitemap',

@@ -1,0 +1,19 @@
+{
+  "key": "test-ch-key-0123456789",
+  "search": {
+    "old town dental surgery": [
+      { "title": "OLD TOWN DENTAL SURGERY LIMITED", "company_number": "01234567", "company_status": "active", "address": { "postal_code": "LS1 4AP" }, "address_snippet": "1 Old Town Street, Leeds, LS1 4AP" },
+      { "title": "OLD TOWN DENTAL LTD", "company_number": "07654321", "company_status": "active", "address": { "postal_code": "M1 1AA" }, "address_snippet": "Manchester, M1 1AA" }
+    ],
+    "beeston dental practice": [
+      { "title": "BEESTON DENTAL CARE LTD", "company_number": "05550555", "company_status": "active", "address": { "postal_code": "LS11 9ZZ" }, "address_snippet": "Beeston, Leeds, LS11 9ZZ" }
+    ]
+  },
+  "officers": {
+    "01234567": [
+      { "name": "KHAN, Sarah", "officer_role": "director", "appointed_on": "2015-03-01" },
+      { "name": "OLDHAM, Peter", "officer_role": "director", "appointed_on": "2010-01-01", "resigned_on": "2020-01-01" },
+      { "name": "ACME SECRETARIES LTD", "officer_role": "corporate-secretary", "appointed_on": "2015-03-01" }
+    ]
+  }
+}

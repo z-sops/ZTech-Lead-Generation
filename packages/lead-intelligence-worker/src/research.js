@@ -15,6 +15,9 @@
  *                               a contact URL (default below)
  *   ZTECH_RESEARCH_CONCURRENCY  websites inspected at once (1-5, default 3)
  *   ZTECH_NOMINATIM_URL / ZTECH_OVERPASS_URL   other instances (e.g. self-hosted)
+ *   COMPANIES_HOUSE_API_KEY     UK owners (directors) from Companies House (optional)
+ *   ZTECH_IG_ACCESS_TOKEN, ZTECH_IG_USER_ID   Instagram activity via the
+ *                               Business Discovery API (optional)
  *   ZTECH_INSPECT_HOST_MAP="host=port,..."  TESTS ONLY: serve named sites locally
  *   ZTECH_INSPECT_ALLOW_PRIVATE=1  TESTS ONLY: allow private addresses; refused
  *                               when NODE_ENV or ZTECH_ENV is "production"
@@ -58,9 +61,14 @@ function researchConfig(env = process.env) {
       hostMap.set(h.toLowerCase(), { http: Number(m[1]), https: m[2] ? Number(m[2]) : null });
     }
   }
+  // TESTS ONLY (with ZTECH_INSPECT_ALLOW_PRIVATE): other hosts for the official APIs.
+  const testBases = allowPrivate ? { ch: env.ZTECH_COMPANIES_HOUSE_URL, graph: env.ZTECH_GRAPH_URL } : {};
   return {
     allowPrivate,
     hostMap,
+    companiesHouseKey: env.COMPANIES_HOUSE_API_KEY || null,
+    instagram: env.ZTECH_IG_ACCESS_TOKEN && env.ZTECH_IG_USER_ID ? { token: env.ZTECH_IG_ACCESS_TOKEN, igUserId: String(env.ZTECH_IG_USER_ID) } : null,
+    testBases,
     concurrency,
     userAgent,
     nominatimUrl: env.ZTECH_NOMINATIM_URL || undefined,
@@ -118,6 +126,34 @@ function createResearchExecutor(options = {}) {
     if (job.jobType !== 'research' || payload.kind !== RESEARCH_KIND) return executeNoop(job);
     if (job.jobClass && job.jobClass !== 'noop') return executeNoop(job); // refused there, loudly
 
+    const enrich = (cfg.companiesHouseKey || cfg.instagram) ? async (business, signal) => {
+      const out = { findings: [] };
+      if (cfg.companiesHouseKey && business.postcode) {
+        out.owners = await intel.enrich.companiesHouseOwners({
+          request: apiFetcher.request, apiKey: cfg.companiesHouseKey, business, signal, ...(cfg.testBases.ch ? { baseUrl: cfg.testBases.ch } : {}),
+        });
+      }
+      const ig = business.contacts && business.contacts.socials && business.contacts.socials.instagram;
+      if (cfg.instagram && ig) {
+        const a = await intel.enrich.instagramActivity({
+          request: apiFetcher.request, token: cfg.instagram.token, igUserId: cfg.instagram.igUserId, handle: ig.handle, now, signal,
+          ...(cfg.testBases.graph ? { baseUrl: cfg.testBases.graph } : {}),
+        });
+        out.instagram = { ...a, url: ig.url, found_on: ig.source_url };
+        if (a.status === 'ok' && a.stale) {
+          out.findings.push({
+            check_id: 'INSTAGRAM_INACTIVE',
+            method: 'Instagram Business Discovery API',
+            source_url: ig.url,
+            excerpt: a.last_post_at
+              ? `@${a.handle}: last post on ${a.last_post_at.slice(0, 10)} (${a.days_since_last_post} days ago), ${a.followers ?? 'unknown'} followers.`
+              : `@${a.handle}: no posts, ${a.followers ?? 'unknown'} followers.`,
+          });
+        }
+      }
+      return out;
+    } : null;
+
     const discovery = new intel.discovery.OsmDiscovery({
       request: apiFetcher.request,
       userAgent: cfg.userAgent,
@@ -134,6 +170,7 @@ function createResearchExecutor(options = {}) {
         signal: job.signal,
         concurrency: cfg.concurrency,
         isCancelled: job.isCancelled,
+        enrich,
       });
     } catch (err) {
       // A criteria or discovery failure becomes the job's error message: it
