@@ -30,7 +30,7 @@
     "node": ">=20.19.0"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
+    "concurrently": "^10.0.7",
     "cross-env": "^10.1.0",
     "electron": "33.4.11",
     "electron-builder": "^26.15.3",
